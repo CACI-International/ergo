@@ -1,4 +1,4 @@
-# Bob Rust Runtime
+# Bob Gets Rusty
 This repository contains a bob core runtime implementation in rust.
 
 The rust project produces a bob library, and a bob executable will be created
