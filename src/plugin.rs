@@ -17,6 +17,21 @@ use std::collections::HashMap;
 use std::path::Path;
 
 pub type ExtensionId = [u8; 16];
+pub type SString = usize;
+
+/// The plugin loading status of a particular plugin.
+#[repr(C)]
+#[derive(Debug)]
+pub enum PluginLoadStatus {
+    /// The plugin was loaded successfully.
+    Success,
+    /// The plugin is waiting for an optional dependency.
+    WaitOptional,
+    /// The plugin is waiting for a required dependency.
+    WaitRequired(SString),
+    /// The plugin failed to load.
+    Fail(SString),
+}
 
 struct Plugin<'a> {
     path: &'a Path,
@@ -62,7 +77,7 @@ macro_rules! bob_register_plugin {
         ) -> PluginLoadStatus {
             match PluginRegistryInterface::new(_indirect) {
                 Ok(mut $p) => $x,
-                Err(e) => PluginLoadStatus::Fail(e),
+                Err(e) => PluginLoadStatus::Fail(0),
             }
         }
     };
@@ -102,6 +117,13 @@ impl<'lib> PluginRegister<'lib> {
     }
 }
 
+/// Fixed sstring values
+enum SStringFixed {
+    PluginInterfaceIncompatible = 0,
+    InvalidUtf8,
+    _Offset, // Must be last element in the enum
+}
+
 /**
  * A registry of plugin extension points.
  *
@@ -113,6 +135,7 @@ pub struct PluginRegistry {
     registered: HashMap<ExtensionId, *mut ()>,
     change: bool,
     plugins: Vec<dl::Library>,
+    strings: Vec<String>,
 }
 
 impl PluginRegistry {
@@ -132,6 +155,18 @@ impl PluginRegistry {
         self.change = true;
     }
 
+    /// Add a string to the string table.
+    pub extern "C" fn make_string(&mut self, bytes: *const u8, size: usize) -> SString {
+        let slice = unsafe { std::slice::from_raw_parts(bytes, size) };
+        match String::from_utf8(Vec::from(slice)) {
+            Ok(s) => {
+                self.strings.push(s);
+                SStringFixed::_Offset as SString + self.strings.len() - 1
+            }
+            Err(_) => SStringFixed::InvalidUtf8 as SString,
+        }
+    }
+
     /// Reset the change state in the registry, returning the current state.
     pub fn reset_change(&mut self) -> bool {
         let ret = self.change;
@@ -139,6 +174,20 @@ impl PluginRegistry {
         ret
     }
 
+    /// Resolve the given SString to a string slice.
+    fn resolve_sstring(&self, s: SString) -> Result<&str, &str> {
+        if s == SStringFixed::PluginInterfaceIncompatible as SString {
+            Err("incompatible plugin interface")
+        } else if s == SStringFixed::InvalidUtf8 as SString {
+            Err("provided invalid utf8 when creating string")
+        } else {
+            self.strings
+                .get(s - SStringFixed::_Offset as SString)
+                .ok_or("provided invalid string reference").map(|s| s.as_ref())
+        }
+    }
+
+    /// Load the given plugin files into the registry.
     pub fn load(&mut self, paths: Vec<&Path>) -> Result<(), String> {
         let mut plugins = Vec::with_capacity(paths.len());
         for path in &paths {
@@ -155,12 +204,12 @@ impl PluginRegistry {
         let mut required = Vec::new();
         while !to_load.is_empty() && self.change {
             self.change = false;
-
-            let mut indirect = PluginRegistryIndirect::new(self);
+            self.strings.clear();
             required.clear();
+
             let mut i = 0;
             while i < to_load.len() {
-                match entries[i].try_register(&mut indirect) {
+                match entries[i].try_register(&mut PluginRegistryIndirect::new(self)) {
                     PluginLoadStatus::Success => {
                         to_load.remove(i);
                         entries.remove(i);
@@ -168,19 +217,32 @@ impl PluginRegistry {
                     }
                     PluginLoadStatus::WaitOptional => i += 1,
                     PluginLoadStatus::WaitRequired(s) => {
-                        required.push(format!(
-                            "{} failed to load due to requirement: {}",
-                            to_load[i].path().display(),
-                            s
-                        ));
+                        match self.resolve_sstring(s) {
+                            Ok(st) => required.push(format!(
+                                "{} failed to load due to requirement: {}",
+                                to_load[i].path().display(),
+                                st
+                            )),
+                            Err(st) => {
+                                return Err(format!(
+                                    "{} failed to load: {}",
+                                    to_load[i].path().display(),
+                                    st
+                                ))
+                            }
+                        }
                         i += 1
                     }
                     PluginLoadStatus::Fail(s) => {
+                        let string = match self.resolve_sstring(s) {
+                            Ok(st) => st,
+                            Err(st) => st,
+                        };
                         return Err(format!(
                             "{} failed to load: {}",
                             to_load[i].path().display(),
-                            s
-                        ))
+                            string
+                        ));
                     }
                 }
             }
@@ -195,7 +257,7 @@ impl PluginRegistry {
     }
 }
 
-const PLUGIN_REGISTRY_INTERFACE_SIZE: usize = 3;
+const PLUGIN_REGISTRY_INTERFACE_SIZE: usize = 4;
 
 #[repr(C)]
 pub struct PluginRegistryIndirect<'a> {
@@ -204,6 +266,7 @@ pub struct PluginRegistryIndirect<'a> {
     add: extern "C" fn(&mut PluginRegistry, ExtensionId, *mut ()),
     get: extern "C" fn(&PluginRegistry, &ExtensionId) -> *mut (),
     mark_change: extern "C" fn(&mut PluginRegistry),
+    make_string: extern "C" fn(&mut PluginRegistry, *const u8, usize) -> SString,
 }
 
 impl<'a> PluginRegistryIndirect<'a> {
@@ -214,6 +277,7 @@ impl<'a> PluginRegistryIndirect<'a> {
             add: PluginRegistry::add,
             get: PluginRegistry::get,
             mark_change: PluginRegistry::mark_change,
+            make_string: PluginRegistry::make_string,
         }
     }
 }
@@ -263,19 +327,11 @@ impl<'a, 'b> PluginRegistryInterface<'a, 'b> {
     pub fn mark_change(&mut self) {
         (self.0.mark_change)(self.0.data);
     }
-}
 
-/// The plugin loading status of a particular plugin.
-#[derive(Debug)]
-pub enum PluginLoadStatus {
-    /// The plugin was loaded successfully.
-    Success,
-    /// The plugin is waiting for an optional dependency.
-    WaitOptional,
-    /// The plugin is waiting for a required dependency.
-    WaitRequired(String),
-    /// The plugin failed to load.
-    Fail(String),
+    /// Create a string to be used in return values.
+    pub fn make_string(&mut self, s: &str) -> SString {
+        (self.0.make_string)(self.0.data, s.as_ptr(), s.len())
+    }
 }
 
 #[cfg(test)]

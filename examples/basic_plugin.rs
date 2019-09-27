@@ -20,6 +20,6 @@ bob_register_plugin! { registry => {
     } else {
         let ext: &'static mut MyExtension = Box::leak(Box::new(MyExtension::default()));
         registry.add(ext);
-        PluginLoadStatus::WaitRequired("need MyExtension plugin".to_owned())
+        PluginLoadStatus::WaitRequired(registry.make_string("need MyExtension plugin"))
     }
 }}
