@@ -64,3 +64,4 @@ impl TaskManager {
         self.delayed(lazy(move |_| f()))
     }
 }
+
