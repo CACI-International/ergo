@@ -9,6 +9,7 @@ serde = "1.0"
 uuid = { version = "0.7", features = ["serde","v5"] }
 lazy_static = "1.4"
 libloading = "0.5"
+futures-preview = "=0.3.0-alpha.19"
 
 [[example]]
 name = "basic_plugin"
