@@ -121,7 +121,7 @@ mod tests {
         runtime.add_procedure(proca, a_resolve);
         runtime.add_procedure(procb, b_resolve);
         runtime.add_procedure(procc, c_resolve);
-        let plan = builder.build(c, runtime.resolve())?;
+        let plan = builder.build(c, runtime.resolve()).map_err(|e| format!("{}", e))?;
         let outs = plan.outputs().ok_or("failed to get outputs")?;
         let result = futures::executor::block_on(outs.get(0).unwrap().clone())?;
         assert!(*result == vec![0, 1]);
