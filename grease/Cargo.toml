@@ -1,0 +1,11 @@
+[package]
+name = "grease"
+version = "0.1.0"
+authors = ["Alex Franchuk <afranchuk@caci.com>"]
+edition = "2018"
+
+[dependencies]
+uuid = { version = "0.7", features = ["v5"] }
+lazy_static = "^1"
+futures-preview = "=0.3.0-alpha.19"
+log = "^0.4"

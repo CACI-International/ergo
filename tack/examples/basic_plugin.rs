@@ -1,19 +1,17 @@
-use bob::bob_register_plugin;
-use bob::uuid as id;
-use uuid::Uuid;
+use tack::{register_plugin,Extension,ExtensionId};
 
 #[derive(Default)]
 struct MyExtension {
     value: i32,
 }
 
-impl id::UniqueType for MyExtension {
-    fn type_id() -> Uuid {
-        Uuid::new_v5(&*id::PLUGIN_NS, b"myextension")
+impl Extension for MyExtension {
+    fn extension_id() -> ExtensionId {
+        [1,2,3,4,1,2,3,4,1,2,3,4,5,6,7,8]
     }
 }
 
-bob_register_plugin! { registry => {
+register_plugin! { registry => {
     if let Some(ref mut r) = registry.get::<MyExtension>() {
         r.value = 42;
         PluginLoadStatus::Success

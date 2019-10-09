@@ -4,6 +4,7 @@
 //! use a description of task dependencies (provided by [`PlanBuilder`](struct.PlanBuilder.html)) to create
 //! an asynchronous call flow to get the outputs of a 'root' task.
 
+use crate::prelude::*;
 use futures::future::{BoxFuture, Future, FutureExt, Shared, TryFutureExt};
 use futures::task::{Context, Poll};
 use std::collections::HashMap;
@@ -25,6 +26,36 @@ struct Task(Procedure);
 
 /// An identifier for a particular task in a plan.
 pub type TaskId = usize;
+
+/// A procedure resolver.
+///
+/// Error is the error type returned by the resolver.
+pub trait Resolver {
+    type Error;
+    /// Resolve the given 
+    fn resolve(
+        &mut self,
+        id: TaskId,
+        proc: &Procedure,
+        inputs: Vec<Value>,
+    ) -> Result<Vec<Value>, Self::Error>;
+}
+
+impl<T, Error> Resolver for T
+where
+    T: FnMut(TaskId, &Procedure, Vec<Value>) -> Result<Vec<Value>, Error>,
+{
+    type Error = Error;
+
+    fn resolve(
+        &mut self,
+        id: TaskId,
+        proc: &Procedure,
+        inputs: Vec<Value>,
+    ) -> Result<Vec<Value>, Error> {
+        self(id, proc, inputs)
+    }
+}
 
 /// A value shared amongst tasks.
 ///
@@ -141,7 +172,10 @@ impl PlanBuilder {
      */
     pub fn add_task(&mut self, proc: Procedure) -> TaskId {
         self.tasks.push(Task(proc));
-        self.tasks.len() - 1
+        let ret = self.tasks.len() - 1;
+        debug!(target: "plan_builder", "added task {} = {}", ret, proc);
+        trace!(target: "plan_builder", "plan builder state = {:?}", self);
+        ret
     }
 
     /**
@@ -159,9 +193,14 @@ impl PlanBuilder {
         match val {
             None => {
                 *val = Some((from, from_index));
+                debug!(target: "plan_builder", "added link {}[{}] -> {}[{}]", from, from_index, to, to_index);
+                trace!(target: "plan_builder", "plan builder state = {:?}", self);
                 true
             }
-            Some(_) => false,
+            Some(_) => {
+                warn!(target: "plan_builder", "link already added {}[{}] -> {}[{}]", from, from_index, to, to_index);
+                false
+            }
         }
     }
 
@@ -169,32 +208,30 @@ impl PlanBuilder {
     ///
     /// The given output TaskId is the root output in the plan.
     /// The resolver will be called for all applicable tasks in the plan.
-    pub fn build<F, E>(self, output: TaskId, mut resolver: F) -> Result<Plan, Error<E>>
-    where
-        F: FnMut(&Procedure, Vec<Value>) -> Result<Vec<Value>, E>,
+    pub fn build<F: Resolver>(self, output: TaskId, mut resolver: F) -> Result<Plan, Error<F::Error>>
     {
         let mut plan = Plan::default();
         plan.root = output;
         let mut processing = Vec::new();
         self.resolve_task(&mut resolver, &mut plan.outputs, &mut processing, output)?;
+        trace!(target: "plan_builder", "built plan {:?}", plan);
         Ok(plan)
     }
 
-    fn resolve_task<'a, F, E>(
+    fn resolve_task<'a, F: Resolver>(
         &self,
         resolver: &mut F,
         outputs: &'a mut HashMap<TaskId, Vec<Value>>,
         processing: &mut Vec<TaskId>,
         id: TaskId,
-    ) -> Result<&'a Vec<Value>, Error<E>>
-    where
-        F: FnMut(&Procedure, Vec<Value>) -> Result<Vec<Value>, E>,
+    ) -> Result<&'a Vec<Value>, Error<F::Error>>
     {
         if let Some(i) = processing.iter().position(|task| *task == id) {
             return Err(Error::LoopDetected(processing[i..].to_vec()));
         }
         processing.push(id);
         if !outputs.contains_key(&id) {
+            debug!(target: "plan_builder", "getting outputs for task id {}", id);
             let Task(ref proc) = self.tasks.get(id).unwrap();
             let inputs = match self.links.get(&id) {
                 None => Ok(vec![]),
@@ -210,7 +247,13 @@ impl PlanBuilder {
                     })
                     .collect(),
             }?;
-            outputs.insert(id, resolver(proc, inputs).map_err(Error::Resolver)?);
+            debug!(target: "plan_builder", "calling resolver for procedure {} with {} inputs", proc, inputs.len());
+            outputs.insert(
+                id,
+                resolver
+                    .resolve(id, proc, inputs)
+                    .map_err(Error::Resolver)?,
+            );
         }
         processing.pop();
         Ok(outputs.get(&id).unwrap())
@@ -229,28 +272,30 @@ mod tests {
         let a = builder.add_task(proca);
         let b = builder.add_task(procb);
         builder.link(a, 0, b, 0);
-        let plan = builder.build(b, |proc, inp| {
-            if proc == &proca {
-                Ok(vec![Value::new(
-                    vec![0],
-                    futures::future::ready(Ok(vec![0])),
-                )])
-            } else if proc == &procb {
-                match inp.get(0) {
-                    None => Err("not enough inputs".to_owned()),
-                    Some(v) => Ok(vec![Value::new(
+        let plan = builder
+            .build(b, |_id: TaskId, proc: &Procedure, inp: Vec<Value>| {
+                if proc == &proca {
+                    Ok(vec![Value::new(
                         vec![0],
-                        v.clone().map_ok(|data| {
-                            let mut o = (*data).clone();
-                            o.push(1);
-                            o
-                        }),
-                    )]),
+                        futures::future::ready(Ok(vec![0])),
+                    )])
+                } else if proc == &procb {
+                    match inp.get(0) {
+                        None => Err("not enough inputs".to_owned()),
+                        Some(v) => Ok(vec![Value::new(
+                            vec![0],
+                            v.clone().map_ok(|data| {
+                                let mut o = (*data).clone();
+                                o.push(1);
+                                o
+                            }),
+                        )]),
+                    }
+                } else {
+                    Err("unhandled".to_owned())
                 }
-            } else {
-                Err("unhandled".to_owned())
-            }
-        }).map_err(|e| format!("{}",e))?;
+            })
+            .map_err(|e| format!("{}", e))?;
         let outs = plan.outputs().ok_or("failed to get outputs")?;
         assert!(outs.len() == 1);
         let v = outs.get(0).unwrap().clone();

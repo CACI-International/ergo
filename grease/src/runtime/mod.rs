@@ -2,11 +2,14 @@
 
 use std::collections::HashMap;
 
-use crate::plan::{Procedure, Value};
+use crate::plan::{Procedure, Resolver, Value};
+use crate::prelude::*;
 
 mod command;
+mod log;
 mod task_manager;
 
+pub use self::log::{Log,LogTarget,LogLevel};
 pub use command::Commands;
 pub use task_manager::TaskManager;
 
@@ -15,15 +18,19 @@ pub use task_manager::TaskManager;
 pub struct Context {
     /// The task manager.
     pub task: TaskManager,
+    /// The command interface.
     pub cmd: Commands,
+    /// The logging interface.
+    pub log: Log,
 }
 
 impl Context {
     /// Create a new, default context.
-    pub fn new() -> Result<Context, futures::io::Error> {
+    pub fn new(logger: self::log::LoggerRef) -> Result<Context, futures::io::Error> {
         Ok(Context {
             task: TaskManager::new()?,
             cmd: Commands::new(),
+            log: Log::new(logger, Default::default()),
         })
     }
 }
@@ -48,16 +55,26 @@ impl Runtime {
 
     /// Add a procedure handler to the runtime.
     pub fn add_procedure(&mut self, proc: Procedure, resolve: ProcedureFunc) {
+        debug!("adding resolver for procedure {}", proc);
         self.procedures.insert(proc, resolve);
     }
+}
 
-    /// Return a suitable resolver function for `PlanBuilder::build`.
-    pub fn resolve<'a>(
-        &'a mut self,
-    ) -> impl FnMut(&Procedure, Vec<Value>) -> Result<Vec<Value>, String> + 'a {
-        move |proc, val| match self.procedures.get(&proc) {
+impl Resolver for &'_ mut Runtime {
+    type Error = String;
+
+    fn resolve(
+        &mut self,
+        id: crate::plan::TaskId,
+        proc: &Procedure,
+        inputs: Vec<Value>,
+    ) -> Result<Vec<Value>, String> {
+        match self.procedures.get(&proc) {
             None => Err(format!("could not resolve procedure {}", proc)),
-            Some(f) => f(&mut self.context, val),
+            Some(f) => {
+                self.context.log = self.context.log.for_task(id);
+                f(&mut self.context, inputs)
+            }
         }
     }
 }
@@ -68,6 +85,18 @@ mod tests {
     use crate::plan::*;
     use futures::future::{try_join, TryFutureExt};
     use uuid::Uuid;
+    use std::fmt::Arguments;
+    use std::sync::{Arc,Mutex};
+
+    struct EmptyLogger;
+
+    impl LogTarget for EmptyLogger {
+        fn log<'a>(&mut self, _level: LogLevel, _task: TaskId, _context: &[String], _args: Arguments<'a>) {}
+    }
+
+    fn empty_logger() -> Arc<Mutex<dyn LogTarget>> {
+        Arc::new(Mutex::new(EmptyLogger))
+    }
 
     fn a_resolve(ctx: &mut Context, _inputs: Vec<Value>) -> Result<Vec<Value>, String> {
         let out = Value::new(vec![0], ctx.task.delayed(futures::future::ok(vec![0])));
@@ -117,11 +146,13 @@ mod tests {
         builder.link(b, 0, c, 1);
 
         let mut runtime =
-            Runtime::new(Context::new().map_err(|_| "failed to create context".to_owned())?);
+            Runtime::new(Context::new(empty_logger()).map_err(|_| "failed to create context".to_owned())?);
         runtime.add_procedure(proca, a_resolve);
         runtime.add_procedure(procb, b_resolve);
         runtime.add_procedure(procc, c_resolve);
-        let plan = builder.build(c, runtime.resolve()).map_err(|e| format!("{}", e))?;
+        let plan = builder
+            .build(c, &mut runtime)
+            .map_err(|e| format!("{}", e))?;
         let outs = plan.outputs().ok_or("failed to get outputs")?;
         let result = futures::executor::block_on(outs.get(0).unwrap().clone())?;
         assert!(*result == vec![0, 1]);
@@ -134,9 +165,9 @@ mod tests {
         let proca = Uuid::from_bytes([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
         let a = builder.add_task(proca);
 
-        let mut runtime = Runtime::new(Context::new().expect("failed to create context"));
+        let mut runtime = Runtime::new(Context::new(empty_logger()).expect("failed to create context"));
         builder
-            .build(a, runtime.resolve())
+            .build(a, &mut runtime)
             .expect_err("should not find procedure");
     }
 
@@ -154,7 +185,7 @@ mod tests {
             }
         });
 
-        Ok(vec![Value::new(vec![0],out)])
+        Ok(vec![Value::new(vec![0], out)])
     }
 
     #[test]
@@ -163,11 +194,14 @@ mod tests {
         let proca = Uuid::from_bytes([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
         let a = builder.add_task(proca);
 
-        let mut runtime = Runtime::new(Context::new().expect("failed to create context"));
+        let mut runtime = Runtime::new(Context::new(empty_logger()).expect("failed to create context"));
         runtime.add_procedure(proca, a_run_ls);
-        let plan = builder.build(a, runtime.resolve()).expect("failed to build plan");
+        let plan = builder
+            .build(a, &mut runtime)
+            .expect("failed to build plan");
         print!("{}", runtime.context.cmd);
         let outs = plan.outputs().expect("failed to get outputs");
-        let _result = futures::executor::block_on(outs.get(0).unwrap().clone()).expect("failed to get result");
+        let _result = futures::executor::block_on(outs.get(0).unwrap().clone())
+            .expect("failed to get result");
     }
 }

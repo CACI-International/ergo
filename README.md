@@ -1,5 +1,9 @@
 # Bob Gets Rusty
 This repository contains a bob core runtime implementation in rust.
 
-The rust project produces a bob library, and a bob executable will be created
-that uses a plugin system with the library to extend the core functionality.
+The project includes a few separate rust crates:
+* [`tack`](tack) - A plugin interface.
+* [`grease`](grease) - A plan definition and runtime library.
+
+A bob executable using these crates will be developed.
+

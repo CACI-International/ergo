@@ -3,6 +3,8 @@
 use futures::executor::ThreadPool;
 use futures::future::{lazy, Future, FutureExt, RemoteHandle};
 
+use crate::prelude::*;
+
 /// The task manager.
 ///
 /// Allows tasks to spawn concurrent tasks to be run.
@@ -23,6 +25,7 @@ impl TaskManager {
     where
         F: Future<Output = ()> + Send + 'static,
     {
+        debug!("spawning new task");
         self.pool.spawn_ok(f)
     }
 
@@ -33,6 +36,7 @@ impl TaskManager {
         F: Future + Send + 'static,
         <F as Future>::Output: Send,
     {
+        debug!("spawning new task");
         let (future, handle) = f.remote_handle();
         self.pool.spawn_ok(future);
         handle
@@ -47,9 +51,13 @@ impl TaskManager {
         F: Future + Send + 'static,
         <F as Future>::Output: Send,
     {
+        debug!("creating new delayed task");
         let (future, handle) = f.remote_handle();
         let p = self.pool.clone();
-        let spawn = lazy(move |_| p.spawn_ok(future));
+        let spawn = lazy(move |_| {
+            debug!("spawning delayed task");
+            p.spawn_ok(future)
+        });
         spawn.then(move |()| handle)
     }
 

@@ -7,6 +7,8 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use crate::prelude::*;
+
 /// Tracks external command usage.
 #[derive(Debug, Default)]
 pub struct Commands {
@@ -31,18 +33,19 @@ impl fmt::Display for Commands {
 fn resolve(program: &OsStr) -> Option<PathBuf> {
     let progpath: &Path = program.as_ref();
     if progpath.is_file() {
+        trace!("program exists: {}", progpath.display());
         Some(program.into())
     } else {
         env::var("PATH").ok().and_then(|s| {
-            env::split_paths(&s)
-                .find_map(|mut f| {
-                    f.push(program);
-                    if f.is_file() {
-                        Some(f)
-                    } else {
-                        None
-                    }
-                })
+            trace!("searching paths: {}", s);
+            env::split_paths(&s).find_map(|mut f| {
+                f.push(program);
+                if f.is_file() {
+                    Some(f)
+                } else {
+                    None
+                }
+            })
         })
     }
 }
@@ -67,9 +70,15 @@ impl Commands {
             .as_ref()
             .map(|s| s.as_os_str())
             .unwrap_or(program.as_ref());
+        debug!(
+            "program '{}' resolved to '{}'",
+            (program.as_ref().as_ref() as &Path).display(),
+            (progpath.as_ref() as &Path).display()
+        );
 
         let mut cmd = Command::new(progpath);
         cmd.env_clear();
         cmd
     }
 }
+
