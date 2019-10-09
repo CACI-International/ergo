@@ -11,7 +11,7 @@ To write plugins, one should generally use the `register_plugin` macro to create
 the plugin entrypoint. Plugins should generally be compiled as `cdylib` crates.
 
 ## Loading paradigm
-Plugins entrypoints may return status about their loading state. They may signal
+Plugin entrypoints may return status about their loading state. They may signal
 that they:
 * successfully loaded
 * are waiting on an optional extension dependency
