@@ -1,0 +1,10 @@
+[package]
+name = "bob"
+version = "1.0.0-alpha.0"
+authors = ["Alex Franchuk <afranchuk@caci.com>"]
+edition = "2018"
+
+[dependencies]
+grease = { path = "../grease" }
+tack = { path = "../tack" }
+
