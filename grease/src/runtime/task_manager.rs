@@ -11,13 +11,36 @@ use crate::prelude::*;
 #[derive(Debug, Clone)]
 pub struct TaskManager {
     pool: ThreadPool,
+    thread_ids: Vec<std::thread::ThreadId>
 }
 
 impl TaskManager {
     pub fn new() -> Result<Self, futures::io::Error> {
-        Ok(TaskManager {
-            pool: ThreadPool::new()?,
-        })
+        let threads = std::cmp::max(1, num_cpus::get());
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(threads + 1));
+        let thread_ids = std::sync::Arc::new(std::sync::Mutex::new(Vec::with_capacity(threads)));
+
+        let closure_thread_ids = thread_ids.clone();
+        let closure_barrier = barrier.clone();
+        let pool = ThreadPool::builder()
+            .pool_size(threads)
+            .after_start(move |_| {
+                {
+                    let mut v = closure_thread_ids.lock().unwrap();
+                    v.push(std::thread::current().id().clone());
+                }
+                closure_barrier.wait();
+            })
+            .create()?;
+        barrier.wait();
+        let ids = thread_ids.lock().unwrap().drain(..).collect();
+
+        Ok(TaskManager { pool, thread_ids: ids })
+    }
+
+    /// Get the thread ids of pool threads.
+    pub fn thread_ids(&self) -> &[std::thread::ThreadId] {
+        self.thread_ids.as_ref()
     }
 
     /// Create a concurrent task to execute the given future to completion.
@@ -72,4 +95,3 @@ impl TaskManager {
         self.delayed(lazy(move |_| f()))
     }
 }
-

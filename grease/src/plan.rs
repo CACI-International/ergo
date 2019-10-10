@@ -5,6 +5,7 @@
 //! an asynchronous call flow to get the outputs of a 'root' task.
 
 use crate::prelude::*;
+use futures::future;
 use futures::future::{BoxFuture, Future, FutureExt, Shared, TryFutureExt};
 use futures::task::{Context, Poll};
 use std::collections::HashMap;
@@ -13,11 +14,9 @@ use std::pin::Pin;
 use std::sync::Arc;
 use uuid::Uuid;
 
-/**
- * Procedures are identified by a UUID.
- *
- * UUIDs should generally be v5 based on the root UUID namespace.
- */
+/// Procedures are identified by a UUID.
+///
+/// UUIDs should generally be v5 based on the root UUID namespace.
 pub type Procedure = Uuid;
 
 /// An instance of a procedure
@@ -102,9 +101,19 @@ pub struct Plan {
 }
 
 impl Plan {
+    /// Create a new plan builder.
+    pub fn builder() -> PlanBuilder {
+        PlanBuilder::default()
+    }
+
     /// Get the root outputs of the plan.
-    pub fn outputs(&self) -> Option<&[Value]> {
-        self.outputs.get(&self.root).map(|v| v.as_ref())
+    pub fn outputs(&self) -> &[Value] {
+        self.outputs.get(&self.root).unwrap().as_ref()
+    }
+
+    /// Run the outputs values to completion, returning the results of each.
+    pub fn run(&mut self) -> Vec<Result<Arc<Vec<u8>>, String>> {
+        futures::executor::block_on(future::join_all(self.outputs.get_mut(&self.root).unwrap()))
     }
 }
 
@@ -121,6 +130,8 @@ pub enum Error<E> {
     ///
     /// The list of tasks involved in the loop is provided, where the first task follows the last.
     LoopDetected(Vec<TaskId>),
+    /// The task id provided as the output id was not valid.
+    InvalidOutput,
     /// A resolver error occurred.
     Resolver(E),
 }
@@ -128,9 +139,7 @@ pub enum Error<E> {
 impl<E: fmt::Display> fmt::Display for Error<E> {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         match self {
-            Error::MissingInput(task, index) => {
-                write!(f, "missing input {} of task {}", index, task)
-            }
+            Error::MissingInput(task, index) => write!(f, "missing input {} of task {}", index, task),
             Error::MissingOutput(task, index, for_task) => write!(
                 f,
                 "missing output {} of task {} (needed for task {})",
@@ -147,7 +156,8 @@ impl<E: fmt::Display> fmt::Display for Error<E> {
                     }
                     write!(f, "{}", lp.first().unwrap())
                 }
-            }
+            },
+            Error::InvalidOutput => write!(f, "invalid output task id"),
             Error::Resolver(e) => write!(f, "resolver error: {}", e),
         }
     }
@@ -161,15 +171,8 @@ pub struct PlanBuilder {
 }
 
 impl PlanBuilder {
-    /// Create a new plan builder.
-    pub fn new() -> PlanBuilder {
-        Self::default()
-    }
-
-    /**
-     * Add a task with the given procedure.
-     * Returns a task id that can be used to link inputs and outputs.
-     */
+    /// Add a task with the given procedure.
+    /// Returns a task id that can be used to link inputs and outputs.
     pub fn add_task(&mut self, proc: Procedure) -> TaskId {
         self.tasks.push(Task(proc));
         let ret = self.tasks.len() - 1;
@@ -178,12 +181,10 @@ impl PlanBuilder {
         ret
     }
 
-    /**
-     * Link an output from one task to an input of another.
-     *
-     * Returns whether the link was made successfully. This will return false if a link already
-     * exists.
-     */
+    /// Link an output from one task to an input of another.
+    ///
+    /// Returns whether the link was made successfully. This will return false if a link already
+    /// exists.
     pub fn link(&mut self, from: TaskId, from_index: usize, to: TaskId, to_index: usize) -> bool {
         let e = self.links.entry(to).or_default();
         if to_index >= e.len() {
@@ -210,6 +211,10 @@ impl PlanBuilder {
     /// The resolver will be called for all applicable tasks in the plan.
     pub fn build<F: Resolver>(self, output: TaskId, mut resolver: F) -> Result<Plan, Error<F::Error>>
     {
+        if output >= self.tasks.len() {
+            return Err(Error::InvalidOutput);
+        }
+
         let mut plan = Plan::default();
         plan.root = output;
         let mut processing = Vec::new();

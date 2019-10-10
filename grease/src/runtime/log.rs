@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use crate::plan::TaskId;
 
 /// Log output levels.
+#[derive(Debug, std::cmp::PartialEq, std::cmp::PartialOrd)]
 pub enum LogLevel {
     Debug,
     Info,
@@ -14,29 +15,75 @@ pub enum LogLevel {
     Error,
 }
 
+impl fmt::Display for LogLevel {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(f, "{}", match self {
+            LogLevel::Debug => "debug",
+            LogLevel::Info => "info",
+            LogLevel::Warn => "warn",
+            LogLevel::Error => "error"
+        })
+    }
+}
+
+/// A single log entry.
+pub struct LogEntry {
+    pub level: LogLevel,
+    pub task: TaskId,
+    pub context: Arc<[String]>,
+    pub args: String,
+}
+
+impl fmt::Display for LogEntry {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(),fmt::Error> {
+        write!(f, "{}[{}]", self.level, self.task)?;
+        let has_context = self.context.len() > 0;
+        if has_context {
+            write!(f, " ({}", self.context.get(0).unwrap())?;
+        }
+        for s in self.context.iter().skip(1) {
+            write!(f, "/{}", s)?;
+        }
+        if has_context {
+            write!(f, ")")?;
+        }
+        write!(f, ": {}", self.args)
+    }
+}
+
 /// A trait for the runtime log target.
 ///
 /// This target is set as part of runtime instantiation. It is used for task runtime logging, not
 /// executable runtime logging.
 pub trait LogTarget {
-    fn log<'a>(&mut self, level: LogLevel, task: TaskId, context: &[String], args: Arguments<'a>);
+    fn log<'a>(&mut self, entry: LogEntry);
 }
 
-pub type LoggerRef = Arc<Mutex<dyn LogTarget>>;
+pub type LoggerRef = Arc<Mutex<dyn LogTarget + Send>>;
+
+/// Create a logger reference.
+pub fn logger_ref<T: LogTarget + Send + 'static>(target: T) -> Arc<Mutex<T>> {
+    Arc::new(Mutex::new(target))
+}
 
 /// The logging interface.
 #[derive(Clone)]
 pub struct Log {
     logger: LoggerRef,
     task: TaskId,
-    context: Vec<String>,
+    context: Arc<[String]>,
 }
 
 macro_rules! log_level {
     ( $name:ident, $level:ident ) => {
         pub fn $name<'a>(&self, args: Arguments<'a>) {
             let mut l = self.logger.lock().unwrap();
-            l.log(LogLevel::$level, self.task, &self.context, args);
+            l.log(LogEntry {
+                level: LogLevel::$level,
+                task: self.task,
+                context: self.context.clone(),
+                args: format!("{}", args)
+            });
         }
     }
 }
@@ -46,7 +93,7 @@ impl Log {
         Log {
             logger,
             task,
-            context: Vec::new(),
+            context: Arc::new([]),
         }
     }
 
@@ -57,7 +104,9 @@ impl Log {
     /// Create a sublog interface with the given context identifier.
     pub fn sublog(&self, name: String) -> Self {
         let mut ret = self.clone();
-        ret.context.push(name);
+        let mut v = Vec::from(ret.context.as_ref());
+        v.push(name);
+        ret.context = Arc::from(v);
         ret
     }
 
@@ -79,4 +128,3 @@ impl fmt::Debug for Log {
             .finish()
     }
 }
-

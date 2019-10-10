@@ -5,7 +5,8 @@ authors = ["Alex Franchuk <afranchuk@caci.com>"]
 edition = "2018"
 
 [dependencies]
-uuid = { version = "0.7", features = ["v5"] }
-lazy_static = "^1"
 futures-preview = "=0.3.0-alpha.19"
+lazy_static = "^1"
 log = "^0.4"
+num_cpus = "^1"
+uuid = { version = "0.7", features = ["v5"] }

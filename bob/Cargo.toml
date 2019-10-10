@@ -5,6 +5,9 @@ authors = ["Alex Franchuk <afranchuk@caci.com>"]
 edition = "2018"
 
 [dependencies]
+atty = "^0.2"
 grease = { path = "../grease" }
 tack = { path = "../tack" }
+term = "^0.6"
+uuid = "^0.7"
 

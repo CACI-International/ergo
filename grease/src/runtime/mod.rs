@@ -9,7 +9,7 @@ mod command;
 mod log;
 mod task_manager;
 
-pub use self::log::{Log,LogTarget,LogLevel};
+pub use self::log::{Log,LogTarget,LogEntry,LogLevel,LoggerRef,logger_ref};
 pub use command::Commands;
 pub use task_manager::TaskManager;
 
@@ -25,13 +25,17 @@ pub struct Context {
 }
 
 impl Context {
-    /// Create a new, default context.
-    pub fn new(logger: self::log::LoggerRef) -> Result<Context, futures::io::Error> {
+    /// Create a new context.
+    pub fn new(logger: LoggerRef) -> Result<Context, futures::io::Error> {
         Ok(Context {
             task: TaskManager::new()?,
             cmd: Commands::new(),
             log: Log::new(logger, Default::default()),
         })
+    }
+
+    pub fn with_logger<T: LogTarget + Send + 'static>(logger: T) -> Result<Context, futures::io::Error> {
+        Self::new(logger_ref(logger))
     }
 }
 
@@ -85,17 +89,11 @@ mod tests {
     use crate::plan::*;
     use futures::future::{try_join, TryFutureExt};
     use uuid::Uuid;
-    use std::fmt::Arguments;
-    use std::sync::{Arc,Mutex};
 
     struct EmptyLogger;
 
     impl LogTarget for EmptyLogger {
-        fn log<'a>(&mut self, _level: LogLevel, _task: TaskId, _context: &[String], _args: Arguments<'a>) {}
-    }
-
-    fn empty_logger() -> Arc<Mutex<dyn LogTarget>> {
-        Arc::new(Mutex::new(EmptyLogger))
+        fn log<'a>(&mut self, _entry: LogEntry) {}
     }
 
     fn a_resolve(ctx: &mut Context, _inputs: Vec<Value>) -> Result<Vec<Value>, String> {
@@ -146,7 +144,7 @@ mod tests {
         builder.link(b, 0, c, 1);
 
         let mut runtime =
-            Runtime::new(Context::new(empty_logger()).map_err(|_| "failed to create context".to_owned())?);
+            Runtime::new(Context::with_logger(EmptyLogger).map_err(|_| "failed to create context".to_owned())?);
         runtime.add_procedure(proca, a_resolve);
         runtime.add_procedure(procb, b_resolve);
         runtime.add_procedure(procc, c_resolve);
@@ -165,7 +163,7 @@ mod tests {
         let proca = Uuid::from_bytes([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
         let a = builder.add_task(proca);
 
-        let mut runtime = Runtime::new(Context::new(empty_logger()).expect("failed to create context"));
+        let mut runtime = Runtime::new(Context::with_logger(EmptyLogger).expect("failed to create context"));
         builder
             .build(a, &mut runtime)
             .expect_err("should not find procedure");
@@ -194,7 +192,7 @@ mod tests {
         let proca = Uuid::from_bytes([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
         let a = builder.add_task(proca);
 
-        let mut runtime = Runtime::new(Context::new(empty_logger()).expect("failed to create context"));
+        let mut runtime = Runtime::new(Context::with_logger(EmptyLogger).expect("failed to create context"));
         runtime.add_procedure(proca, a_run_ls);
         let plan = builder
             .build(a, &mut runtime)
