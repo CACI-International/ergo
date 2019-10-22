@@ -135,7 +135,8 @@ fn sleepy(ctx: &mut Context, _inp: Vec<Value>) -> Result<Vec<Value>, String> {
     let l = ctx.log.sublog("sleepytime".to_owned());
     let later = ctx.task.delayed_fn(move || {
         l.info(format_args!("Going to sleep"));
-        std::thread::sleep(std::time::Duration::from_secs(2));
+        use rand::distributions::{Distribution,Uniform};
+        std::thread::sleep(std::time::Duration::from_secs_f32(Uniform::from(1.0..4.0).sample(&mut rand::thread_rng())));
         l.info(format_args!("Wake up!"));
         Ok(vec![])
     });
@@ -161,7 +162,7 @@ fn main() {
         .collect();
     let joiner = builder.add_task(join_uuid.clone());
     for (i, id) in sleepers.iter().enumerate() {
-        builder.link(*id, 0, joiner, i);
+        builder.link(id.output(0), joiner.input(i));
     }
     let mut plan = builder
         .build(joiner, &mut rt)

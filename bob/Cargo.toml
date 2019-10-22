@@ -10,4 +10,5 @@ grease = { path = "../grease" }
 tack = { path = "../tack" }
 term = "^0.6"
 uuid = "^0.7"
+rand = "^0.7"
 
