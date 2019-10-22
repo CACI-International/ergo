@@ -148,8 +148,8 @@ mod tests {
         let b = builder.add_task(procb);
         let c = builder.add_task(procc);
 
-        builder.link(a, 0, c, 0);
-        builder.link(b, 0, c, 1);
+        builder.link(a.output(0), c.input(0));
+        builder.link(b.output(0), c.input(1));
 
         let mut runtime = Runtime::new(
             Context::with_logger(EmptyLogger).map_err(|_| "failed to create context".to_owned())?,

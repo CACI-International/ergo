@@ -201,7 +201,7 @@ impl<E: fmt::Display> fmt::Display for Error<E> {
 }
 
 #[derive(Clone, Copy, Debug)]
-enum OutputReference {
+pub enum OutputReference {
     Task(TaskId, usize),
     Constant(ConstantId),
 }
@@ -209,9 +209,38 @@ enum OutputReference {
 impl fmt::Display for OutputReference {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         match self {
-            OutputReference::Task(ref id, ref ind) => write!(f, "{}[{}]", id, ind),
+            OutputReference::Task(ref id, ref ind) => write!(f, "{} output {}", id, ind),
             OutputReference::Constant(ref id) => write!(f, "{}", id),
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct InputReference {
+    id: TaskId,
+    index: usize
+}
+
+impl fmt::Display for InputReference {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(f, "{} input {}", self.id, self.index)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct TaskReference {
+    id: TaskId
+}
+
+impl TaskReference {
+    /// Create a reference to the given output index.
+    pub fn output(&self, index: usize) -> OutputReference {
+        OutputReference::Task(self.id, index)
+    }
+
+    /// Create a reference to the given input index.
+    pub fn input(&self, index: usize) -> InputReference {
+        InputReference { id: self.id, index }
     }
 }
 
@@ -225,60 +254,44 @@ pub struct PlanBuilder {
 
 impl PlanBuilder {
     /// Add a task with the given procedure.
-    /// Returns a task id that can be used to link inputs and outputs.
-    pub fn add_task(&mut self, proc: Procedure) -> TaskId {
+    /// Returns a task reference that can be used to link inputs and outputs.
+    pub fn add_task(&mut self, proc: Procedure) -> TaskReference {
         self.tasks.push(Task(proc));
         let ret = TaskId(self.tasks.len() - 1);
         debug!(target: "plan_builder", "added {} = {}", ret, proc);
         trace!(target: "plan_builder", "plan builder state = {:?}", self);
-        ret
+        TaskReference { id: ret }
     }
 
     /// Add a constant value to the plan.
-    /// Returns a constant id that can be use to link to task inputs.
-    pub fn add_constant(&mut self, tp: ValueType, value: Vec<u8>) -> ConstantId {
+    /// Returns an output reference that can be use to link to task inputs.
+    pub fn add_constant(&mut self, tp: ValueType, value: Vec<u8>) -> OutputReference {
         self.constants.push(Value::new(tp, future::ok(value)));
         let ret = ConstantId(self.constants.len() - 1);
         debug!(target: "plan_builder", "added {}", ret);
         trace!(target: "plan_builder", "plan builder state = {:?}", self);
-        ret
+        OutputReference::Constant(ret)
     }
 
-    /// Link an output from one task to an input of another.
+    /// Link an output to an input.
     ///
     /// Returns whether the link was made successfully. This will return false if a link already
     /// exists.
-    pub fn link(&mut self, from: TaskId, from_index: usize, to: TaskId, to_index: usize) -> bool {
-        self.make_link(OutputReference::Task(from, from_index), to, to_index)
-    }
-
-    /// Link a constant to the input of a task.
-    ///
-    /// Returns whether the link was made successfully. This will return false if a link already
-    /// exists.
-    pub fn link_const(&mut self, from: ConstantId, to: TaskId, to_index: usize) -> bool {
-        self.make_link(OutputReference::Constant(from), to, to_index)
-    }
-
-    /// Link an output reference to an input of a task.
-    ///
-    /// Returns whether the link was made successfully. This will return false if a link already
-    /// exists.
-    fn make_link(&mut self, from: OutputReference, to: TaskId, to_index: usize) -> bool {
-        let e = self.links.entry(to).or_default();
-        if to_index >= e.len() {
-            e.resize_with(to_index + 1, Default::default);
+    pub fn link(&mut self, from: OutputReference, to: InputReference) -> bool {
+        let e = self.links.entry(to.id).or_default();
+        if to.index >= e.len() {
+            e.resize_with(to.index + 1, Default::default);
         }
-        let val = e.get_mut(to_index).unwrap();
+        let val = e.get_mut(to.index).unwrap();
         match val {
             None => {
-                debug!(target: "plan_builder", "added link {} -> {}[{}]", from, to, to_index);
+                debug!(target: "plan_builder", "added link {} -> {}", from, to);
                 *val = Some(from);
                 trace!(target: "plan_builder", "plan builder state = {:?}", self);
                 true
             }
             Some(ref f) => {
-                warn!(target: "plan_builder", "link to {}[{}] already exists: {}", to, to_index, f);
+                warn!(target: "plan_builder", "link to {} already exists: {}", to, f);
                 false
             }
         }
@@ -290,19 +303,19 @@ impl PlanBuilder {
     /// The resolver will be called for all applicable tasks in the plan.
     pub fn build<F: Resolver>(
         self,
-        output: TaskId,
+        output: TaskReference,
         mut resolver: F,
     ) -> Result<Plan, Error<F::Error>> {
-        if output.0 >= self.tasks.len() {
+        if output.id.0 >= self.tasks.len() {
             return Err(Error::InvalidOutput);
         }
 
         let mut outputs = HashMap::new();
         let mut processing = Vec::new();
-        self.resolve_task(&mut resolver, &mut outputs, &mut processing, output)?;
+        self.resolve_task(&mut resolver, &mut outputs, &mut processing, output.id)?;
         let p = Plan {
             outputs,
-            root: output,
+            root: output.id,
         };
         trace!(target: "plan_builder", "built plan {:?}", p);
         Ok(p)
@@ -371,8 +384,8 @@ mod tests {
         let a = builder.add_task(proca);
         let constv = builder.add_constant(vec_type(), vec![1]);
         let b = builder.add_task(procb);
-        assert!(builder.link(a, 0, b, 0));
-        assert!(builder.link_const(constv, b, 1));
+        assert!(builder.link(a.output(0), b.input(0)));
+        assert!(builder.link(constv, b.input(1)));
         let plan = builder
             .build(b, |_id: TaskId, proc: &Procedure, inp: Vec<Value>| {
                 if proc == &proca {
