@@ -9,7 +9,7 @@ mod command;
 mod log;
 mod task_manager;
 
-pub use self::log::{Log,LogTarget,LogEntry,LogLevel,LoggerRef,logger_ref};
+pub use self::log::{logger_ref, Log, LogEntry, LogLevel, LogTarget, LoggerRef};
 pub use command::Commands;
 pub use task_manager::TaskManager;
 
@@ -34,7 +34,9 @@ impl Context {
         })
     }
 
-    pub fn with_logger<T: LogTarget + Send + 'static>(logger: T) -> Result<Context, futures::io::Error> {
+    pub fn with_logger<T: LogTarget + Send + 'static>(
+        logger: T,
+    ) -> Result<Context, futures::io::Error> {
         Self::new(logger_ref(logger))
     }
 }
@@ -96,14 +98,20 @@ mod tests {
         fn log<'a>(&mut self, _entry: LogEntry) {}
     }
 
+    fn vec_type() -> ValueType {
+        ValueType::new(Uuid::from_bytes([
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ]))
+    }
+
     fn a_resolve(ctx: &mut Context, _inputs: Vec<Value>) -> Result<Vec<Value>, String> {
-        let out = Value::new(vec![0], ctx.task.delayed(futures::future::ok(vec![0])));
+        let out = Value::new(vec_type(), ctx.task.delayed(futures::future::ok(vec![0])));
         Ok(vec![out])
     }
 
     fn b_resolve(ctx: &mut Context, _inputs: Vec<Value>) -> Result<Vec<Value>, String> {
         let out = Value::new(
-            vec![0],
+            vec_type(),
             ctx.task.delayed_fn(|| {
                 std::thread::sleep(std::time::Duration::from_millis(200));
                 Ok(vec![1])
@@ -116,7 +124,7 @@ mod tests {
         match inputs[..] {
             [ref a, ref b] => {
                 let out = Value::new(
-                    vec![0],
+                    vec_type(),
                     ctx.task
                         .delayed(try_join(a.clone(), b.clone()).map_ok(|(ad, bd)| {
                             let mut o = (*ad).clone();
@@ -132,7 +140,7 @@ mod tests {
 
     #[test]
     fn test_runtime_tasks() -> Result<(), String> {
-        let mut builder = PlanBuilder::new();
+        let mut builder = Plan::builder();
         let proca = Uuid::from_bytes([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
         let procb = Uuid::from_bytes([2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
         let procc = Uuid::from_bytes([3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
@@ -143,15 +151,16 @@ mod tests {
         builder.link(a, 0, c, 0);
         builder.link(b, 0, c, 1);
 
-        let mut runtime =
-            Runtime::new(Context::with_logger(EmptyLogger).map_err(|_| "failed to create context".to_owned())?);
+        let mut runtime = Runtime::new(
+            Context::with_logger(EmptyLogger).map_err(|_| "failed to create context".to_owned())?,
+        );
         runtime.add_procedure(proca, a_resolve);
         runtime.add_procedure(procb, b_resolve);
         runtime.add_procedure(procc, c_resolve);
         let plan = builder
             .build(c, &mut runtime)
             .map_err(|e| format!("{}", e))?;
-        let outs = plan.outputs().ok_or("failed to get outputs")?;
+        let outs = plan.outputs();
         let result = futures::executor::block_on(outs.get(0).unwrap().clone())?;
         assert!(*result == vec![0, 1]);
         Ok(())
@@ -159,11 +168,12 @@ mod tests {
 
     #[test]
     fn test_missing_task() {
-        let mut builder = PlanBuilder::new();
+        let mut builder = Plan::builder();
         let proca = Uuid::from_bytes([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
         let a = builder.add_task(proca);
 
-        let mut runtime = Runtime::new(Context::with_logger(EmptyLogger).expect("failed to create context"));
+        let mut runtime =
+            Runtime::new(Context::with_logger(EmptyLogger).expect("failed to create context"));
         builder
             .build(a, &mut runtime)
             .expect_err("should not find procedure");
@@ -183,22 +193,23 @@ mod tests {
             }
         });
 
-        Ok(vec![Value::new(vec![0], out)])
+        Ok(vec![Value::new(vec_type(), out)])
     }
 
     #[test]
     fn test_commands() {
-        let mut builder = PlanBuilder::new();
+        let mut builder = Plan::builder();
         let proca = Uuid::from_bytes([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
         let a = builder.add_task(proca);
 
-        let mut runtime = Runtime::new(Context::with_logger(EmptyLogger).expect("failed to create context"));
+        let mut runtime =
+            Runtime::new(Context::with_logger(EmptyLogger).expect("failed to create context"));
         runtime.add_procedure(proca, a_run_ls);
         let plan = builder
             .build(a, &mut runtime)
             .expect("failed to build plan");
         print!("{}", runtime.context.cmd);
-        let outs = plan.outputs().expect("failed to get outputs");
+        let outs = plan.outputs();
         let _result = futures::executor::block_on(outs.get(0).unwrap().clone())
             .expect("failed to get result");
     }

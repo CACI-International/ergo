@@ -9,15 +9,19 @@ lazy_static! {
         [0x66,0xfc,0xed,0x11,0x59,0x91,0x4d,0x46,
         0xae,0xd6,0x70,0x3c,0xfd,0x03,0x70,0x66]);
 
-    pub static ref PLUGIN_NS: Uuid = Uuid::new_v5(&*ROOT_NS, b"plugin");
-
+    /// The procedure namespace UUID.
     pub static ref PROCEDURE_NS: Uuid = Uuid::new_v5(&*ROOT_NS, b"procedure");
 
+    /// The type namespace UUID.
     pub static ref TYPE_NS: Uuid = Uuid::new_v5(&*ROOT_NS, b"type");
 }
 
-/// A trait for rust types that have an associated UUID.
-pub trait UniqueType {
-    fn type_id() -> Uuid;
+/// Create a new procedure Uuid with the given string digest.
+pub fn proc_uuid(name: &[u8]) -> Uuid {
+    Uuid::new_v5(&*PROCEDURE_NS, name)
 }
 
+/// Create a new type Uuid with the given string digest.
+pub fn type_uuid(name: &[u8]) -> Uuid {
+    Uuid::new_v5(&*TYPE_NS, name)
+}

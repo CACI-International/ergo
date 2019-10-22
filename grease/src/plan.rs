@@ -24,14 +24,31 @@ pub type Procedure = Uuid;
 struct Task(Procedure);
 
 /// An identifier for a particular task in a plan.
-pub type TaskId = usize;
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd, Hash)]
+pub struct TaskId(usize);
+
+impl fmt::Display for TaskId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(f, "task {}", self.0)
+    }
+}
+
+/// An identifier for a constant in a plan.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+pub struct ConstantId(usize);
+
+impl fmt::Display for ConstantId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(f, "constant {}", self.0)
+    }
+}
 
 /// A procedure resolver.
 ///
 /// Error is the error type returned by the resolver.
 pub trait Resolver {
     type Error;
-    /// Resolve the given 
+    /// Resolve the given
     fn resolve(
         &mut self,
         id: TaskId,
@@ -56,18 +73,38 @@ where
     }
 }
 
+/// A value type.
+///
+/// The type is an id and type-specific data.
+#[derive(Debug, PartialEq, Eq)]
+pub struct ValueType {
+    pub id: Uuid,
+    pub data: Vec<u8>,
+}
+
+impl ValueType {
+    /// Create a new ValueType.
+    pub fn new(id: Uuid) -> Self {
+        Self::with_data(id, vec![])
+    }
+
+    pub fn with_data(id: Uuid, data: Vec<u8>) -> Self {
+        ValueType { id, data }
+    }
+}
+
 /// A value shared amongst tasks.
 ///
 /// Values have a type and a future value.
 #[derive(Clone, Debug)]
 pub struct Value {
-    tp: Arc<Vec<u8>>,
+    tp: Arc<ValueType>,
     value: Shared<BoxFuture<'static, Result<Arc<Vec<u8>>, String>>>,
 }
 
 impl Value {
     /// Create a value with the given type and future.
-    pub fn new<F>(tp: Vec<u8>, value: F) -> Value
+    pub fn new<F>(tp: ValueType, value: F) -> Value
     where
         F: Future<Output = Result<Vec<u8>, String>> + Send + 'static,
     {
@@ -78,7 +115,7 @@ impl Value {
     }
 
     /// Get the type of the contained value.
-    pub fn get_type(&self) -> &[u8] {
+    pub fn get_type(&self) -> &ValueType {
         &*self.tp
     }
 }
@@ -94,7 +131,7 @@ impl Future for Value {
 /// A plan, composed of tasks and IO links between them.
 ///
 /// The plan is a representation of an asynchronous call graph among tasks.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Plan {
     outputs: HashMap<TaskId, Vec<Value>>,
     root: TaskId,
@@ -139,10 +176,10 @@ pub enum Error<E> {
 impl<E: fmt::Display> fmt::Display for Error<E> {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         match self {
-            Error::MissingInput(task, index) => write!(f, "missing input {} of task {}", index, task),
+            Error::MissingInput(task, index) => write!(f, "missing input {} of {}", index, task),
             Error::MissingOutput(task, index, for_task) => write!(
                 f,
-                "missing output {} of task {} (needed for task {})",
+                "missing output {} of {} (needed for {})",
                 index, task, for_task
             ),
             Error::LoopDetected(lp) => {
@@ -156,9 +193,24 @@ impl<E: fmt::Display> fmt::Display for Error<E> {
                     }
                     write!(f, "{}", lp.first().unwrap())
                 }
-            },
+            }
             Error::InvalidOutput => write!(f, "invalid output task id"),
             Error::Resolver(e) => write!(f, "resolver error: {}", e),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum OutputReference {
+    Task(TaskId, usize),
+    Constant(ConstantId),
+}
+
+impl fmt::Display for OutputReference {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        match self {
+            OutputReference::Task(ref id, ref ind) => write!(f, "{}[{}]", id, ind),
+            OutputReference::Constant(ref id) => write!(f, "{}", id),
         }
     }
 }
@@ -167,7 +219,8 @@ impl<E: fmt::Display> fmt::Display for Error<E> {
 #[derive(Debug, Default)]
 pub struct PlanBuilder {
     tasks: Vec<Task>,
-    links: HashMap<TaskId, Vec<Option<(TaskId, usize)>>>,
+    constants: Vec<Value>,
+    links: HashMap<TaskId, Vec<Option<OutputReference>>>,
 }
 
 impl PlanBuilder {
@@ -175,8 +228,18 @@ impl PlanBuilder {
     /// Returns a task id that can be used to link inputs and outputs.
     pub fn add_task(&mut self, proc: Procedure) -> TaskId {
         self.tasks.push(Task(proc));
-        let ret = self.tasks.len() - 1;
-        debug!(target: "plan_builder", "added task {} = {}", ret, proc);
+        let ret = TaskId(self.tasks.len() - 1);
+        debug!(target: "plan_builder", "added {} = {}", ret, proc);
+        trace!(target: "plan_builder", "plan builder state = {:?}", self);
+        ret
+    }
+
+    /// Add a constant value to the plan.
+    /// Returns a constant id that can be use to link to task inputs.
+    pub fn add_constant(&mut self, tp: ValueType, value: Vec<u8>) -> ConstantId {
+        self.constants.push(Value::new(tp, future::ok(value)));
+        let ret = ConstantId(self.constants.len() - 1);
+        debug!(target: "plan_builder", "added {}", ret);
         trace!(target: "plan_builder", "plan builder state = {:?}", self);
         ret
     }
@@ -186,6 +249,22 @@ impl PlanBuilder {
     /// Returns whether the link was made successfully. This will return false if a link already
     /// exists.
     pub fn link(&mut self, from: TaskId, from_index: usize, to: TaskId, to_index: usize) -> bool {
+        self.make_link(OutputReference::Task(from, from_index), to, to_index)
+    }
+
+    /// Link a constant to the input of a task.
+    ///
+    /// Returns whether the link was made successfully. This will return false if a link already
+    /// exists.
+    pub fn link_const(&mut self, from: ConstantId, to: TaskId, to_index: usize) -> bool {
+        self.make_link(OutputReference::Constant(from), to, to_index)
+    }
+
+    /// Link an output reference to an input of a task.
+    ///
+    /// Returns whether the link was made successfully. This will return false if a link already
+    /// exists.
+    fn make_link(&mut self, from: OutputReference, to: TaskId, to_index: usize) -> bool {
         let e = self.links.entry(to).or_default();
         if to_index >= e.len() {
             e.resize_with(to_index + 1, Default::default);
@@ -193,13 +272,13 @@ impl PlanBuilder {
         let val = e.get_mut(to_index).unwrap();
         match val {
             None => {
-                *val = Some((from, from_index));
-                debug!(target: "plan_builder", "added link {}[{}] -> {}[{}]", from, from_index, to, to_index);
+                debug!(target: "plan_builder", "added link {} -> {}[{}]", from, to, to_index);
+                *val = Some(from);
                 trace!(target: "plan_builder", "plan builder state = {:?}", self);
                 true
             }
-            Some(_) => {
-                warn!(target: "plan_builder", "link already added {}[{}] -> {}[{}]", from, from_index, to, to_index);
+            Some(ref f) => {
+                warn!(target: "plan_builder", "link to {}[{}] already exists: {}", to, to_index, f);
                 false
             }
         }
@@ -209,18 +288,24 @@ impl PlanBuilder {
     ///
     /// The given output TaskId is the root output in the plan.
     /// The resolver will be called for all applicable tasks in the plan.
-    pub fn build<F: Resolver>(self, output: TaskId, mut resolver: F) -> Result<Plan, Error<F::Error>>
-    {
-        if output >= self.tasks.len() {
+    pub fn build<F: Resolver>(
+        self,
+        output: TaskId,
+        mut resolver: F,
+    ) -> Result<Plan, Error<F::Error>> {
+        if output.0 >= self.tasks.len() {
             return Err(Error::InvalidOutput);
         }
 
-        let mut plan = Plan::default();
-        plan.root = output;
+        let mut outputs = HashMap::new();
         let mut processing = Vec::new();
-        self.resolve_task(&mut resolver, &mut plan.outputs, &mut processing, output)?;
-        trace!(target: "plan_builder", "built plan {:?}", plan);
-        Ok(plan)
+        self.resolve_task(&mut resolver, &mut outputs, &mut processing, output)?;
+        let p = Plan {
+            outputs,
+            root: output,
+        };
+        trace!(target: "plan_builder", "built plan {:?}", p);
+        Ok(p)
     }
 
     fn resolve_task<'a, F: Resolver>(
@@ -229,26 +314,29 @@ impl PlanBuilder {
         outputs: &'a mut HashMap<TaskId, Vec<Value>>,
         processing: &mut Vec<TaskId>,
         id: TaskId,
-    ) -> Result<&'a Vec<Value>, Error<F::Error>>
-    {
+    ) -> Result<&'a Vec<Value>, Error<F::Error>> {
         if let Some(i) = processing.iter().position(|task| *task == id) {
             return Err(Error::LoopDetected(processing[i..].to_vec()));
         }
         processing.push(id);
         if !outputs.contains_key(&id) {
             debug!(target: "plan_builder", "getting outputs for task id {}", id);
-            let Task(ref proc) = self.tasks.get(id).unwrap();
+            let Task(ref proc) = self.tasks.get(id.0).unwrap();
             let inputs = match self.links.get(&id) {
                 None => Ok(vec![]),
                 Some(ref v) => v
                     .iter()
                     .enumerate()
-                    .map(|(i, a)| {
-                        let (from_id, from_index) = a.ok_or(Error::MissingInput(id, i))?;
-                        let outs = self.resolve_task(resolver, outputs, processing, from_id)?;
-                        outs.get(from_index)
-                            .map(|v| v.clone())
-                            .ok_or(Error::MissingOutput(from_id, from_index, id))
+                    .map(|(i, a)| match a.ok_or(Error::MissingInput(id, i))? {
+                        OutputReference::Task(from_id, from_index) => {
+                            let outs = self.resolve_task(resolver, outputs, processing, from_id)?;
+                            outs.get(from_index)
+                                .map(|v| v.clone())
+                                .ok_or(Error::MissingOutput(from_id, from_index, id))
+                        }
+                        OutputReference::Constant(id) => {
+                            Ok(self.constants.get(id.0).unwrap().clone())
+                        }
                     })
                     .collect(),
             }?;
@@ -269,44 +357,56 @@ impl PlanBuilder {
 mod tests {
     use super::*;
 
+    fn vec_type() -> ValueType {
+        ValueType::new(Uuid::from_bytes([
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ]))
+    }
+
     #[test]
     fn test_plan_builder() -> Result<(), String> {
-        let mut builder = PlanBuilder::new();
+        let mut builder = Plan::builder();
         let proca = Uuid::from_bytes([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
         let procb = Uuid::from_bytes([2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
         let a = builder.add_task(proca);
+        let constv = builder.add_constant(vec_type(), vec![1]);
         let b = builder.add_task(procb);
-        builder.link(a, 0, b, 0);
+        assert!(builder.link(a, 0, b, 0));
+        assert!(builder.link_const(constv, b, 1));
         let plan = builder
             .build(b, |_id: TaskId, proc: &Procedure, inp: Vec<Value>| {
                 if proc == &proca {
-                    Ok(vec![Value::new(
-                        vec![0],
-                        futures::future::ready(Ok(vec![0])),
-                    )])
+                    Ok(vec![Value::new(vec_type(), futures::future::ok(vec![0]))])
                 } else if proc == &procb {
-                    match inp.get(0) {
-                        None => Err("not enough inputs".to_owned()),
-                        Some(v) => Ok(vec![Value::new(
-                            vec![0],
-                            v.clone().map_ok(|data| {
-                                let mut o = (*data).clone();
-                                o.push(1);
-                                o
-                            }),
-                        )]),
+                    match inp.as_slice() {
+                        [av, cv] => {
+                            let av_ = av.clone();
+                            let cv_ = cv.clone();
+                            Ok(vec![Value::new(
+                                vec_type(),
+                                av_.and_then(move |adata| {
+                                    cv_.map_ok(move |cdata| {
+                                        let mut o = (*adata).clone();
+                                        o.extend(cdata.iter());
+                                        o.push(2);
+                                        o
+                                    })
+                                }),
+                            )])
+                        }
+                        _ => Err("incorrect number of inputs".to_owned()),
                     }
                 } else {
                     Err("unhandled".to_owned())
                 }
             })
             .map_err(|e| format!("{}", e))?;
-        let outs = plan.outputs().ok_or("failed to get outputs")?;
+        let outs = plan.outputs();
         assert!(outs.len() == 1);
         let v = outs.get(0).unwrap().clone();
-        assert!(v.get_type() == vec![0].as_slice());
+        assert!(*v.get_type() == vec_type());
         let result = futures::executor::block_on(v)?;
-        assert!(*result == vec![0, 1]);
+        assert!(*result == vec![0, 1, 2]);
         Ok(())
     }
 }

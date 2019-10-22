@@ -1,5 +1,5 @@
 use grease::{
-    plan::{Plan, TaskId, Value},
+    plan::{Plan, TaskId, Value, ValueType},
     runtime::{logger_ref, Context, LogEntry, LogLevel, LogTarget, Runtime},
 };
 use std::collections::HashMap;
@@ -125,6 +125,12 @@ impl LogTarget for Output {
     }
 }
 
+fn void_type() -> ValueType {
+    ValueType::new(Uuid::from_bytes([
+        1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    ]))
+}
+
 fn sleepy(ctx: &mut Context, _inp: Vec<Value>) -> Result<Vec<Value>, String> {
     let l = ctx.log.sublog("sleepytime".to_owned());
     let later = ctx.task.delayed_fn(move || {
@@ -133,7 +139,7 @@ fn sleepy(ctx: &mut Context, _inp: Vec<Value>) -> Result<Vec<Value>, String> {
         l.info(format_args!("Wake up!"));
         Ok(vec![])
     });
-    Ok(vec![Value::new(vec![], later)])
+    Ok(vec![Value::new(void_type(), later)])
 }
 
 fn join(_ctx: &mut Context, inp: Vec<Value>) -> Result<Vec<Value>, String> {
