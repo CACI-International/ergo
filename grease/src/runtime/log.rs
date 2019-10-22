@@ -28,9 +28,13 @@ impl fmt::Display for LogLevel {
 
 /// A single log entry.
 pub struct LogEntry {
+    /// The log level.
     pub level: LogLevel,
+    /// The task which produced the log.
     pub task: TaskId,
+    /// Additional log context.
     pub context: Arc<[String]>,
+    /// The log string.
     pub args: String,
 }
 
@@ -56,9 +60,16 @@ impl fmt::Display for LogEntry {
 /// This target is set as part of runtime instantiation. It is used for task runtime logging, not
 /// executable runtime logging.
 pub trait LogTarget {
-    fn log<'a>(&mut self, entry: LogEntry);
+    /// Send a log entry.
+    fn log(&mut self, entry: LogEntry);
+
+    /// A log was dropped.
+    ///
+    /// This is mainly useful for streaming outputs to know that a log completed.
+    fn dropped(&mut self, _task: TaskId, _context: Arc<[String]>) {}
 }
 
+/// A heap-allocated reference to a LogTarget.
 pub type LoggerRef = Arc<Mutex<dyn LogTarget + Send>>;
 
 /// Create a logger reference.
@@ -126,5 +137,12 @@ impl fmt::Debug for Log {
             .field("task", &self.task)
             .field("context", &self.context)
             .finish()
+    }
+}
+
+impl std::ops::Drop for Log {
+    fn drop(&mut self) {
+        let mut l = self.logger.lock().unwrap();
+        l.dropped(self.task, self.context.clone());
     }
 }
