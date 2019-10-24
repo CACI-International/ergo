@@ -1,7 +1,7 @@
 //! UUID namespaces and utilities.
 
 use crate::prelude::*;
-use uuid::Uuid;
+pub use uuid::Uuid;
 
 lazy_static! {
     /// The root namespace UUID, for use with v3/v5 UUIDs.
