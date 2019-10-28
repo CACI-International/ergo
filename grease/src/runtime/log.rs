@@ -1,7 +1,6 @@
 //! Runtime logging.
 
 use std::fmt;
-use std::fmt::Arguments;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -117,12 +116,13 @@ pub struct RecordingWork<'a> {
 
 macro_rules! log_level {
     ( $name:ident, $level:ident ) => {
-        pub fn $name<'a>(&self, args: Arguments<'a>) {
+        /// Write a log message.
+        pub fn $name<T: std::string::ToString>(&self, message: T) {
             let mut l = self.logger.lock().unwrap();
             l.log(LogEntry {
                 level: LogLevel::$level,
                 context: self.context.clone(),
-                args: format!("{}", args)
+                args: message.to_string()
             });
         }
     }
@@ -164,13 +164,9 @@ impl Log {
         w
     }
 
-    /// Write a debug log.
     log_level!(debug, Debug);
-    /// Write an info log.
     log_level!(info, Info);
-    /// Write a warning log.
     log_level!(warn, Warn);
-    /// Write an error log.
     log_level!(error, Error);
 }
 

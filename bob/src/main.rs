@@ -166,6 +166,7 @@ impl LogTarget for Output {
         let mut times = self.timings.entry(Vec::from(id)).or_default();
         times.0 += duration;
         times.1 += 1;
+        self.print_thread_status();
     }
 }
 
@@ -188,12 +189,12 @@ impl Plan<Context> for Sleeper {
         let later =
             future::lazy(move |_| (l.work("sleep".to_owned()), l)).then(move |(mut sleep, l)| {
                 tsk.delayed_fn(move || {
-                    l.info(format_args!("Going to sleep"));
+                    l.info("Going to sleep");
                     {
                         let _record = sleep.start();
                         std::thread::sleep(std::time::Duration::from_secs_f32(time));
                     }
-                    l.info(format_args!("Wake up!"));
+                    l.info("Wake up!");
                     Ok(vec![])
                 })
             });
