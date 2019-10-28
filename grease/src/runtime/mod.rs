@@ -1,17 +1,23 @@
 //! Execution logic for plans.
 
-use std::collections::HashMap;
+use std::fmt;
+use std::rc::Rc;
 
-use crate::plan::{Procedure, Resolver, Value};
-use crate::prelude::*;
+use crate::plan::Value;
 
 mod command;
 mod log;
+mod procedure;
 mod task_manager;
 
+use self::log::EmptyLogTarget;
 pub use self::log::{logger_ref, Log, LogEntry, LogLevel, LogTarget, LoggerRef};
 pub use command::Commands;
+use procedure::EmptyResolver;
+pub use procedure::{Proc, Procedure, ProcedureFunc, ProcedureInput, Resolver};
 pub use task_manager::TaskManager;
+pub use futures::future;
+pub use futures::future::{FutureExt,TryFutureExt};
 
 /// Runtime context.
 #[derive(Debug)]
@@ -22,66 +28,65 @@ pub struct Context {
     pub cmd: Commands,
     /// The logging interface.
     pub log: Log,
+    /// The procedure interface.
+    proc: Rc<Proc>,
+}
+
+#[derive(Default)]
+pub struct ContextBuilder {
+    logger: Option<LoggerRef>,
+    resolver: Option<Box<dyn Resolver>>,
+}
+
+#[derive(Debug)]
+pub enum BuilderError {
+    TaskManagerError(futures::io::Error),
+}
+
+impl fmt::Display for BuilderError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::TaskManagerError(e) => write!(f, "task manager error: {}", e),
+        }
+    }
+}
+
+impl ContextBuilder {
+    pub fn logger<T: LogTarget + Send + 'static>(mut self, logger: T) -> Self {
+        self.logger = Some(logger_ref(logger));
+        self
+    }
+
+    pub fn logger_ref(mut self, logger: LoggerRef) -> Self {
+        self.logger = Some(logger);
+        self
+    }
+
+    pub fn procedure_resolver<R: Resolver + 'static>(mut self, resolver: R) -> Self {
+        self.resolver = Some(Box::new(resolver));
+        self
+    }
+
+    pub fn build(self) -> Result<Context, BuilderError> {
+        Ok(Context {
+            task: TaskManager::new().map_err(BuilderError::TaskManagerError)?,
+            cmd: Commands::new(),
+            log: Log::new(self.logger.unwrap_or_else(|| logger_ref(EmptyLogTarget))),
+            proc: Rc::new(Proc::new(
+                self.resolver.unwrap_or_else(|| Box::new(EmptyResolver)),
+            )),
+        })
+    }
 }
 
 impl Context {
-    /// Create a new context.
-    pub fn new(logger: LoggerRef) -> Result<Context, futures::io::Error> {
-        Ok(Context {
-            task: TaskManager::new()?,
-            cmd: Commands::new(),
-            log: Log::new(logger, Default::default()),
-        })
+    pub fn builder() -> ContextBuilder {
+        Default::default()
     }
 
-    pub fn with_logger<T: LogTarget + Send + 'static>(
-        logger: T,
-    ) -> Result<Context, futures::io::Error> {
-        Self::new(logger_ref(logger))
-    }
-}
-
-/// A function used to resolve procedures.
-pub type ProcedureFunc = fn(&mut Context, Vec<Value>) -> Result<Vec<Value>, String>;
-
-/// The plan execution runtime.
-pub struct Runtime {
-    procedures: HashMap<Procedure, ProcedureFunc>,
-    pub context: Context,
-}
-
-impl Runtime {
-    /// Create a new runtime with the given context.
-    pub fn new(ctx: Context) -> Self {
-        Runtime {
-            procedures: HashMap::new(),
-            context: ctx,
-        }
-    }
-
-    /// Add a procedure handler to the runtime.
-    pub fn add_procedure(&mut self, proc: Procedure, resolve: ProcedureFunc) {
-        debug!("adding resolver for procedure {}", proc);
-        self.procedures.insert(proc, resolve);
-    }
-}
-
-impl Resolver for &'_ mut Runtime {
-    type Error = String;
-
-    fn resolve(
-        &mut self,
-        id: crate::plan::TaskId,
-        proc: &Procedure,
-        inputs: Vec<Value>,
-    ) -> Result<Vec<Value>, String> {
-        match self.procedures.get(&proc) {
-            None => Err(format!("could not resolve procedure {}", proc)),
-            Some(f) => {
-                self.context.log = self.context.log.for_task(id);
-                f(&mut self.context, inputs)
-            }
-        }
+    pub fn run_proc<Input: ProcedureInput>(&mut self, input: Input) -> Result<Value, String> {
+        let proc = self.proc.clone();
+        proc.run(self, input)
     }
 }
 
@@ -92,97 +97,105 @@ mod tests {
     use futures::future::{try_join, TryFutureExt};
     use uuid::Uuid;
 
-    struct EmptyLogger;
-
-    impl LogTarget for EmptyLogger {
-        fn log<'a>(&mut self, _entry: LogEntry) {}
-    }
-
     fn vec_type() -> ValueType {
         ValueType::new(Uuid::from_bytes([
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         ]))
     }
 
-    fn a_resolve(ctx: &mut Context, _inputs: Vec<Value>) -> Result<Vec<Value>, String> {
-        let out = Value::new(vec_type(), ctx.task.delayed(futures::future::ok(vec![0])));
-        Ok(vec![out])
-    }
+    struct TestRuntimePlan;
 
-    fn b_resolve(ctx: &mut Context, _inputs: Vec<Value>) -> Result<Vec<Value>, String> {
-        let out = Value::new(
-            vec_type(),
-            ctx.task.delayed_fn(|| {
-                std::thread::sleep(std::time::Duration::from_millis(200));
-                Ok(vec![1])
-            }),
-        );
-        Ok(vec![out])
-    }
+    impl Plan<Context> for TestRuntimePlan {
+        type Output = Value;
 
-    fn c_resolve(ctx: &mut Context, inputs: Vec<Value>) -> Result<Vec<Value>, String> {
-        match inputs[..] {
-            [ref a, ref b] => {
-                let out = Value::new(
-                    vec_type(),
-                    ctx.task
-                        .delayed(try_join(a.clone(), b.clone()).map_ok(|(ad, bd)| {
-                            let mut o = (*ad).clone();
-                            o.extend_from_slice(&*bd);
-                            o
-                        })),
-                );
-                Ok(vec![out])
-            }
-            _ => Err("not enough inputs".to_owned()),
+        fn plan(&self, ctx: &mut Context) -> Value {
+            let val_a = Value::constant(vec_type(), vec![0]);
+            let val_b = Value::future(
+                vec_type(),
+                ctx.task.delayed_fn(|| {
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                    Ok(vec![1])
+                }),
+            );
+            crate::derived_value!(vec_type(), (a=val_a, b=val_b) {
+                ctx.task.delayed(try_join(a,b).map_ok(|(av,bv)| {
+                    let mut o = (*av).clone();
+                    o.extend_from_slice(&bv);
+                    o
+                }))
+            })
         }
     }
 
     #[test]
-    fn test_runtime_tasks() -> Result<(), String> {
-        let mut builder = Plan::builder();
-        let proca = Uuid::from_bytes([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-        let procb = Uuid::from_bytes([2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-        let procc = Uuid::from_bytes([3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-        let a = builder.add_task(proca);
-        let b = builder.add_task(procb);
-        let c = builder.add_task(procc);
+    fn runtime_tasks() -> Result<(), String> {
+        let mut ctx = Context::builder().build().map_err(|e| format!("{}", e))?;
 
-        builder.link(a.output(0), c.input(0));
-        builder.link(b.output(0), c.input(1));
-
-        let mut runtime = Runtime::new(
-            Context::with_logger(EmptyLogger).map_err(|_| "failed to create context".to_owned())?,
-        );
-        runtime.add_procedure(proca, a_resolve);
-        runtime.add_procedure(procb, b_resolve);
-        runtime.add_procedure(procc, c_resolve);
-        let plan = builder
-            .build(c, &mut runtime)
-            .map_err(|e| format!("{}", e))?;
-        let outs = plan.outputs();
-        let result = futures::executor::block_on(outs.get(0).unwrap().clone())?;
+        let output = TestRuntimePlan.plan(&mut ctx);
+        let result = futures::executor::block_on(output)?;
         assert!(*result == vec![0, 1]);
         Ok(())
     }
 
-    #[test]
-    fn test_missing_task() {
-        let mut builder = Plan::builder();
-        let proca = Uuid::from_bytes([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-        let a = builder.add_task(proca);
-
-        let mut runtime =
-            Runtime::new(Context::with_logger(EmptyLogger).expect("failed to create context"));
-        builder
-            .build(a, &mut runtime)
-            .expect_err("should not find procedure");
+    fn a_resolve(_ctx: &mut Context, input: Value) -> Result<Value, String> {
+        Ok(crate::derived_value!(vec_type(), (a=input) {
+            a.map_ok(|av| {
+                let mut o = (*av).clone();
+                o.push(1);
+                o
+            })
+        }))
     }
 
-    fn a_run_ls(ctx: &mut Context, _inputs: Vec<Value>) -> Result<Vec<Value>, String> {
+    struct AData {
+        val: Value,
+    }
+
+    impl AData {
+        pub fn new(val: Value) -> AData {
+            AData { val }
+        }
+    }
+
+    impl Into<Value> for AData {
+        fn into(self) -> Value {
+            self.val
+        }
+    }
+
+    impl ProcedureInput for AData {
+        fn procedure() -> Procedure {
+            Uuid::from_bytes([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+        }
+    }
+
+    #[test]
+    fn procedure_lookup() -> Result<(), String> {
+        let mut procs: std::collections::HashMap<Procedure, ProcedureFunc> =
+            std::collections::HashMap::new();
+        procs.insert(AData::procedure(), a_resolve);
+
+        let mut ctx = Context::builder()
+            .procedure_resolver(procs)
+            .build()
+            .map_err(|e| format!("{}", e))?;
+
+        let output = ctx.run_proc(AData::new(Value::constant(vec_type(), vec![0])))?;
+        let result = futures::executor::block_on(output)?;
+        assert!(*result == vec![0, 1]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn commands() -> Result<(), String> {
+        let mut ctx = Context::builder()
+            .build()
+            .map_err(|e| format!("{}", e))?;
+
         let mut ls = ctx.cmd.create("ls");
 
-        let out = ctx.task.delayed_fn(move || match ls.output() {
+        let output = Value::future(vec_type(),ctx.task.delayed_fn(move || match ls.output() {
             Err(e) => Err(format!("failed to run ls: {}", e)),
             Ok(output) => {
                 if output.status.success() {
@@ -191,26 +204,8 @@ mod tests {
                     Err(format!("ls exited with status {}", output.status))
                 }
             }
-        });
+        }));
 
-        Ok(vec![Value::new(vec_type(), out)])
-    }
-
-    #[test]
-    fn test_commands() {
-        let mut builder = Plan::builder();
-        let proca = Uuid::from_bytes([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-        let a = builder.add_task(proca);
-
-        let mut runtime =
-            Runtime::new(Context::with_logger(EmptyLogger).expect("failed to create context"));
-        runtime.add_procedure(proca, a_run_ls);
-        let plan = builder
-            .build(a, &mut runtime)
-            .expect("failed to build plan");
-        print!("{}", runtime.context.cmd);
-        let outs = plan.outputs();
-        let _result = futures::executor::block_on(outs.get(0).unwrap().clone())
-            .expect("failed to get result");
+        futures::executor::block_on(output).map(|_| ())
     }
 }

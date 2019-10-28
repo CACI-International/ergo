@@ -1,8 +1,13 @@
 use grease::{
-    plan::{Plan, TaskId, Value, ValueType},
-    runtime::{logger_ref, Context, LogEntry, LogLevel, LogTarget, Runtime},
+    plan::{Plan, Value, ValueType},
+    runtime::{
+        future, logger_ref, Context, FutureExt, LogEntry, LogLevel, LogTarget, TryFutureExt,
+    },
 };
+use log::warn;
+use simplelog::TermLogger;
 use std::collections::HashMap;
+use std::convert::TryInto;
 use std::io::Write;
 use term::Terminal;
 use uuid::Uuid;
@@ -13,6 +18,8 @@ struct Output {
     log_level: LogLevel,
     thread_mapping: HashMap<std::thread::ThreadId, Option<LogEntry>>,
     out: output::OutputInterface,
+    timings: HashMap<Vec<String>, (std::time::Duration, usize)>,
+    pending: HashMap<Vec<String>, usize>,
 }
 
 impl Output {
@@ -38,8 +45,23 @@ impl Output {
             .unwrap();
         }
 
-        //TODO calculate progress
-        writeln!(self.out, "Progress: ...").unwrap();
+        let mut count_remaining = 0;
+        let mut duration_remaining = std::time::Duration::default();
+        for (k, v) in self.pending.iter() {
+            count_remaining += v;
+            if let Some((duration, count)) = self.timings.get(k) {
+                duration_remaining +=
+                    *duration * (*v).try_into().unwrap() / (*count).try_into().unwrap();
+            }
+        }
+
+        let t = chrono::naive::NaiveTime::from_hms(0, 0, 0)
+            + chrono::Duration::from_std(duration_remaining).unwrap();
+        write!(self.out, "Progress: {} remaining", count_remaining).unwrap();
+        if duration_remaining != std::time::Duration::default() {
+            write!(self.out, " ({})", t).unwrap();
+        }
+        writeln!(self.out).unwrap();
         self.out.cursor_up().unwrap();
 
         // Reset cursor
@@ -83,6 +105,8 @@ impl Default for Output {
             log_level: LogLevel::Info,
             thread_mapping: HashMap::new(),
             out: output::stdout(),
+            timings: Default::default(),
+            pending: Default::default(),
         }
     }
 }
@@ -108,7 +132,7 @@ impl LogTarget for Output {
         }
     }
 
-    fn dropped(&mut self, _task: TaskId, _context: std::sync::Arc<[String]>) {
+    fn dropped(&mut self, _context: std::sync::Arc<[String]>) {
         if !self.out.is_tty() {
             return;
         }
@@ -123,6 +147,26 @@ impl LogTarget for Output {
             self.print_thread_status();
         }
     }
+
+    fn timer_pending(&mut self, id: &[String]) {
+        *self.pending.entry(Vec::from(id)).or_default() += 1;
+        self.print_thread_status();
+    }
+
+    fn timer_complete(&mut self, id: &[String], duration: std::time::Duration) {
+        if let Some(v) = self.pending.get_mut(id) {
+            if *v > 0 {
+                *v -= 1;
+            } else {
+                warn!("timer count inconsistent: {:?}", id);
+            }
+        } else {
+            warn!("timer count inconsistent: {:?}", id);
+        }
+        let mut times = self.timings.entry(Vec::from(id)).or_default();
+        times.0 += duration;
+        times.1 += 1;
+    }
 }
 
 fn void_type() -> ValueType {
@@ -131,51 +175,85 @@ fn void_type() -> ValueType {
     ]))
 }
 
-fn sleepy(ctx: &mut Context, _inp: Vec<Value>) -> Result<Vec<Value>, String> {
-    let l = ctx.log.sublog("sleepytime".to_owned());
-    let later = ctx.task.delayed_fn(move || {
-        l.info(format_args!("Going to sleep"));
-        use rand::distributions::{Distribution,Uniform};
-        std::thread::sleep(std::time::Duration::from_secs_f32(Uniform::from(1.0..4.0).sample(&mut rand::thread_rng())));
-        l.info(format_args!("Wake up!"));
-        Ok(vec![])
-    });
-    Ok(vec![Value::new(void_type(), later)])
+struct Sleeper {
+    time: f32,
 }
 
-fn join(_ctx: &mut Context, inp: Vec<Value>) -> Result<Vec<Value>, String> {
-    Ok(inp)
+impl Plan<Context> for Sleeper {
+    type Output = Value;
+    fn plan(&self, ctx: &mut Context) -> Value {
+        let l = ctx.log.sublog("sleepytime".to_owned());
+        let tsk = ctx.task.clone();
+        let time = self.time;
+        let later =
+            future::lazy(move |_| (l.work("sleep".to_owned()), l)).then(move |(mut sleep, l)| {
+                tsk.delayed_fn(move || {
+                    l.info(format_args!("Going to sleep"));
+                    {
+                        let _record = sleep.start();
+                        std::thread::sleep(std::time::Duration::from_secs_f32(time));
+                    }
+                    l.info(format_args!("Wake up!"));
+                    Ok(vec![])
+                })
+            });
+        Value::future(void_type(), later)
+    }
+}
+
+struct SleepyTasks {
+    count: usize,
+    min_time: f32,
+    max_time: f32,
+}
+
+impl Plan<Context> for SleepyTasks {
+    type Output = Value;
+    fn plan(&self, ctx: &mut Context) -> Value {
+        use rand::distributions::{Distribution, Uniform};
+        let sleepers: Vec<_> = Uniform::from(self.min_time..self.max_time)
+            .sample_iter(rand::thread_rng())
+            .take(self.count)
+            .map(|v| Sleeper { time: v }.plan(ctx))
+            .collect();
+
+        Value::future(
+            void_type(),
+            future::try_join_all(sleepers).map_ok(|_| vec![]),
+        )
+    }
 }
 
 fn main() {
+    TermLogger::init(
+        simplelog::LevelFilter::Warn,
+        simplelog::Config::default(),
+        simplelog::TerminalMode::Stderr,
+    )
+    .unwrap();
+
     let logger = logger_ref(Output::default());
-    let mut rt = Runtime::new(Context::new(logger.clone()).expect("failed to create context"));
 
-    let sleep_uuid = Uuid::from_bytes([1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4]);
-    let join_uuid = Uuid::from_bytes([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]);
-    rt.add_procedure(sleep_uuid.clone(), sleepy);
-    rt.add_procedure(join_uuid.clone(), join);
-
-    let mut builder = Plan::builder();
-    let sleepers: Vec<_> = (0..20)
-        .map(|_| builder.add_task(sleep_uuid.clone()))
-        .collect();
-    let joiner = builder.add_task(join_uuid.clone());
-    for (i, id) in sleepers.iter().enumerate() {
-        builder.link(id.output(0), joiner.input(i));
-    }
-    let mut plan = builder
-        .build(joiner, &mut rt)
-        .expect("failed to build plan");
+    let mut ctx = Context::builder()
+        .logger_ref(logger.clone())
+        .build()
+        .expect("failed to create context");
 
     {
         let mut l = logger.lock().unwrap();
-        for id in rt.context.task.thread_ids() {
+        for id in ctx.task.thread_ids() {
             l.thread_mapping.insert(id.clone(), None);
         }
     }
 
-    plan.run();
+    let mut result = SleepyTasks {
+        count: 50,
+        min_time: 1.0,
+        max_time: 4.0,
+    }
+    .plan(&mut ctx);
+
+    result.get().unwrap();
 
     let mut l = logger.lock().unwrap();
     l.clear_status();

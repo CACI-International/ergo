@@ -1,10 +1,9 @@
-//! Procedure logging.
+//! Runtime logging.
 
 use std::fmt;
 use std::fmt::Arguments;
 use std::sync::{Arc, Mutex};
-
-use crate::plan::TaskId;
+use std::time::{Duration, Instant};
 
 /// Log output levels.
 #[derive(Debug, std::cmp::PartialEq, std::cmp::PartialOrd)]
@@ -17,12 +16,16 @@ pub enum LogLevel {
 
 impl fmt::Display for LogLevel {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        write!(f, "{}", match self {
-            LogLevel::Debug => "debug",
-            LogLevel::Info => "info",
-            LogLevel::Warn => "warn",
-            LogLevel::Error => "error"
-        })
+        write!(
+            f,
+            "{}",
+            match self {
+                LogLevel::Debug => "debug",
+                LogLevel::Info => "info",
+                LogLevel::Warn => "warn",
+                LogLevel::Error => "error",
+            }
+        )
     }
 }
 
@@ -30,8 +33,6 @@ impl fmt::Display for LogLevel {
 pub struct LogEntry {
     /// The log level.
     pub level: LogLevel,
-    /// The task which produced the log.
-    pub task: TaskId,
     /// Additional log context.
     pub context: Arc<[String]>,
     /// The log string.
@@ -39,8 +40,8 @@ pub struct LogEntry {
 }
 
 impl fmt::Display for LogEntry {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(),fmt::Error> {
-        write!(f, "{}[{}]", self.level, self.task)?;
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(f, "{}", self.level)?;
         let has_context = self.context.len() > 0;
         if has_context {
             write!(f, " ({}", self.context.get(0).unwrap())?;
@@ -66,11 +67,24 @@ pub trait LogTarget {
     /// A log was dropped.
     ///
     /// This is mainly useful for streaming outputs to know that a log completed.
-    fn dropped(&mut self, _task: TaskId, _context: Arc<[String]>) {}
+    fn dropped(&mut self, _context: Arc<[String]>) {}
+
+    /// Indicates a unique timer for the given id has been created.
+    fn timer_pending(&mut self, _id: &[String]) {}
+
+    /// Indicates that a unique timer for the given id has completed with the given total duration.
+    fn timer_complete(&mut self, _id: &[String], _duration: std::time::Duration) {}
 }
 
 /// A heap-allocated reference to a LogTarget.
 pub type LoggerRef = Arc<Mutex<dyn LogTarget + Send>>;
+
+/// A LogTarget that does nothing.
+pub struct EmptyLogTarget;
+
+impl LogTarget for EmptyLogTarget {
+    fn log(&mut self, _entry: LogEntry) {}
+}
 
 /// Create a logger reference.
 pub fn logger_ref<T: LogTarget + Send + 'static>(target: T) -> Arc<Mutex<T>> {
@@ -81,8 +95,24 @@ pub fn logger_ref<T: LogTarget + Send + 'static>(target: T) -> Arc<Mutex<T>> {
 #[derive(Clone)]
 pub struct Log {
     logger: LoggerRef,
-    task: TaskId,
     context: Arc<[String]>,
+}
+
+/// Tracks a particular unit of work.
+pub struct Work {
+    logger: LoggerRef,
+    id: Box<[String]>,
+    duration: Duration,
+    errored: bool,
+}
+
+/// Tracks a unit of work that is currently occurring.
+///
+/// When dropped, the duration of work is recorded.
+#[derive(Debug)]
+pub struct RecordingWork<'a> {
+    work: &'a mut Work,
+    at: Instant,
 }
 
 macro_rules! log_level {
@@ -91,7 +121,6 @@ macro_rules! log_level {
             let mut l = self.logger.lock().unwrap();
             l.log(LogEntry {
                 level: LogLevel::$level,
-                task: self.task,
                 context: self.context.clone(),
                 args: format!("{}", args)
             });
@@ -100,16 +129,11 @@ macro_rules! log_level {
 }
 
 impl Log {
-    pub(crate) fn new(logger: LoggerRef, task: TaskId) -> Self {
+    pub(crate) fn new(logger: LoggerRef) -> Self {
         Log {
             logger,
-            task,
             context: Arc::new([]),
         }
-    }
-
-    pub(crate) fn for_task(&self, task: TaskId) -> Self {
-        Log::new(self.logger.clone(), task)
     }
 
     /// Create a sublog interface with the given context identifier.
@@ -119,6 +143,25 @@ impl Log {
         v.push(name);
         ret.context = Arc::from(v);
         ret
+    }
+
+    /// Create and track a unit of work.
+    ///
+    /// The returned object should be used to record work runtime.
+    pub fn work(&self, name: String) -> Work {
+        let mut v = Vec::from(self.context.as_ref());
+        v.push(name);
+        let w = Work {
+            logger: self.logger.clone(),
+            id: Box::from(v),
+            duration: Duration::default(),
+            errored: false,
+        };
+        {
+            let mut l = w.logger.lock().unwrap();
+            l.timer_pending(w.id.as_ref());
+        }
+        w
     }
 
     /// Write a debug log.
@@ -134,7 +177,6 @@ impl Log {
 impl fmt::Debug for Log {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Log")
-            .field("task", &self.task)
             .field("context", &self.context)
             .finish()
     }
@@ -143,6 +185,43 @@ impl fmt::Debug for Log {
 impl std::ops::Drop for Log {
     fn drop(&mut self) {
         let mut l = self.logger.lock().unwrap();
-        l.dropped(self.task, self.context.clone());
+        l.dropped(self.context.clone());
+    }
+}
+
+impl Work {
+    /// Start the unit of work.
+    pub fn start(&mut self) -> RecordingWork {
+        RecordingWork {
+            work: self,
+            at: Instant::now(),
+        }
+    }
+
+    /// Indicate the unit of work errored.
+    pub fn err(&mut self) {
+        self.errored = true;
+    }
+}
+
+impl fmt::Debug for Work {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Work")
+            .field("id", &self.id)
+            .field("duration", &self.duration)
+            .finish()
+    }
+}
+
+impl std::ops::Drop for Work {
+    fn drop(&mut self) {
+        let mut l = self.logger.lock().unwrap();
+        l.timer_complete(&self.id, self.duration);
+    }
+}
+
+impl std::ops::Drop for RecordingWork<'_> {
+    fn drop(&mut self) {
+        self.work.duration += self.at.elapsed();
     }
 }
