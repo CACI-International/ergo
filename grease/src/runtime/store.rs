@@ -109,10 +109,10 @@ impl Item {
 
     /// Open an item using the provided OpenOptions.
     pub fn open(&self, options: &OpenOptions) -> io::Result<ItemContent> {
+        std::fs::create_dir_all(&self.path)?;
         let mut path = self.path.clone();
         path.push(&self.item);
-        let file = options.open(path)?;
-        Ok(ItemContent { file })
+        Ok(ItemContent { file: options.open(path)? })
     }
 }
 
