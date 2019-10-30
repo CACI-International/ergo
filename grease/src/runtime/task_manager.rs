@@ -44,7 +44,7 @@ impl TaskManager {
     }
 
     /// Create a concurrent task to execute the given future to completion.
-    pub fn spawn<F>(&self, f: F)
+    pub fn spawn_future<F>(&self, f: F)
     where
         F: Future<Output = ()> + Send + 'static,
     {
@@ -54,7 +54,7 @@ impl TaskManager {
 
     /// Create a concurrent task to execute the given future to completion,
     /// returning the result of the future.
-    pub fn spawn_value<F>(&self, f: F) -> RemoteHandle<<F as Future>::Output>
+    pub fn spawn<F>(&self, f: F) -> RemoteHandle<<F as Future>::Output>
     where
         F: Future + Send + 'static,
         <F as Future>::Output: Send,

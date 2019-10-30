@@ -6,7 +6,9 @@ edition = "2018"
 
 [dependencies]
 futures-preview = "=0.3.0-alpha.19"
+grease_macro = { path = "../grease_macro" }
 lazy_static = "^1"
 log = "^0.4"
 num_cpus = "^1"
+proc-macro-hack = "0.5"
 uuid = { version = "0.7", features = ["v5"] }

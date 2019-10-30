@@ -1,8 +1,7 @@
-//! Plan creation.
+//! Plan values.
 //!
-//! A plan is a graph of tasks, where each task represents an instance of a procedure. Plans
-//! use a description of task dependencies (provided by [`PlanBuilder`](struct.PlanBuilder.html)) to create
-//! an asynchronous call flow to get the outputs of a 'root' task.
+//! A plan is a graph of values, where each value may depend on others. Plans use asynchronous
+//! values to build the graph and dependency tree.
 
 use futures::future::{BoxFuture, Future, FutureExt, Shared, TryFutureExt};
 use futures::task::{Context, Poll};
@@ -93,18 +92,7 @@ macro_rules! derived_value {
     ( $tp:expr , ( $( $name:ident = $val:expr ),* ) $body:expr ) => {
         {
             $( let $name = $val.clone(); )*
-            $crate::plan::Value::new($tp, $body, &[$($val.clone()),*])
+            $crate::Value::new($tp, $body, &[$($val.clone()),*])
         }
     }
-}
-
-/// A type which can be used for plan creation.
-///
-/// In general, Output should contain one or more Values for use in other plans.
-pub trait Plan<Context> {
-    /// The output type of planning.
-    type Output;
-
-    /// Create a plan given the context.
-    fn plan(&self, ctx: &mut Context) -> Self::Output;
 }

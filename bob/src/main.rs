@@ -1,9 +1,4 @@
-use grease::{
-    plan::{Plan, Value, ValueType},
-    runtime::{
-        future, logger_ref, Context, FutureExt, LogEntry, LogLevel, LogTarget, TryFutureExt,
-    },
-};
+use grease::*;
 use log::warn;
 use simplelog::TermLogger;
 use std::collections::HashMap;
@@ -180,25 +175,24 @@ struct Sleeper {
     time: f32,
 }
 
-impl Plan<Context> for Sleeper {
+impl Plan for Sleeper {
     type Output = Value;
     fn plan(&self, ctx: &mut Context) -> Value {
-        let l = ctx.log.sublog("sleepytime".to_owned());
+        let l = ctx.log.sublog("sleepytime");
         let tsk = ctx.task.clone();
         let time = self.time;
-        let later =
-            future::lazy(move |_| (l.work("sleep".to_owned()), l)).then(move |(mut sleep, l)| {
-                tsk.delayed_fn(move || {
-                    l.info("Going to sleep");
-                    {
-                        let _record = sleep.start();
-                        std::thread::sleep(std::time::Duration::from_secs_f32(time));
-                    }
-                    l.info("Wake up!");
-                    Ok(vec![])
-                })
-            });
-        Value::future(void_type(), later)
+        Value::future(void_type(), async move {
+            let mut sleep = l.work("sleep");
+            tsk.spawn(async move {
+                l.info("Going to sleep");
+                {
+                    let _record = sleep.start();
+                    std::thread::sleep(std::time::Duration::from_secs_f32(time));
+                }
+                l.info("Wake up!");
+                Ok(vec![])
+            }).await
+        })
     }
 }
 
@@ -208,7 +202,7 @@ struct SleepyTasks {
     max_time: f32,
 }
 
-impl Plan<Context> for SleepyTasks {
+impl Plan for SleepyTasks {
     type Output = Value;
     fn plan(&self, ctx: &mut Context) -> Value {
         use rand::distributions::{Distribution, Uniform};
@@ -232,6 +226,8 @@ fn main() {
         simplelog::TerminalMode::Stderr,
     )
     .unwrap();
+
+    let _name = item_name!("hello");
 
     let logger = logger_ref(Output::default());
 

@@ -137,10 +137,10 @@ impl Log {
     }
 
     /// Create a sublog interface with the given context identifier.
-    pub fn sublog(&self, name: String) -> Self {
+    pub fn sublog<T: Into<String>>(&self, name: T) -> Self {
         let mut ret = self.clone();
         let mut v = Vec::from(ret.context.as_ref());
-        v.push(name);
+        v.push(name.into());
         ret.context = Arc::from(v);
         ret
     }
@@ -148,9 +148,9 @@ impl Log {
     /// Create and track a unit of work.
     ///
     /// The returned object should be used to record work runtime.
-    pub fn work(&self, name: String) -> Work {
+    pub fn work<T: Into<String>>(&self, name: T) -> Work {
         let mut v = Vec::from(self.context.as_ref());
-        v.push(name);
+        v.push(name.into());
         let w = Work {
             logger: self.logger.clone(),
             id: Box::from(v),

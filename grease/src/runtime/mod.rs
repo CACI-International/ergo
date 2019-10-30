@@ -4,14 +4,25 @@ use std::fmt;
 
 mod command;
 mod log;
+mod store;
 mod task_manager;
 
 use self::log::EmptyLogTarget;
 pub use self::log::{logger_ref, Log, LogEntry, LogLevel, LogTarget, LoggerRef};
 pub use command::Commands;
+pub use store::{Item, ItemContent, ItemName, Store};
 pub use task_manager::TaskManager;
-pub use futures::future;
-pub use futures::future::{FutureExt,TryFutureExt};
+
+/// A type which can be used for plan creation.
+///
+/// In general, Output should contain one or more Values for use in other plans.
+pub trait Plan {
+    /// The output type of planning.
+    type Output;
+
+    /// Create a plan given the context.
+    fn plan(&self, ctx: &mut Context) -> Self::Output;
+}
 
 /// Runtime context.
 #[derive(Debug)]
@@ -22,13 +33,18 @@ pub struct Context {
     pub cmd: Commands,
     /// The logging interface.
     pub log: Log,
+    /// The storage interface.
+    pub store: Store,
 }
 
+/// A builder for a Context.
 #[derive(Default)]
 pub struct ContextBuilder {
     logger: Option<LoggerRef>,
+    store_dir: Option<std::path::PathBuf>,
 }
 
+/// An error produced by the ContextBuilder.
 #[derive(Debug)]
 pub enum BuilderError {
     TaskManagerError(futures::io::Error),
@@ -53,11 +69,17 @@ impl ContextBuilder {
         self
     }
 
+    pub fn storage_directory(mut self, dir: std::path::PathBuf) -> Self {
+        self.store_dir = Some(dir);
+        self
+    }
+
     pub fn build(self) -> Result<Context, BuilderError> {
         Ok(Context {
             task: TaskManager::new().map_err(BuilderError::TaskManagerError)?,
             cmd: Commands::new(),
             log: Log::new(self.logger.unwrap_or_else(|| logger_ref(EmptyLogTarget))),
+            store: Store::new(self.store_dir.unwrap_or(std::env::temp_dir())),
         })
     }
 }
@@ -71,7 +93,7 @@ impl Context {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plan::*;
+    use crate::value::*;
     use futures::future::{try_join, TryFutureExt};
     use uuid::Uuid;
 
@@ -83,7 +105,7 @@ mod tests {
 
     struct TestRuntimePlan;
 
-    impl Plan<Context> for TestRuntimePlan {
+    impl Plan for TestRuntimePlan {
         type Output = Value;
 
         fn plan(&self, ctx: &mut Context) -> Value {
@@ -117,23 +139,24 @@ mod tests {
 
     #[test]
     fn commands() -> Result<(), String> {
-        let mut ctx = Context::builder()
-            .build()
-            .map_err(|e| format!("{}", e))?;
+        let mut ctx = Context::builder().build().map_err(|e| format!("{}", e))?;
 
         let mut ls = ctx.cmd.create("ls");
 
-        let output = Value::future(vec_type(),ctx.task.delayed_fn(move || match ls.output() {
-            Err(e) => Err(format!("failed to run ls: {}", e)),
-            Ok(output) => {
-                if output.status.success() {
-                    Ok(output.stdout)
-                } else {
-                    Err(format!("ls exited with status {}", output.status))
+        let mut output = Value::future(
+            vec_type(),
+            ctx.task.delayed_fn(move || match ls.output() {
+                Err(e) => Err(format!("failed to run ls: {}", e)),
+                Ok(output) => {
+                    if output.status.success() {
+                        Ok(output.stdout)
+                    } else {
+                        Err(format!("ls exited with status {}", output.status))
+                    }
                 }
-            }
-        }));
+            }),
+        );
 
-        futures::executor::block_on(output).map(|_| ())
+        output.get().map(|_| ())
     }
 }
