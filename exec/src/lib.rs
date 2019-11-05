@@ -1,5 +1,6 @@
-use grease::{future, Context, Plan, Value, ValueType, type_uuid};
+use grease::{item_name, future, Context, ItemName, Plan, Value, ValueType, type_uuid};
 use std::collections::HashMap;
+use std::convert::TryInto;
 use std::path::PathBuf;
 
 #[derive(Clone, Debug)]
@@ -68,6 +69,7 @@ impl Plan for Config {
         let log = ctx.log.sublog("exec");
         let name = self.command.clone();
         let tsk = ctx.task.clone();
+        let store = ctx.store.item(item_name!("exec"));
         Value::new(
             ValueType::new(type_uuid(b"process")),
             async move {
@@ -95,10 +97,12 @@ impl Plan for Config {
                                 i += 1;
                             }
                             Argument::ProducedFile { id } => {
+                                let s = format!("{}", id);
+                                let item_name : &ItemName = s.as_str().try_into().map_err(|e : &str| e.to_owned())?;
                                 let p = files
                                     .entry(id)
-                                    .or_insert_with(|| "output_file".to_owned());
-                                cmd.arg(p);
+                                    .or_insert_with(|| store.item(item_name));
+                                cmd.arg(p.path());
                             }
                         }
                     }

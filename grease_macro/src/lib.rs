@@ -12,10 +12,10 @@ pub fn item_name(ts: TokenStream) -> TokenStream {
     let input = parse_macro_input!(ts as LitStr);
 
     let s = input.value();
-    if !s.chars().all(|c| c.is_ascii_alphanumeric()) {
+    if !s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
         quote_spanned! {
             input.span() => {
-                compile_error!("literals may only have ascii alphanumeric characters");
+                compile_error!("literals may only have ascii alphanumeric and underscore characters");
             }
         }
     } else {

@@ -30,7 +30,7 @@ pub struct ItemName(str);
 impl ItemName {
     fn new<'a, T: AsRef<str> + ?Sized>(s: &'a T) -> Option<&'a ItemName> {
         let v = s.as_ref();
-        if !v.chars().all(|c| c.is_ascii_alphanumeric()) {
+        if !v.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
             None
         } else {
             Some(unsafe { &*(v as *const str as *const ItemName) })
@@ -43,6 +43,12 @@ impl<'a> TryFrom<&'a str> for &'a ItemName {
 
     fn try_from(s: &'a str) -> Result<Self, Self::Error> {
         ItemName::new(s).ok_or("invalid item name; must be ascii alphanumeric")
+    }
+}
+
+impl AsRef<ItemName> for ItemName {
+    fn as_ref(&self) -> &ItemName {
+        &self
     }
 }
 
@@ -90,9 +96,7 @@ impl Item {
 
     /// Check whether an item exists.
     pub fn exists(&self) -> bool {
-        let mut path = self.path.clone();
-        path.push(&self.item);
-        path.exists()
+        self.path().exists()
     }
 
     /// Open an item for writing.
@@ -110,9 +114,14 @@ impl Item {
     /// Open an item using the provided OpenOptions.
     pub fn open(&self, options: &OpenOptions) -> io::Result<ItemContent> {
         std::fs::create_dir_all(&self.path)?;
+        Ok(ItemContent { file: options.open(self.path())? })
+    }
+
+    /// Get the path this item uses.
+    pub fn path(&self) -> PathBuf {
         let mut path = self.path.clone();
         path.push(&self.item);
-        Ok(ItemContent { file: options.open(path)? })
+        path
     }
 }
 
