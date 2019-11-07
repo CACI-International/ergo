@@ -96,17 +96,17 @@ pub fn make_value(ts: TokenStream) -> TokenStream {
         quote! { let #name = #value.clone(); }
     });
 
-    let deps = input
+    let deps = {
+        let depslist = input
         .bindings
         .iter()
         .map(|v| {
             let name = &v.name;
             quote! { #name }
         })
-        .chain(input.deps.iter().map(|v| quote! { #v }))
-        .fold(quote! { ::grease::Dependencies::new() }, |o, v| {
-            quote! { #o.add(&#v) }
-        });
+        .chain(input.deps.iter().map(|v| quote! { #v }));
+        quote! { depends![#(#depslist),*] }
+    };
 
     let tp = input.tp;
     let body = input.body;

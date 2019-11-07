@@ -8,6 +8,7 @@ use futures::future::{BoxFuture, Future, FutureExt, Shared, TryFutureExt};
 use futures::task::{Context, Poll};
 use std::collections::BTreeSet;
 use std::hash::{Hash, Hasher};
+use std::iter::FromIterator;
 use std::pin::Pin;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -32,89 +33,81 @@ impl ValueType {
     }
 }
 
-pub trait Dependency {
-    fn get_value(&self) -> Option<Value> {
-        None
-    }
-    fn identity(&self) -> u128;
+/// A dependency of a Value.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Dependency {
+    Value(Value),
+    Hashed(u128),
 }
 
-impl<T: Hash> Dependency for T {
-    fn identity(&self) -> u128 {
+impl From<&'_ Value> for Dependency {
+    fn from(v: &'_ Value) -> Self {
+        Dependency::from(v.clone())
+    }
+}
+
+impl From<Value> for Dependency {
+    fn from(v: Value) -> Self {
+        Dependency::Value(v)
+    }
+}
+
+impl<H: Hash> From<&'_ H> for Dependency {
+    fn from(v: &'_ H) -> Self {
         let mut hfn = HasherFn::default();
-        self.hash(&mut hfn);
-        hfn.finish_ext()
+        v.hash(&mut hfn);
+        Dependency::Hashed(hfn.finish_ext())
     }
 }
 
-impl Dependency for Value {
-    fn get_value(&self) -> Option<Value> {
-        Some(self.clone())
-    }
-    fn identity(&self) -> u128 {
-        self.id
-    }
-}
-
-/// Dependencies of a value.
-#[derive(Debug, Default)]
-pub struct Dependencies {
-    values: Vec<Value>,
-    dependencies: BTreeSet<u128>,
-}
-
-impl Dependencies {
-    /// Create a new dependency tracker.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Add the given value as a dependency.
-    pub fn add<D: Dependency>(mut self, dep: &D) -> Self {
-        if let Some(v) = dep.get_value() {
-            self.values.push(v);
-        }
-        self.dependencies.insert(dep.identity());
-        self
-    }
-}
-
-impl Hash for Dependencies {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.dependencies.hash(state);
-    }
-}
-
-/// An intermediate untyped value which can be used to create a Value.
-pub struct UntypedValue<F> {
-    value: F,
-    dependencies: Dependencies,
-}
-
-impl<F> UntypedValue<F> {
-    /// Create a new untyped value.
-    pub fn new(value: F, dependencies: Dependencies) -> Self {
-        UntypedValue {
-            value,
-            dependencies,
+impl Hash for Dependency {
+    fn hash<H: Hasher>(&self, state: &'_ mut H) {
+        match self {
+            Dependency::Value(v) => v.id.hash(state),
+            Dependency::Hashed(v) => v.hash(state),
         }
     }
+}
 
-    /// Add a dependency to the untyped value.
-    pub fn add_dependency<D: Dependency>(mut self, dep: &D) -> Self {
-        self.dependencies = self.dependencies.add(dep);
-        self
+/// Types which can be converted into an iterator over dependencies.
+pub trait IntoDependencies {
+    type Iter: Iterator<Item = Dependency>;
+
+    fn into_dependencies(self) -> Self::Iter;
+}
+
+impl IntoDependencies for Dependency {
+    type Iter = std::iter::Once<Dependency>;
+
+    fn into_dependencies(self) -> Self::Iter {
+        std::iter::once(self)
     }
 }
 
-impl<F> UntypedValue<F>
+impl<T> IntoDependencies for T
 where
-    F: Future<Output = Result<Vec<u8>, String>> + Send + 'static,
+    T: IntoIterator,
+    <T as IntoIterator>::Item: Into<Dependency>,
+    <T as IntoIterator>::IntoIter: 'static,
 {
-    /// Create a value using the given type.
-    pub fn with_type(self, tp: ValueType) -> Value {
-        Value::new(tp, self.value, self.dependencies)
+    type Iter = Box<dyn Iterator<Item = Dependency>>;
+
+    fn into_dependencies(self) -> Self::Iter {
+        Box::new(self.into_iter().map(|d| d.into()))
     }
+}
+
+/// Create a Vec<Dependency> from the given dependant values.
+///
+/// Values are always accessed by shared reference.
+#[macro_export]
+macro_rules! depends {
+    ( $( $exp:expr ),* ) => {
+        {
+            let v: Vec<$crate::Dependency> = vec![$( Dependency::from(&$exp) ),*];
+            v
+        }
+    };
 }
 
 /// A value shared amongst tasks.
@@ -128,26 +121,51 @@ pub struct Value {
     id: u128,
 }
 
+impl PartialEq for Value {
+    fn eq(&self, other: &Value) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for Value {}
+
+impl PartialOrd for Value {
+    fn partial_cmp(&self, other: &Value) -> Option<std::cmp::Ordering> {
+        Some(self.id.cmp(&other.id))
+    }
+}
+
+impl Ord for Value {
+    fn cmp(&self, other: &Value) -> std::cmp::Ordering {
+        self.id.cmp(&other.id)
+    }
+}
+
 impl Value {
     /// Create a value with the given type, future, and dependencies.
-    pub fn new<F>(tp: ValueType, value: F, deps: Dependencies) -> Value
+    pub fn new<F, D>(tp: ValueType, value: F, deps: D) -> Value
     where
         F: Future<Output = Result<Vec<u8>, String>> + Send + 'static,
+        D: IntoDependencies,
     {
         let mut hasher = HasherFn::default();
         tp.hash(&mut hasher);
-        deps.hash(&mut hasher);
+        let depset = BTreeSet::from_iter(deps.into_dependencies());
+        depset.hash(&mut hasher);
         Value {
             tp: Arc::new(tp),
             value: value.map_ok(Arc::new).boxed().shared(),
-            dependencies: Arc::from(deps.values.as_slice()),
+            dependencies: Arc::from_iter(depset.into_iter().filter_map(|v| match v {
+                Dependency::Value(val) => Some(val),
+                _ => None,
+            })),
             id: hasher.finish_ext(),
         }
     }
 
     /// Create a constant value with the given type and data.
     pub fn constant(tp: ValueType, data: Vec<u8>) -> Value {
-        let deps = Dependencies::default().add(&data);
+        let deps = depends![data];
         Self::new(tp, futures::future::ok(data), deps)
     }
 

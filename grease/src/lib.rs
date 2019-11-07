@@ -45,6 +45,6 @@ pub use grease_macro::item_name;
 /// additional dependencies, the surrounding brackets may be omitted.
 ///
 /// All captures in _body_ are moved into the block. _body_ is used to produce the result of
-/// the value.
+/// the value, and is in an async context (so `.await` is valid).
 #[proc_macro_hack]
 pub use grease_macro::make_value;

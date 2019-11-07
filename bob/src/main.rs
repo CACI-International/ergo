@@ -212,11 +212,9 @@ impl Plan for SleepyTasks {
             .map(|v| Sleeper { time: v }.plan(ctx))
             .collect();
 
-        Value::new(
-            void_type(),
-            future::try_join_all(sleepers).map_ok(|_| vec![]),
-            Dependencies::default()
-        )
+        make_value!(void_type(), {
+            future::try_join_all(sleepers).map_ok(|_| vec![]).await
+        })
     }
 }
 
