@@ -181,7 +181,7 @@ impl Plan for Sleeper {
         let l = ctx.log.sublog("sleepytime");
         let tsk = ctx.task.clone();
         let time = self.time;
-        Value::future(void_type(), async move {
+        make_value!(void_type(), {
             let mut sleep = l.work("sleep");
             tsk.spawn(async move {
                 l.info("Going to sleep");
@@ -212,9 +212,10 @@ impl Plan for SleepyTasks {
             .map(|v| Sleeper { time: v }.plan(ctx))
             .collect();
 
-        Value::future(
+        Value::new(
             void_type(),
             future::try_join_all(sleepers).map_ok(|_| vec![]),
+            Dependencies::default()
         )
     }
 }

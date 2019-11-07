@@ -20,5 +20,31 @@ pub use ::uuid::Uuid;
 
 pub use self::{runtime::*, uuid::*, value::*};
 
+/// Create a literal item name.
+///
+/// Item names must contain only ascii alphanumeric characters.
 #[proc_macro_hack]
 pub use grease_macro::item_name;
+
+/// Make a new value.
+///
+/// The expected syntax is:
+///
+/// `make_value!(` _type_ `,` ( `(` _clones_ `)` ) ( `[` _dependencies_ `]` ) _body_ `)`
+///
+/// Where _clones_ are either comma-separated single identifiers of bindings in scope, or
+/// _ident_ `=` _expr_ bindings.
+///
+/// All _clones_ will be exposed as the given identifiers in _body_, and they will be clones of
+/// the given expression (or the identifier if no expression provided). They will also all be
+/// tracked as dependencies of the value. If there are no clones, the surrounding parentheses may
+/// be omitted.
+///
+/// Additional dependency expressions may be provided in _dependencies_, as comma-separated
+/// expressions. These are used as dependencies but not exposed in _body_. If there are no
+/// additional dependencies, the surrounding brackets may be omitted.
+///
+/// All captures in _body_ are moved into the block. _body_ is used to produce the result of
+/// the value.
+#[proc_macro_hack]
+pub use grease_macro::make_value;
