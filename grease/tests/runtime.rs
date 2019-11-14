@@ -44,6 +44,7 @@ fn runtime_tasks() -> Result<(), String> {
     Ok(())
 }
 
+/*
 #[test]
 fn commands() -> Result<(), String> {
     let mut ctx = Context::builder().build().map_err(|e| format!("{}", e))?;
@@ -69,3 +70,4 @@ fn commands() -> Result<(), String> {
     assert!("hello, world" == s);
     Ok(())
 }
+*/

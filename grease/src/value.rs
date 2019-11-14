@@ -69,14 +69,17 @@ impl Hash for Dependency {
     }
 }
 
+
 /// Types which can be converted into an iterator over dependencies.
-pub trait IntoDependencies {
-    type Iter: Iterator<Item = Dependency>;
+///
+/// The lifetime parameter is the iterator's lifetime.
+pub trait IntoDependencies<'a> {
+    type Iter: Iterator<Item = Dependency> + 'a;
 
     fn into_dependencies(self) -> Self::Iter;
 }
 
-impl IntoDependencies for Dependency {
+impl IntoDependencies<'static> for Dependency {
     type Iter = std::iter::Once<Dependency>;
 
     fn into_dependencies(self) -> Self::Iter {
@@ -84,13 +87,13 @@ impl IntoDependencies for Dependency {
     }
 }
 
-impl<T> IntoDependencies for T
+impl<'a, T> IntoDependencies<'a> for T
 where
     T: IntoIterator,
     <T as IntoIterator>::Item: Into<Dependency>,
-    <T as IntoIterator>::IntoIter: 'static,
+    <T as IntoIterator>::IntoIter: 'a,
 {
-    type Iter = Box<dyn Iterator<Item = Dependency>>;
+    type Iter = Box<dyn Iterator<Item = Dependency> + 'a>;
 
     fn into_dependencies(self) -> Self::Iter {
         Box::new(self.into_iter().map(|d| d.into()))
@@ -99,12 +102,22 @@ where
 
 /// Create a Vec<Dependency> from the given dependant values.
 ///
-/// Values are always accessed by shared reference.
+/// Values are always accessed by shared reference in the normal form.
+/// Prepending 'join' to the list will instead call into_dependencies on each argument and join the
+/// resulting list.
 #[macro_export]
 macro_rules! depends {
     ( $( $exp:expr ),* ) => {
         {
-            let v: Vec<$crate::Dependency> = vec![$( Dependency::from(&$exp) ),*];
+            let v: Vec<$crate::Dependency> = vec![$( $crate::Dependency::from(&$exp) ),*];
+            v
+        }
+    };
+    ( join $( $exp:expr ),* ) => {
+        {
+            use $crate::IntoDependencies;
+            let v: Vec<$crate::Dependency> = std::iter::empty::<$crate::Dependency>()
+                $( .chain($exp.into_dependencies()) )* .collect();
             v
         }
     };
@@ -143,10 +156,10 @@ impl Ord for Value {
 
 impl Value {
     /// Create a value with the given type, future, and dependencies.
-    pub fn new<F, D>(tp: ValueType, value: F, deps: D) -> Value
+    pub fn new<'a, F, D>(tp: ValueType, value: F, deps: D) -> Value
     where
         F: Future<Output = Result<Vec<u8>, String>> + Send + 'static,
-        D: IntoDependencies,
+        D: IntoDependencies<'a>,
     {
         let mut hasher = HasherFn::default();
         tp.hash(&mut hasher);

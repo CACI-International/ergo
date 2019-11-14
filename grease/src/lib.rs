@@ -14,6 +14,7 @@ mod runtime;
 mod uuid;
 mod value;
 
+pub use futures::channel;
 pub use futures::future;
 pub use futures::future::{FutureExt, TryFutureExt};
 pub use ::uuid::Uuid;
@@ -43,6 +44,10 @@ pub use grease_macro::item_name;
 /// Additional dependency expressions may be provided in _dependencies_, as comma-separated
 /// expressions. These are used as dependencies but not exposed in _body_. If there are no
 /// additional dependencies, the surrounding brackets may be omitted.
+///
+/// The items in _clones_ and _dependencies_ may be preceded by a `^`, indicating that the
+/// expression (by reference) implements `IntoDependencies` and those dependencies should be
+/// propagated.
 ///
 /// All captures in _body_ are moved into the block. _body_ is used to produce the result of
 /// the value, and is in an async context (so `.await` is valid).

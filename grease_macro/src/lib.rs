@@ -29,6 +29,22 @@ pub fn item_name(ts: TokenStream) -> TokenStream {
     .into()
 }
 
+struct Dep<T> {
+    nested_deps: bool,
+    value: T,
+}
+
+impl<T: Parse> Parse for Dep<T> {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let nested_deps = input.peek(syn::token::Caret);
+        if nested_deps {
+            input.parse::<syn::token::Caret>()?;
+        }
+        let value: T = input.parse()?;
+        Ok(Dep { nested_deps, value })
+    }
+}
+
 struct Binding {
     name: Ident,
     value: Expr,
@@ -49,8 +65,8 @@ impl Parse for Binding {
 
 struct MakeValue {
     tp: Expr,
-    bindings: Punctuated<Binding, syn::token::Comma>,
-    deps: Punctuated<Expr, syn::token::Comma>,
+    bindings: Punctuated<Dep<Binding>, syn::token::Comma>,
+    deps: Punctuated<Dep<Expr>, syn::token::Comma>,
     body: Expr,
 }
 
@@ -58,23 +74,19 @@ impl Parse for MakeValue {
     fn parse(input: ParseStream) -> Result<Self> {
         let tp: Expr = input.parse()?;
         input.parse::<syn::token::Comma>()?;
-        let bindings = {
-            if input.peek(syn::token::Paren) {
-                let group;
-                parenthesized!(group in input);
-                group.parse_terminated(Binding::parse)?
-            } else {
-                Default::default()
-            }
+        let bindings = if input.peek(syn::token::Paren) {
+            let group;
+            parenthesized!(group in input);
+            group.parse_terminated(Dep::parse)?
+        } else {
+            Default::default()
         };
-        let deps = {
-            if input.peek(syn::token::Bracket) {
-                let group;
-                bracketed!(group in input);
-                group.parse_terminated(Expr::parse)?
-            } else {
-                Default::default()
-            }
+        let deps = if input.peek(syn::token::Bracket) {
+            let group;
+            bracketed!(group in input);
+            group.parse_terminated(Dep::parse)?
+        } else {
+            Default::default()
         };
         let body: Expr = input.parse()?;
         Ok(MakeValue {
@@ -91,21 +103,31 @@ pub fn make_value(ts: TokenStream) -> TokenStream {
     let input = parse_macro_input!(ts as MakeValue);
 
     let bindings = input.bindings.iter().map(|v| {
-        let name = &v.name;
-        let value = &v.value;
+        let name = &v.value.name;
+        let value = &v.value.value;
         quote! { let #name = #value.clone(); }
     });
 
     let deps = {
-        let depslist = input
-        .bindings
-        .iter()
-        .map(|v| {
-            let name = &v.name;
-            quote! { #name }
-        })
-        .chain(input.deps.iter().map(|v| quote! { #v }));
-        quote! { depends![#(#depslist),*] }
+        let (nested_deps, value_deps): (Vec<_>, Vec<_>) = input
+            .bindings
+            .iter()
+            .map(|v| {
+                let name = &v.value.name;
+                (v.nested_deps, quote! { #name })
+            })
+            .chain(input.deps.iter().map(|v| {
+                let val = &v.value;
+                (v.nested_deps, quote! { #val })
+            }))
+            .partition(|(n, _)| *n);
+
+        let nested_deps = nested_deps.into_iter().map(|(_, v)| v);
+        let value_deps = value_deps.into_iter().map(|(_, v)| v);
+        quote! { {
+            let value_deps = ::grease::depends![#(#value_deps),*];
+            ::grease::depends![join value_deps #(, &#nested_deps)*]
+        } }
     };
 
     let tp = input.tp;
