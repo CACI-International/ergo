@@ -5,7 +5,6 @@ use std::collections::HashMap;
 use std::convert::TryInto;
 use std::io::Write;
 use term::Terminal;
-use uuid::Uuid;
 
 mod output;
 
@@ -165,23 +164,18 @@ impl LogTarget for Output {
     }
 }
 
-fn void_type() -> ValueType {
-    ValueType::new(Uuid::from_bytes([
-        1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    ]))
-}
-
 struct Sleeper {
     time: f32,
 }
 
 impl Plan for Sleeper {
-    type Output = Value;
-    fn plan(&self, ctx: &mut Context) -> Value {
+    type Output = TypedValue<()>;
+
+    fn plan(&self, ctx: &mut Context) -> Self::Output {
         let l = ctx.log.sublog("sleepytime");
         let tsk = ctx.task.clone();
         let time = self.time;
-        make_value!(void_type(), {
+        make_value!({
             let mut sleep = l.work("sleep");
             tsk.spawn(async move {
                 l.info("Going to sleep");
@@ -190,7 +184,7 @@ impl Plan for Sleeper {
                     std::thread::sleep(std::time::Duration::from_secs_f32(time));
                 }
                 l.info("Wake up!");
-                Ok(vec![])
+                Ok(())
             }).await
         })
     }
@@ -203,8 +197,9 @@ struct SleepyTasks {
 }
 
 impl Plan for SleepyTasks {
-    type Output = Value;
-    fn plan(&self, ctx: &mut Context) -> Value {
+    type Output = TypedValue<()>;
+
+    fn plan(&self, ctx: &mut Context) -> Self::Output {
         use rand::distributions::{Distribution, Uniform};
         let sleepers: Vec<_> = Uniform::from(self.min_time..self.max_time)
             .sample_iter(rand::thread_rng())
@@ -212,8 +207,8 @@ impl Plan for SleepyTasks {
             .map(|v| Sleeper { time: v }.plan(ctx))
             .collect();
 
-        make_value!(void_type(), {
-            future::try_join_all(sleepers).map_ok(|_| vec![]).await
+        make_value!([^sleepers] {
+            future::try_join_all(sleepers).map_ok(|_| ()).await
         })
     }
 }
@@ -242,7 +237,7 @@ fn main() {
         }
     }
 
-    let mut result = SleepyTasks {
+    let result = SleepyTasks {
         count: 50,
         min_time: 1.0,
         max_time: 4.0,
