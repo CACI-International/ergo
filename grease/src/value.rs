@@ -13,6 +13,10 @@ use std::pin::Pin;
 use std::sync::Arc;
 use uuid::Uuid;
 
+mod types;
+
+pub use types::*;
+
 /// A value type.
 ///
 /// The type is an id and type-specific data.
@@ -31,6 +35,11 @@ impl ValueType {
     pub fn with_data(id: Uuid, data: Vec<u8>) -> Self {
         ValueType { id, data }
     }
+}
+
+/// A type that has an associated ValueType.
+pub trait GetValueType {
+    fn value_type() -> ValueType;
 }
 
 /// A dependency of a Value.
@@ -52,6 +61,18 @@ impl From<Value> for Dependency {
     }
 }
 
+impl<T> From<&'_ TypedValue<T>> for Dependency {
+    fn from(v: &'_ TypedValue<T>) -> Self {
+        Dependency::from(&v.inner)
+    }
+}
+
+impl<T> From<TypedValue<T>> for Dependency {
+    fn from(v: TypedValue<T>) -> Self {
+        Dependency::from(v.inner)
+    }
+}
+
 impl<H: Hash> From<&'_ H> for Dependency {
     fn from(v: &'_ H) -> Self {
         let mut hfn = HasherFn::default();
@@ -68,7 +89,6 @@ impl Hash for Dependency {
         }
     }
 }
-
 
 /// Types which can be converted into an iterator over dependencies.
 ///
@@ -123,13 +143,70 @@ macro_rules! depends {
     };
 }
 
+/// Value data with a stored drop function.
+///
+/// The drop function is called when the ValueData instance itself is dropped.
+pub struct ValueData(*mut (), extern "C" fn(*mut ()));
+
+// ValueData should always be Send, and should be Sync if the value it stores is Sync. However, we
+// cannot enforce the Sync restriction, so we instead ensure values are Sync in the Alias struct,
+// which is used to access ValueData.
+unsafe impl Send for ValueData {}
+unsafe impl Sync for ValueData {}
+
+extern "C" fn no_drop(_v: *mut ()) {}
+
+extern "C" fn drop_box<T>(ptr: *mut ()) {
+    unsafe { drop(Box::from_raw(ptr as *mut T)) };
+}
+
+impl ValueData {
+    /// Create a ValueData from raw components.
+    pub fn from_raw(data: *mut (), drop_fn: extern "C" fn(*mut ())) -> Self {
+        ValueData(data, drop_fn)
+    }
+
+    /// Create a ValueData from the given value.
+    pub fn new<T>(v: T) -> Self {
+        let ptr = Box::into_raw(Box::new(v)) as *mut ();
+        Self::from_raw(ptr, drop_box::<T>)
+    }
+
+    /// Create a ValueData from a primitive value.
+    pub fn primitive(v: usize) -> Self {
+        Self::from_raw(v as *mut (), no_drop)
+    }
+
+    /// Get the ValueData as a &T reference.
+    ///
+    /// Unsafe because callers must ensure the data is a T.
+    pub unsafe fn as_ref<T: Sync>(&self) -> &T {
+        (self.0 as *const T).as_ref().unwrap()
+    }
+
+    /// Get the ValueData as a primitive.
+    ///
+    /// Unsafe because callers must ensure the data is a primitive type.
+    pub unsafe fn as_primitive(&self) -> usize {
+        self.0 as usize
+    }
+}
+
+impl Drop for ValueData {
+    fn drop(&mut self) {
+        self.1(self.0)
+    }
+}
+
+type ValueResult = Result<Arc<ValueData>, String>;
+
 /// A value shared amongst tasks.
 ///
 /// Values have a type and a future value.
 #[derive(Clone, Debug)]
 pub struct Value {
     tp: Arc<ValueType>,
-    value: Shared<BoxFuture<'static, Result<Arc<Vec<u8>>, String>>>,
+    data: Shared<BoxFuture<'static, ValueResult>>,
     dependencies: Arc<[Value]>,
     id: u128,
 }
@@ -158,7 +235,7 @@ impl Value {
     /// Create a value with the given type, future, and dependencies.
     pub fn new<'a, F, D>(tp: ValueType, value: F, deps: D) -> Value
     where
-        F: Future<Output = Result<Vec<u8>, String>> + Send + 'static,
+        F: Future<Output = Result<ValueData, String>> + Send + 'static,
         D: IntoDependencies<'a>,
     {
         let mut hasher = HasherFn::default();
@@ -167,7 +244,7 @@ impl Value {
         depset.hash(&mut hasher);
         Value {
             tp: Arc::new(tp),
-            value: value.map_ok(Arc::new).boxed().shared(),
+            data: value.map_ok(Arc::new).boxed().shared(),
             dependencies: Arc::from_iter(depset.into_iter().filter_map(|v| match v {
                 Dependency::Value(val) => Some(val),
                 _ => None,
@@ -176,39 +253,143 @@ impl Value {
         }
     }
 
-    /// Create a constant value with the given type and data.
-    pub fn constant(tp: ValueType, data: Vec<u8>) -> Value {
-        let deps = depends![data];
-        Self::new(tp, futures::future::ok(data), deps)
+    /// Try to convert this Value to a TypedValue.
+    ///
+    /// If the conversion fails, the Err result contains the original Value.
+    pub fn typed<T: GetValueType>(self) -> Result<TypedValue<T>, Value> {
+        if *self.value_type() == T::value_type() {
+            Ok(TypedValue {
+                inner: self,
+                phantom: Default::default(),
+            })
+        } else {
+            Err(self)
+        }
     }
 
     /// Get the value identifier.
     ///
     /// This identifier is deterministically derived from the value type and dependencies, so is
     /// functionally pure and consistent.
-    pub fn get_id(&self) -> u128 {
+    pub fn id(&self) -> u128 {
         self.id
     }
 
     /// Get the type of the contained value.
-    pub fn get_type(&self) -> &ValueType {
+    pub fn value_type(&self) -> &ValueType {
         &*self.tp
     }
 
     /// Get the result of the value.
     ///
-    /// In general, this should only be called if only one value is needed. Otherwise, joining
-    /// values will optimally poll all values at once. This will block the caller until the result
-    /// is available.
-    pub fn get(&mut self) -> Result<Arc<Vec<u8>>, String> {
+    /// In general, this should only be called on a top-level value. This will block the caller
+    /// until the result is available.
+    pub fn get(self) -> ValueResult {
         futures::executor::block_on(self)
     }
 }
 
 impl Future for Value {
-    type Output = Result<Arc<Vec<u8>>, String>;
+    type Output = ValueResult;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        Future::poll(Pin::new(&mut self.get_mut().value), cx)
+        Future::poll(unsafe { self.map_unchecked_mut(|s| &mut s.data) }, cx)
+    }
+}
+
+/// An alias of ValueData that can be dereferenced to T.
+pub struct Alias<T>(Arc<ValueData>, std::marker::PhantomData<T>);
+
+impl<T> Alias<T> {
+    /// Create a new alias from a ValueData.
+    ///
+    /// Unsafe because callers must ensure that the ValueData stores T.
+    unsafe fn new(inner: Arc<ValueData>) -> Self {
+        Alias(inner, Default::default())
+    }
+}
+
+impl<T: Sync> std::ops::Deref for Alias<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { (*self.0).as_ref::<T>() }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct TypedValue<T> {
+    inner: Value,
+    phantom: std::marker::PhantomData<T>,
+}
+
+impl<T: GetValueType> TypedValue<T> {
+    /// Create a typed value from the given future and dependencies.
+    pub fn new<'a, F, D>(value: F, deps: D) -> Self
+    where
+        F: Future<Output = Result<T, String>> + Send + 'static,
+        D: IntoDependencies<'a>,
+    {
+        TypedValue {
+            inner: Value::new(T::value_type(), value.map_ok(|r| ValueData::new(r)), deps),
+            phantom: Default::default(),
+        }
+    }
+
+    /// Create a constant value with the given type and data.
+    pub fn constant(data: T) -> Self
+    where
+        T: Hash + Send + 'static,
+    {
+        let deps = depends![data];
+        Self::new(futures::future::ok(data), deps)
+    }
+
+    /// Get the result of the value.
+    ///
+    /// In general, this should only be called on a top-level value. This will block the caller
+    /// until the result is available.
+    pub fn get(self) -> Result<Alias<T>, String> {
+        futures::executor::block_on(self)
+    }
+
+    /// Create a new TypedValue by consuming and mapping the result of this TypedValue.
+    pub fn map<U, F>(self, f: F) -> TypedValue<U>
+    where
+        U: GetValueType,
+        F: FnOnce(&T) -> Result<U, String> + Send + 'static,
+        T: Sync + 'static,
+    {
+        let deps = depends![self];
+        TypedValue::new(
+            FutureExt::map(self, move |result| result.and_then(move |at| f(&*at))),
+            deps,
+        )
+    }
+}
+
+// Value is Send (as it is just pointers to Sync values), so TypedValue should be Send as well.
+unsafe impl<T> Send for TypedValue<T> {}
+
+impl<T> Future for TypedValue<T> {
+    type Output = Result<Alias<T>, String>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        Future::poll(unsafe { self.map_unchecked_mut(|s| &mut s.inner) }, cx)
+            .map(|v| v.map(|data| unsafe { Alias::new(data) }))
+    }
+}
+
+impl<T> std::ops::Deref for TypedValue<T> {
+    type Target = Value;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl<T> From<TypedValue<T>> for Value {
+    fn from(v: TypedValue<T>) -> Self {
+        v.inner
     }
 }

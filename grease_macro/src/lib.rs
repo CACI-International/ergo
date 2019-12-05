@@ -64,7 +64,6 @@ impl Parse for Binding {
 }
 
 struct MakeValue {
-    tp: Expr,
     bindings: Punctuated<Dep<Binding>, syn::token::Comma>,
     deps: Punctuated<Dep<Expr>, syn::token::Comma>,
     body: Expr,
@@ -72,8 +71,6 @@ struct MakeValue {
 
 impl Parse for MakeValue {
     fn parse(input: ParseStream) -> Result<Self> {
-        let tp: Expr = input.parse()?;
-        input.parse::<syn::token::Comma>()?;
         let bindings = if input.peek(syn::token::Paren) {
             let group;
             parenthesized!(group in input);
@@ -90,7 +87,6 @@ impl Parse for MakeValue {
         };
         let body: Expr = input.parse()?;
         Ok(MakeValue {
-            tp,
             bindings,
             deps,
             body,
@@ -130,14 +126,13 @@ pub fn make_value(ts: TokenStream) -> TokenStream {
         } }
     };
 
-    let tp = input.tp;
     let body = input.body;
 
     let expanded = quote! {
         {
             #( #bindings )*
             let make_value__deps = #deps;
-            ::grease::Value::new(#tp, async move { #body }, make_value__deps)
+            ::grease::TypedValue::new(async move { #body }, make_value__deps)
         }
     };
 
