@@ -30,10 +30,14 @@ trait CallMut {
 
 impl<T: Sized> CallMut for T {}
 
+/// Define forwards and backwards conversions to a type, with sideband data.
 pub trait SplitInto<To> {
     type Extra;
 
+    /// Split this value into the target value and extra data.
     fn split(self) -> (To, Self::Extra);
+
+    /// Create a value from the target value and extra data.
     fn join(a: To, b: Self::Extra) -> Self;
 }
 
@@ -232,6 +236,7 @@ impl<T> Context<T> {
         plan.plan_split(self)
     }
 
+    /// Plan a type by joining this context with extra data to form the target context.
     pub fn plan_join<P, Ctx>(&mut self, plan: P, e: Ctx::Extra) -> <P as Plan<Ctx>>::Output
     where
         P: Plan<Ctx>,

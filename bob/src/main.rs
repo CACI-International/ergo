@@ -56,8 +56,12 @@ fn main() {
     let logger = logger_ref(Output::default());
 
     // Create build context
-    let mut ctx = script::script_context(Context::builder().logger_ref(logger.clone()))
-        .expect("failed to create script context");
+    let mut ctx = script::script_context(
+        Context::builder()
+            .logger_ref(logger.clone())
+            .storage_directory(".bob_work".into()),
+    )
+    .expect("failed to create script context");
 
     // Set therad ids in the logger, as reported by the task manager.
     {
@@ -88,7 +92,10 @@ fn main() {
         .app_err("target not found");
 
     // Force outputs from parameters
-    futures::executor::block_on(futures::future::join_all(vals));
+    futures::executor::block_on(futures::future::join_all(vals))
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .app_err("execution error");
 
     let mut l = logger.lock().unwrap();
     l.clear_status();

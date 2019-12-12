@@ -6,7 +6,7 @@ use grease::Plan;
 use std::collections::HashMap;
 
 pub fn exec_builtin() -> Data {
-    Data::Function(DataFunction::BuiltinFunction(std::rc::Rc::new(exec)))
+    Data::Function(DataFunction::BuiltinFunction(Box::new(exec)).into())
 }
 
 fn exec(ctx: &mut grease::Context<FunctionContext>) -> Result<Data, String> {
@@ -37,9 +37,7 @@ fn exec(ctx: &mut grease::Context<FunctionContext>) -> Result<Data, String> {
         Data::Value(result.exit_status.into()),
     );
     for (binding, file) in output_file_bindings.into_iter().zip(result.output_files) {
-        ctx.inner
-            .current_env()
-            .insert(binding, Data::Value(file.into()));
+        ctx.inner.env_insert(binding, Data::Value(file.into()));
     }
 
     Ok(Data::Map(ret_map))

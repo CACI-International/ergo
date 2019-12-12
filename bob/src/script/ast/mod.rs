@@ -6,7 +6,7 @@ mod parse;
 mod tokenize;
 
 /// A parsed expression.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Expression {
     String(String),
     Array(Vec<Expression>),

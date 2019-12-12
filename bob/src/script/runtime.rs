@@ -7,6 +7,7 @@ use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
 use std::str::FromStr;
+use std::task::Poll;
 
 pub mod exec;
 
@@ -22,13 +23,28 @@ pub enum Data {
     /// A map of values, not preserving order.
     Map(HashMap<String, Data>),
     /// A function.
-    Function(DataFunction),
+    Function(std::rc::Rc<DataFunction>),
 }
 
-impl Future for Data {
-    type Output = ();
+impl PartialEq for Data {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::String(a), Self::String(b)) => a == b,
+            (Self::Value(a), Self::Value(b)) => a == b,
+            (Self::Array(a), Self::Array(b)) => a == b,
+            (Self::Map(a), Self::Map(b)) => a == b,
+            (Self::Function(a), Self::Function(b)) => std::rc::Rc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
+}
 
-    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context) -> std::task::Poll<()> {
+impl Eq for Data {}
+
+impl Future for Data {
+    type Output = Result<(), String>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context) -> Poll<Self::Output> {
         match *self {
             Self::Value(_) => Future::poll(
                 unsafe {
@@ -41,8 +57,7 @@ impl Future for Data {
                     })
                 },
                 cx,
-            )
-            .map(|_| ()),
+            ).map(|v| v.map(|_| ())),
             Self::Array(_) => {
                 let pending = unsafe {
                     self.map_unchecked_mut(|s| {
@@ -54,12 +69,15 @@ impl Future for Data {
                     })
                 }
                 .iter_mut()
-                .map(|a| Future::poll(Pin::new(a), cx))
-                .any(|e| e == std::task::Poll::Pending);
-                if pending {
-                    std::task::Poll::Pending
+                .map(|a| match Future::poll(Pin::new(a), cx) {
+                    Poll::Pending => None,
+                    Poll::Ready(r) => Some(r),
+                }).collect::<Option<Vec<_>>>()
+                .map(|v| v.into_iter().collect::<Result<Vec<_>,_>>());
+                if let Some(result) = pending {
+                    Poll::Ready(result.map(|_| ()))
                 } else {
-                    std::task::Poll::Ready(())
+                    Poll::Pending
                 }
             }
             Self::Map(_) => {
@@ -73,15 +91,18 @@ impl Future for Data {
                     })
                 }
                 .iter_mut()
-                .map(|(_, a)| Future::poll(Pin::new(a), cx))
-                .any(|e| e == std::task::Poll::Pending);
-                if pending {
-                    std::task::Poll::Pending
+                .map(|(_, a)| match Future::poll(Pin::new(a), cx) {
+                    Poll::Pending => None,
+                    Poll::Ready(r) => Some(r),
+                }).collect::<Option<Vec<_>>>()
+                .map(|v| v.into_iter().collect::<Result<Vec<_>,_>>());
+                if let Some(result) = pending {
+                    Poll::Ready(result.map(|_| ()))
                 } else {
-                    std::task::Poll::Ready(())
+                    Poll::Pending
                 }
             }
-            _ => std::task::Poll::Ready(()),
+            _ => std::task::Poll::Ready(Ok(())),
         }
     }
 }
@@ -89,10 +110,9 @@ impl Future for Data {
 type Builtin = dyn Fn(&mut grease::Context<FunctionContext>) -> Result<Data, String>;
 
 /// A function value.
-#[derive(Clone)]
 pub enum DataFunction {
-    UserFunction(Box<Expression>),
-    BuiltinFunction(std::rc::Rc<Builtin>),
+    UserFunction(Expression),
+    BuiltinFunction(Box<Builtin>),
 }
 
 impl fmt::Debug for DataFunction {
@@ -128,8 +148,24 @@ impl Default for Context {
 }
 
 impl Context {
-    pub fn current_env(&mut self) -> &mut HashMap<String, Data> {
-        self.env.last_mut().unwrap()
+    pub fn env_insert(&mut self, k: String, v: Data) {
+        self.env.last_mut().unwrap().insert(k, v);
+    }
+
+    pub fn env_remove<Q: ?Sized>(&mut self, k: &Q) -> Option<Data>
+    where
+        String: std::borrow::Borrow<Q>,
+        Q: std::hash::Hash + Eq,
+    {
+        self.env.last_mut().unwrap().remove(k)
+    }
+
+    pub fn env_get<Q: ?Sized>(&mut self, k: &Q) -> Option<&Data>
+    where
+        String: std::borrow::Borrow<Q>,
+        Q: std::hash::Hash + Eq,
+    {
+        self.env.iter().rev().find_map(|m| m.get(k))
     }
 }
 
@@ -196,21 +232,19 @@ impl fmt::Display for Error {
     }
 }
 
-impl Plan<FunctionContext> for DataFunction {
+impl Plan<FunctionContext> for std::rc::Rc<DataFunction> {
     type Output = Result<Data, Error>;
 
     fn plan(self, ctx: &mut grease::Context<FunctionContext>) -> Self::Output {
-        match self {
+        match self.as_ref() {
             DataFunction::UserFunction(e) => {
                 // A FunctionContext is only used once, so swap out the arguments.
                 let mut args = Vec::new();
                 std::mem::swap(&mut ctx.inner.args, &mut args);
 
                 ctx.inner.env.push(HashMap::new());
-                ctx.inner
-                    .current_env()
-                    .insert("@".to_owned(), Data::Array(args));
-                let v = e.plan_split(ctx);
+                ctx.inner.env_insert("@".to_owned(), Data::Array(args));
+                let v = e.clone().plan_split(ctx);
                 ctx.inner.env.pop();
                 v
             }
@@ -232,11 +266,11 @@ impl Plan<Context> for Expression {
             )),
             Self::SetVariable(var, e) => {
                 let data = e.plan(ctx)?;
-                ctx.inner.current_env().insert(var.clone(), data);
+                ctx.inner.env_insert(var.clone(), data);
                 Ok(Data::String("".to_owned()))
             }
             Self::UnsetVariable(var) => {
-                ctx.inner.current_env().remove(&var);
+                ctx.inner.env_remove(&var);
                 Ok(Data::String("".to_owned()))
             }
             Self::Index(e, i) => match e.plan(ctx)? {
@@ -251,15 +285,11 @@ impl Plan<Context> for Expression {
                 match cmd.plan(ctx)? {
                     Data::String(s) => {
                         // Lookup string in environment, and apply result to remaining arguments
-                        let (cmd, args) = match ctx.inner.current_env().get(&s) {
+                        let (cmd, args) = match ctx.inner.env_get(&s) {
                             Some(data) => (data, args),
                             None => {
                                 // Fall back to 'exec' command.
-                                let exec = ctx
-                                    .inner
-                                    .current_env()
-                                    .get("exec")
-                                    .ok_or(Error::ExecMissing)?;
+                                let exec = ctx.inner.env_get("exec").ok_or(Error::ExecMissing)?;
                                 args.insert(0, Expression::String(s));
                                 (exec, args)
                             }
@@ -288,7 +318,7 @@ impl Plan<Context> for Expression {
                 }
             }
             Self::Block(es) => es.plan(ctx).map(Data::Map),
-            Self::Function(e) => Ok(Data::Function(DataFunction::UserFunction(e.clone()))),
+            Self::Function(e) => Ok(Data::Function(DataFunction::UserFunction(*e).into())),
             Self::If(cond, t, f) => {
                 let cond = cond.plan(ctx)?;
                 if (&cond).into() {
