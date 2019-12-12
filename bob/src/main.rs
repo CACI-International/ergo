@@ -1,219 +1,51 @@
 use grease::*;
-use log::warn;
 use simplelog::TermLogger;
-use std::collections::HashMap;
-use std::convert::TryInto;
-use std::io::Write;
-use term::Terminal;
+use std::fs::File;
+use std::io::{Read, Write};
 
 mod output;
+mod script;
 
-struct Output {
-    log_level: LogLevel,
-    thread_mapping: HashMap<std::thread::ThreadId, Option<LogEntry>>,
-    out: output::OutputInterface,
-    timings: HashMap<Vec<String>, (std::time::Duration, usize)>,
-    pending: HashMap<Vec<String>, usize>,
+use output::Output;
+use script::Script;
+
+trait AppErr {
+    type Output;
+
+    fn app_err(self, s: &str) -> Self::Output;
 }
 
-impl Output {
-    fn send(&mut self, entry: &LogEntry) {
-        // Output should already be at the stream location
-        writeln!(self.out, "{}", entry).expect("failed to write to output");
-    }
+impl<T, E: std::fmt::Display> AppErr for Result<T, E> {
+    type Output = T;
 
-    fn print_thread_status(&mut self) {
-        self.out.fg(term::color::YELLOW).unwrap();
-        // Assumes thread_mapping remains the same for order consistency
-        for (i, v) in self.thread_mapping.values().enumerate() {
-            self.out.delete_line().unwrap();
-            writeln!(
-                self.out,
-                "{}: {}",
-                i + 1,
-                match v {
-                    None => "",
-                    Some(entry) => entry.args.as_ref(),
-                }
-            )
-            .unwrap();
-        }
-
-        let mut count_remaining = 0;
-        let mut duration_remaining = std::time::Duration::default();
-        for (k, v) in self.pending.iter() {
-            count_remaining += v;
-            if let Some((duration, count)) = self.timings.get(k) {
-                duration_remaining +=
-                    *duration * (*v).try_into().unwrap() / (*count).try_into().unwrap();
+    fn app_err(self, s: &str) -> Self::Output {
+        match self {
+            Ok(v) => v,
+            Err(e) => {
+                writeln!(std::io::stderr(), "{}: {}", s, e).unwrap();
+                std::process::exit(1);
             }
-        }
-
-        let t = chrono::naive::NaiveTime::from_hms(0, 0, 0)
-            + chrono::Duration::from_std(duration_remaining).unwrap();
-        write!(self.out, "Progress: {} remaining", count_remaining).unwrap();
-        if duration_remaining != std::time::Duration::default() {
-            write!(self.out, " ({})", t).unwrap();
-        }
-        writeln!(self.out).unwrap();
-        self.out.cursor_up().unwrap();
-
-        // Reset cursor
-        for _ in 0..self.thread_mapping.len() {
-            self.out.cursor_up().unwrap();
-        }
-        self.out.carriage_return().unwrap();
-        self.out.reset().unwrap();
-    }
-
-    fn clear_status(&mut self) {
-        if self.out.is_tty() {
-            let final_logs: Vec<_> = self.thread_mapping.values_mut().map(|v| v.take()).collect();
-            let mut lines_to_clear = 0;
-            for l in final_logs {
-                if let Some(v) = l {
-                    self.out.delete_line().unwrap();
-                    self.send(&v);
-                } else {
-                    lines_to_clear += 1;
-                }
-            }
-
-            for _ in 0..lines_to_clear + 1 {
-                self.out.delete_line().unwrap();
-                writeln!(self.out).unwrap();
-            }
-
-            for _ in 0..lines_to_clear + 1 {
-                self.out.cursor_up().unwrap();
-            }
-
-            self.out.carriage_return().unwrap();
         }
     }
 }
 
-impl Default for Output {
-    fn default() -> Self {
-        Output {
-            log_level: LogLevel::Info,
-            thread_mapping: HashMap::new(),
-            out: output::stdout(),
-            timings: Default::default(),
-            pending: Default::default(),
-        }
-    }
-}
+impl<T> AppErr for Option<T> {
+    type Output = T;
 
-impl LogTarget for Output {
-    fn log(&mut self, entry: LogEntry) {
-        if entry.level < self.log_level {
-            return;
-        }
-
-        if !self.out.is_tty() {
-            self.send(&entry);
-        } else {
-            let id = std::thread::current().id();
-            if let Some(v) = self.thread_mapping.get_mut(&id) {
-                if let Some(previous) = v.replace(entry) {
-                    self.out.delete_line().unwrap();
-                    self.send(&previous);
-                }
+    fn app_err(self, s: &str) -> Self::Output {
+        match self {
+            Some(v) => v,
+            None => {
+                writeln!(std::io::stderr(), "{}", s).unwrap();
+                std::process::exit(1);
             }
-
-            self.print_thread_status();
         }
-    }
-
-    fn dropped(&mut self, _context: std::sync::Arc<[String]>) {
-        if !self.out.is_tty() {
-            return;
-        }
-
-        let id = std::thread::current().id();
-        if let Some(v) = self.thread_mapping.get_mut(&id) {
-            if let Some(previous) = v.take() {
-                self.out.delete_line().unwrap();
-                self.send(&previous);
-            }
-
-            self.print_thread_status();
-        }
-    }
-
-    fn timer_pending(&mut self, id: &[String]) {
-        *self.pending.entry(Vec::from(id)).or_default() += 1;
-        self.print_thread_status();
-    }
-
-    fn timer_complete(&mut self, id: &[String], duration: std::time::Duration) {
-        if let Some(v) = self.pending.get_mut(id) {
-            if *v > 0 {
-                *v -= 1;
-            } else {
-                warn!("timer count inconsistent: {:?}", id);
-            }
-        } else {
-            warn!("timer count inconsistent: {:?}", id);
-        }
-        let mut times = self.timings.entry(Vec::from(id)).or_default();
-        times.0 += duration;
-        times.1 += 1;
-        self.print_thread_status();
-    }
-}
-
-struct Sleeper {
-    time: f32,
-}
-
-impl Plan for Sleeper {
-    type Output = TypedValue<()>;
-
-    fn plan(&self, ctx: &mut Context) -> Self::Output {
-        let l = ctx.log.sublog("sleepytime");
-        let tsk = ctx.task.clone();
-        let time = self.time;
-        make_value!({
-            let mut sleep = l.work("sleep");
-            tsk.spawn(async move {
-                l.info("Going to sleep");
-                {
-                    let _record = sleep.start();
-                    std::thread::sleep(std::time::Duration::from_secs_f32(time));
-                }
-                l.info("Wake up!");
-                Ok(())
-            }).await
-        })
-    }
-}
-
-struct SleepyTasks {
-    count: usize,
-    min_time: f32,
-    max_time: f32,
-}
-
-impl Plan for SleepyTasks {
-    type Output = TypedValue<()>;
-
-    fn plan(&self, ctx: &mut Context) -> Self::Output {
-        use rand::distributions::{Distribution, Uniform};
-        let sleepers: Vec<_> = Uniform::from(self.min_time..self.max_time)
-            .sample_iter(rand::thread_rng())
-            .take(self.count)
-            .map(|v| Sleeper { time: v }.plan(ctx))
-            .collect();
-
-        make_value!([^sleepers] {
-            future::try_join_all(sleepers).map_ok(|_| ()).await
-        })
     }
 }
 
 fn main() {
+    let args: Vec<_> = std::env::args().collect();
+
     TermLogger::init(
         simplelog::LevelFilter::Warn,
         simplelog::Config::default(),
@@ -221,30 +53,42 @@ fn main() {
     )
     .unwrap();
 
-    let _name = item_name!("hello");
-
     let logger = logger_ref(Output::default());
 
-    let mut ctx = Context::builder()
-        .logger_ref(logger.clone())
-        .build()
-        .expect("failed to create context");
+    // Create build context
+    let mut ctx = script::script_context(Context::builder().logger_ref(logger.clone()))
+        .expect("failed to create script context");
 
+    // Set therad ids in the logger, as reported by the task manager.
     {
         let mut l = logger.lock().unwrap();
-        for id in ctx.task.thread_ids() {
-            l.thread_mapping.insert(id.clone(), None);
-        }
+        l.set_thread_ids(ctx.task.thread_ids().iter().cloned());
     }
 
-    let result = SleepyTasks {
-        count: 50,
-        min_time: 1.0,
-        max_time: 4.0,
-    }
-    .plan(&mut ctx);
+    let script = args.get(1).app_err("first argument must be a script file");
+    let mut f = File::open(script).app_err("failed to open script file");
+    // TODO inefficient read
+    let mut s = String::new();
+    f.read_to_string(&mut s)
+        .app_err("failed to read script file");
+    let loaded = Script::load(s.chars()).app_err("failed to parse script file");
 
-    result.get().unwrap();
+    let mut script_output = loaded.plan(&mut ctx).app_err("script runtime error");
+
+    let params = args
+        .get(1..)
+        .map(|strs| strs.iter().map(|s| s.as_ref()).collect())
+        .unwrap_or(vec!["*"]);
+
+    // Get all data values based on parameters
+    let vals = params
+        .into_iter()
+        .map(|p| script_output.remove(p).ok_or(p))
+        .collect::<Result<Vec<_>, _>>()
+        .app_err("target not found");
+
+    // Force outputs from parameters
+    futures::executor::block_on(futures::future::join_all(vals));
 
     let mut l = logger.lock().unwrap();
     l.clear_status();

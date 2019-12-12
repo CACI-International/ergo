@@ -84,4 +84,3 @@ impl Terminal for OutputInterface {
         self
     }
 }
-

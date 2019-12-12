@@ -7,8 +7,11 @@ edition = "2018"
 [dependencies]
 atty = "^0.2"
 chrono = "^0.4"
+exec = { path = "../exec" }
+futures = "^0.3"
 grease = { path = "../grease" }
 log = "^0.4"
+pom = { git = "https://github.com/J-F-Liu/pom" }
 rand = "^0.7"
 simplelog = "^0.7"
 tack = { path = "../tack" }

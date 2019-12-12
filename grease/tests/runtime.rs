@@ -6,7 +6,7 @@ struct TestRuntimePlan;
 impl Plan for TestRuntimePlan {
     type Output = TypedValue<Vec<u8>>;
 
-    fn plan(&self, ctx: &mut Context) -> Self::Output {
+    fn plan(self, ctx: &mut Context) -> Self::Output {
         let a = TypedValue::constant(vec![0]);
         let tsk = ctx.task.clone();
         let b = make_value!([vec![1]] {
@@ -32,8 +32,7 @@ impl Plan for TestRuntimePlan {
 fn runtime_tasks() -> Result<(), String> {
     let mut ctx = Context::builder().build().map_err(|e| format!("{}", e))?;
 
-    let output = TestRuntimePlan.plan(&mut ctx);
-    let result = output.get()?;
+    let result = TestRuntimePlan.plan(&mut ctx).get()?;
     assert!(*result == vec![0, 1]);
     Ok(())
 }

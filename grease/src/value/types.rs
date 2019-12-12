@@ -16,7 +16,7 @@ macro_rules! impl_prim {
 }
 
 macro_rules! impl_simple {
-    ( $t:ty) => {
+    ( $t:ty ) => {
         impl GetValueType for $t {
             fn value_type() -> ValueType {
                 ValueType::new(type_uuid(stringify!($t).as_bytes()))

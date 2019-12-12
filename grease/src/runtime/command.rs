@@ -6,18 +6,19 @@ use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Arc, Mutex};
 
 use crate::prelude::*;
 
 /// Tracks external command usage.
 #[derive(Debug, Default)]
 pub struct Commands {
-    cmds: BTreeMap<OsString, Option<PathBuf>>,
+    cmds: Arc<Mutex<BTreeMap<OsString, Option<PathBuf>>>>,
 }
 
 impl fmt::Display for Commands {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        for (ref k, ref v) in &self.cmds {
+        for (ref k, ref v) in self.cmds.lock().unwrap().iter() {
             let ks = k.to_string_lossy();
             match v {
                 None => writeln!(f, "{} -> missing", ks)?,
@@ -62,10 +63,8 @@ impl Commands {
     /// added.
     pub fn create<S: AsRef<OsStr>>(&mut self, program: S) -> Command {
         let s = program.as_ref().to_owned();
-        let resolved = self
-            .cmds
-            .entry(s)
-            .or_insert_with(|| resolve(program.as_ref()));
+        let mut guard = self.cmds.lock().unwrap();
+        let resolved = guard.entry(s).or_insert_with(|| resolve(program.as_ref()));
         let progpath = resolved
             .as_ref()
             .map(|s| s.as_os_str())

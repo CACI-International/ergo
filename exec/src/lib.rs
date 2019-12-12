@@ -54,7 +54,7 @@ impl Config {
 impl Plan for Config {
     type Output = Result<ExecResult, String>;
 
-    fn plan(&self, ctx: &mut Context) -> Self::Output {
+    fn plan(self, ctx: &mut Context) -> Self::Output {
         if !self.env.is_empty() {
             unimplemented!();
         }
@@ -201,7 +201,7 @@ mod test {
         cfg.arguments.push(Argument::String("hello".to_owned()));
 
         let mut ctx = Context::builder().build().map_err(|e| format!("{}", e))?;
-        let status = cfg.plan(&mut ctx)?.exit_status.get()?;
+        let status = ctx.plan(cfg)?.exit_status.get()?;
         assert!(status.success());
         Ok(())
     }
@@ -211,7 +211,7 @@ mod test {
         let cfg = Config::new("false");
 
         let mut ctx = Context::builder().build().map_err(|e| format!("{}", e))?;
-        let status = cfg.plan(&mut ctx)?.exit_status.get()?;
+        let status = ctx.plan(cfg)?.exit_status.get()?;
         assert!(!status.success());
         Ok(())
     }

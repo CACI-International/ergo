@@ -53,3 +53,6 @@ pub use grease_macro::item_name;
 /// the value, and is in an async context (so `.await` is valid).
 #[proc_macro_hack]
 pub use grease_macro::make_value;
+
+/// Derive GetValueType based on the item's full Rust path.
+pub use grease_macro::GetValueType;

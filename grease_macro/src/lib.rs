@@ -7,7 +7,7 @@ use syn::{
     parse::{Parse, ParseStream, Result},
     parse_macro_input, parse_quote,
     punctuated::Punctuated,
-    Expr, Ident, LitStr,
+    DeriveInput, Expr, Ident, LitStr,
 };
 
 #[proc_macro_hack]
@@ -133,6 +133,24 @@ pub fn make_value(ts: TokenStream) -> TokenStream {
             #( #bindings )*
             let make_value__deps = #deps;
             ::grease::TypedValue::new(async move { #body }, make_value__deps)
+        }
+    };
+
+    TokenStream::from(expanded)
+}
+
+#[proc_macro_derive(GetValueType)]
+pub fn derive_get_value_type(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+
+    let name = input.ident;
+    let namestr = syn::LitStr::new(&format!("{}", name), name.span());
+
+    let expanded = quote! {
+        impl ::grease::GetValueType for #name {
+            fn value_type() -> ::grease::ValueType {
+                ::grease::ValueType::new(::grease::type_uuid(concat![module_path!(), "::", #namestr].as_bytes()))
+            }
         }
     };
 
