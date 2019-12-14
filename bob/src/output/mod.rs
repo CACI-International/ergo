@@ -96,6 +96,7 @@ impl Output {
             }
 
             self.out.carriage_return().unwrap();
+            self.out.flush().unwrap();
         }
     }
 }

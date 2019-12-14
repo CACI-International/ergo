@@ -1,4 +1,7 @@
-use grease::{channel, future, item_name, make_value, Context, ItemName, Plan, TypedValue};
+use grease::{
+    channel, depends, future, item_name, make_value, Context, Dependencies, ItemName, Plan,
+    TypedValue,
+};
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::convert::TryInto;
@@ -13,6 +16,29 @@ pub enum Argument {
     File(PathBuf),
     OutputFile(TypedValue<PathBuf>),
     ProducedFile { id: usize },
+}
+
+impl Argument {
+    pub fn as_value(&self) -> Option<grease::Value> {
+        match self {
+            Self::OutputString(s) => Some(s.clone().into()),
+            Self::OutputFile(s) => Some(s.clone().into()),
+            _ => None,
+        }
+    }
+}
+
+impl From<&Argument> for grease::Dependency {
+    fn from(a: &Argument) -> Self {
+        use Argument::*;
+        match a {
+            String(s) => s.into(),
+            OutputString(v) => v.into(),
+            File(p) => p.into(),
+            OutputFile(v) => v.into(),
+            ProducedFile { .. } => (&1238479745234347u128).into(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -55,25 +81,58 @@ impl Plan for Config {
     type Output = Result<ExecResult, String>;
 
     fn plan(self, ctx: &mut Context) -> Self::Output {
-        if !self.env.is_empty() {
-            unimplemented!();
-        }
+        // Move and rebind for convenience
+        let args = self.arguments;
+        let name = self.command;
+        let env: Vec<_> = self.env.into_iter().collect();
 
-        let mut cmd = ctx.cmd.create(&self.command);
-        let args = self.arguments.clone();
-
+        // Create values from the context for use later
+        let mut cmd = ctx.cmd.create(&name);
         let log = ctx.log.sublog("exec");
-        let name = self.command.clone();
         let tsk = ctx.task.clone();
         let store = ctx.store.item(item_name!("exec"));
 
-        let mut files: BTreeMap<usize, grease::Item> = Default::default();
+        // Get Values out of arguments to access later
         let mut str_values = Vec::new();
         let mut file_values = Vec::new();
         for a in &args {
             match a {
                 Argument::OutputString(v) => str_values.push(v.clone()),
                 Argument::OutputFile(v) => file_values.push(v.clone()),
+                _ => (),
+            }
+        }
+        let input = self.stdin.clone();
+
+        // Get Values out of the environment to access later
+        let env_values: Vec<_> = env
+            .iter()
+            .filter_map(|(_, v)| {
+                if let Some(Argument::OutputString(v)) = v {
+                    Some(v.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Create dependencies
+        let mut deps = Dependencies::ordered(depends![join & args])
+            + Dependencies::unordered(depends![join depends![name],&env_values]);
+        if let Some(v) = &input {
+            if let Some(v) = v.as_value() {
+                deps = deps + Dependencies::unordered(depends![v]);
+            }
+        }
+
+        // Get value id from dependencies and use it as part of the item output path
+        let value_id = deps.value_id::<()>();
+        let store = store.item::<&ItemName>(value_id.to_string().as_str().try_into().unwrap());
+
+        // Create map of produced file id to item
+        let mut files: BTreeMap<usize, grease::Item> = Default::default();
+        for a in &args {
+            match a {
                 Argument::ProducedFile { id } => {
                     let s = format!("{}", id);
                     let item_name: &ItemName =
@@ -83,17 +142,20 @@ impl Plan for Config {
                 _ => (),
             }
         }
-        let files_copy = files.clone();
-        let input = self.stdin.clone();
+        let filesmap = files.clone();
 
+        // Create channels for outputs
         let (send_stdout, rcv_stdout) = channel::oneshot::channel();
         let (send_stderr, rcv_stderr) = channel::oneshot::channel();
         let (send_status, rcv_status) = channel::oneshot::channel();
 
-        let run_command = make_value!([^str_values,^file_values,name] {
+        let run_command = make_value!([^deps] {
             let mut work = log.work(&name);
             tsk.spawn(async move {
-                let (strs,files) = future::try_join(future::try_join_all(str_values),future::try_join_all(file_values)).await?;
+                // Force futures
+                let (strs,files,envs) = future::try_join3(future::try_join_all(str_values),future::try_join_all(file_values),future::try_join_all(env_values)).await?;
+
+                // Set arguments
                 let mut str_iter = strs.iter();
                 let mut file_iter = files.iter();
                 for a in args {
@@ -115,13 +177,12 @@ impl Plan for Config {
                             cmd.arg(p);
                         }
                         Argument::ProducedFile { id } => {
-                            cmd.arg(files_copy.get(&id).unwrap().path());
+                            cmd.arg(filesmap.get(&id).unwrap().path());
                         }
                     }
                 }
-                log.info(format!("Running '{}'", &name));
-                log.debug(format!("Arguments: {:?}", cmd));
 
+                // Set stdin
                 use std::process::Stdio;
                 let input_str = if let Some(input_arg) = input {
                     match input_arg {
@@ -151,6 +212,28 @@ impl Plan for Config {
                 cmd.stdout(Stdio::piped());
                 cmd.stderr(Stdio::piped());
 
+                // Set environment
+                let mut env_iter = envs.into_iter();
+                for (k,v) in env {
+                    match v {
+                        None => {
+                            if let Some(v) = std::env::var_os(&k) {
+                                cmd.env(k,v);
+                            }
+                        }
+                        Some(Argument::String(s)) => {
+                            cmd.env(k,s);
+                        },
+                        Some(Argument::OutputString(_)) => {
+                            cmd.env(k,&*env_iter.next().unwrap());
+                        },
+                        _ => ()
+                    }
+                }
+
+                log.info(format!("Running '{}'", &name));
+                log.debug(format!("Arguments: {:?}", cmd));
+
                 let output = {
                     let _record = work.start();
                     let mut child = cmd.spawn().map_err(|e| format!("io error: {}", e))?;
@@ -161,15 +244,24 @@ impl Plan for Config {
                     //TODO make stdout/stderr streamed out instead of collected at the end
                     child.wait_with_output().map_err(|e| format!("io error: {}", e))?
                 };
-                drop(send_stdout.send(output.stdout));
-                drop(send_stderr.send(output.stderr));
                 if send_status.is_canceled() {
                     if !output.status.success() {
-                        return Err("command returned failure exit status".to_owned());
+                        let rest = if send_stderr.is_canceled() {
+                            if let Ok(s) = String::from_utf8(output.stderr) {
+                                format!(":\n{}", s)
+                            } else {
+                                "".into()
+                            }
+                        } else {
+                            "".into()
+                        };
+                        return Err(format!("command returned failure exit status{}", rest));
                     }
                 } else {
                     drop(send_status.send(output.status));
                 }
+                drop(send_stdout.send(output.stdout));
+                drop(send_stderr.send(output.stderr));
                 Ok(())
             }).await
         });

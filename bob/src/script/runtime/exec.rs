@@ -3,6 +3,7 @@
 use super::{Data, DataFunction, FunctionContext};
 use exec::{Argument, Config};
 use grease::Plan;
+use log::trace;
 use std::collections::HashMap;
 
 pub fn exec_builtin() -> Data {
@@ -27,6 +28,7 @@ fn exec(ctx: &mut grease::Context<FunctionContext>) -> Result<Data, String> {
     let mut output_file_bindings = Vec::new();
     to_cfg(arg_iter, &mut cfg, &mut output_file_bindings)?;
 
+    trace!("exec plan configuration: {:?}", &cfg);
     let result = cfg.plan_split(ctx)?;
 
     let mut ret_map = HashMap::new();
@@ -50,6 +52,7 @@ fn to_cfg<I: Iterator<Item = Data>>(
 ) -> Result<(), String> {
     for a in data {
         match a {
+            Data::Unit => (),
             Data::String(s) => cfg.arguments.push(Argument::String(s)),
             Data::Value(v) => {
                 let arg = v
@@ -60,9 +63,9 @@ fn to_cfg<I: Iterator<Item = Data>>(
                 cfg.arguments.push(arg)
             }
             Data::Array(arr) => to_cfg(arr.into_iter(), cfg, output_file_bindings)?,
-            Data::Map(mut m) => {
-                if m.len() == 1 {
-                    if let Some(v) = m.remove("output") {
+            Data::Map(m) => {
+                for (k, v) in m.into_iter() {
+                    if k == "output" {
                         match v {
                             Data::String(s) => {
                                 output_file_bindings.push(s);
@@ -81,27 +84,23 @@ fn to_cfg<I: Iterator<Item = Data>>(
                                     .to_owned())
                             }
                         }
-                    } else if let Some(v) = m.remove("env") {
+                    } else if k == "env" {
                         match v {
                             Data::Map(env) => {
                                 for (k, v) in env.into_iter() {
                                     match v {
+                                        Data::Unit => {
+                                            cfg.env.insert(k, None);
+                                        }
                                         Data::String(s) => {
-                                            cfg.env.insert(
-                                                k,
-                                                if s.is_empty() {
-                                                    None
-                                                } else {
-                                                    Some(Argument::String(s))
-                                                },
-                                            );
+                                            cfg.env.insert(k, Some(Argument::String(s)));
                                         }
                                         Data::Value(v) => {
                                             let arg = v
                                                 .typed::<String>()
                                                 .map(Argument::OutputString)
                                                 .map_err(|_| "only string types are supported")?;
-                                            cfg.arguments.push(arg);
+                                            cfg.env.insert(k, Some(arg));
                                         }
                                         _ => return Err("env values must be strings".to_owned()),
                                     }
@@ -109,8 +108,10 @@ fn to_cfg<I: Iterator<Item = Data>>(
                             }
                             _ => return Err("env must be a map".to_owned()),
                         }
-                    } else if let Some(_v) = m.remove("stdin") {
+                    } else if k == "stdin" {
                         unimplemented!();
+                    } else {
+                        return Err(format!("unrecognized map directive: {}", k));
                     }
                 }
             }

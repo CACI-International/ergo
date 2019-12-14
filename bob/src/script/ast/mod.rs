@@ -8,6 +8,7 @@ mod tokenize;
 /// A parsed expression.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Expression {
+    Empty,
     String(String),
     Array(Vec<Expression>),
     SetVariable(String, Box<Expression>),

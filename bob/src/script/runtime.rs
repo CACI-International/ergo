@@ -14,6 +14,8 @@ pub mod exec;
 /// A script runtime value.
 #[derive(Clone, Debug, GetValueType)]
 pub enum Data {
+    /// No value.
+    Unit,
     /// A string.
     String(String),
     /// A value from a command.
@@ -29,6 +31,7 @@ pub enum Data {
 impl PartialEq for Data {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
+            (Self::Unit, Self::Unit) => true,
             (Self::String(a), Self::String(b)) => a == b,
             (Self::Value(a), Self::Value(b)) => a == b,
             (Self::Array(a), Self::Array(b)) => a == b,
@@ -57,7 +60,8 @@ impl Future for Data {
                     })
                 },
                 cx,
-            ).map(|v| v.map(|_| ())),
+            )
+            .map(|v| v.map(|_| ())),
             Self::Array(_) => {
                 let pending = unsafe {
                     self.map_unchecked_mut(|s| {
@@ -72,8 +76,9 @@ impl Future for Data {
                 .map(|a| match Future::poll(Pin::new(a), cx) {
                     Poll::Pending => None,
                     Poll::Ready(r) => Some(r),
-                }).collect::<Option<Vec<_>>>()
-                .map(|v| v.into_iter().collect::<Result<Vec<_>,_>>());
+                })
+                .collect::<Option<Vec<_>>>()
+                .map(|v| v.into_iter().collect::<Result<Vec<_>, _>>());
                 if let Some(result) = pending {
                     Poll::Ready(result.map(|_| ()))
                 } else {
@@ -94,8 +99,9 @@ impl Future for Data {
                 .map(|(_, a)| match Future::poll(Pin::new(a), cx) {
                     Poll::Pending => None,
                     Poll::Ready(r) => Some(r),
-                }).collect::<Option<Vec<_>>>()
-                .map(|v| v.into_iter().collect::<Result<Vec<_>,_>>());
+                })
+                .collect::<Option<Vec<_>>>()
+                .map(|v| v.into_iter().collect::<Result<Vec<_>, _>>());
                 if let Some(result) = pending {
                     Poll::Ready(result.map(|_| ()))
                 } else {
@@ -215,6 +221,8 @@ pub enum Error {
     NonCallableExpression(Data),
     /// No exec bindings is available in the current environment.
     ExecMissing,
+    /// The unit type is passed more than one argument.
+    UnitTooManyArguments,
 }
 
 impl fmt::Display for Error {
@@ -228,6 +236,7 @@ impl fmt::Display for Error {
                 write!(f, "cannot pass arguments to non-callable value {:?}", d)
             }
             Self::ExecMissing => write!(f, "'exec' is not available in the current environment"),
+            Self::UnitTooManyArguments => write!(f, "only one argument allowed"),
         }
     }
 }
@@ -258,6 +267,7 @@ impl Plan<Context> for Expression {
 
     fn plan(self, ctx: &mut grease::Context<Context>) -> Self::Output {
         match self {
+            Self::Empty => Ok(Data::Unit),
             Self::String(s) => Ok(Data::String(s.clone())),
             Self::Array(es) => Ok(Data::Array(
                 es.into_iter()
@@ -267,11 +277,11 @@ impl Plan<Context> for Expression {
             Self::SetVariable(var, e) => {
                 let data = e.plan(ctx)?;
                 ctx.inner.env_insert(var.clone(), data);
-                Ok(Data::String("".to_owned()))
+                Ok(Data::Unit)
             }
             Self::UnsetVariable(var) => {
                 ctx.inner.env_remove(&var);
-                Ok(Data::String("".to_owned()))
+                Ok(Data::Unit)
             }
             Self::Index(e, i) => match e.plan(ctx)? {
                 Data::Array(v) => {
@@ -314,10 +324,23 @@ impl Plan<Context> for Expression {
                             }
                         }
                     }
+                    Data::Unit => {
+                        // Return a single argument if provided, else return unit
+                        let mut args = args.into_iter();
+                        if let Some(v) = args.next() {
+                            if args.next().is_some() {
+                                Err(Error::UnitTooManyArguments)
+                            } else {
+                                v.plan(ctx)
+                            }
+                        } else {
+                            Ok(Data::Unit)
+                        }
+                    }
                     d => Ok(d),
                 }
             }
-            Self::Block(es) => es.plan(ctx).map(Data::Map),
+            Self::Block(es) => es.plan(ctx),
             Self::Function(e) => Ok(Data::Function(DataFunction::UserFunction(*e).into())),
             Self::If(cond, t, f) => {
                 let cond = cond.plan(ctx)?;
@@ -332,17 +355,20 @@ impl Plan<Context> for Expression {
 }
 
 impl Plan<Context> for Vec<Expression> {
-    type Output = Result<HashMap<String, Data>, Error>;
+    type Output = Result<Data, Error>;
 
     fn plan(self, ctx: &mut grease::Context<Context>) -> Self::Output {
         // Push a new scope
         ctx.inner.env.push(HashMap::new());
-        let mut val = Data::String("".to_owned());
+        let mut val = Data::Unit;
         for e in self {
             val = e.plan(ctx)?;
         }
-        let mut ret = ctx.inner.env.pop().unwrap();
-        ret.insert("*".to_owned(), val);
-        Ok(ret)
+        let ret = ctx.inner.env.pop().unwrap();
+        if let Data::Unit = val {
+            Ok(Data::Map(ret))
+        } else {
+            Ok(val)
+        }
     }
 }

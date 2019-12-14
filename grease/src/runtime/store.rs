@@ -119,6 +119,7 @@ impl Item {
 
     /// Get the path this item uses.
     pub fn path(&self) -> PathBuf {
+        std::fs::create_dir_all(&self.path).unwrap();
         let mut path = self.path.clone();
         path.push(&self.item);
         path

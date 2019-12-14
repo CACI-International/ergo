@@ -127,17 +127,17 @@ where
 /// resulting list.
 #[macro_export]
 macro_rules! depends {
-    ( $( $exp:expr ),* ) => {
-        {
-            let v: Vec<$crate::Dependency> = vec![$( $crate::Dependency::from(&$exp) ),*];
-            v
-        }
-    };
     ( join $( $exp:expr ),* ) => {
         {
             use $crate::IntoDependencies;
             let v: Vec<$crate::Dependency> = std::iter::empty::<$crate::Dependency>()
                 $( .chain($exp.into_dependencies()) )* .collect();
+            v
+        }
+    };
+    ( $( $exp:expr ),* ) => {
+        {
+            let v: Vec<$crate::Dependency> = vec![$( $crate::Dependency::from(&$exp) ),*];
             v
         }
     };
@@ -231,6 +231,89 @@ impl Ord for Value {
     }
 }
 
+/// A group of dependencies, which can be used to get the final value id.
+#[derive(Clone, Debug, Default)]
+pub struct Dependencies {
+    unordered: BTreeSet<Dependency>,
+    ordered: Vec<Dependency>,
+}
+
+impl Dependencies {
+    /// Create a new group of dependencies.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create a new group of unordered dependencies from a dependency source.
+    pub fn unordered<'a, D: IntoDependencies<'a>>(deps: D) -> Self {
+        Dependencies {
+            unordered: BTreeSet::from_iter(deps.into_dependencies()),
+            ordered: Vec::new(),
+        }
+    }
+
+    /// Create a new group of ordered depedencies from a dependency source.
+    pub fn ordered<'a, D: IntoDependencies<'a>>(deps: D) -> Self {
+        Dependencies {
+            unordered: BTreeSet::new(),
+            ordered: Vec::from_iter(deps.into_dependencies()),
+        }
+    }
+
+    /// Get the value id with the given ValueType.
+    pub fn value_id_with(&self, tp: &ValueType) -> u128 {
+        let mut hasher = HasherFn::default();
+        tp.hash(&mut hasher);
+        self.unordered.hash(&mut hasher);
+        self.ordered.hash(&mut hasher);
+        hasher.finish_ext()
+    }
+
+    /// Get the value id with the given type.
+    pub fn value_id<T: GetValueType>(&self) -> u128 {
+        self.value_id_with(&T::value_type())
+    }
+}
+
+impl std::ops::Add for Dependencies {
+    type Output = Self;
+
+    /// Combine two Dependencies into one. The order matter with respect
+    /// to any ordered dependencies that are stored.
+    fn add(self, other: Self) -> Self {
+        Dependencies {
+            unordered: self
+                .unordered
+                .into_iter()
+                .chain(other.unordered.into_iter())
+                .collect(),
+            ordered: self
+                .ordered
+                .into_iter()
+                .chain(other.ordered.into_iter())
+                .collect(),
+        }
+    }
+}
+
+impl IntoIterator for Dependencies {
+    type Item = Dependency;
+    type IntoIter = Box<dyn Iterator<Item = Dependency>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        Box::new(self.unordered.into_iter().chain(self.ordered.into_iter()))
+    }
+}
+
+impl IntoIterator for &Dependencies {
+    type Item = Dependency;
+    type IntoIter = Box<dyn Iterator<Item = Dependency>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.clone().into_iter()
+    }
+}
+
 impl Value {
     /// Create a value with the given type, future, and dependencies.
     pub fn new<'a, F, D>(tp: ValueType, value: F, deps: D) -> Value
@@ -238,18 +321,16 @@ impl Value {
         F: Future<Output = Result<ValueData, String>> + Send + 'static,
         D: IntoDependencies<'a>,
     {
-        let mut hasher = HasherFn::default();
-        tp.hash(&mut hasher);
-        let depset = BTreeSet::from_iter(deps.into_dependencies());
-        depset.hash(&mut hasher);
+        let deps = Dependencies::ordered(deps);
+        let id = deps.value_id_with(&tp);
         Value {
             tp: Arc::new(tp),
             data: value.map_ok(Arc::new).boxed().shared(),
-            dependencies: Arc::from_iter(depset.into_iter().filter_map(|v| match v {
+            dependencies: Arc::from_iter(deps.into_iter().filter_map(|v| match v {
                 Dependency::Value(val) => Some(val),
                 _ => None,
             })),
-            id: hasher.finish_ext(),
+            id,
         }
     }
 
@@ -313,7 +394,7 @@ impl<T: Sync> std::ops::Deref for Alias<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        unsafe { (*self.0).as_ref::<T>() }
+        unsafe { (*self.0).as_ref() }
     }
 }
 
