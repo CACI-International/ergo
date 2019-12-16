@@ -20,3 +20,6 @@ tack = { path = "../tack" }
 term = "^0.6"
 uuid = "^0.7"
 
+[profile.release]
+lto = true
+panic = 'abort'
