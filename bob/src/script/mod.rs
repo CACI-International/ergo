@@ -19,7 +19,11 @@ pub fn script_context(
     let mut ctx = runtime::Context::default();
 
     // Add 'exec' to the initial environment
-    ctx.env_insert("exec".to_owned(), runtime::exec::exec_builtin());
+    ctx.env_insert("exec".into(), runtime::exec::exec_builtin());
+    ctx.env_insert("track".into(), runtime::track::track_builtin());
+    ctx.env_insert("map".into(), runtime::map::map_builtin());
+    ctx.env_insert("do".into(), runtime::do_::do_builtin());
+    ctx.env_insert("path".into(), runtime::path::path_builtin());
     cb.build_with(ctx)
 }
 
@@ -61,6 +65,14 @@ mod test {
                 ("alpha".to_owned(), Data::String("one".into())),
                 ("beta".to_owned(), Data::String("two".into())),
             ])),
+        )
+    }
+
+    #[test]
+    fn comment() -> Result<(), String> {
+        script_eval_to(
+            "# comment comment comment\n$ something",
+            Data::String("something".into()),
         )
     }
 

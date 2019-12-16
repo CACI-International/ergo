@@ -8,6 +8,7 @@ use futures::future::{BoxFuture, Future, FutureExt, Shared, TryFutureExt};
 use futures::task::{Context, Poll};
 use std::collections::BTreeSet;
 use std::hash::{Hash, Hasher};
+use std::io::{BufRead, BufReader, Read};
 use std::iter::FromIterator;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -40,6 +41,22 @@ impl ValueType {
 /// A type that has an associated ValueType.
 pub trait GetValueType {
     fn value_type() -> ValueType;
+}
+
+/// Hash the contents of a type implementing Read.
+pub fn hash_read<R: Read>(read: R) -> std::io::Result<u128> {
+    let mut hfn = HasherFn::default();
+    let mut br = BufReader::new(read);
+    loop {
+        let slice = br.fill_buf()?;
+        if slice.len() == 0 {
+            break;
+        }
+        hfn.write(slice);
+        let len = slice.len();
+        br.consume(len);
+    }
+    Ok(hfn.finish_ext())
 }
 
 /// A dependency of a Value.

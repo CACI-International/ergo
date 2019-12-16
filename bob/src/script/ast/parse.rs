@@ -9,7 +9,7 @@ pub type Parser<'a, T> = pom::parser::Parser<'a, Token, T>;
 
 /// Return a parser for a script.
 pub fn script<'a>() -> Parser<'a, Script> {
-    exprs()
+    spacenl() * list(expression(None), eoe()) - spacenl()
 }
 
 type ExprFactory<'a> = fn() -> Parser<'a, Expression>;
@@ -106,11 +106,6 @@ fn expression<'a>(set_expr: Option<ExprFactory<'a>>) -> Parser<'a, Expression> {
             e
         })
     })
-}
-
-/// Zero or more expressions.
-fn exprs<'a>() -> Parser<'a, Vec<Expression>> {
-    list(expression(None), eoe())
 }
 
 /// A single string.

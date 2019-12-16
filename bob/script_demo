@@ -1,0 +1,73 @@
+# Runtime data types:
+# * strings
+# * output values (arbitrary/custom from commands)
+# * arrays of data types
+# * maps from data types to data types
+
+
+# Syntax:
+# parentheses "(inner)" execute "inner" returning the result
+# "$inner" is shorthand for "(inner)" when "inner" contains no spaces
+#
+# square brackets "[value,value]" create an array
+#
+# double curly brackets "{{a: a, b: b}}" create a map
+#
+# single curly brackets "{cmd,cmd}" evaluate the commands in order, returning the last value
+#
+# all other values are interpreted as string literals
+# whitespace separates arguments to commands
+# quotes may be used to include whitespace in an argument
+#
+# note the syntax attempts to be somewhat similar to shell syntax with some additions
+# to accomodate complex data types
+
+
+# Semantics:
+# the first word in a command is used to look up the command; if no command with the given name exists,
+# the 'exec' command is used (and the first word is looked up on the current PATH)
+# all arguments are passed to the command, and it will return a single value (which may itself contain other values)
+#
+# commands are essentially creating lazy results that track dependencies; the final value of the script determines what is actually run, if anything
+# thus, order of commands is not important besides variable access (so dependencies must come before a command)
+# * implicitly avoids dependency loops
+# scripts are purposefully non-turing complete (no command recursion)
+# lexical variable scoping
+# command- vs value-position interpretation
+
+
+# Example:
+# the 'track' command records an input file dependency
+# the 'output' flag produces an anonymous output file that relies on the command
+# variables can be set with '='
+# the 'fn' command creates a new command
+compile = fn {
+    c++ -O2 -c -o { output = objfile } (track $@:0)
+    objfile
+}
+
+link = fn {
+    c++ -o { output = linked, env = { PATH = $ } } $@
+    linked
+}
+
+# the 'map' command iterates over an array, running the given command on each value
+exe = fn link (map $compile $@)
+
+# the 'do' command executes each command in order
+dist = fn do [
+  rm -rf dist
+  mkdir dist
+  # the 'path' command creates a path from individual components
+  map (fn ln ($@:0) (path dist $@:0)) $@
+]
+
+# use new 'exe' command
+prog = exe a.cpp b.cpp main.cpp
+
+# the final expression is what is accessed externally
+# on the command line by default. providing a target "tgt" behaves as if
+# this final expression was set to a variable and indexed with "tgt"
+# the output(s) of the target are then forced to be run, running all required dependencies
+# e.g. a target of "prog" would access "$output.prog"
+dist prog

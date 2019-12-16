@@ -108,7 +108,7 @@ impl Item {
 
     /// Open an item for reading.
     pub fn read(&self) -> io::Result<ItemContent> {
-        self.open(OpenOptions::new().read(true).create(true))
+        self.open(OpenOptions::new().read(true).write(true).create(true))
     }
 
     /// Open an item using the provided OpenOptions.

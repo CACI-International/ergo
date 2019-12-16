@@ -6,6 +6,7 @@ edition = "2018"
 
 [dependencies]
 atty = "^0.2"
+bincode = "^1.2"
 chrono = "^0.4"
 exec = { path = "../exec" }
 futures = "^0.3"
@@ -13,6 +14,7 @@ grease = { path = "../grease" }
 log = "^0.4"
 pom = { git = "https://github.com/J-F-Liu/pom" }
 rand = "^0.7"
+serde = { version = "^1", features = ["derive"] }
 simplelog = "^0.7"
 tack = { path = "../tack" }
 term = "^0.6"

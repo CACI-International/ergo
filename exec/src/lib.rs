@@ -268,7 +268,14 @@ impl Plan for Config {
 
         let output_files: Vec<_> = files
             .into_iter()
-            .map(|(_, item)| make_value!((run_command) { run_command.await?; Ok(item.path()) }))
+            .map(|(_, item)| {
+                make_value!((run_command) {
+                    if !item.exists() {
+                        run_command.await?;
+                    }
+                    Ok(item.path())
+                })
+            })
             .collect();
         let stdout = make_value!((run_command) { run_command.await?; rcv_stdout.await.map_err(|e| format!("{}", e)) });
         let stderr = make_value!((run_command) { run_command.await?; rcv_stderr.await.map_err(|e| format!("{}", e)) });

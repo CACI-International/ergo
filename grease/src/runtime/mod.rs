@@ -39,6 +39,19 @@ pub trait SplitInto<To> {
 
     /// Create a value from the target value and extra data.
     fn join(a: To, b: Self::Extra) -> Self;
+
+    /// Split this context and run the given function on it.
+    fn split_map<F, Ret>(&mut self, f: F) -> Ret
+    where
+        F: FnOnce(&mut To) -> Ret,
+        Self: Sized,
+    {
+        self.call_mut(move |this| {
+            let (mut to, extra) = this.split();
+            let ret = f(&mut to);
+            (Self::join(to, extra), ret)
+        })
+    }
 }
 
 impl<T> SplitInto<()> for T {

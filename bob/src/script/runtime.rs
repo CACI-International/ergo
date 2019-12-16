@@ -9,7 +9,12 @@ use std::pin::Pin;
 use std::str::FromStr;
 use std::task::Poll;
 
+#[path = "runtime/do.rs"]
+pub mod do_;
 pub mod exec;
+pub mod map;
+pub mod path;
+pub mod track;
 
 /// A script runtime value.
 #[derive(Clone, Debug, GetValueType)]
@@ -25,7 +30,7 @@ pub enum Data {
     /// A map of values, not preserving order.
     Map(HashMap<String, Data>),
     /// A function.
-    Function(std::rc::Rc<DataFunction>),
+    Function(std::sync::Arc<DataFunction>),
 }
 
 impl PartialEq for Data {
@@ -36,7 +41,7 @@ impl PartialEq for Data {
             (Self::Value(a), Self::Value(b)) => a == b,
             (Self::Array(a), Self::Array(b)) => a == b,
             (Self::Map(a), Self::Map(b)) => a == b,
-            (Self::Function(a), Self::Function(b)) => std::rc::Rc::ptr_eq(a, b),
+            (Self::Function(a), Self::Function(b)) => std::sync::Arc::ptr_eq(a, b),
             _ => false,
         }
     }
@@ -113,7 +118,7 @@ impl Future for Data {
     }
 }
 
-type Builtin = dyn Fn(&mut grease::Context<FunctionContext>) -> Result<Data, String>;
+type Builtin = dyn Fn(&mut grease::Context<FunctionContext>) -> Result<Data, String> + Send + Sync;
 
 /// A function value.
 pub enum DataFunction {
@@ -241,7 +246,7 @@ impl fmt::Display for Error {
     }
 }
 
-impl Plan<FunctionContext> for std::rc::Rc<DataFunction> {
+impl Plan<FunctionContext> for std::sync::Arc<DataFunction> {
     type Output = Result<Data, Error>;
 
     fn plan(self, ctx: &mut grease::Context<FunctionContext>) -> Self::Output {
