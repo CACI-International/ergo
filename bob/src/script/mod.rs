@@ -5,6 +5,7 @@ use grease::{Context, Plan};
 mod ast;
 mod runtime;
 
+pub use ast::{FileSource, Source, StringSource};
 pub use runtime::Data;
 
 /// A loaded script.
@@ -29,13 +30,13 @@ pub fn script_context(
 
 impl Script {
     /// Load a script from a character stream.
-    pub fn load<I: IntoIterator<Item = char>>(i: I) -> Result<Self, ast::Error> {
-        ast::load(i.into_iter()).map(|ast| Script { ast })
+    pub fn load(src: Source<()>) -> Result<Self, ast::Error> {
+        ast::load(src).map(|ast| Script { ast })
     }
 }
 
 impl Plan<runtime::Context> for Script {
-    type Output = Result<runtime::Data, runtime::Error>;
+    type Output = Result<runtime::Data, Source<runtime::Error>>;
 
     fn plan(self, ctx: &mut Context<runtime::Context>) -> Self::Output {
         self.ast.plan(ctx)
@@ -130,7 +131,7 @@ mod test {
 
     fn script_eval(s: &str) -> Result<Data, String> {
         let mut ctx = script_context(Context::builder()).map_err(|e| e.to_string())?;
-        ctx.plan(Script::load(s.chars()).map_err(|e| e.to_string())?)
+        ctx.plan(Script::load(Source::new(StringSource(s.to_owned()))).map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string())
     }
 }

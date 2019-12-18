@@ -1,6 +1,6 @@
 //! Tracking file changes.
 
-use super::{Data, DataFunction, FunctionContext};
+use super::{Data, DataFunction, FunctionContext, FunctionError};
 use grease::{item_name, make_value, Context, Plan, TypedValue};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -14,7 +14,7 @@ struct Config {
     path: PathBuf,
 }
 
-fn track(ctx: &mut Context<FunctionContext>) -> Result<Data, String> {
+fn track(ctx: &mut Context<FunctionContext>) -> Result<Data, FunctionError> {
     let mut args = Vec::new();
     std::mem::swap(&mut args, &mut ctx.inner.args);
 
@@ -31,7 +31,7 @@ fn track(ctx: &mut Context<FunctionContext>) -> Result<Data, String> {
     Config { path: path.into() }
         .plan_split(ctx)
         .map(|v| Data::Value(v.into()))
-        .map_err(|e| format!("track error: {}", e))
+        .map_err(|e| e.into())
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -58,7 +58,6 @@ impl Plan for Config {
 
         let meta = std::fs::metadata(&self.path).map_err(|e| e.to_string())?;
         let mod_time = meta.modified().map_err(|e| e.to_string())?;
-
 
         let calc_hash = match info.get(&self.path) {
             Some(data) => data.modification_time < mod_time,

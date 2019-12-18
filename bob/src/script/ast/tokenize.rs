@@ -1,6 +1,6 @@
 //! AST tokenization.
 
-use super::Location;
+use super::Source;
 use std::fmt;
 
 /// Script tokens.
@@ -23,6 +23,9 @@ pub enum Token {
     /// One or more whitespace characters (except newlines).
     Whitespace,
 }
+
+/// A token with source information.
+pub type Tok = Source<Token>;
 
 impl fmt::Display for Token {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -66,31 +69,35 @@ impl fmt::Display for Error {
 /// Iterator producing tokens or errors.
 pub struct Tokens<I: Iterator> {
     iter: std::iter::Peekable<I>,
-    count: usize,
+    source: Source<()>,
 }
 
-impl<I: Iterator> Tokens<I> {
-    pub fn new<T: IntoIterator<IntoIter = I, Item = I::Item>>(i: T) -> Self {
+impl<I: Iterator, T> From<Source<T>> for Tokens<I>
+where
+    T: IntoIterator<IntoIter = I, Item = I::Item>,
+{
+    fn from(s: Source<T>) -> Self {
+        let (source,i) = s.take();
         Tokens {
             iter: i.into_iter().peekable(),
-            count: 0,
+            source,
         }
     }
 }
 
 impl<I: Iterator<Item = char>> Iterator for Tokens<I> {
-    type Item = Result<(Token, Location), (Error, Location)>;
+    type Item = Result<Tok, Source<Error>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.iter.next().and_then(|c| {
-            let start = self.count;
-            self.count += 1;
+            self.source.location.start += self.source.location.length;
+            self.source.location.length = 1;
             // Comments
             if c == '#' {
                 while let Some(c) = self.iter.peek() {
                     if *c != '\n' {
                         self.iter.next();
-                        self.count += 1;
+                        self.source.location.length += 1;
                     } else {
                         break;
                     }
@@ -105,7 +112,7 @@ impl<I: Iterator<Item = char>> Iterator for Tokens<I> {
                         let mut s = String::new();
                         let mut escape = false;
                         while let Some(c) = self.iter.next() {
-                            self.count += 1;
+                            self.source.location.length += 1;
                             // Escape sequence
                             if escape {
                                 if "\"\\".contains(c) {
@@ -115,13 +122,16 @@ impl<I: Iterator<Item = char>> Iterator for Tokens<I> {
                                 } else if c == 't' {
                                     s.push('\t');
                                 } else {
-                                    return Some(Err((Error::UnrecognizedEscapeSequence,Location::new(self.count-1, 2))));
+                                    let mut val = self.source.clone().with(Error::UnrecognizedEscapeSequence);
+                                    val.location.start = val.location.start + val.location.length - 2;
+                                    val.location.length = 2;
+                                    return Some(Err(val));
                                 }
                                 escape = false;
                             // Normal character
                             } else {
                                 if c == '"' {
-                                    return Some(Ok((Token::String(s),Location::new(start,self.count - start))));
+                                    return Some(Ok(self.source.clone().with(Token::String(s))));
                                 } else if c == '\\' {
                                     escape = true;
                                 } else {
@@ -140,7 +150,7 @@ impl<I: Iterator<Item = char>> Iterator for Tokens<I> {
                         while let Some(c) = self.iter.peek() {
                             if c.is_whitespace() && *c != '\n' {
                                 self.iter.next();
-                                self.count += 1;
+                                self.source.location.length += 1;
                             } else {
                                 break;
                             }
@@ -180,15 +190,14 @@ impl<I: Iterator<Item = char>> Iterator for Tokens<I> {
                                 break;
                             } else {
                                 s.push(self.iter.next().unwrap());
-                                self.count += 1;
+                                self.source.location.length += 1;
                             }
                         }
                         Ok(Token::String(s))
                     };
-                let loc = Location::new(start, self.count - start);
                 Some(match tokentype {
-                    Ok(t) => Ok((t,loc)),
-                    Err(e) => Err((e,loc)),
+                    Ok(t) => Ok(self.source.clone().map(move |()| t)),
+                    Err(e) => Err(self.source.clone().map(move |()| e)),
                 })
             }
         })
@@ -200,7 +209,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn symbols() -> Result<(), (Error, Location)> {
+    fn symbols() -> Result<(), Source<Error>> {
         assert_tokens(
             "[]{}()$,;:=\n",
             &[
@@ -221,7 +230,7 @@ mod test {
     }
 
     #[test]
-    fn whitespace() -> Result<(), (Error, Location)> {
+    fn whitespace() -> Result<(), Source<Error>> {
         assert_tokens(
             " ,     \n   ",
             &[
@@ -235,7 +244,7 @@ mod test {
     }
 
     #[test]
-    fn strings() -> Result<(), (Error, Location)> {
+    fn strings() -> Result<(), Source<Error>> {
         assert_tokens(
             "hello \"world[]{}()$:,;:=\" \"escape\\\"quote\\n\"",
             &[
@@ -249,7 +258,7 @@ mod test {
     }
 
     #[test]
-    fn string_ends() -> Result<(), (Error, Location)> {
+    fn string_ends() -> Result<(), Source<Error>> {
         assert_tokens(
             "a[b]c{d}e(f)g$h,i;j:k=l\nm ",
             &[
@@ -285,18 +294,18 @@ mod test {
 
     #[test]
     fn bad_escape() {
-        let (err, _) = assert_tokens("\"ohn\\o\"", &[]).unwrap_err();
+        let err = assert_tokens("\"ohn\\o\"", &[]).unwrap_err().into_value();
         assert!(err == Error::UnrecognizedEscapeSequence);
     }
 
     #[test]
     fn unfinished_string() {
-        let (err, _) = assert_tokens("\"ohno", &[]).unwrap_err();
+        let err = assert_tokens("\"ohno", &[]).unwrap_err().into_value();
         assert!(err == Error::UnfinishedQuotedString);
     }
 
     #[test]
-    fn comments() -> Result<(), (Error, Location)> {
+    fn comments() -> Result<(), Source<Error>> {
         assert_tokens(
             "# This is a comment\n$ #This is also a comment\n#One last comment",
             &[
@@ -308,11 +317,11 @@ mod test {
         )
     }
 
-    fn assert_tokens(s: &str, expected: &[Token]) -> Result<(), (Error, Location)> {
-        let toks: Vec<_> = Tokens::new(s.chars())
+    fn assert_tokens(s: &str, expected: &[Token]) -> Result<(), Source<Error>> {
+        let toks: Vec<_> = Tokens::from(Source::new(super::super::StringSource(s.to_owned())).open().unwrap())
             .collect::<Result<Vec<_>, _>>()?
             .into_iter()
-            .map(|(t, _)| t)
+            .map(|t| t.into_value())
             .collect();
         assert!(toks == expected);
         Ok(())

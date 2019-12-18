@@ -1,13 +1,13 @@
 //! Join path components.
 
-use super::{Data, DataFunction, FunctionContext};
+use super::{Data, DataFunction, FunctionContext, FunctionError};
 use grease::Context;
 
 pub fn path_builtin() -> Data {
     Data::Function(DataFunction::BuiltinFunction(Box::new(path)).into())
 }
 
-fn path(ctx: &mut Context<FunctionContext>) -> Result<Data, String> {
+fn path(ctx: &mut Context<FunctionContext>) -> Result<Data, FunctionError> {
     let mut args = Vec::new();
     std::mem::swap(&mut args, &mut ctx.inner.args);
 

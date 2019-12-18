@@ -1,6 +1,6 @@
 //! Wrapper around exec calls.
 
-use super::{Data, DataFunction, FunctionContext};
+use super::{Data, DataFunction, FunctionContext, FunctionError};
 use exec::{Argument, Config};
 use grease::Plan;
 use log::trace;
@@ -10,18 +10,18 @@ pub fn exec_builtin() -> Data {
     Data::Function(DataFunction::BuiltinFunction(Box::new(exec)).into())
 }
 
-fn exec(ctx: &mut grease::Context<FunctionContext>) -> Result<Data, String> {
+fn exec(ctx: &mut grease::Context<FunctionContext>) -> Result<Data, FunctionError> {
     // FunctionContext is only used once, so swap out args.
     let mut args = Vec::new();
     std::mem::swap(&mut args, &mut ctx.inner.args);
 
     let mut arg_iter = args.into_iter();
 
-    let cmd = arg_iter.next().ok_or("no command provided".to_owned())?;
+    let cmd = arg_iter.next().ok_or(FunctionError::from("no command provided"))?;
     let cmd = if let Data::String(s) = cmd {
         s
     } else {
-        return Err("first exec argument must be a string".to_owned());
+        return Err("first exec argument must be a string".into());
     };
 
     let mut cfg = Config::new(cmd);

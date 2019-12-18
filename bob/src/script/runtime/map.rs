@@ -1,13 +1,13 @@
 //! Mapping over arrays.
 
-use super::{Data, DataFunction, FunctionContext};
+use super::{Data, DataFunction, FunctionContext, FunctionError};
 use grease::{Context, Plan, SplitInto};
 
 pub fn map_builtin() -> Data {
     Data::Function(DataFunction::BuiltinFunction(Box::new(map)).into())
 }
 
-fn map(ctx: &mut Context<FunctionContext>) -> Result<Data, String> {
+fn map(ctx: &mut Context<FunctionContext>) -> Result<Data, FunctionError> {
     let mut args = Vec::new();
     std::mem::swap(&mut args, &mut ctx.inner.args);
 
@@ -29,8 +29,9 @@ fn map(ctx: &mut Context<FunctionContext>) -> Result<Data, String> {
 
     let arr = arr
         .into_iter()
-        .map(|d| ctx.split_map(|ctx: &mut Context<super::Context>| func.clone().plan_join(ctx, vec![d])))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?;
+        .map(|d| {
+            ctx.split_map(|ctx: &mut Context<super::Context>| func.clone().plan_join(ctx, vec![d]))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(Data::Array(arr))
 }

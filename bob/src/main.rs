@@ -1,13 +1,12 @@
 use grease::*;
 use simplelog::TermLogger;
-use std::fs::File;
-use std::io::{Read, Write};
+use std::io::Write;
 
 mod output;
 mod script;
 
 use output::Output;
-use script::Script;
+use script::{FileSource, Script, Source};
 
 trait AppErr {
     type Output;
@@ -17,6 +16,7 @@ trait AppErr {
 
 fn err_exit(s: &str) -> ! {
     writeln!(std::io::stderr(), "{}", s).unwrap();
+    std::io::stderr().flush().unwrap();
     std::process::exit(1);
 }
 
@@ -26,7 +26,7 @@ impl<T, E: std::fmt::Display> AppErr for Result<T, E> {
     fn app_err(self, s: &str) -> Self::Output {
         match self {
             Ok(v) => v,
-            Err(e) => err_exit(&format!("{}: {}", s, e)),
+            Err(e) => err_exit(&format!("{}:\n{}", s, e)),
         }
     }
 }
@@ -79,12 +79,8 @@ fn main() {
     }
 
     let script = args.get(1).app_err("first argument must be a script file");
-    let mut f = File::open(script).app_err("failed to open script file");
-    // TODO inefficient read
-    let mut s = String::new();
-    f.read_to_string(&mut s)
-        .app_err("failed to read script file");
-    let loaded = Script::load(s.chars()).app_err("failed to parse script file");
+    let source = Source::new(FileSource(script.into()));
+    let loaded = Script::load(source).app_err("failed to parse script file");
 
     let script_output = loaded.plan(&mut ctx).app_err("script runtime error");
 

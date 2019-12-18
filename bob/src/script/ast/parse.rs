@@ -1,95 +1,122 @@
 //! AST parsing.
 
-use super::tokenize::Token;
+use super::tokenize::{Tok, Token};
 use super::*;
 use pom::parser::*;
 
 /// A parser alias.
-pub type Parser<'a, T> = pom::parser::Parser<'a, Token, T>;
+pub type Parser<'a, T> = pom::parser::Parser<'a, Tok, T>;
 
 /// Return a parser for a script.
 pub fn script<'a>() -> Parser<'a, Script> {
-    spacenl() * list(expression(None), eoe()) - spacenl()
+    spacenl() * list(expression(None), eoe()) - spacenl() - end()
 }
 
-type ExprFactory<'a> = fn() -> Parser<'a, Expression>;
+type ExprFactory<'a> = fn() -> Parser<'a, Expr>;
 
 /// A set variable expression.
-fn set_variable<'a>(inner: ExprFactory<'a>) -> Parser<'a, Expression> {
+fn set_variable<'a>(inner: ExprFactory<'a>) -> Parser<'a, Expr> {
     let parsed = word() - space() - sym(Token::Equal).discard() - space() + inner();
-    parsed.map(|(var, expr)| Expression::SetVariable(var, Box::new(expr)))
+    parsed.map(|res| {
+        res.into_source()
+            .map(|(var, expr)| Expression::SetVariable(var.into_value(), expr.into()))
+    })
 }
 
 /// An unset variable expression.
-fn unset_variable<'a>() -> Parser<'a, Expression> {
-    (word() - space() - sym(Token::Equal).discard()).map(Expression::UnsetVariable)
+fn unset_variable<'a>() -> Parser<'a, Expr> {
+    (word() - space() - sym(Token::Equal).discard()).map(|e| e.map(Expression::UnsetVariable))
 }
 
 /// A nested expression.
 ///
 /// Expressions may be nested with parentheses or the shorthand $expr.
-fn nested<'a>() -> Parser<'a, Expression> {
-    let word_nested = is_a(|t: Token| match t {
+fn nested<'a>() -> Parser<'a, Expr> {
+    let word_nested = is_a(|t: Tok| match t.as_ref() {
         Token::String(_) => true,
         Token::Colon => true,
         _ => false,
     })
     .repeat(1..)
     .convert(|e| expression(None).parse(&e));
-    let self_nested = call(|| nested()).map(|e| Expression::Command(e.into(), vec![]));
-    let none = empty().map(|_| Expression::Empty);
+    let self_nested =
+        call(|| nested()).map(|e| e.clone().with(Expression::Command(e.into(), vec![])));
 
     let paren_expr =
         sym(Token::OpenParen) * spacenl() * expression(None) - spacenl() - sym(Token::CloseParen);
-    let empty_parens = sym(Token::OpenParen) * sym(Token::CloseParen).map(|_| Expression::Empty);
-    let dollar = sym(Token::Dollar)
-        * (word_nested | array(expression(None)) | block(None) | self_nested | none);
+    let empty_parens = (sym(Token::OpenParen) + sym(Token::CloseParen))
+        .map(|res| res.into_source().with(Expression::Empty));
+    let dollar =
+        sym(Token::Dollar) * (word_nested | array(expression(None)) | block(None) | self_nested);
+    let empty_dollar = sym(Token::Dollar).map(|res: Source<_>| res.with(Expression::Empty));
 
-    paren_expr | empty_parens | dollar
+    paren_expr | empty_parens | dollar | empty_dollar
 }
 
 /// An expression in argument position (words are interpreted as strings rather than as commands).
-fn arg<'a>() -> Parser<'a, Expression> {
-    call(|| nested() | word().map(Expression::String) | array(arg()) | block(Some(|| arg())))
+fn arg<'a>() -> Parser<'a, Expr> {
+    call(|| {
+        nested() | word().map(|s| s.map(Expression::String)) | array(arg()) | block(Some(|| arg()))
+    })
 }
 
 /// A command expression.
-fn command<'a>() -> Parser<'a, Expression> {
-    (arg() + (req_space() * list(arg(), req_space())).opt())
-        .map(|(cmd, args)| Expression::Command(Box::new(cmd), args.unwrap_or(vec![])))
+fn command<'a>() -> Parser<'a, Expr> {
+    (arg() + (req_space() * list(arg(), req_space())).opt()).map(|res| {
+        res.into_source().map(|(cmd, args)| {
+            Expression::Command(
+                Box::new(cmd),
+                args.into_value().map(|e| e.into_value()).unwrap_or(vec![]),
+            )
+        })
+    })
 }
 
 /// A function expression.
-fn function<'a>() -> Parser<'a, Expression> {
+fn function<'a>() -> Parser<'a, Expr> {
     let tok = tag("fn");
-    let rest = req_space() * expression(None).map(|e| Expression::Function(Box::new(e)));
-    tok * rest.expect("fn argument")
+    let rest = req_space() * expression(None);
+    (tok + rest.expect("fn argument")).map(|res| {
+        let p: Source<_> = res.into_source();
+        p.map(|(_, e)| Expression::Function(Box::new(e)))
+    })
 }
 
 /// An if expression.
-fn if_expr<'a>() -> Parser<'a, Expression> {
+fn if_expr<'a>() -> Parser<'a, Expr> {
     let tok = tag("if");
-    let rest = (req_space() * arg() - req_space() + arg() - req_space() + arg())
-        .map(|((cond, t), f)| Expression::If(Box::new(cond), Box::new(t), Box::new(f)));
-    tok * rest.expect("if arguments")
+    let rest = req_space() * arg() - req_space() + arg() - req_space() + arg();
+    //.map(|((cond, t), f)| Expression::If(Box::new(cond), Box::new(t), Box::new(f)));
+    (tok + rest.expect("if arguments")).map(|res| {
+        let p: Source<_> = res.into_source();
+        p.map(|(_, vals)| {
+            let (condt, f) = vals.into_value();
+            let (cond, t) = condt.into_value();
+            Expression::If(cond.into(), t.into(), f.into())
+        })
+    })
 }
 
 /// An array expression.
-fn array<'a>(inner: Parser<'a, Expression>) -> Parser<'a, Expression> {
-    sym(Token::OpenBracket) * spacenl() * list(inner, eoe()).map(Expression::Array)
+fn array<'a>(inner: Parser<'a, Expr>) -> Parser<'a, Expr> {
+    sym(Token::OpenBracket)
+        * spacenl()
+        * list(inner, eoe()).map(|e| e.into_source().map(Expression::Array))
         - spacenl()
         - sym(Token::CloseBracket)
 }
 
 /// A block expression.
-fn block<'a>(inner: Option<ExprFactory<'a>>) -> Parser<'a, Expression> {
-    sym(Token::OpenCurly) * spacenl() * list(expression(inner), eoe()).map(Expression::Block)
+fn block<'a>(inner: Option<ExprFactory<'a>>) -> Parser<'a, Expr> {
+    sym(Token::OpenCurly)
+        * spacenl()
+        * list(expression(inner), eoe()).map(|e| e.into_source().map(Expression::Block))
         - spacenl()
         - sym(Token::CloseCurly)
 }
 
 /// A single expression.
-fn expression<'a>(set_expr: Option<ExprFactory<'a>>) -> Parser<'a, Expression> {
+fn expression<'a>(set_expr: Option<ExprFactory<'a>>) -> Parser<'a, Expr> {
     call(move || {
         let expr = function()
             | if_expr()
@@ -101,7 +128,9 @@ fn expression<'a>(set_expr: Option<ExprFactory<'a>>) -> Parser<'a, Expression> {
         (expr + (sym(Token::Colon) * list(word(), sym(Token::Colon))).opt()).map(|(exp, inds)| {
             let mut e = exp;
             for i in inds.unwrap_or(vec![]) {
-                e = Expression::Index(Box::new(e), i);
+                e = (e, i)
+                    .into_source()
+                    .map(|(e, i)| Expression::Index(Box::new(e), i.into_value()));
             }
             e
         })
@@ -109,11 +138,11 @@ fn expression<'a>(set_expr: Option<ExprFactory<'a>>) -> Parser<'a, Expression> {
 }
 
 /// A single string.
-fn word<'a>() -> Parser<'a, String> {
+fn word<'a>() -> Parser<'a, Source<String>> {
     Parser::new(|a, s| {
         if let Some(t) = a.get(s) {
-            if let Token::String(st) = t {
-                Ok((st.clone(), s + 1))
+            if let Token::String(st) = t.as_ref() {
+                Ok((t.clone().with(st.clone()), s + 1))
             } else {
                 Err(pom::Error::Mismatch {
                     message: format!("expected string, found {}", t),
@@ -127,9 +156,9 @@ fn word<'a>() -> Parser<'a, String> {
 }
 
 /// A string token with the given contents.
-fn tag<'a>(s: &'a str) -> Parser<'a, ()> {
+fn tag<'a>(s: &'a str) -> Parser<'a, Source<()>> {
     let tok = Token::String(s.to_string());
-    is_a(move |t: Token| t == tok).discard()
+    is_a(move |v| v == tok).map(|e: Tok| e.with(()))
 }
 
 /// A required whitespace.
@@ -161,11 +190,15 @@ mod test {
 
     type Result = pom::Result<()>;
 
+    fn src<T>(e: T) -> Source<T> {
+        Source::new(NoSource).with(e)
+    }
+
     #[test]
     fn word() -> Result {
         assert_parse(
             &[Token::String("hello".to_owned())],
-            super::word(),
+            |_| super::word(),
             "hello".to_owned(),
         )
     }
@@ -179,8 +212,8 @@ mod test {
                 Token::String("howdy".to_owned()),
             ],
             Expression::Command(
-                Box::new(Expression::String("echo".to_owned())),
-                vec![Expression::String("howdy".to_owned())],
+                Box::new(src(Expression::String("echo".to_owned()))),
+                vec![src(Expression::String("howdy".to_owned()))],
             ),
         )
     }
@@ -189,8 +222,11 @@ mod test {
     fn arg() -> Result {
         assert_parse(
             &[Dollar, Token::String("howdy".to_owned())],
-            super::arg(),
-            Expression::Command(Box::new(Expression::String("howdy".to_owned())), vec![]),
+            |_| super::arg(),
+            Expression::Command(
+                Box::new(src(Expression::String("howdy".to_owned()))),
+                vec![],
+            ),
         )?;
         assert_parse(
             &[
@@ -200,10 +236,10 @@ mod test {
                 Token::String("world".to_owned()),
                 CloseParen,
             ],
-            super::arg(),
+            |_| super::arg(),
             Expression::Command(
-                Box::new(Expression::String("hello".to_owned())),
-                vec![Expression::String("world".to_owned())],
+                Box::new(src(Expression::String("hello".to_owned()))),
+                vec![src(Expression::String("world".to_owned()))],
             ),
         )?;
         assert_parse(
@@ -216,11 +252,15 @@ mod test {
                 Token::String("ls".into()),
                 CloseCurly,
             ],
-            super::arg(),
-            Expression::Block(vec![Expression::SetVariable(
+            |_| super::arg(),
+            Expression::Block(vec![src(Expression::SetVariable(
                 "a".into(),
-                Expression::Command(Expression::String("ls".into()).into(), vec![]).into(),
-            )]),
+                src(Expression::Command(
+                    src(Expression::String("ls".into())).into(),
+                    vec![],
+                ))
+                .into(),
+            ))]),
         )?;
         assert_parse(
             &[
@@ -233,10 +273,16 @@ mod test {
                 Newline,
                 CloseBracket,
             ],
-            super::arg(),
+            |_| super::arg(),
             Expression::Array(vec![
-                Expression::Command(Expression::String("a".into()).into(), vec![]),
-                Expression::Command(Expression::String("b".into()).into(), vec![]),
+                src(Expression::Command(
+                    src(Expression::String("a".into())).into(),
+                    vec![],
+                )),
+                src(Expression::Command(
+                    src(Expression::String("b".into())).into(),
+                    vec![],
+                )),
             ]),
         )
     }
@@ -245,11 +291,11 @@ mod test {
     fn empty() -> Result {
         assert_expr(
             &[Dollar],
-            Expression::Command(Expression::Empty.into(), vec![]),
+            Expression::Command(src(Expression::Empty).into(), vec![]),
         )?;
         assert_expr(
             &[OpenParen, CloseParen],
-            Expression::Command(Expression::Empty.into(), vec![]),
+            Expression::Command(src(Expression::Empty).into(), vec![]),
         )
     }
 
@@ -258,8 +304,8 @@ mod test {
         assert_expr(
             &[Dollar, Whitespace, Token::String("hello".into())],
             Expression::Command(
-                Expression::Empty.into(),
-                vec![Expression::String("hello".into())],
+                src(Expression::Empty).into(),
+                vec![src(Expression::String("hello".into()))],
             ),
         )
     }
@@ -284,10 +330,22 @@ mod test {
                 CloseBracket,
             ],
             Expression::Array(vec![
-                Expression::Command(Expression::String("a".into()).into(), vec![]),
-                Expression::Command(Expression::String("b".into()).into(), vec![]),
-                Expression::Command(Expression::String("c".into()).into(), vec![]),
-                Expression::Command(Expression::String("d".into()).into(), vec![]),
+                src(Expression::Command(
+                    src(Expression::String("a".into())).into(),
+                    vec![],
+                )),
+                src(Expression::Command(
+                    src(Expression::String("b".into())).into(),
+                    vec![],
+                )),
+                src(Expression::Command(
+                    src(Expression::String("c".into())).into(),
+                    vec![],
+                )),
+                src(Expression::Command(
+                    src(Expression::String("d".into())).into(),
+                    vec![],
+                )),
             ]),
         )
     }
@@ -302,7 +360,11 @@ mod test {
             ],
             Expression::SetVariable(
                 "a".to_owned(),
-                Expression::Command(Expression::String("echo".to_owned()).into(), vec![]).into(),
+                src(Expression::Command(
+                    src(Expression::String("echo".to_owned())).into(),
+                    vec![],
+                ))
+                .into(),
             ),
         )
     }
@@ -336,15 +398,21 @@ mod test {
                 Token::CloseCurly,
             ],
             Expression::Block(vec![
-                Expression::Command(Box::new(Expression::String("a".to_owned())), vec![]),
-                Expression::Command(Box::new(Expression::String("b".to_owned())), vec![]),
-                Expression::SetVariable(
+                src(Expression::Command(
+                    Box::new(src(Expression::String("a".to_owned()))),
+                    vec![],
+                )),
+                src(Expression::Command(
+                    Box::new(src(Expression::String("b".to_owned()))),
+                    vec![],
+                )),
+                src(Expression::SetVariable(
                     "c".to_owned(),
-                    Box::new(Expression::Command(
-                        Box::new(Expression::String("echo".to_owned())),
+                    Box::new(src(Expression::Command(
+                        Box::new(src(Expression::String("echo".to_owned()))),
                         vec![],
-                    )),
-                ),
+                    ))),
+                )),
             ]),
         )
     }
@@ -357,10 +425,10 @@ mod test {
                 Token::Whitespace,
                 Token::String("howdy".to_owned()),
             ],
-            Expression::Function(Box::new(Expression::Command(
-                Box::new(Expression::String("howdy".to_owned())),
+            Expression::Function(Box::new(src(Expression::Command(
+                Box::new(src(Expression::String("howdy".to_owned()))),
                 vec![],
-            ))),
+            )))),
         )
     }
 
@@ -380,18 +448,18 @@ mod test {
                 Token::String("c".to_owned()),
             ],
             Expression::If(
-                Box::new(Expression::Command(
-                    Box::new(Expression::String("a".to_owned())),
+                Box::new(src(Expression::Command(
+                    Box::new(src(Expression::String("a".to_owned()))),
                     vec![],
-                )),
-                Box::new(Expression::Command(
-                    Box::new(Expression::String("b".to_owned())),
+                ))),
+                Box::new(src(Expression::Command(
+                    Box::new(src(Expression::String("b".to_owned()))),
                     vec![],
-                )),
-                Box::new(Expression::Command(
-                    Box::new(Expression::String("c".to_owned())),
+                ))),
+                Box::new(src(Expression::Command(
+                    Box::new(src(Expression::String("c".to_owned()))),
                     vec![],
-                )),
+                ))),
             ),
         )
     }
@@ -405,10 +473,10 @@ mod test {
                 Token::String("a".to_owned()),
             ],
             Expression::Index(
-                Box::new(Expression::Command(
-                    Box::new(Expression::String("hi".to_owned())),
+                Box::new(src(Expression::Command(
+                    Box::new(src(Expression::String("hi".to_owned()))),
                     vec![],
-                )),
+                ))),
                 "a".to_owned(),
             ),
         )?;
@@ -421,10 +489,14 @@ mod test {
                 Token::String("b".to_owned()),
             ],
             Expression::Index(
-                Expression::Index(
-                    Expression::Command(Expression::String("hi".into()).into(), vec![]).into(),
+                src(Expression::Index(
+                    src(Expression::Command(
+                        src(Expression::String("hi".into())).into(),
+                        vec![],
+                    ))
+                    .into(),
                     "a".into(),
-                )
+                ))
                 .into(),
                 "b".into(),
             ),
@@ -432,15 +504,17 @@ mod test {
     }
 
     fn assert_expr(s: &[Token], expected: Expression) -> Result {
-        assert_parse(s, expression(None), expected)
+        assert_parse(s, |_| expression(None), expected)
     }
 
-    fn assert_parse<'a, T: PartialEq + std::fmt::Debug>(
-        s: &'a [Token],
-        parser: Parser<'a, T>,
-        expected: T,
+    fn assert_parse<T: PartialEq<I> + std::fmt::Debug, I>(
+        s: &[Token],
+        parser: impl for<'a> FnOnce(std::marker::PhantomData<&'a ()>) -> Parser<'a, T>,
+        expected: I,
     ) -> Result {
-        let r = parser.parse(s)?;
+        let src = Source::new(NoSource);
+        let toks: Vec<_> = s.into_iter().cloned().map(|tok| src.clone().with(tok)).collect();
+        let r = parser(std::marker::PhantomData).parse(&toks)?;
         dbg!(&r);
         assert!(r == expected);
         Ok(())

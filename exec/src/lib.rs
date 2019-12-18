@@ -3,7 +3,6 @@ use grease::{
     TypedValue,
 };
 use std::collections::BTreeMap;
-use std::collections::HashMap;
 use std::convert::TryInto;
 use std::fs::File;
 use std::io::Write;
@@ -45,7 +44,7 @@ impl From<&Argument> for grease::Dependency {
 pub struct Config {
     command: String,
     pub arguments: Vec<Argument>,
-    pub env: HashMap<String, Option<Argument>>,
+    pub env: BTreeMap<String, Option<Argument>>,
     pub stdin: Option<Argument>,
     produced_files: usize,
 }
@@ -116,9 +115,16 @@ impl Plan for Config {
             })
             .collect();
 
+        let env_deps: Vec<grease::Dependency> = env.iter().map(|(k,v)| {
+            vec![k.into(),match v {
+                None => (&57023u128).into(),
+                Some(v) => v.into()
+            }]
+        }).flatten().collect();
+
         // Create dependencies
         let mut deps = Dependencies::ordered(depends![join & args])
-            + Dependencies::unordered(depends![join depends![name],&env_values]);
+            + Dependencies::unordered(depends![join depends![name],&env_deps]);
         if let Some(v) = &input {
             if let Some(v) = v.as_value() {
                 deps = deps + Dependencies::unordered(depends![v]);

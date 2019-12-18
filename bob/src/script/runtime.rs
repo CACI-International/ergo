@@ -1,6 +1,6 @@
 //! Script runtime definitions.
 
-use super::ast::Expression;
+use super::ast::{Expression, Source};
 use grease::{GetValueType, Plan, Value};
 use std::collections::HashMap;
 use std::fmt;
@@ -118,11 +118,36 @@ impl Future for Data {
     }
 }
 
-type Builtin = dyn Fn(&mut grease::Context<FunctionContext>) -> Result<Data, String> + Send + Sync;
+#[derive(Debug)]
+pub enum FunctionError {
+    Err(String),
+    Nested(Source<Error>),
+}
+
+impl From<&'_ str> for FunctionError {
+    fn from(s: &str) -> Self {
+        FunctionError::Err(s.to_owned())
+    }
+}
+
+impl From<String> for FunctionError {
+    fn from(s: String) -> Self {
+        FunctionError::Err(s)
+    }
+}
+
+impl From<Source<Error>> for FunctionError {
+    fn from(e: Source<Error>) -> Self {
+        FunctionError::Nested(e)
+    }
+}
+
+type Builtin =
+    dyn Fn(&mut grease::Context<FunctionContext>) -> Result<Data, FunctionError> + Send + Sync;
 
 /// A function value.
 pub enum DataFunction {
-    UserFunction(Expression),
+    UserFunction(Source<Expression>),
     BuiltinFunction(Box<Builtin>),
 }
 
@@ -213,6 +238,7 @@ impl grease::SplitInto<Context> for FunctionContext {
 }
 
 /// Script runtime errors.
+#[derive(Debug)]
 pub enum Error {
     /// An integer index (for arrays) was expected.
     NonIntegerIndex,
@@ -247,7 +273,7 @@ impl fmt::Display for Error {
 }
 
 impl Plan<FunctionContext> for std::sync::Arc<DataFunction> {
-    type Output = Result<Data, Error>;
+    type Output = Result<Data, FunctionError>;
 
     fn plan(self, ctx: &mut grease::Context<FunctionContext>) -> Self::Output {
         match self.as_ref() {
@@ -260,43 +286,46 @@ impl Plan<FunctionContext> for std::sync::Arc<DataFunction> {
                 ctx.inner.env_insert("@".to_owned(), Data::Array(args));
                 let v = e.clone().plan_split(ctx);
                 ctx.inner.env.pop();
-                v
+                v.map_err(FunctionError::Nested)
             }
-            DataFunction::BuiltinFunction(f) => f(ctx).map_err(Error::FunctionError),
+            DataFunction::BuiltinFunction(f) => f(ctx),
         }
     }
 }
 
-impl Plan<Context> for Expression {
-    type Output = Result<Data, Error>;
+impl Plan<Context> for Source<Expression> {
+    type Output = Result<Data, Source<Error>>;
 
     fn plan(self, ctx: &mut grease::Context<Context>) -> Self::Output {
-        match self {
-            Self::Empty => Ok(Data::Unit),
-            Self::String(s) => Ok(Data::String(s.clone())),
-            Self::Array(es) => Ok(Data::Array(
+        use Expression::*;
+        let (source, expr) = self.take();
+        match expr {
+            Empty => Ok(Data::Unit),
+            Expression::String(s) => Ok(Data::String(s.clone())),
+            Array(es) => Ok(Data::Array(
                 es.into_iter()
                     .map(|e| e.plan(ctx))
                     .collect::<Result<Vec<_>, _>>()?,
             )),
-            Self::SetVariable(var, e) => {
+            SetVariable(var, e) => {
                 let data = e.plan(ctx)?;
                 ctx.inner.env_insert(var.clone(), data);
                 Ok(Data::Unit)
             }
-            Self::UnsetVariable(var) => {
+            UnsetVariable(var) => {
                 ctx.inner.env_remove(&var);
                 Ok(Data::Unit)
             }
-            Self::Index(e, i) => match e.plan(ctx)? {
-                Data::Array(v) => {
-                    let ind = usize::from_str(&i).map_err(|_| Error::NonIntegerIndex)?;
-                    v.get(ind).cloned().ok_or(Error::MissingIndex)
-                }
-                Data::Map(v) => v.get(&i).cloned().ok_or(Error::MissingIndex),
-                _ => Err(Error::InvalidIndex),
+            Index(e, i) => match e.plan(ctx)? {
+                Data::Array(v) => match usize::from_str(&i) {
+                    Err(_) => Err(source.with(Error::NonIntegerIndex)),
+                    Ok(ind) => v.get(ind).cloned().ok_or(source.with(Error::MissingIndex)),
+                },
+                Data::Map(v) => v.get(&i).cloned().ok_or(source.with(Error::MissingIndex)),
+                _ => Err(source.with(Error::InvalidIndex)),
             },
-            Self::Command(cmd, mut args) => {
+            Command(cmd, mut args) => {
+                let cmdsource = cmd.clone().with(());
                 match cmd.plan(ctx)? {
                     Data::String(s) => {
                         // Lookup string in environment, and apply result to remaining arguments
@@ -304,8 +333,11 @@ impl Plan<Context> for Expression {
                             Some(data) => (data, args),
                             None => {
                                 // Fall back to 'exec' command.
-                                let exec = ctx.inner.env_get("exec").ok_or(Error::ExecMissing)?;
-                                args.insert(0, Expression::String(s));
+                                let exec = match ctx.inner.env_get("exec") {
+                                    Some(v) => v,
+                                    None => return Err(source.with(Error::ExecMissing)),
+                                };
+                                args.insert(0, cmdsource.with(Expression::String(s)));
                                 (exec, args)
                             }
                         };
@@ -318,11 +350,19 @@ impl Plan<Context> for Expression {
                                     args.into_iter()
                                         .map(|a| a.plan(ctx))
                                         .collect::<Result<Vec<_>, _>>()?;
-                                f.plan_join(ctx, args)
+                                match f.plan_join(ctx, args) {
+                                    Err(e) => match e {
+                                        FunctionError::Err(e) => {
+                                            Err(source.with(Error::FunctionError(e)))
+                                        }
+                                        FunctionError::Nested(e) => Err(e),
+                                    },
+                                    Ok(r) => Ok(r),
+                                }
                             }
                             v => {
                                 if has_args {
-                                    Err(Error::NonCallableExpression(v))
+                                    Err(source.with(Error::NonCallableExpression(v)))
                                 } else {
                                     Ok(v)
                                 }
@@ -334,7 +374,7 @@ impl Plan<Context> for Expression {
                         let mut args = args.into_iter();
                         if let Some(v) = args.next() {
                             if args.next().is_some() {
-                                Err(Error::UnitTooManyArguments)
+                                Err(source.with(Error::UnitTooManyArguments))
                             } else {
                                 v.plan(ctx)
                             }
@@ -345,9 +385,9 @@ impl Plan<Context> for Expression {
                     d => Ok(d),
                 }
             }
-            Self::Block(es) => es.plan(ctx),
-            Self::Function(e) => Ok(Data::Function(DataFunction::UserFunction(*e).into())),
-            Self::If(cond, t, f) => {
+            Block(es) => es.plan(ctx),
+            Function(e) => Ok(Data::Function(DataFunction::UserFunction(*e).into())),
+            If(cond, t, f) => {
                 let cond = cond.plan(ctx)?;
                 if (&cond).into() {
                     t.plan(ctx)
@@ -359,8 +399,8 @@ impl Plan<Context> for Expression {
     }
 }
 
-impl Plan<Context> for Vec<Expression> {
-    type Output = Result<Data, Error>;
+impl Plan<Context> for Vec<Source<Expression>> {
+    type Output = Result<Data, Source<Error>>;
 
     fn plan(self, ctx: &mut grease::Context<Context>) -> Self::Output {
         // Push a new scope

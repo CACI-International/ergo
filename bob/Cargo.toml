@@ -12,7 +12,7 @@ exec = { path = "../exec" }
 futures = "^0.3"
 grease = { path = "../grease" }
 log = "^0.4"
-pom = { git = "https://github.com/J-F-Liu/pom" }
+pom = { git = "https://github.com/afranchuk/pom", rev = "d56552b2b9b54a833e7afc1543d9dd26c338b2f5" }
 rand = "^0.7"
 serde = { version = "^1", features = ["derive"] }
 simplelog = "^0.7"
