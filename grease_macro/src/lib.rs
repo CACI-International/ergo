@@ -144,12 +144,50 @@ pub fn derive_get_value_type(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
 
     let name = input.ident;
+    let params = input.generics.params;
+    let param_reqs = params.clone().into_iter().map(|mut p| {
+        if let syn::GenericParam::Type(ref mut tp) = &mut p {
+            tp.bounds.push(parse_quote! {
+                    ::grease::GetValueType
+            });
+        }
+        p
+    });
+    let param_args = params.clone().into_iter().map(|e| match e {
+        syn::GenericParam::Type(tp) => {
+            let ident = tp.ident;
+            quote!(#ident)
+        }
+        syn::GenericParam::Lifetime(lt) => {
+            let lifetime = lt.lifetime;
+            quote!(#lifetime)
+        }
+        syn::GenericParam::Const(c) => {
+            let ident = c.ident;
+            quote!(#ident)
+        }
+    });
+    let set_data = params.into_iter().filter_map(|e| match e {
+        syn::GenericParam::Type(tp) => {
+            let ident = tp.ident;
+            Some(quote! {
+                {
+                    let tp = #ident::value_type();
+                    data.extend(tp.id.as_bytes());
+                    data.extend(tp.data);
+                }
+            })
+        }
+        _ => None,
+    });
     let namestr = syn::LitStr::new(&format!("{}", name), name.span());
 
     let expanded = quote! {
-        impl ::grease::GetValueType for #name {
+        impl<#(#param_reqs),*> ::grease::GetValueType for #name<#(#param_args),*> {
             fn value_type() -> ::grease::ValueType {
-                ::grease::ValueType::new(::grease::type_uuid(concat![module_path!(), "::", #namestr].as_bytes()))
+                let mut data = Vec::new();
+                #(#set_data)*
+                ::grease::ValueType::with_data(::grease::type_uuid(concat![module_path!(), "::", #namestr].as_bytes()), data)
             }
         }
     };
