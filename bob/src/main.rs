@@ -56,13 +56,21 @@ fn main() {
     let args: Vec<_> = std::env::args().collect();
 
     TermLogger::init(
-        simplelog::LevelFilter::Warn,
+        if cfg!(debug_assertions) {
+            simplelog::LevelFilter::Trace
+        } else {
+            simplelog::LevelFilter::Warn
+        },
         simplelog::Config::default(),
         simplelog::TerminalMode::Stderr,
     )
     .unwrap();
 
-    let logger = logger_ref(Output::default());
+    let mut output = Output::default();
+    if cfg!(debug_assertions) {
+        output.set_log_level(LogLevel::Debug);
+    }
+    let logger = logger_ref(output);
 
     // Create build context
     let mut ctx = script::script_context(
@@ -89,8 +97,11 @@ fn main() {
         .map(|strs| strs.iter().map(|s| s.as_ref()).collect())
         .and_then(|ps: Vec<&str>| if ps.is_empty() { None } else { Some(ps) });
 
-    let result = match (params, script_output) {
-        (Some(params), script::Data::Map(mut m)) => {
+    let result = match script_output {
+        script::Data::Map(mut m) if params.is_some() || m.contains_key("*") => {
+            let mut params = params.unwrap_or(vec!["*"]);
+            params.sort_unstable();
+            params.dedup();
             // Get all data values based on parameters
             let vals = params
                 .into_iter()
@@ -98,13 +109,17 @@ fn main() {
                 .collect::<Result<Vec<_>, _>>()
                 .app_err("target not found");
 
+            // Drop map to get rid of any unnecessary values. Their presence or absence may affect
+            // value behavior.
+            drop(m);
+
             // Force outputs from parameters
             futures::executor::block_on(futures::future::join_all(vals))
                 .into_iter()
                 .collect::<Result<Vec<_>, _>>()
                 .map(|_| ())
         }
-        (params, v) => {
+        v => {
             params.is_none().app_err(
                 "cannot specify additional parameters unless the script evaluates to a map",
             );

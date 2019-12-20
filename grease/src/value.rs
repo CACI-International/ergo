@@ -466,6 +466,14 @@ impl<T: GetValueType> TypedValue<T> {
     }
 }
 
+impl<T> From<T> for TypedValue<T>
+where T: GetValueType + Hash + Send + 'static
+{
+    fn from(v: T) -> Self {
+        TypedValue::constant(v)
+    }
+}
+
 // Value is Send (as it is just pointers to Sync values), so TypedValue should be Send as well.
 unsafe impl<T> Send for TypedValue<T> {}
 

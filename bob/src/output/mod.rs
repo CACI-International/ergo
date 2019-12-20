@@ -23,6 +23,10 @@ impl Output {
     }
 
     fn print_thread_status(&mut self) {
+        if !self.out.is_tty() {
+            return;
+        }
+
         self.out.fg(term::color::YELLOW).unwrap();
         // Assumes thread_mapping remains the same for order consistency
         for (i, v) in self.thread_mapping.values().enumerate() {
@@ -66,11 +70,14 @@ impl Output {
         self.out.reset().unwrap();
     }
 
-    pub fn set_thread_ids<I: IntoIterator<Item = std::thread::ThreadId>>(&mut self, i: I)
-    {
+    pub fn set_thread_ids<I: IntoIterator<Item = std::thread::ThreadId>>(&mut self, i: I) {
         for id in i {
             self.thread_mapping.insert(id, None);
         }
+    }
+
+    pub fn set_log_level(&mut self, log_level: LogLevel) {
+        self.log_level = log_level;
     }
 
     pub fn clear_status(&mut self) {
