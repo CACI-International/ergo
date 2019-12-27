@@ -6,12 +6,14 @@ mod command;
 mod log;
 mod store;
 mod task_manager;
+mod traits;
 
 use self::log::EmptyLogTarget;
 pub use self::log::{logger_ref, Log, LogEntry, LogLevel, LogTarget, LoggerRef};
 pub use command::Commands;
 pub use store::{Item, ItemContent, ItemName, Store};
 pub use task_manager::TaskManager;
+pub use traits::{TraitGenerator, Traits};
 
 trait CallMut {
     fn call_mut<O, F>(&mut self, f: F) -> O
@@ -80,6 +82,7 @@ where
                 cmd: self.cmd,
                 log: self.log,
                 store: self.store,
+                traits: self.traits,
                 inner: o,
             },
             e,
@@ -92,6 +95,7 @@ where
             cmd: c.cmd,
             log: c.log,
             store: c.store,
+            traits: c.traits,
             inner: T::join(c.inner, e),
         }
     }
@@ -158,6 +162,8 @@ pub struct Context<Inner = ()> {
     pub log: Log,
     /// The storage interface.
     pub store: Store,
+    /// The traits interface.
+    pub traits: Traits,
     /// An inner context type.
     pub inner: Inner,
 }
@@ -222,6 +228,7 @@ impl ContextBuilder {
             cmd: Commands::new(),
             log: Log::new(self.logger.unwrap_or_else(|| logger_ref(EmptyLogTarget))),
             store: Store::new(self.store_dir.unwrap_or(std::env::temp_dir())),
+            traits: Traits::new(),
             inner,
         })
     }

@@ -11,6 +11,7 @@ use proc_macro_hack::proc_macro_hack;
 
 mod prelude;
 mod runtime;
+mod traits;
 mod uuid;
 mod value;
 
@@ -19,7 +20,7 @@ pub use futures::future;
 pub use futures::future::{FutureExt, TryFutureExt};
 pub use ::uuid::Uuid;
 
-pub use self::{runtime::*, uuid::*, value::*};
+pub use self::{runtime::*, uuid::*, value::*, traits::*};
 
 /// Create a literal item name.
 ///

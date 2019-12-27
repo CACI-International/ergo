@@ -16,6 +16,10 @@ pub struct Commands {
     cmds: Arc<Mutex<BTreeMap<OsString, Option<PathBuf>>>>,
 }
 
+#[derive(Debug, Default, Clone)]
+#[non_exhaustive]
+pub struct UntrackedCommands;
+
 impl fmt::Display for Commands {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         for (ref k, ref v) in self.cmds.lock().unwrap().iter() {
@@ -61,6 +65,8 @@ impl Commands {
     ///
     /// The command environment is cleared, so required environment variables should be explicitly
     /// added.
+    ///
+    /// The dependency on the command is recorded.
     pub fn create<S: AsRef<OsStr>>(&mut self, program: S) -> Command {
         let s = program.as_ref().to_owned();
         let mut guard = self.cmds.lock().unwrap();
@@ -76,6 +82,25 @@ impl Commands {
         );
 
         let mut cmd = Command::new(progpath);
+        cmd.env_clear();
+        cmd
+    }
+
+    /// Return a command builder that does not track used commands.
+    ///
+    /// Such a builder can only be used for explicit paths.
+    pub fn untracked(&mut self) -> UntrackedCommands {
+        UntrackedCommands
+    }
+}
+
+impl UntrackedCommands {
+    /// Make a Command suitable for launching an external application.
+    ///
+    /// The command environment is cleared, so required environment variables should be explicitly
+    /// added.
+    pub fn create<S: AsRef<Path>>(&mut self, program: S) -> Command {
+        let mut cmd = Command::new(program.as_ref());
         cmd.env_clear();
         cmd
     }

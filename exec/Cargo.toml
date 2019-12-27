@@ -8,3 +8,4 @@ edition = "2018"
 
 [dependencies]
 grease = { path = "../grease" }
+os_str_bytes = "0.3"

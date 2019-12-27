@@ -1,29 +1,165 @@
 use grease::{
-    channel, depends, future, item_name, make_value, Context, Dependencies, ItemName, Plan,
-    TypedValue,
+    channel, depends, future, item_name, make_value, Context, Dependencies, GetValueType, ItemName,
+    Plan, TraitImpl, TypedValue, ValueType,
 };
+use os_str_bytes::OsStringBytes;
 use std::collections::BTreeMap;
 use std::convert::TryInto;
-use std::fs::File;
-use std::io::Write;
+use std::ffi::{OsStr, OsString};
+use std::hash::Hash;
+use std::io::{Read, Write};
 use std::path::PathBuf;
+
+#[derive(Clone, Debug, GetValueType, Hash)]
+pub struct CommandString(OsString);
+
+impl<T: Into<OsString>> From<T> for CommandString {
+    fn from(v: T) -> Self {
+        CommandString(v.into())
+    }
+}
+
+impl AsRef<OsStr> for CommandString {
+    fn as_ref(&self) -> &OsStr {
+        &self.0
+    }
+}
+
+#[derive(Clone, Debug, GetValueType, Hash)]
+pub struct StdinString(OsString);
+
+impl<T: Into<OsString>> From<T> for StdinString {
+    fn from(v: T) -> Self {
+        StdinString(v.into())
+    }
+}
+
+impl AsRef<OsStr> for StdinString {
+    fn as_ref(&self) -> &OsStr {
+        &self.0
+    }
+}
+
+pub fn trait_generator(v: std::sync::Arc<ValueType>) -> Vec<TraitImpl> {
+    if *v == String::value_type() {
+        vec![
+            grease::impl_into::<String, CommandString>().into(),
+            grease::impl_into::<String, StdinString>().into(),
+        ]
+    } else if *v == PathBuf::value_type() {
+        vec![
+            grease::impl_into::<PathBuf, CommandString>().into(),
+            grease::IntoTrait {
+                into: |v| {
+                    v.typed::<PathBuf>().unwrap().map(|path| {
+                        let mut v = Vec::new();
+                        std::fs::File::open(path)
+                            .map_err(|e| e.to_string())?
+                            .read_to_end(&mut v)
+                            .map_err(|e| e.to_string())?;
+                        OsString::from_vec(v)
+                            .map(StdinString::from)
+                            .map_err(|e| e.to_string())
+                    })
+                },
+            }
+            .into(),
+        ]
+    } else if *v == Vec::<u8>::value_type() {
+        vec![
+            grease::IntoTrait {
+                into: |v| {
+                    v.typed::<Vec<u8>>().unwrap().map(|vec| {
+                        OsString::from_bytes(vec)
+                            .map(CommandString::from)
+                            .map_err(|e| e.to_string())
+                    })
+                },
+            }
+            .into(),
+            grease::IntoTrait {
+                into: |v| {
+                    v.typed::<Vec<u8>>().unwrap().map(|vec| {
+                        OsString::from_bytes(vec)
+                            .map(StdinString::from)
+                            .map_err(|e| e.to_string())
+                    })
+                },
+            }
+            .into(),
+        ]
+    } else {
+        vec![]
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum SomeValue<T> {
+    Immediate(T),
+    Delayed(TypedValue<T>),
+}
+
+impl<T> From<T> for SomeValue<T> {
+    fn from(v: T) -> Self {
+        Self::Immediate(v)
+    }
+}
+
+impl<T> From<TypedValue<T>> for SomeValue<T> {
+    fn from(v: TypedValue<T>) -> Self {
+        Self::Delayed(v)
+    }
+}
+
+impl<T: Clone> From<&'_ TypedValue<T>> for SomeValue<T> {
+    fn from(v: &TypedValue<T>) -> Self {
+        Self::Delayed(v.clone())
+    }
+}
+
+impl<T> SomeValue<T> {
+    pub fn dependency<'a>(&'a self) -> grease::Dependency
+    where
+        &'a T: Into<grease::Dependency>,
+    {
+        match self {
+            SomeValue::Immediate(v) => v.into(),
+            SomeValue::Delayed(v) => v.into(),
+        }
+    }
+
+    pub fn from<U: Into<T>>(v: U) -> Self {
+        Self::Immediate(v.into())
+    }
+}
 
 #[derive(Clone, Debug)]
 pub enum Argument {
-    String(String),
-    OutputString(TypedValue<String>),
-    File(PathBuf),
-    OutputFile(TypedValue<PathBuf>),
-    ProducedFile { id: usize },
+    Arg(SomeValue<CommandString>),
+    ProducedPath { id: usize },
 }
 
-impl Argument {
-    pub fn as_value(&self) -> Option<grease::Value> {
-        match self {
-            Self::OutputString(s) => Some(s.clone().into()),
-            Self::OutputFile(s) => Some(s.clone().into()),
-            _ => None,
-        }
+impl From<TypedValue<CommandString>> for Argument {
+    fn from(v: TypedValue<CommandString>) -> Self {
+        Argument::Arg(SomeValue::Delayed(v))
+    }
+}
+
+impl From<CommandString> for Argument {
+    fn from(v: CommandString) -> Self {
+        Argument::Arg(SomeValue::Immediate(v))
+    }
+}
+
+impl From<&str> for Argument {
+    fn from(v: &str) -> Self {
+        Self::from(CommandString::from(v))
+    }
+}
+
+impl From<&OsStr> for Argument {
+    fn from(v: &OsStr) -> Self {
+        Self::from(CommandString::from(v))
     }
 }
 
@@ -31,48 +167,62 @@ impl From<&Argument> for grease::Dependency {
     fn from(a: &Argument) -> Self {
         use Argument::*;
         match a {
-            String(s) => s.into(),
-            OutputString(v) => v.into(),
-            File(p) => p.into(),
-            OutputFile(v) => v.into(),
-            ProducedFile { .. } => (&1238479745234347u128).into(),
+            Arg(v) => v.dependency(),
+            ProducedPath { .. } => (&1238479745234347u128).into(),
         }
+    }
+}
+
+impl From<&'_ str> for SomeValue<CommandString> {
+    fn from(v: &str) -> Self {
+        Self::from(CommandString::from(v))
     }
 }
 
 #[derive(Debug)]
 pub struct Config {
-    command: String,
+    command: SomeValue<CommandString>,
     pub arguments: Vec<Argument>,
-    pub env: BTreeMap<String, Option<Argument>>,
-    pub stdin: Option<Argument>,
-    produced_files: usize,
+    pub env: BTreeMap<String, Option<SomeValue<CommandString>>>,
+    pub stdin: Option<SomeValue<StdinString>>,
+    pub dir: Option<SomeValue<PathBuf>>,
+    produced_paths: usize,
 }
 
 pub struct ExecResult {
-    pub output_files: Vec<TypedValue<PathBuf>>,
+    pub output_paths: Vec<TypedValue<PathBuf>>,
     pub stdout: TypedValue<Vec<u8>>,
     pub stderr: TypedValue<Vec<u8>>,
     pub exit_status: TypedValue<std::process::ExitStatus>,
 }
 
 impl Config {
-    pub fn new<T: Into<String>>(command: T) -> Self {
+    pub fn new<T: Into<SomeValue<CommandString>>>(command: T) -> Self {
         Config {
             arguments: Default::default(),
             env: Default::default(),
             stdin: None,
+            dir: None,
             command: command.into(),
-            produced_files: 0,
+            produced_paths: 0,
         }
     }
 
-    pub fn file(&mut self) -> Argument {
-        let ret = Argument::ProducedFile {
-            id: self.produced_files,
+    pub fn push_arg<T: Into<Argument>>(&mut self, v: T) {
+        self.arguments.push(v.into())
+    }
+
+    pub fn path(&mut self) -> Argument {
+        let ret = Argument::ProducedPath {
+            id: self.produced_paths,
         };
-        self.produced_files += 1;
+        self.produced_paths += 1;
         ret
+    }
+
+    pub fn push_path(&mut self) {
+        let p = self.path();
+        self.arguments.push(p);
     }
 }
 
@@ -82,22 +232,25 @@ impl Plan for Config {
     fn plan(self, ctx: &mut Context) -> Self::Output {
         // Move and rebind for convenience
         let args = self.arguments;
-        let name = self.command;
+        let command = self.command;
         let env: Vec<_> = self.env.into_iter().collect();
 
         // Create values from the context for use later
-        let mut cmd = ctx.cmd.create(&name);
+        let command_dep = command.dependency();
+        let cmd = match command {
+            SomeValue::Immediate(v) => Ok((v.0.to_owned(), ctx.cmd.create(&v.0))),
+            SomeValue::Delayed(v) => Err(v),
+        };
         let log = ctx.log.sublog("exec");
         let tsk = ctx.task.clone();
         let store = ctx.store.item(item_name!("exec"));
+        let mut cmd_untracked = ctx.cmd.untracked();
 
         // Get Values out of arguments to access later
-        let mut str_values = Vec::new();
-        let mut file_values = Vec::new();
+        let mut arg_values = Vec::new();
         for a in &args {
             match a {
-                Argument::OutputString(v) => str_values.push(v.clone()),
-                Argument::OutputFile(v) => file_values.push(v.clone()),
+                Argument::Arg(SomeValue::Delayed(v)) => arg_values.push(v.clone()),
                 _ => (),
             }
         }
@@ -107,7 +260,7 @@ impl Plan for Config {
         let env_values: Vec<_> = env
             .iter()
             .filter_map(|(_, v)| {
-                if let Some(Argument::OutputString(v)) = v {
+                if let Some(SomeValue::Delayed(v)) = v {
                     Some(v.clone())
                 } else {
                     None
@@ -115,20 +268,25 @@ impl Plan for Config {
             })
             .collect();
 
-        let env_deps: Vec<grease::Dependency> = env.iter().map(|(k,v)| {
-            vec![k.into(),match v {
-                None => (&57023u128).into(),
-                Some(v) => v.into()
-            }]
-        }).flatten().collect();
+        let env_deps: Vec<grease::Dependency> = env
+            .iter()
+            .map(|(k, v)| {
+                vec![
+                    k.into(),
+                    match v {
+                        None => (&57023u128).into(),
+                        Some(v) => v.dependency(),
+                    },
+                ]
+            })
+            .flatten()
+            .collect();
 
         // Create dependencies
-        let mut deps = Dependencies::ordered(depends![join & args])
-            + Dependencies::unordered(depends![join depends![name],&env_deps]);
-        if let Some(v) = &input {
-            if let Some(v) = v.as_value() {
-                deps = deps + Dependencies::unordered(depends![v]);
-            }
+        let mut deps = Dependencies::ordered(&args)
+            + Dependencies::unordered(depends![join vec![command_dep],&env_deps]);
+        if let Some(SomeValue::Delayed(v)) = &input {
+            deps = deps + Dependencies::unordered(vec![v]);
         }
 
         // Get value id from dependencies and use it as part of the item output path
@@ -139,13 +297,13 @@ impl Plan for Config {
         let mut files: BTreeMap<usize, grease::Item> = Default::default();
         for a in &args {
             match a {
-                Argument::ProducedFile { id } => {
+                Argument::Arg(_) => (),
+                Argument::ProducedPath { id } => {
                     let s = format!("{}", id);
                     let item_name: &ItemName =
                         s.as_str().try_into().map_err(|e: &str| e.to_owned())?;
                     files.entry(*id).or_insert_with(|| store.item(item_name));
                 }
-                _ => (),
             }
         }
         let filesmap = files.clone();
@@ -156,35 +314,38 @@ impl Plan for Config {
         let (send_status, rcv_status) = channel::oneshot::channel();
 
         let run_command = make_value!([^deps] {
-            let mut work = log.work(&name);
+            let name = match &cmd {
+                Ok((n,_)) => (*n).clone(),
+                Err(v) => format!("cmd{}", v.id()).into()
+            };
+            let mut work = log.work(name.to_string_lossy());
             tsk.spawn(async move {
+                let (name, mut cmd) = match cmd {
+                    Ok(v) => v,
+                    Err(v) => {
+                        let v = v.await?;
+                        (v.0.to_owned(),cmd_untracked.create(&v.0))
+                    }
+                };
+
                 // Force futures
-                let (strs,files,envs) = future::try_join3(future::try_join_all(str_values),future::try_join_all(file_values),future::try_join_all(env_values)).await?;
+                // TODO combine with prior await
+                let (arg_vs,envs) = future::try_join(future::try_join_all(arg_values),future::try_join_all(env_values)).await?;
 
                 // Set arguments
-                let mut str_iter = strs.iter();
-                let mut file_iter = files.iter();
+                let mut arg_iter = arg_vs.into_iter();
                 for a in args {
                     match a {
-                        Argument::String(s) => {
+                        Argument::Arg(SomeValue::Immediate(s)) => {
                             cmd.arg(s);
-                        }
-                        Argument::OutputString(_) => {
-                            let s = str_iter.next().unwrap();
-                            let p: &str = s.as_ref();
-                            cmd.arg(p);
-                        }
-                        Argument::File(p) => {
-                            cmd.arg(p);
-                        }
-                        Argument::OutputFile(_) => {
-                            let s = file_iter.next().unwrap();
-                            let p: &std::path::Path = s.as_ref();
-                            cmd.arg(p);
-                        }
-                        Argument::ProducedFile { id } => {
+                        },
+                        Argument::Arg(SomeValue::Delayed(_)) => {
+                            let v = arg_iter.next().unwrap();
+                            cmd.arg(v.as_ref());
+                        },
+                        Argument::ProducedPath { id } => {
                             cmd.arg(filesmap.get(&id).unwrap().path());
-                        }
+                        },
                     }
                 }
 
@@ -192,26 +353,14 @@ impl Plan for Config {
                 use std::process::Stdio;
                 let input_str = if let Some(input_arg) = input {
                     match input_arg {
-                        Argument::String(s) => {
+                        SomeValue::Immediate(s) => {
                             cmd.stdin(Stdio::piped());
                             Some(s)
                         },
-                        Argument::OutputString(o) => {
+                        SomeValue::Delayed(o) => {
                             let s = o.await?;
                             cmd.stdin(Stdio::piped());
                             Some(s.clone())
-                        },
-                        Argument::File(p) => {
-                            cmd.stdin(Stdio::from(File::open(p).map_err(|e| format!("failed to open file: {}", e))?));
-                            None
-                        },
-                        Argument::OutputFile(o) => {
-                            let p = o.await?;
-                            cmd.stdin(Stdio::from(File::open(p.clone()).map_err(|e| format!("failed to open file: {}", e))?));
-                            None
-                        }
-                        Argument::ProducedFile {id} => {
-                            return Err("cannot use an output file as process input".to_owned());
                         }
                     }
                 } else { None };
@@ -227,25 +376,25 @@ impl Plan for Config {
                                 cmd.env(k,v);
                             }
                         }
-                        Some(Argument::String(s)) => {
+                        Some(SomeValue::Immediate(s)) => {
                             cmd.env(k,s);
                         },
-                        Some(Argument::OutputString(_)) => {
+                        Some(SomeValue::Delayed(_)) => {
                             cmd.env(k,&*env_iter.next().unwrap());
                         },
                         _ => ()
                     }
                 }
 
-                log.info(format!("Running '{}'", &name));
+                log.info(format!("Running: {}", name.to_string_lossy()));
                 log.debug(format!("Arguments: {:?}", cmd));
 
                 let output = {
                     let _record = work.start();
                     let mut child = cmd.spawn().map_err(|e| format!("io error: {}", e))?;
-                    // Write stdin if we couldn't use it directly as a file
+                    // Write stdin
                     if let (Some(cin),Some(s)) = (&mut child.stdin,&input_str) {
-                        write!(cin, "{}", s).map_err(|e| format!("io error: {}", e))?;
+                        write!(cin, "{}", s.0.to_string_lossy()).map_err(|e| format!("io error: {}", e))?;
                     }
                     //TODO make stdout/stderr streamed out instead of collected at the end
                     child.wait_with_output().map_err(|e| format!("io error: {}", e))?
@@ -254,7 +403,11 @@ impl Plan for Config {
                     if !output.status.success() {
                         let rest = if send_stderr.is_canceled() {
                             if let Ok(s) = String::from_utf8(output.stderr) {
-                                format!(":\n{}", s)
+                                if s.is_empty() {
+                                    "".into()
+                                } else {
+                                    format!(":\n{}", s)
+                                }
                             } else {
                                 "".into()
                             }
@@ -272,7 +425,7 @@ impl Plan for Config {
             }).await
         });
 
-        let output_files: Vec<_> = files
+        let output_paths: Vec<_> = files
             .into_iter()
             .map(|(_, item)| {
                 make_value!((run_command) {
@@ -288,7 +441,7 @@ impl Plan for Config {
         let exit_status = make_value!((run_command) { run_command.await?; rcv_status.await.map_err(|e| format!("{}", e)) });
 
         Ok(ExecResult {
-            output_files,
+            output_paths,
             stdout,
             stderr,
             exit_status,
@@ -303,7 +456,7 @@ mod test {
     #[test]
     fn run_command() -> Result<(), String> {
         let mut cfg = Config::new("echo");
-        cfg.arguments.push(Argument::String("hello".to_owned()));
+        cfg.push_arg("hello");
 
         let mut ctx = Context::builder().build().map_err(|e| format!("{}", e))?;
         let status = ctx.plan(cfg)?.exit_status.get()?;
@@ -326,15 +479,16 @@ mod test {
         let mut ctx = Context::builder().build().map_err(|e| format!("{}", e))?;
 
         let mut cfg = Config::new("echo");
-        cfg.arguments.push(Argument::String("hello".to_owned()));
+        cfg.push_arg("hello");
         let result = cfg.plan(&mut ctx)?;
 
         let mut cfg2 = Config::new("echo");
-        cfg2.arguments.push(Argument::OutputString(
-            result
-                .stdout
-                .map(|v| String::from_utf8(v.clone()).map_err(|e| format!("{}", e))),
-        ));
+        cfg2.push_arg(result.stdout.map(|v| {
+            String::from_utf8(v.clone())
+                .map_err(|e| format!("{}", e))
+                .map(OsString::from)
+                .map(CommandString::from)
+        }));
         let result = cfg2.plan(&mut ctx)?;
 
         assert!(result.exit_status.get()?.success());
@@ -347,18 +501,51 @@ mod test {
         let mut ctx = Context::builder().build().map_err(|e| format!("{}", e))?;
 
         let mut cfg = Config::new("echo");
-        cfg.arguments.push(Argument::String("hello".to_owned()));
+        cfg.push_arg("hello");
         let result = cfg.plan(&mut ctx)?;
 
         let mut cfg2 = Config::new("cat");
-        cfg2.stdin =
-            Some(Argument::OutputString(result.stdout.map(|v| {
-                String::from_utf8(v.clone()).map_err(|e| format!("{}", e))
-            })));
+        cfg2.stdin = Some(
+            result
+                .stdout
+                .map(|v| {
+                    String::from_utf8(v.clone())
+                        .map_err(|e| format!("{}", e))
+                        .map(OsString::from)
+                        .map(StdinString::from)
+                        .into()
+                })
+                .into(),
+        );
         let result = cfg2.plan(&mut ctx)?;
 
         assert!(result.exit_status.get()?.success());
         assert!(&*(result.stdout.get()?) == b"hello\n");
+        Ok(())
+    }
+
+    #[test]
+    fn env() -> Result<(), String> {
+        let mut ctx = Context::builder().build().map_err(|e| e.to_string())?;
+
+        let mut cfg = Config::new("env");
+        cfg.env
+            .insert("VALUE".into(), Some(SomeValue::from(OsString::from("42"))));
+        let result = ctx.plan(cfg)?;
+
+        assert!(&*(result.stdout.get()?) == b"VALUE=42\n");
+        Ok(())
+    }
+
+    #[test]
+    fn env_inherit() -> Result<(), String> {
+        let mut ctx = Context::builder().build().map_err(|e| e.to_string())?;
+
+        let mut cfg = Config::new("env");
+        cfg.env.insert("CARGO_PKG_NAME".into(), None);
+        let result = ctx.plan(cfg)?;
+
+        assert!(&*(result.stdout.get()?) == b"CARGO_PKG_NAME=exec\n");
         Ok(())
     }
 }

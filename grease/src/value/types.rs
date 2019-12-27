@@ -1,7 +1,8 @@
 //! GetValueType implementations for std types.
-use crate::uuid::*;
 
-use super::{GetValueType, ValueType};
+use super::{GetValueType, TypedValue, Value, ValueType};
+use crate::uuid::*;
+use crate::{Trait, TraitImpl, TraitType};
 
 // Primitive types
 
@@ -60,3 +61,35 @@ impl<T: GetValueType> GetValueType for Vec<T> {
         )
     }
 }
+
+pub struct IntoTrait<T> {
+    pub into: fn(Value) -> TypedValue<T>,
+}
+
+impl<T: GetValueType> Trait for IntoTrait<T> {
+    fn trait_type() -> TraitType {
+        let to = T::value_type();
+        let mut data = Vec::new();
+        data.extend(to.id.as_bytes());
+        data.extend(to.data);
+        TraitType::with_data(type_uuid(b"grease::Into"), data)
+    }
+}
+
+pub fn impl_into<T, U>() -> IntoTrait<U>
+where
+    T: GetValueType + Send + Sync + Clone + 'static,
+    U: From<T> + GetValueType,
+{
+    IntoTrait {
+        into: |v| v.typed::<T>().unwrap().map(|v| Ok(U::from(v.clone()))),
+    }
+}
+
+/*
+pub(crate) fn trait_generator(tp: std::sync::Arc<ValueType>) -> Vec<TraitImpl> {
+    vec![IntoTrait {
+        into: |v| v.typed().unwrap()
+    }.into()]
+}
+*/

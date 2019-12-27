@@ -374,8 +374,8 @@ impl Value {
     }
 
     /// Get the type of the contained value.
-    pub fn value_type(&self) -> &ValueType {
-        &*self.tp
+    pub fn value_type(&self) -> Arc<ValueType> {
+        self.tp.clone()
     }
 
     /// Get the result of the value.
@@ -467,7 +467,8 @@ impl<T: GetValueType> TypedValue<T> {
 }
 
 impl<T> From<T> for TypedValue<T>
-where T: GetValueType + Hash + Send + 'static
+where
+    T: GetValueType + Hash + Send + 'static,
 {
     fn from(v: T) -> Self {
         TypedValue::constant(v)
