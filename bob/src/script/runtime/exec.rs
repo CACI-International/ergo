@@ -34,13 +34,13 @@ fn exec(ctx: &mut grease::Context<FunctionContext>) -> Result<Data, FunctionErro
 
     let mut cfg = Config::new(cmd);
     let mut output_path_bindings = Vec::new();
-    let mut provides = Vec::new();
+    let mut creates = Vec::new();
     to_cfg(
         arg_iter,
         ctx,
         &mut cfg,
         &mut output_path_bindings,
-        &mut provides,
+        &mut creates,
     )?;
 
     trace!("exec plan configuration: {:?}", &cfg);
@@ -62,7 +62,7 @@ fn exec(ctx: &mut grease::Context<FunctionContext>) -> Result<Data, FunctionErro
             },
         );
     }
-    for (binding, value) in provides {
+    for (binding, value) in creates {
         ctx.inner.env_insert(
             binding,
             Data::Value(
@@ -112,7 +112,7 @@ fn to_cfg<I: Iterator<Item = Data>>(
     ctx: &mut grease::Context<FunctionContext>,
     cfg: &mut Config,
     output_path_bindings: &mut Vec<(String, bool)>,
-    provides: &mut Vec<(String, grease::TypedValue<std::path::PathBuf>)>,
+    creates: &mut Vec<(String, grease::TypedValue<std::path::PathBuf>)>,
 ) -> Result<(), String> {
     for a in data {
         match a {
@@ -125,7 +125,7 @@ fn to_cfg<I: Iterator<Item = Data>>(
                     .ok_or("cannot convert value into command string".to_owned())?;
                 cfg.push_arg(t.into_typed(v));
             }
-            Data::Array(arr) => to_cfg(arr.into_iter(), ctx, cfg, output_path_bindings, provides)?,
+            Data::Array(arr) => to_cfg(arr.into_iter(), ctx, cfg, output_path_bindings, creates)?,
             Data::Map(m) => {
                 for (k, v) in m.into_iter() {
                     if k == "file" || k == "dir" {
@@ -178,7 +178,7 @@ fn to_cfg<I: Iterator<Item = Data>>(
                             }
                             _ => return Err("pwd values must be paths".to_owned()),
                         });
-                    } else if k == "provides" {
+                    } else if k == "creates" {
                         match v {
                             Data::Map(bindings) => {
                                 for (k, v) in bindings.into_iter() {
@@ -186,16 +186,16 @@ fn to_cfg<I: Iterator<Item = Data>>(
                                         Data::Value(v) => {
                                             let t: grease::IntoTyped<std::path::PathBuf> =
                                                 ctx.traits.get(&v).ok_or(
-                                                    "cannot convert provides value into path"
+                                                    "cannot convert creates value into path"
                                                         .to_owned(),
                                                 )?;
-                                            provides.push((k, t.into_typed(v)));
+                                            creates.push((k, t.into_typed(v)));
                                         }
-                                        _ => return Err("provides bindings must be values".into()),
+                                        _ => return Err("creates bindings must be values".into()),
                                     }
                                 }
                             }
-                            _ => return Err("provides must be a map".to_owned()),
+                            _ => return Err("creates must be a map".to_owned()),
                         }
                     } else if k == "stdin" {
                         cfg.stdin = Some(match v {
