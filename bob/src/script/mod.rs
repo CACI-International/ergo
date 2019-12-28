@@ -19,13 +19,18 @@ pub fn script_context(
 ) -> Result<Context<runtime::Context>, grease::BuilderError> {
     let mut ctx = runtime::Context::default();
 
-    // Add 'exec' to the initial environment
+    // Add initial environment functions
     ctx.env_insert("exec".into(), runtime::exec::exec_builtin());
     ctx.env_insert("track".into(), runtime::track::track_builtin());
     ctx.env_insert("map".into(), runtime::map::map_builtin());
     ctx.env_insert("do".into(), runtime::do_::do_builtin());
     ctx.env_insert("path".into(), runtime::path::path_builtin());
-    cb.build_with(ctx)
+
+    cb.build_with(ctx).map(|mut ctx| {
+        // Add initial traits
+        ctx.traits.add(::exec::trait_generator);
+        ctx
+    })
 }
 
 impl Script {

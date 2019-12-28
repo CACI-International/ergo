@@ -103,11 +103,24 @@ fn main() {
             params.sort_unstable();
             params.dedup();
             // Get all data values based on parameters
-            let vals = params
+            let mut vals = params
                 .into_iter()
                 .map(|p| m.remove(p).ok_or(p))
                 .collect::<Result<Vec<_>, _>>()
                 .app_err("target not found");
+
+            // Evaluate any maps down to default values.
+            for v in &mut vals {
+                loop {
+                    if let script::Data::Map(m) = v {
+                        if let Some(nv) = m.remove("*") {
+                            *v = nv;
+                            continue;
+                        }
+                    }
+                    break;
+                }
+            }
 
             // Drop map to get rid of any unnecessary values. Their presence or absence may affect
             // value behavior.
@@ -116,8 +129,7 @@ fn main() {
             // Force outputs from parameters
             futures::executor::block_on(futures::future::join_all(vals))
                 .into_iter()
-                .collect::<Result<Vec<_>, _>>()
-                .map(|_| ())
+                .collect::<Result<(), _>>()
         }
         v => {
             params.is_none().app_err(

@@ -19,7 +19,11 @@ pub struct TraitImpl {
 
 /// A runtime trait.
 pub trait Trait {
+    type Impl: Sync;
+
     fn trait_type() -> TraitType;
+
+    fn create(imp: &Self::Impl) -> Self;
 }
 
 impl TraitType {
@@ -35,17 +39,22 @@ impl TraitType {
 }
 
 impl TraitImpl {
-    pub unsafe fn as_ref<T: Sync>(&self) -> &T {
-        self.data.as_ref()
+    pub fn new<T>(tt: TraitType, imp: T) -> Self {
+        Self {
+            tt,
+            data: ValueData::new(imp),
+        }
     }
-}
 
-impl<T: Trait> From<T> for TraitImpl {
-    fn from(v: T) -> Self {
+    pub fn for_trait<T: Trait>(v: T::Impl) -> Self {
         Self {
             tt: T::trait_type(),
             data: ValueData::new(v),
         }
+    }
+
+    pub unsafe fn as_ref<T: Sync>(&self) -> &T {
+        self.data.as_ref()
     }
 }
 

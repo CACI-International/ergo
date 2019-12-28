@@ -20,7 +20,7 @@ impl Traits {
     pub fn new() -> Self {
         Traits {
             traits: Default::default(),
-            generators: vec![],
+            generators: vec![crate::value::trait_generator],
         }
     }
 
@@ -36,7 +36,7 @@ impl Traits {
     }
 
     /// Get a trait for a particular Value's type, if it is implemented.
-    pub fn get<T: Trait + Sync>(&mut self, v: &Value) -> Option<&T> {
+    pub fn get<T: Trait + Sync>(&mut self, v: &Value) -> Option<T> {
         let tp = v.value_type();
         if !self.traits.contains_key(tp.as_ref()) {
             let mut m = HashSet::new();
@@ -49,6 +49,6 @@ impl Traits {
             .get(v.value_type().as_ref())
             .unwrap()
             .get(&T::trait_type())
-            .map(|imp| unsafe { imp.as_ref() })
+            .map(|imp| T::create(unsafe { imp.as_ref() }))
     }
 }

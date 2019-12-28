@@ -430,11 +430,11 @@ impl<T: fmt::Display + fmt::Debug> fmt::Display for Source<T> {
                         }
 
                         let chars = line.chars().count();
-                        if remaining <= chars {
+                        if remaining < chars {
                             if start.is_none() {
                                 start = Some((linecount, remaining + 1));
                                 startline = Some(line);
-                                remaining += self.location.length;
+                                remaining += self.location.length + 1;
                                 if remaining <= chars {
                                     end = Some((linecount, remaining + 1));
                                     break None;
@@ -464,7 +464,7 @@ impl<T: fmt::Display + fmt::Debug> fmt::Display for Source<T> {
                             } else {
                                 startline.chars().count()
                             };
-                            for _ in start.1 + 1..endchar {
+                            for _ in start.1..endchar {
                                 underline.push('-');
                             }
                             write!(

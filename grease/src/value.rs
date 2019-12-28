@@ -21,7 +21,7 @@ pub use types::*;
 /// A value type.
 ///
 /// The type is an id and type-specific data.
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ValueType {
     pub id: Uuid,
     pub data: Vec<u8>,
@@ -333,22 +333,27 @@ impl IntoIterator for &Dependencies {
 
 impl Value {
     /// Create a value with the given type, future, and dependencies.
-    pub fn new<'a, F, D>(tp: ValueType, value: F, deps: D) -> Value
+    pub fn new<'a, F, D>(tp: Arc<ValueType>, value: F, deps: D) -> Value
     where
-        F: Future<Output = Result<ValueData, String>> + Send + 'static,
+        F: Future<Output = Result<Arc<ValueData>, String>> + Send + 'static,
         D: IntoDependencies<'a>,
     {
         let deps = Dependencies::ordered(deps);
         let id = deps.value_id_with(&tp);
         Value {
-            tp: Arc::new(tp),
-            data: value.map_ok(Arc::new).boxed().shared(),
+            tp,
+            data: value.boxed().shared(),
             dependencies: Arc::from_iter(deps.into_iter().filter_map(|v| match v {
                 Dependency::Value(val) => Some(val),
                 _ => None,
             })),
             id,
         }
+    }
+
+    pub fn then(self, v: Value) -> Value {
+        let deps = Dependencies::unordered(depends![self, v]);
+        Self::new(v.value_type(), FutureExt::then(self, move |_| v), deps)
     }
 
     /// Try to convert this Value to a TypedValue.
@@ -429,7 +434,11 @@ impl<T: GetValueType> TypedValue<T> {
         D: IntoDependencies<'a>,
     {
         TypedValue {
-            inner: Value::new(T::value_type(), value.map_ok(|r| ValueData::new(r)), deps),
+            inner: Value::new(
+                T::value_type().into(),
+                value.map_ok(|r| ValueData::new(r).into()),
+                deps,
+            ),
             phantom: Default::default(),
         }
     }

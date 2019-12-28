@@ -62,34 +62,67 @@ impl<T: GetValueType> GetValueType for Vec<T> {
     }
 }
 
-pub struct IntoTrait<T> {
-    pub into: fn(Value) -> TypedValue<T>,
+pub struct IntoTrait {
+    tp: std::sync::Arc<ValueType>,
+    into: fn(Value) -> Value,
 }
 
-impl<T: GetValueType> Trait for IntoTrait<T> {
-    fn trait_type() -> TraitType {
-        let to = T::value_type();
-        let mut data = Vec::new();
-        data.extend(to.id.as_bytes());
-        data.extend(to.data);
-        TraitType::with_data(type_uuid(b"grease::Into"), data)
+impl From<IntoTrait> for TraitImpl {
+    fn from(v: IntoTrait) -> Self {
+        TraitImpl::new(into_trait_type(v.tp.as_ref().clone()), v.into)
     }
 }
 
-pub fn impl_into<T, U>() -> IntoTrait<U>
+fn into_trait_type(to: ValueType) -> TraitType {
+    let mut data = Vec::new();
+    data.extend(to.id.as_bytes());
+    data.extend(to.data);
+    TraitType::with_data(type_uuid(b"grease::IntoTyped"), data)
+}
+
+pub struct IntoTyped<T> {
+    into: fn(Value) -> Value,
+    _phantom: std::marker::PhantomData<T>,
+}
+
+impl<T: GetValueType> IntoTyped<T> {
+    pub fn into_typed(&self, v: Value) -> TypedValue<T> {
+        (self.into)(v).typed::<T>().unwrap()
+    }
+}
+
+impl<T: GetValueType> Trait for IntoTyped<T> {
+    type Impl = fn(Value) -> Value;
+
+    fn trait_type() -> TraitType {
+        into_trait_type(T::value_type())
+    }
+
+    fn create(imp: &Self::Impl) -> Self {
+        Self {
+            into: *imp,
+            _phantom: Default::default(),
+        }
+    }
+}
+
+pub fn impl_into<T, U>() -> TraitImpl
 where
     T: GetValueType + Send + Sync + Clone + 'static,
     U: From<T> + GetValueType,
 {
-    IntoTrait {
-        into: |v| v.typed::<T>().unwrap().map(|v| Ok(U::from(v.clone()))),
-    }
+    TraitImpl::for_trait::<IntoTyped<U>>(|v| {
+        v.typed::<T>()
+            .unwrap()
+            .map(|v| Ok(U::from(v.clone())))
+            .into()
+    })
 }
 
-/*
 pub(crate) fn trait_generator(tp: std::sync::Arc<ValueType>) -> Vec<TraitImpl> {
     vec![IntoTrait {
-        into: |v| v.typed().unwrap()
-    }.into()]
+        into: std::convert::identity,
+        tp,
+    }
+    .into()]
 }
-*/

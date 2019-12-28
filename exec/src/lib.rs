@@ -10,6 +10,7 @@ use std::hash::Hash;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 
+/// Strings used for commands and arguments.
 #[derive(Clone, Debug, GetValueType, Hash)]
 pub struct CommandString(OsString);
 
@@ -25,6 +26,7 @@ impl AsRef<OsStr> for CommandString {
     }
 }
 
+/// Strings used for stdin to commands.
 #[derive(Clone, Debug, GetValueType, Hash)]
 pub struct StdinString(OsString);
 
@@ -40,6 +42,20 @@ impl AsRef<OsStr> for StdinString {
     }
 }
 
+fn vec_to_os_string_impl<T: From<OsString> + GetValueType>() -> TraitImpl {
+    TraitImpl::for_trait::<grease::IntoTyped<T>>(|v| {
+        v.typed::<Vec<u8>>()
+            .unwrap()
+            .map(|vec| {
+                OsString::from_bytes(vec)
+                    .map(T::from)
+                    .map_err(|e| e.to_string())
+            })
+            .into()
+    })
+}
+
+/// Traits for types in this crate.
 pub fn trait_generator(v: std::sync::Arc<ValueType>) -> Vec<TraitImpl> {
     if *v == String::value_type() {
         vec![
@@ -48,10 +64,11 @@ pub fn trait_generator(v: std::sync::Arc<ValueType>) -> Vec<TraitImpl> {
         ]
     } else if *v == PathBuf::value_type() {
         vec![
-            grease::impl_into::<PathBuf, CommandString>().into(),
-            grease::IntoTrait {
-                into: |v| {
-                    v.typed::<PathBuf>().unwrap().map(|path| {
+            grease::impl_into::<PathBuf, CommandString>(),
+            TraitImpl::for_trait::<grease::IntoTyped<StdinString>>(|v| {
+                v.typed::<PathBuf>()
+                    .unwrap()
+                    .map(|path| {
                         let mut v = Vec::new();
                         std::fs::File::open(path)
                             .map_err(|e| e.to_string())?
@@ -61,32 +78,13 @@ pub fn trait_generator(v: std::sync::Arc<ValueType>) -> Vec<TraitImpl> {
                             .map(StdinString::from)
                             .map_err(|e| e.to_string())
                     })
-                },
-            }
-            .into(),
+                    .into()
+            }),
         ]
     } else if *v == Vec::<u8>::value_type() {
         vec![
-            grease::IntoTrait {
-                into: |v| {
-                    v.typed::<Vec<u8>>().unwrap().map(|vec| {
-                        OsString::from_bytes(vec)
-                            .map(CommandString::from)
-                            .map_err(|e| e.to_string())
-                    })
-                },
-            }
-            .into(),
-            grease::IntoTrait {
-                into: |v| {
-                    v.typed::<Vec<u8>>().unwrap().map(|vec| {
-                        OsString::from_bytes(vec)
-                            .map(StdinString::from)
-                            .map_err(|e| e.to_string())
-                    })
-                },
-            }
-            .into(),
+            vec_to_os_string_impl::<CommandString>(),
+            vec_to_os_string_impl::<StdinString>(),
         ]
     } else {
         vec![]
@@ -151,6 +149,12 @@ impl From<CommandString> for Argument {
     }
 }
 
+impl From<String> for Argument {
+    fn from(v: String) -> Self {
+        Self::from(CommandString::from(v))
+    }
+}
+
 impl From<&str> for Argument {
     fn from(v: &str) -> Self {
         Self::from(CommandString::from(v))
@@ -194,6 +198,7 @@ pub struct ExecResult {
     pub stdout: TypedValue<Vec<u8>>,
     pub stderr: TypedValue<Vec<u8>>,
     pub exit_status: TypedValue<std::process::ExitStatus>,
+    pub complete: TypedValue<()>,
 }
 
 impl Config {
@@ -254,7 +259,8 @@ impl Plan for Config {
                 _ => (),
             }
         }
-        let input = self.stdin.clone();
+        let input = self.stdin;
+        let dir = self.dir;
 
         // Get Values out of the environment to access later
         let env_values: Vec<_> = env
@@ -286,6 +292,9 @@ impl Plan for Config {
         let mut deps = Dependencies::ordered(&args)
             + Dependencies::unordered(depends![join vec![command_dep],&env_deps]);
         if let Some(SomeValue::Delayed(v)) = &input {
+            deps = deps + Dependencies::unordered(vec![v]);
+        }
+        if let Some(SomeValue::Delayed(v)) = &dir {
             deps = deps + Dependencies::unordered(vec![v]);
         }
 
@@ -346,6 +355,19 @@ impl Plan for Config {
                         Argument::ProducedPath { id } => {
                             cmd.arg(filesmap.get(&id).unwrap().path());
                         },
+                    }
+                }
+
+                // Set working directory
+                if let Some(dir) = dir {
+                    match dir {
+                        SomeValue::Immediate(path) => {
+                            cmd.current_dir(path);
+                        },
+                        SomeValue::Delayed(o) => {
+                            let path = o.await?;
+                            cmd.current_dir(&*path);
+                        }
                     }
                 }
 
@@ -445,6 +467,7 @@ impl Plan for Config {
             stdout,
             stderr,
             exit_status,
+            complete: run_command,
         })
     }
 }

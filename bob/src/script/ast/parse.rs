@@ -3,6 +3,7 @@
 use super::tokenize::{Tok, Token};
 use super::*;
 use pom::parser::*;
+use std::iter::FromIterator;
 
 /// A parser alias.
 pub type Parser<'a, T> = pom::parser::Parser<'a, Tok, T>;
@@ -56,7 +57,10 @@ fn nested<'a>() -> Parser<'a, Expr> {
 /// An expression in argument position (words are interpreted as strings rather than as commands).
 fn arg<'a>() -> Parser<'a, Expr> {
     call(|| {
-        nested() | word().map(|s| s.map(Expression::String)) | array(arg()) | block(Some(|| arg()))
+        nested()
+            | eqword().map(|s| s.map(Expression::String))
+            | array(arg())
+            | block(Some(|| arg()))
     })
 }
 
@@ -153,6 +157,16 @@ fn word<'a>() -> Parser<'a, Source<String>> {
             Err(pom::Error::Incomplete)
         }
     })
+}
+
+/// A single string, allowing equals signs.
+fn eqword<'a>() -> Parser<'a, Source<String>> {
+    (word() | sym(Token::Equal).map(|s: Source<Token>| s.with("=".to_owned())))
+        .repeat(1..)
+        .map(|ss| {
+            ss.into_source()
+                .map(|s| String::from_iter(s.into_iter().map(|s| s.into_value())))
+        })
 }
 
 /// A string token with the given contents.
@@ -513,7 +527,11 @@ mod test {
         expected: I,
     ) -> Result {
         let src = Source::new(NoSource);
-        let toks: Vec<_> = s.into_iter().cloned().map(|tok| src.clone().with(tok)).collect();
+        let toks: Vec<_> = s
+            .into_iter()
+            .cloned()
+            .map(|tok| src.clone().with(tok))
+            .collect();
         let r = parser(std::marker::PhantomData).parse(&toks)?;
         dbg!(&r);
         assert!(r == expected);

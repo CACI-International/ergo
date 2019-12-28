@@ -63,3 +63,16 @@ fn commands() -> Result<(), String> {
     assert!("hello, world" == s);
     Ok(())
 }
+
+#[test]
+fn traits() -> Result<(), String> {
+    let mut ctx = Context::builder().build().map_err(|e| e.to_string())?;
+
+    let v: Value = TypedValue::constant("hello".to_owned()).into();
+    let t: Option<grease::IntoTyped<String>> = ctx.traits.get(&v);
+    let t = t.unwrap();
+    let v = t.into_typed(v);
+    let out = v.get()?;
+    assert!(*out == "hello");
+    Ok(())
+}

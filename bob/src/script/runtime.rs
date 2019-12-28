@@ -162,8 +162,8 @@ impl fmt::Debug for DataFunction {
 
 impl From<&'_ Data> for bool {
     fn from(v: &Data) -> bool {
-        if let Data::String(s) = v {
-            !s.is_empty()
+        if let Data::Unit = v {
+            false
         } else {
             true
         }
@@ -367,6 +367,26 @@ impl Plan<Context> for Source<Expression> {
                                     Ok(v)
                                 }
                             }
+                        }
+                    }
+                    Data::Value(v) => {
+                        // Fall back to 'exec' command.
+                        let exec = match ctx.inner.env_get("exec") {
+                            Some(Data::Function(f)) => f.clone(),
+                            _ => return Err(source.with(Error::ExecMissing)),
+                        };
+                        let mut args = args
+                            .into_iter()
+                            .map(|a| a.plan(ctx))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        args.insert(0, Data::Value(v));
+
+                        match exec.plan_join(ctx, args) {
+                            Err(e) => match e {
+                                FunctionError::Err(e) => Err(source.with(Error::FunctionError(e))),
+                                FunctionError::Nested(e) => Err(e),
+                            },
+                            Ok(r) => Ok(r),
                         }
                     }
                     Data::Unit => {
