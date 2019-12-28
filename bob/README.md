@@ -1,13 +1,15 @@
 # bob program
 
-The program's target features include:
+Current features include:
 
-[x] A hybrid-typed scripting language that (in many ways) closely resembles
+* A hybrid-typed scripting language that (in many ways) closely resembles 
 shell scripts.
-[x] Automatic concurrent processing of commands.
-[x] Dependency tracking for all produced values.
-[ ] A platform-agnostic plugin system based on WASM.
-[ ] Persistent database of command statistics aggregated over multiple runs and
+* Automatic concurrent processing of commands.
+* Dependency tracking for all produced values.
+
+Planned features include:
+* A platform-agnostic plugin system based on WASM.
+* Persistent database of command statistics aggregated over multiple runs and
 used to estimate future performance.
 
 ## Script Example
