@@ -14,7 +14,7 @@ used to estimate future performance.
 
 ## Script Example
 
-```
+```sh
 #!/usr/bin/env bob1
 
 use_path = { env = { PATH = $ } }
