@@ -280,6 +280,8 @@ impl Plan for Config {
                 vec![
                     k.into(),
                     match v {
+                        // TODO pull from env here for dependency? if so, env changes from other
+                        // commands will not be visible
                         None => (&57023u128).into(),
                         Some(v) => v.dependency(),
                     },
