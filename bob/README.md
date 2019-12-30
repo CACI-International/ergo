@@ -50,3 +50,11 @@ c++ -o { file = test } $main $influx:lib $use_path
   * = $test { env = { LD_LIBRARY_PATH = $influx:libpath } }
 }
 ```
+
+## TODO
+* Consider whether index notation is necessary at all, or whether it's more
+  uniform to use command notation for indexing (some shorthand notation may
+  still be useful on the command-line).
+* Data-manipulation functions (maybe as a plugin).
+* Consider making arrays and maps always argument-position by default, and only
+  command-position when in a nested expression.

@@ -4,7 +4,7 @@
 //! values to build the graph and dependency tree.
 
 use fasthash::{HasherExt, SpookyHasherExt as HasherFn};
-use futures::future::{BoxFuture, Future, FutureExt, Shared, TryFutureExt};
+use futures::future::{BoxFuture, FusedFuture, Future, FutureExt, Shared, TryFutureExt};
 use futures::task::{Context, Poll};
 use std::collections::BTreeSet;
 use std::hash::{Hash, Hasher};
@@ -397,6 +397,12 @@ impl Future for Value {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         Future::poll(unsafe { self.map_unchecked_mut(|s| &mut s.data) }, cx)
+    }
+}
+
+impl FusedFuture for Value {
+    fn is_terminated(&self) -> bool {
+        self.data.is_terminated()
     }
 }
 

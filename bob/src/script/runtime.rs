@@ -1,6 +1,7 @@
 //! Script runtime definitions.
 
 use super::ast::{Expression, Source};
+use grease::future::FusedFuture;
 use grease::{GetValueType, Plan, Value};
 use std::collections::HashMap;
 use std::fmt;
@@ -78,14 +79,20 @@ impl Future for Data {
                     })
                 }
                 .iter_mut()
-                .map(|a| match Future::poll(Pin::new(a), cx) {
-                    Poll::Pending => None,
-                    Poll::Ready(r) => Some(r),
+                .map(|a| {
+                    if a.is_terminated() {
+                        Some(Ok(()))
+                    } else {
+                        match Future::poll(Pin::new(a), cx) {
+                            Poll::Pending => None,
+                            Poll::Ready(r) => Some(r.map(|_| ())),
+                        }
+                    }
                 })
                 .collect::<Option<Vec<_>>>()
-                .map(|v| v.into_iter().collect::<Result<Vec<_>, _>>());
+                .map(|v| v.into_iter().collect::<Result<(), _>>());
                 if let Some(result) = pending {
-                    Poll::Ready(result.map(|_| ()))
+                    Poll::Ready(result)
                 } else {
                     Poll::Pending
                 }
@@ -101,12 +108,18 @@ impl Future for Data {
                     })
                 }
                 .iter_mut()
-                .map(|(_, a)| match Future::poll(Pin::new(a), cx) {
-                    Poll::Pending => None,
-                    Poll::Ready(r) => Some(r),
+                .map(|(_, a)| {
+                    if a.is_terminated() {
+                        Some(Ok(()))
+                    } else {
+                        match Future::poll(Pin::new(a), cx) {
+                            Poll::Pending => None,
+                            Poll::Ready(r) => Some(r),
+                        }
+                    }
                 })
                 .collect::<Option<Vec<_>>>()
-                .map(|v| v.into_iter().collect::<Result<Vec<_>, _>>());
+                .map(|v| v.into_iter().collect::<Result<(), _>>());
                 if let Some(result) = pending {
                     Poll::Ready(result.map(|_| ()))
                 } else {
@@ -114,6 +127,17 @@ impl Future for Data {
                 }
             }
             _ => std::task::Poll::Ready(Ok(())),
+        }
+    }
+}
+
+impl FusedFuture for Data {
+    fn is_terminated(&self) -> bool {
+        match self {
+            Self::Value(v) => v.is_terminated(),
+            Self::Array(arr) => arr.iter().all(|v| v.is_terminated()),
+            Self::Map(m) => m.iter().all(|(_, v)| v.is_terminated()),
+            _ => true,
         }
     }
 }
