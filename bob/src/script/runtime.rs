@@ -267,7 +267,7 @@ pub enum Error {
     /// An integer index (for arrays) was expected.
     NonIntegerIndex,
     /// An index was not present.
-    MissingIndex,
+    MissingIndex(String),
     /// An indexing operation was attempted on a type that is not an array or map.
     InvalidIndex,
     /// An error from a builtin function.
@@ -284,7 +284,7 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Self::NonIntegerIndex => write!(f, "positive integer index expected"),
-            Self::MissingIndex => write!(f, "index missing"),
+            Self::MissingIndex(s) => write!(f, "index missing: {}", s),
             Self::InvalidIndex => write!(f, "type is not an array or map; cannot index"),
             Self::FunctionError(s) => write!(f, "{}", s),
             Self::NonCallableExpression(d) => {
@@ -343,9 +343,9 @@ impl Plan<Context> for Source<Expression> {
             Index(e, i) => match e.plan(ctx)? {
                 Data::Array(v) => match usize::from_str(&i) {
                     Err(_) => Err(source.with(Error::NonIntegerIndex)),
-                    Ok(ind) => v.get(ind).cloned().ok_or(source.with(Error::MissingIndex)),
+                    Ok(ind) => v.get(ind).cloned().ok_or(source.with(Error::MissingIndex(i))),
                 },
-                Data::Map(v) => v.get(&i).cloned().ok_or(source.with(Error::MissingIndex)),
+                Data::Map(v) => v.get(&i).cloned().ok_or(source.with(Error::MissingIndex(i))),
                 _ => Err(source.with(Error::InvalidIndex)),
             },
             Command(cmd, mut args) => {

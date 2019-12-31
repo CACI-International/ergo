@@ -434,7 +434,7 @@ impl<T: fmt::Display + fmt::Debug> fmt::Display for Source<T> {
                             if start.is_none() {
                                 start = Some((linecount, remaining + 1));
                                 startline = Some(line);
-                                remaining += self.location.length + 1;
+                                remaining += self.location.length - 1;
                                 if remaining <= chars {
                                     end = Some((linecount, remaining + 1));
                                     break None;
