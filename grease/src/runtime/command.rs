@@ -16,6 +16,10 @@ pub struct Commands {
     cmds: Arc<Mutex<BTreeMap<OsString, Option<PathBuf>>>>,
 }
 
+/// A set of missing commands.
+#[derive(Debug, Clone)]
+pub struct Missing(Vec<OsString>);
+
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub struct UntrackedCommands;
@@ -91,6 +95,40 @@ impl Commands {
     /// Such a builder can only be used for explicit paths.
     pub fn untracked(&mut self) -> UntrackedCommands {
         UntrackedCommands
+    }
+
+    /// Return an account of any missing commands.
+    pub fn missing(&self) -> Missing {
+        Missing(
+            self.cmds
+                .lock()
+                .unwrap()
+                .iter()
+                .filter_map(|(k, v)| match v {
+                    None => Some(k.clone()),
+                    Some(_) => None,
+                })
+                .collect(),
+        )
+    }
+}
+
+impl Missing {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl fmt::Display for Missing {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.0
+            .first()
+            .map(|v| write!(f, "{}", v.to_string_lossy()))
+            .transpose()?;
+        for s in self.0.get(1..).unwrap_or(&[]) {
+            write!(f, ", {}", s.to_string_lossy())?;
+        }
+        Ok(())
     }
 }
 
