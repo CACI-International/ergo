@@ -160,10 +160,39 @@ macro_rules! depends {
     };
 }
 
+#[repr(align(8))]
+struct ValueDataBuffer([u8; 24]);
+
+impl ValueDataBuffer {
+    /// Panics if T has improper size or alignment.
+    pub fn new<T>(v: T) -> Self {
+        assert!(std::mem::size_of_val(&v) <= std::mem::size_of::<Self>());
+        assert!(std::mem::align_of_val(&v) <= std::mem::align_of::<Self>());
+        let mut ret = ValueDataBuffer(unsafe { std::mem::MaybeUninit::uninit().assume_init() });
+        let ptr = &mut ret.0 as *mut [u8; 24] as *mut T;
+        unsafe {
+            ptr.write(v);
+        }
+        ret
+    }
+
+    /// Convert into the given type.
+    pub fn as_value<T>(&mut self) -> T {
+        let ptr = &mut self.0 as *mut [u8; 24] as *mut T;
+        unsafe { ptr.read() }
+    }
+
+    /// Get a reference of type T.
+    pub fn as_ref<T>(&self) -> &T {
+        let ptr = &self.0 as *const [u8; 24] as *const T;
+        unsafe { ptr.as_ref().unwrap() }
+    }
+}
+
 /// Value data with a stored drop function.
 ///
 /// The drop function is called when the ValueData instance itself is dropped.
-pub struct ValueData(*mut (), extern "C" fn(*mut ()));
+pub struct ValueData(ValueDataBuffer, extern "C" fn(&mut ValueDataBuffer));
 
 // ValueData should always be Send, and should be Sync if the value it stores is Sync. However, we
 // cannot enforce the Sync restriction, so we instead ensure values are Sync in the Alias struct,
@@ -171,47 +200,64 @@ pub struct ValueData(*mut (), extern "C" fn(*mut ()));
 unsafe impl Send for ValueData {}
 unsafe impl Sync for ValueData {}
 
-extern "C" fn no_drop(_v: *mut ()) {}
+extern "C" fn no_drop(_v: &mut ValueDataBuffer) {}
 
-extern "C" fn drop_box<T>(ptr: *mut ()) {
-    unsafe { drop(Box::from_raw(ptr as *mut T)) };
+extern "C" fn drop_type<T>(v: &mut ValueDataBuffer) {
+    drop(v.as_value::<T>());
 }
 
 impl ValueData {
-    /// Create a ValueData from raw components.
-    pub fn from_raw(data: *mut (), drop_fn: extern "C" fn(*mut ())) -> Self {
-        ValueData(data, drop_fn)
-    }
-
     /// Create a ValueData from the given value.
     pub fn new<T>(v: T) -> Self {
-        let ptr = Box::into_raw(Box::new(v)) as *mut ();
-        Self::from_raw(ptr, drop_box::<T>)
+        if std::mem::size_of_val(&v) <= std::mem::size_of::<ValueDataBuffer>()
+            && std::mem::align_of_val(&v) <= std::mem::align_of::<ValueDataBuffer>()
+        {
+            Self::from_type(v)
+        } else {
+            // Box<T> is defined as having the same size as usize/pointer, so the size
+            // assertions should be true on any platform.
+            Self::from_type(Box::new(v))
+        }
     }
 
-    /// Create a ValueData from a primitive value.
-    pub fn primitive(v: usize) -> Self {
-        Self::from_raw(v as *mut (), no_drop)
+    /// Create a ValueData from the given type, assuming the size and alignment of the type will
+    /// fit in the ValueDataBuffer. Panics if these constraints are not satisfied (in debug
+    /// builds).
+    fn from_type<T>(v: T) -> Self {
+        debug_assert!(std::mem::size_of::<T>() <= std::mem::size_of::<ValueDataBuffer>());
+        debug_assert!(std::mem::align_of::<T>() <= std::mem::align_of::<ValueDataBuffer>());
+        ValueData(
+            ValueDataBuffer::new(v),
+            if std::mem::needs_drop::<T>() {
+                drop_type::<T>
+            } else {
+                no_drop
+            },
+        )
     }
 
     /// Get the ValueData as a &T reference.
     ///
     /// Unsafe because callers must ensure the data is a T.
     pub unsafe fn as_ref<T: Sync>(&self) -> &T {
-        (self.0 as *const T).as_ref().unwrap()
+        self.0.as_ref()
     }
 
-    /// Get the ValueData as a primitive.
+    /// Get the ValueData as an owned value.
     ///
-    /// Unsafe because callers must ensure the data is a primitive type.
-    pub unsafe fn as_primitive(&self) -> usize {
-        self.0 as usize
+    /// Unsafe because callers must ensure the data is a T.
+    pub unsafe fn owned<T>(mut self) -> T {
+        let mut v: ValueDataBuffer = std::mem::MaybeUninit::uninit().assume_init();
+        std::mem::swap(&mut v, &mut self.0);
+        let v = v.as_value::<T>();
+        self.1 = no_drop;
+        v
     }
 }
 
 impl Drop for ValueData {
     fn drop(&mut self) {
-        self.1(self.0)
+        self.1(&mut self.0)
     }
 }
 
@@ -415,6 +461,22 @@ impl<T> Alias<T> {
     /// Unsafe because callers must ensure that the ValueData stores T.
     unsafe fn new(inner: Arc<ValueData>) -> Self {
         Alias(inner, Default::default())
+    }
+}
+
+impl<T: Clone + Sync> Alias<T> {
+    /// Get an owned version of the value.
+    ///
+    /// This may clone or simply move the value, depending on whether the value is needed
+    /// elsewhere.
+    pub fn owned(self) -> T {
+        match Arc::try_unwrap(self.0) {
+            Ok(v) => unsafe { v.owned() },
+            Err(r) => unsafe {
+                let v: &T = (*r).as_ref();
+                v.clone()
+            },
+        }
     }
 }
 
