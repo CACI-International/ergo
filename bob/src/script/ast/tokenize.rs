@@ -294,13 +294,13 @@ mod test {
 
     #[test]
     fn bad_escape() {
-        let err = assert_tokens("\"ohn\\o\"", &[]).unwrap_err().into_value();
+        let err = assert_tokens("\"ohn\\o\"", &[]).unwrap_err().unwrap();
         assert!(err == Error::UnrecognizedEscapeSequence);
     }
 
     #[test]
     fn unfinished_string() {
-        let err = assert_tokens("\"ohno", &[]).unwrap_err().into_value();
+        let err = assert_tokens("\"ohno", &[]).unwrap_err().unwrap();
         assert!(err == Error::UnfinishedQuotedString);
     }
 
@@ -321,7 +321,7 @@ mod test {
         let toks: Vec<_> = Tokens::from(Source::new(super::super::StringSource(s.to_owned())).open().unwrap())
             .collect::<Result<Vec<_>, _>>()?
             .into_iter()
-            .map(|t| t.into_value())
+            .map(|t| t.unwrap())
             .collect();
         assert!(toks == expected);
         Ok(())

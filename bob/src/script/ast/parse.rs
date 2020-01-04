@@ -20,7 +20,7 @@ fn set_variable<'a>(inner: ExprFactory<'a>) -> Parser<'a, Expr> {
     let parsed = word() - space() - sym(Token::Equal).discard() - space() + inner();
     parsed.map(|res| {
         res.into_source()
-            .map(|(var, expr)| Expression::SetVariable(var.into_value(), expr.into()))
+            .map(|(var, expr)| Expression::SetVariable(var.unwrap(), expr.into()))
     })
 }
 
@@ -70,7 +70,7 @@ fn command<'a>() -> Parser<'a, Expr> {
         res.into_source().map(|(cmd, args)| {
             Expression::Command(
                 Box::new(cmd),
-                args.into_value().map(|e| e.into_value()).unwrap_or(vec![]),
+                args.unwrap().map(|e| e.unwrap()).unwrap_or(vec![]),
             )
         })
     })
@@ -94,8 +94,8 @@ fn if_expr<'a>() -> Parser<'a, Expr> {
     (tok + rest.expect("if arguments")).map(|res| {
         let p: Source<_> = res.into_source();
         p.map(|(_, vals)| {
-            let (condt, f) = vals.into_value();
-            let (cond, t) = condt.into_value();
+            let (condt, f) = vals.unwrap();
+            let (cond, t) = condt.unwrap();
             Expression::If(cond.into(), t.into(), f.into())
         })
     })
@@ -134,7 +134,7 @@ fn expression<'a>(set_expr: Option<ExprFactory<'a>>) -> Parser<'a, Expr> {
             for i in inds.unwrap_or(vec![]) {
                 e = (e, i)
                     .into_source()
-                    .map(|(e, i)| Expression::Index(Box::new(e), i.into_value()));
+                    .map(|(e, i)| Expression::Index(Box::new(e), i.unwrap()));
             }
             e
         })
@@ -165,7 +165,7 @@ fn eqword<'a>() -> Parser<'a, Source<String>> {
         .repeat(1..)
         .map(|ss| {
             ss.into_source()
-                .map(|s| String::from_iter(s.into_iter().map(|s| s.into_value())))
+                .map(|s| String::from_iter(s.into_iter().map(|s| s.unwrap())))
         })
 }
 

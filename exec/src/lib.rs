@@ -1,3 +1,8 @@
+//! External command execution.
+//!
+//! TODO: should command identity always be randomly-generated based on instance?
+//! Otherwise, commands with side-effects may be pruned. For instance, running sleep 5 multiple
+//! times will be pruned. Maybe offer a configuration to indicate that side effects are expected?
 use grease::{
     channel, depends, future, item_name, make_value, Context, Dependencies, GetValueType, ItemName,
     Plan, TraitImpl, TypedValue, ValueType,
@@ -199,6 +204,7 @@ pub struct ExecResult {
     pub stderr: TypedValue<Vec<u8>>,
     pub exit_status: TypedValue<std::process::ExitStatus>,
     pub complete: TypedValue<()>,
+    pub complete_once: TypedValue<()>,
 }
 
 impl Config {
@@ -319,6 +325,9 @@ impl Plan for Config {
         }
         let filesmap = files.clone();
 
+        let complete_item = store.item(item_name!["complete"]);
+        let did_complete = complete_item.clone();
+
         // Create channels for outputs
         let (send_stdout, rcv_stdout) = channel::oneshot::channel();
         let (send_stderr, rcv_stderr) = channel::oneshot::channel();
@@ -423,6 +432,11 @@ impl Plan for Config {
                     //TODO make stdout/stderr streamed out instead of collected at the end
                     child.wait_with_output().map_err(|e| format!("io error: {}", e))?
                 };
+
+                if output.status.success() {
+                    write!(complete_item.write().map_err(|e| e.to_string())?, "").map_err(|e| e.to_string())?;
+                }
+
                 if send_status.is_canceled() {
                     if !output.status.success() {
                         let rest = if send_stderr.is_canceled() {
@@ -463,6 +477,12 @@ impl Plan for Config {
         let stdout = make_value!((run_command) { run_command.await?; rcv_stdout.await.map_err(|e| format!("{}", e)) });
         let stderr = make_value!((run_command) { run_command.await?; rcv_stderr.await.map_err(|e| format!("{}", e)) });
         let exit_status = make_value!((run_command) { run_command.await?; rcv_status.await.map_err(|e| format!("{}", e)) });
+        let complete_once = make_value!((run_command) {
+            if !did_complete.exists() {
+                run_command.await?;
+            }
+            Ok(())
+        });
 
         Ok(ExecResult {
             output_paths,
@@ -470,6 +490,7 @@ impl Plan for Config {
             stderr,
             exit_status,
             complete: run_command,
+            complete_once,
         })
     }
 }

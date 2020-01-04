@@ -1,229 +1,188 @@
 //! Script runtime definitions.
 
-use super::ast::{Expression, Source};
-use grease::future::FusedFuture;
-use grease::{GetValueType, Plan, Value};
-use std::collections::HashMap;
+use super::ast::{Expression, IntoSource, Source};
+use grease::{make_value, match_value, IntoValue, Plan, Value};
+use grease::future::{BoxFuture, FutureExt};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::future::Future;
-use std::pin::Pin;
 use std::str::FromStr;
-use std::task::Poll;
 
 #[path = "runtime/do.rs"]
 pub mod do_;
 pub mod exec;
+pub mod has;
 pub mod map;
 pub mod path;
 pub mod track;
 
-/// A script runtime value.
-#[derive(Clone, Debug, GetValueType)]
-pub enum Data {
-    /// No value.
-    Unit,
-    /// A string.
-    String(String),
-    /// A value from a command.
-    Value(Value),
-    /// An array of values.
-    Array(Vec<Data>),
-    /// A map of values, not preserving order.
-    Map(HashMap<String, Data>),
-    /// A function.
-    Function(std::sync::Arc<DataFunction>),
-}
+pub mod script_types {
+    use super::super::ast::{Expression, Source};
+    use grease::{depends, GetValueType, TypedValue, Value};
+    use std::collections::BTreeMap;
+    use std::fmt;
 
-impl PartialEq for Data {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Unit, Self::Unit) => true,
-            (Self::String(a), Self::String(b)) => a == b,
-            (Self::Value(a), Self::Value(b)) => a == b,
-            (Self::Array(a), Self::Array(b)) => a == b,
-            (Self::Map(a), Self::Map(b)) => a == b,
-            (Self::Function(a), Self::Function(b)) => std::sync::Arc::ptr_eq(a, b),
-            _ => false,
+    /// Script unit type.
+    pub type ScriptUnit = ();
+
+    /// Script string type.
+    pub type ScriptString = String;
+
+    /// Script array type.
+    #[derive(Clone, Debug, GetValueType, PartialEq)]
+    pub struct ScriptArray(pub Vec<Source<Value>>);
+
+    impl From<ScriptArray> for TypedValue<ScriptArray> {
+        fn from(v: ScriptArray) -> Self {
+            let deps = depends![join v.0.iter().map(|s| s.as_ref())];
+            Self::constant_deps(v, deps)
+        }
+    }
+
+    /// Script map type.
+    #[derive(Clone, Debug, GetValueType, PartialEq)]
+    pub struct ScriptMap(pub BTreeMap<String, Source<Value>>);
+
+    impl From<ScriptMap> for TypedValue<ScriptMap> {
+        fn from(v: ScriptMap) -> Self {
+            let deps =
+                v.0.iter()
+                    .map(|(a, v)| depends![*a, **v])
+                    .flatten()
+                    .collect::<Vec<_>>();
+            Self::constant_deps(v, deps)
+        }
+    }
+
+    /// Script function type.
+    #[derive(GetValueType)]
+    pub enum ScriptFunction {
+        UserFunction(Source<Expression>),
+        BuiltinFunction(Box<Builtin>),
+    }
+
+    type Builtin = dyn Fn(&mut grease::Context<super::FunctionContext>) -> Result<Value, super::EvalError>
+        + Send
+        + Sync;
+
+    impl std::hash::Hash for ScriptFunction {
+        fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+            match self {
+                Self::UserFunction(s) => s.hash(h),
+                Self::BuiltinFunction(b) => std::ptr::hash(b, h),
+            }
+        }
+    }
+
+    impl fmt::Debug for ScriptFunction {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            match self {
+                Self::UserFunction(e) => write!(f, "UserFunction: {:?}", e),
+                Self::BuiltinFunction(_) => write!(f, "BuiltinFunction"),
+            }
         }
     }
 }
 
-impl Eq for Data {}
+use script_types::*;
 
-impl Future for Data {
-    type Output = Result<(), String>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context) -> Poll<Self::Output> {
-        match *self {
-            Self::Value(_) => Future::poll(
-                unsafe {
-                    self.map_unchecked_mut(|s| {
-                        if let Self::Value(ref mut v) = s {
-                            v
-                        } else {
-                            panic!("value changed");
+fn get_values<'a> (v: Source<Value>, set: &'a mut BTreeSet<Source<Value>>) -> BoxFuture<'a, Result<(), Source<String>>> {
+    async move {
+        let (source, v) = v.take();
+        
+        let res = async {
+            match_value!(v => {
+                ScriptMap => |val| {
+                    let ScriptMap(mut m) = val.await.map_err(Err)?.owned();
+                    if let Some(v) = m.remove("*") {
+                        get_values(v, set).await.map_err(Ok)?;
+                    } else {
+                        for (_,v) in m {
+                            get_values(v, set).await.map_err(Ok)?;
                         }
-                    })
+                    }
+                    Ok(None)
                 },
-                cx,
-            )
-            .map(|v| v.map(|_| ())),
-            Self::Array(_) => {
-                let pending = unsafe {
-                    self.map_unchecked_mut(|s| {
-                        if let Self::Array(ref mut arr) = s {
-                            arr
-                        } else {
-                            panic!("value changed");
-                        }
-                    })
-                }
-                .iter_mut()
-                .map(|a| {
-                    if a.is_terminated() {
-                        Some(Ok(()))
-                    } else {
-                        match Future::poll(Pin::new(a), cx) {
-                            Poll::Pending => None,
-                            Poll::Ready(r) => Some(r.map(|_| ())),
-                        }
+                ScriptArray => |val| {
+                    let ScriptArray(arr) = val.await.map_err(Err)?.owned();
+                    for v in arr {
+                        get_values(v, set).await.map_err(Ok)?;
                     }
-                })
-                .collect::<Option<Vec<_>>>()
-                .map(|v| v.into_iter().collect::<Result<(), _>>());
-                if let Some(result) = pending {
-                    Poll::Ready(result)
-                } else {
-                    Poll::Pending
+                    Ok(None)
+                },
+                => |v| {
+                    Ok(Some(v))
                 }
+            })
+        }.await;
+        source.with(res)
+        .transpose()
+        .map_err(
+            |e: Source<Result<Source<String>, String>>| match e.transpose_err() {
+                Ok(e) => e,
+                Err(e) => e,
+            },
+        )
+        .map(|v| {
+            let (source, v) = v.take();
+            if let Some(v) = v {
+                set.insert(source.with(v));
             }
-            Self::Map(_) => {
-                let pending = unsafe {
-                    self.map_unchecked_mut(|s| {
-                        if let Self::Map(ref mut m) = s {
-                            m
-                        } else {
-                            panic!("value changed");
-                        }
-                    })
-                }
-                .iter_mut()
-                .map(|(_, a)| {
-                    if a.is_terminated() {
-                        Some(Ok(()))
-                    } else {
-                        match Future::poll(Pin::new(a), cx) {
-                            Poll::Pending => None,
-                            Poll::Ready(r) => Some(r),
-                        }
-                    }
-                })
-                .collect::<Option<Vec<_>>>()
-                .map(|v| v.into_iter().collect::<Result<(), _>>());
-                if let Some(result) = pending {
-                    Poll::Ready(result.map(|_| ()))
-                } else {
-                    Poll::Pending
-                }
-            }
-            _ => std::task::Poll::Ready(Ok(())),
-        }
-    }
+            ()
+        })
+    }.boxed()
 }
 
-impl FusedFuture for Data {
-    fn is_terminated(&self) -> bool {
-        match self {
-            Self::Value(v) => v.is_terminated(),
-            Self::Array(arr) => arr.iter().all(|v| v.is_terminated()),
-            Self::Map(m) => m.iter().all(|(_, v)| v.is_terminated()),
-            _ => true,
-        }
-    }
-}
-
-#[derive(Debug)]
-pub enum FunctionError {
-    Err(String),
-    Nested(Source<Error>),
-}
-
-impl From<&'_ str> for FunctionError {
-    fn from(s: &str) -> Self {
-        FunctionError::Err(s.to_owned())
-    }
-}
-
-impl From<String> for FunctionError {
-    fn from(s: String) -> Self {
-        FunctionError::Err(s)
-    }
-}
-
-impl From<Source<Error>> for FunctionError {
-    fn from(e: Source<Error>) -> Self {
-        FunctionError::Nested(e)
-    }
-}
-
-type Builtin =
-    dyn Fn(&mut grease::Context<FunctionContext>) -> Result<Data, FunctionError> + Send + Sync;
-
-/// A function value.
-pub enum DataFunction {
-    UserFunction(Source<Expression>),
-    BuiltinFunction(Box<Builtin>),
-}
-
-impl fmt::Debug for DataFunction {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Self::UserFunction(e) => write!(f, "UserFunction: {:?}", e),
-            Self::BuiltinFunction(_) => write!(f, "BuiltinFunction"),
-        }
-    }
-}
-
-impl From<&'_ Data> for bool {
-    fn from(v: &Data) -> bool {
-        if let Data::Unit = v {
-            false
-        } else {
-            true
-        }
-    }
+/// Create a value which deeply evaluates all script types within the given value.
+///
+/// The returned value will be unit-typed.
+pub fn script_deep_eval(v: Source<Value>) -> Source<Value> {
+    let (source, v) = v.take();
+    let s2 = source.clone();
+    source.with(
+        make_value!([v] {
+            let mut set = Default::default();
+            get_values(s2.with(v), &mut set).await.map_err(|e| e.to_string())?;
+            grease::future::join_all(set).await.into_iter()
+                .map(|e| e.transpose_err())
+                .collect::<Result<Vec<_>,_>>()
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+        })
+        .into(),
+    )
 }
 
 /// The script context.
 pub struct Context {
-    env: Vec<HashMap<String, Data>>,
+    env: Vec<BTreeMap<String, Source<Value>>>,
 }
 
 impl Default for Context {
     fn default() -> Self {
         Context {
-            env: vec![HashMap::new()],
+            // The default context should start with an empty map as the base.
+            env: vec![Default::default()],
         }
     }
 }
 
 impl Context {
-    pub fn env_insert(&mut self, k: String, v: Data) {
+    pub fn env_insert(&mut self, k: String, v: Source<Value>) {
         self.env.last_mut().unwrap().insert(k, v);
     }
 
-    pub fn env_remove<Q: ?Sized>(&mut self, k: &Q) -> Option<Data>
+    pub fn env_remove<Q: ?Sized>(&mut self, k: &Q) -> Option<Source<Value>>
     where
         String: std::borrow::Borrow<Q>,
-        Q: std::hash::Hash + Eq,
+        Q: Ord,
     {
         self.env.last_mut().unwrap().remove(k)
     }
 
-    pub fn env_get<Q: ?Sized>(&mut self, k: &Q) -> Option<&Data>
+    pub fn env_get<Q: ?Sized>(&mut self, k: &Q) -> Option<&Source<Value>>
     where
         String: std::borrow::Borrow<Q>,
-        Q: std::hash::Hash + Eq,
+        Q: Ord,
     {
         self.env.iter().rev().find_map(|m| m.get(k))
     }
@@ -232,7 +191,7 @@ impl Context {
 /// Function call context.
 pub struct FunctionContext {
     ctx: Context,
-    args: Vec<Data>,
+    args: Vec<Source<Value>>,
 }
 
 impl std::ops::Deref for FunctionContext {
@@ -250,13 +209,13 @@ impl std::ops::DerefMut for FunctionContext {
 }
 
 impl grease::SplitInto<Context> for FunctionContext {
-    type Extra = Vec<Data>;
+    type Extra = Vec<Source<Value>>;
 
-    fn split(self) -> (Context, Vec<Data>) {
+    fn split(self) -> (Context, Self::Extra) {
         (self.ctx, self.args)
     }
 
-    fn join(ctx: Context, args: Vec<Data>) -> Self {
+    fn join(ctx: Context, args: Self::Extra) -> Self {
         FunctionContext { ctx, args }
     }
 }
@@ -270,14 +229,14 @@ pub enum Error {
     MissingIndex(String),
     /// An indexing operation was attempted on a type that is not an array or map.
     InvalidIndex,
-    /// An error from a builtin function.
-    FunctionError(String),
     /// An expression is in call-position (had arguments) but is not callable.
-    NonCallableExpression(Data),
+    NonCallableExpression(Value),
     /// No exec bindings is available in the current environment.
     ExecMissing,
     /// The unit type is passed more than one argument.
     UnitTooManyArguments,
+    /// An error occured while evaluating a value.
+    ValueError(String),
 }
 
 impl fmt::Display for Error {
@@ -286,80 +245,157 @@ impl fmt::Display for Error {
             Self::NonIntegerIndex => write!(f, "positive integer index expected"),
             Self::MissingIndex(s) => write!(f, "index missing: {}", s),
             Self::InvalidIndex => write!(f, "type is not an array or map; cannot index"),
-            Self::FunctionError(s) => write!(f, "{}", s),
             Self::NonCallableExpression(d) => {
                 write!(f, "cannot pass arguments to non-callable value {:?}", d)
             }
             Self::ExecMissing => write!(f, "'exec' is not available in the current environment"),
             Self::UnitTooManyArguments => write!(f, "only one argument allowed"),
+            Self::ValueError(s) => write!(f, "{}", s),
         }
     }
 }
 
-impl Plan<FunctionContext> for std::sync::Arc<DataFunction> {
-    type Output = Result<Data, FunctionError>;
+impl Plan<FunctionContext> for &'_ ScriptFunction {
+    type Output = Result<Value, EvalError>;
 
     fn plan(self, ctx: &mut grease::Context<FunctionContext>) -> Self::Output {
-        match self.as_ref() {
-            DataFunction::UserFunction(e) => {
+        match self {
+            ScriptFunction::UserFunction(e) => {
                 // A FunctionContext is only used once, so swap out the arguments.
                 let mut args = Vec::new();
                 std::mem::swap(&mut ctx.inner.args, &mut args);
 
-                ctx.inner.env.push(HashMap::new());
-                ctx.inner.env_insert("@".to_owned(), Data::Array(args));
+                let args = args
+                    .into_source()
+                    .map(|args| ScriptArray(args).into_value());
+
+                ctx.inner.env.push(Default::default());
+                ctx.inner.env_insert("@".to_owned(), args);
                 let v = e.clone().plan_split(ctx);
                 ctx.inner.env.pop();
-                v.map_err(FunctionError::Nested)
+                v.map(Source::unwrap).map_err(EvalError::Nested)
             }
-            DataFunction::BuiltinFunction(f) => f(ctx),
+            ScriptFunction::BuiltinFunction(f) => f(ctx),
         }
     }
 }
 
-impl Plan<Context> for Source<Expression> {
-    type Output = Result<Data, Source<Error>>;
+macro_rules! value_now {
+    ( $e:expr ) => {
+        $e.get().map_err(move |e| Error::ValueError(e))?
+    };
+}
+
+#[derive(Debug)]
+pub enum EvalError {
+    Err(Error),
+    Nested(Source<Error>),
+}
+
+impl From<Source<EvalError>> for Source<Error> {
+    fn from(v: Source<EvalError>) -> Self {
+        let (s, v) = v.take();
+        v.normalize(s)
+    }
+}
+
+impl From<Source<EvalError>> for EvalError {
+    fn from(v: Source<EvalError>) -> Self {
+        Self::from(Source::<Error>::from(v))
+    }
+}
+
+impl EvalError {
+    /// Normalize to a Source<Error>.
+    pub fn normalize(self, s: Source<()>) -> Source<Error> {
+        use EvalError::*;
+        match self {
+            Err(e) => s.with(e),
+            Nested(e) => e,
+        }
+    }
+}
+
+impl From<Error> for EvalError {
+    fn from(e: Error) -> Self {
+        Self::Err(e)
+    }
+}
+
+impl From<&'_ str> for EvalError {
+    fn from(s: &str) -> Self {
+        Self::from(s.to_owned())
+    }
+}
+
+impl From<String> for EvalError {
+    fn from(s: String) -> Self {
+        Self::Err(Error::ValueError(s))
+    }
+}
+
+impl From<Source<Error>> for EvalError {
+    fn from(e: Source<Error>) -> Self {
+        Self::Nested(e)
+    }
+}
+
+impl From<Source<&str>> for EvalError {
+    fn from(s: Source<&str>) -> Self {
+        Self::from(s.map(|s| s.to_owned()))
+    }
+}
+
+impl From<Source<String>> for EvalError {
+    fn from(s: Source<String>) -> Self {
+        s.map(Error::ValueError).into()
+    }
+}
+
+impl Plan<Context> for Expression {
+    type Output = Result<Value, EvalError>;
 
     fn plan(self, ctx: &mut grease::Context<Context>) -> Self::Output {
         use Expression::*;
-        let (source, expr) = self.take();
-        match expr {
-            Empty => Ok(Data::Unit),
-            Expression::String(s) => Ok(Data::String(s.clone())),
-            Array(es) => Ok(Data::Array(
+        match self {
+            Empty => Ok(().into_value()),
+            Expression::String(s) => Ok(s.into_value()),
+            Array(es) => Ok(ScriptArray(
                 es.into_iter()
                     .map(|e| e.plan(ctx))
                     .collect::<Result<Vec<_>, _>>()?,
-            )),
+            )
+            .into_value()),
             SetVariable(var, e) => {
                 let data = e.plan(ctx)?;
-                ctx.inner.env_insert(var.clone(), data);
-                Ok(Data::Unit)
+                ctx.inner.env_insert(var, data);
+                Ok(().into_value())
             }
             UnsetVariable(var) => {
                 ctx.inner.env_remove(&var);
-                Ok(Data::Unit)
+                Ok(().into_value())
             }
-            Index(e, i) => match e.plan(ctx)? {
-                Data::Array(v) => match usize::from_str(&i) {
-                    Err(_) => Err(source.with(Error::NonIntegerIndex)),
-                    Ok(ind) => v.get(ind).cloned().ok_or(source.with(Error::MissingIndex(i))),
+            Index(e, i) => match_value!(e.plan(ctx)?.unwrap() => {
+                ScriptArray => |val| match usize::from_str(&i) {
+                    Err(_) => Err(Error::NonIntegerIndex.into()),
+                    Ok(ind) => value_now!(val).0.get(ind).cloned().map(Source::unwrap).ok_or(Error::MissingIndex(i.clone()).into())
                 },
-                Data::Map(v) => v.get(&i).cloned().ok_or(source.with(Error::MissingIndex(i))),
-                _ => Err(source.with(Error::InvalidIndex)),
-            },
+                ScriptMap => |val| value_now!(val).0.get(&i).cloned().map(Source::unwrap).ok_or(Error::MissingIndex(i).into()),
+                => |_| Err(Error::InvalidIndex.into())
+            }),
             Command(cmd, mut args) => {
-                let cmdsource = cmd.clone().with(());
-                match cmd.plan(ctx)? {
-                    Data::String(s) => {
+                let cmdsource = cmd.source();
+                match_value!(cmd.plan(ctx)?.unwrap() => {
+                    ScriptString => |val| {
+                        let s = value_now!(val).owned();
                         // Lookup string in environment, and apply result to remaining arguments
                         let (cmd, args) = match ctx.inner.env_get(&s) {
-                            Some(data) => (data, args),
+                            Some(value) => (value, args),
                             None => {
                                 // Fall back to 'exec' command.
                                 let exec = match ctx.inner.env_get("exec") {
                                     Some(v) => v,
-                                    None => return Err(source.with(Error::ExecMissing)),
+                                    None => return Err(Error::ExecMissing.into()),
                                 };
                                 args.insert(0, cmdsource.with(Expression::String(s)));
                                 (exec, args)
@@ -368,96 +404,113 @@ impl Plan<Context> for Source<Expression> {
 
                         let has_args = !args.is_empty();
 
-                        match cmd.clone() {
-                            Data::Function(f) if has_args => {
-                                let args =
-                                    args.into_iter()
-                                        .map(|a| a.plan(ctx))
-                                        .collect::<Result<Vec<_>, _>>()?;
-                                match f.plan_join(ctx, args) {
-                                    Err(e) => match e {
-                                        FunctionError::Err(e) => {
-                                            Err(source.with(Error::FunctionError(e)))
-                                        }
-                                        FunctionError::Nested(e) => Err(e),
-                                    },
-                                    Ok(r) => Ok(r),
-                                }
-                            }
-                            v => {
+                        match_value!(cmd.clone().unwrap() => {
+                            ScriptFunction => |val| {
                                 if has_args {
-                                    Err(source.with(Error::NonCallableExpression(v)))
+                                    let f = value_now!(val);
+                                    let args =
+                                        args.into_iter()
+                                            .map(|a| a.plan(ctx))
+                                            .collect::<Result<Vec<_>, _>>()?;
+                                    f.plan_join(ctx, args)
+                                } else {
+                                    Ok(val.into())
+                                }
+                            },
+                            => |v| {
+                                if has_args {
+                                    Err(Error::NonCallableExpression(v).into())
                                 } else {
                                     Ok(v)
                                 }
                             }
-                        }
-                    }
-                    Data::Value(v) => {
+                        })
+                    },
+                    std::path::PathBuf => |val| {
                         // Fall back to 'exec' command.
                         let exec = match ctx.inner.env_get("exec") {
-                            Some(Data::Function(f)) => f.clone(),
-                            _ => return Err(source.with(Error::ExecMissing)),
+                            Some(f) => match f.clone().unwrap().typed::<ScriptFunction>() {
+                                Ok(f) => f,
+                                Err(_) => return Err(Error::ExecMissing.into())
+                            }
+                            _ => return Err(Error::ExecMissing.into()),
                         };
                         let mut args = args
                             .into_iter()
                             .map(|a| a.plan(ctx))
                             .collect::<Result<Vec<_>, _>>()?;
-                        args.insert(0, Data::Value(v));
+                        args.insert(0, cmdsource.with(val.into()));
 
-                        match exec.plan_join(ctx, args) {
-                            Err(e) => match e {
-                                FunctionError::Err(e) => Err(source.with(Error::FunctionError(e))),
-                                FunctionError::Nested(e) => Err(e),
-                            },
-                            Ok(r) => Ok(r),
-                        }
-                    }
-                    Data::Unit => {
+                        let exec = value_now!(exec);
+
+                        exec.plan_join(ctx, args)
+                    },
+                    ScriptUnit => |_| {
                         // Return a single argument if provided, else return unit
                         let mut args = args.into_iter();
                         if let Some(v) = args.next() {
                             if args.next().is_some() {
-                                Err(source.with(Error::UnitTooManyArguments))
+                                Err(Error::UnitTooManyArguments.into())
                             } else {
-                                v.plan(ctx)
+                                v.plan(ctx).map(Source::unwrap).map_err(Into::into)
                             }
                         } else {
-                            Ok(Data::Unit)
+                            Ok(().into_value())
                         }
-                    }
-                    d => Ok(d),
-                }
+                    },
+                    => |v| Ok(v)
+                })
             }
-            Block(es) => es.plan(ctx),
-            Function(e) => Ok(Data::Function(DataFunction::UserFunction(*e).into())),
+            Block(es) => es.plan(ctx).map(Source::unwrap).map_err(Into::into),
+            Function(e) => Ok(ScriptFunction::UserFunction(*e).into_value()),
             If(cond, t, f) => {
-                let cond = cond.plan(ctx)?;
-                if (&cond).into() {
-                    t.plan(ctx)
-                } else {
-                    f.plan(ctx)
-                }
+                let cond = cond.plan(ctx)?.unwrap();
+
+                let to_bool: Option<grease::IntoTyped<bool>> = ctx.traits.get(&cond);
+                let cond = match to_bool {
+                    Some(t) => {
+                        let v = value_now!(t.into_typed(cond));
+                        *v
+                    }
+                    None => true,
+                };
+                if cond { t.plan(ctx) } else { f.plan(ctx) }
+                    .map(Source::unwrap)
+                    .map_err(Into::into)
             }
         }
     }
 }
 
+impl Plan<Context> for Source<Expression> {
+    type Output = Result<Source<Value>, Source<Error>>;
+
+    fn plan(self, ctx: &mut grease::Context<Context>) -> Self::Output {
+        let (source, expr) = self.take();
+        match expr.plan(ctx) {
+            Ok(val) => Ok(source.with(val)),
+            Err(e) => Err(e.normalize(source)),
+        }
+    }
+}
+
 impl Plan<Context> for Vec<Source<Expression>> {
-    type Output = Result<Data, Source<Error>>;
+    type Output = Result<Source<Value>, Source<Error>>;
 
     fn plan(self, ctx: &mut grease::Context<Context>) -> Self::Output {
         // Push a new scope
-        ctx.inner.env.push(HashMap::new());
-        let mut val = Data::Unit;
+        ctx.inner.env.push(Default::default());
+        let mut val = Source::builtin(().into_value());
         for e in self {
             val = e.plan(ctx)?;
         }
+        // Pop the pushed scope
         let ret = ctx.inner.env.pop().unwrap();
-        if let Data::Unit = val {
-            Ok(Data::Map(ret))
-        } else {
-            Ok(val)
-        }
+        // Return result based on final value.
+        let (source, val) = val.take();
+        Ok(val
+            .typed::<ScriptUnit>()
+            .map(move |_| Source::builtin(ScriptMap(ret).into_value()))
+            .unwrap_or_else(|v| source.with(v)))
     }
 }

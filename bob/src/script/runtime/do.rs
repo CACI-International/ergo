@@ -1,34 +1,37 @@
 //! Execute commands in order.
 
-use super::{Data, DataFunction, FunctionContext, FunctionError};
-use grease::future::{FutureExt, TryFutureExt};
-use grease::{make_value, Context};
+use super::script_types::*;
+use super::{script_deep_eval, EvalError, FunctionContext, Source};
+use grease::{Context, IntoValue, Value};
 
-pub fn do_builtin() -> Data {
-    Data::Function(DataFunction::BuiltinFunction(Box::new(do_f)).into())
+pub fn do_builtin() -> Value {
+    ScriptFunction::BuiltinFunction(Box::new(do_f)).into()
 }
 
-fn do_f(ctx: &mut Context<FunctionContext>) -> Result<Data, FunctionError> {
+fn do_f(ctx: &mut Context<FunctionContext>) -> Result<Value, EvalError> {
     let mut args = Vec::new();
     std::mem::swap(&mut args, &mut ctx.inner.args);
 
     let mut args = args.into_iter();
-    let arr = args
-        .next()
-        .ok_or(FunctionError::from("no commands provided"))?;
+    let arr = args.next().ok_or(EvalError::from("no commands provided"))?;
     if args.next().is_some() {
         return Err("extraneous arguments to do".into());
     }
 
-    let arr = match arr {
-        Data::Array(arr) => arr,
-        _ => return Err("argument to do must be an array".into()),
-    };
+    let (arrsource, arr) = arr.take();
 
-    let mut fut = grease::future::ok(()).boxed();
+    let arr: Result<Vec<Source<Value>>, EvalError> = match arr.typed::<ScriptArray>() {
+        Ok(val) => val.get().map(|alias| alias.owned().0),
+        Err(_) => Err("argument to do must be an array".to_owned()),
+    }
+    .map_err(|e| arrsource.with(e).into());
+
+    let arr = arr?;
+
+    let mut val = Source::builtin(().into_value());
     for a in arr {
-        fut = fut.and_then(move |()| a).boxed();
+        val = script_deep_eval(val).map(|v| v.then(a.unwrap()));
     }
 
-    Ok(Data::Value(make_value!(fut.await).into()))
+    Ok(val.unwrap())
 }

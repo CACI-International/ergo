@@ -1,20 +1,21 @@
 //! Tracking file changes.
 
-use super::{Data, DataFunction, FunctionContext, FunctionError};
-use grease::{item_name, make_value, Context, Plan, TypedValue};
+use super::script_types::*;
+use super::{EvalError, FunctionContext};
+use grease::{item_name, make_value, Context, Plan, TypedValue, Value};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-pub fn track_builtin() -> Data {
-    Data::Function(DataFunction::BuiltinFunction(Box::new(track)).into())
+pub fn track_builtin() -> Value {
+    ScriptFunction::BuiltinFunction(Box::new(track)).into()
 }
 
 struct Config {
     path: PathBuf,
 }
 
-fn track(ctx: &mut Context<FunctionContext>) -> Result<Data, FunctionError> {
+fn track(ctx: &mut Context<FunctionContext>) -> Result<Value, EvalError> {
     let mut args = Vec::new();
     std::mem::swap(&mut args, &mut ctx.inner.args);
 
@@ -23,14 +24,19 @@ fn track(ctx: &mut Context<FunctionContext>) -> Result<Data, FunctionError> {
     }
 
     let path = args.into_iter().next().unwrap();
-    let path = match path {
-        Data::String(path) => path,
-        _ => return Err("track argument must be a string".into()),
-    };
+
+    let path = path
+        .map(|p| {
+            p.typed::<ScriptString>()
+                .map_err(|_| "track argument must be a string".into())
+                .and_then(TypedValue::get)
+                .map(|v| v.owned())
+        })
+        .transpose_err()?;
 
     Config { path: path.into() }
         .plan_split(ctx)
-        .map(|v| Data::Value(v.into()))
+        .map(|v| v.into())
         .map_err(|e| e.into())
 }
 

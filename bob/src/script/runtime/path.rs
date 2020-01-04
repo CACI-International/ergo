@@ -1,35 +1,41 @@
 //! Join path components.
 
-use super::{Data, DataFunction, FunctionContext, FunctionError};
-use grease::Context;
+use super::script_types::*;
+use super::{EvalError, FunctionContext};
+use grease::{Context, Value};
 
-pub fn path_builtin() -> Data {
-    Data::Function(DataFunction::BuiltinFunction(Box::new(path)).into())
+pub fn path_builtin() -> Value {
+    ScriptFunction::BuiltinFunction(Box::new(path)).into()
 }
 
-fn path(ctx: &mut Context<FunctionContext>) -> Result<Data, FunctionError> {
+fn path(ctx: &mut Context<FunctionContext>) -> Result<Value, EvalError> {
     let mut args = Vec::new();
     std::mem::swap(&mut args, &mut ctx.inner.args);
 
     let mut args = args
         .into_iter()
-        .map(|a| match a {
-            Data::String(s) => Ok(s),
-            _ => Err("all arguments must be strings".to_owned()),
+        .map(|sv| {
+            sv.map(|v| {
+                v.typed::<ScriptString>()
+                    .map_err(|_| "all arguments must be strings".into())
+                    .and_then(|v| v.get())
+            })
+            .transpose_err()
         })
         .collect::<Result<Vec<_>, _>>()?
         .into_iter();
     let first = args
         .next()
-        .ok_or("at least one path component is required".to_owned())?;
+        .ok_or("at least one path component is required".to_owned())?
+        .owned();
 
     let mut path = std::path::PathBuf::from(first);
     for a in args {
-        path.push(a);
+        path.push(a.as_ref());
     }
-    Ok(Data::String(
-        path.into_os_string()
-            .into_string()
-            .map_err(|_| "invalid path".to_owned())?,
-    ))
+
+    path.into_os_string()
+        .into_string()
+        .map(|v| v.into())
+        .map_err(|_| "invalid path".into())
 }

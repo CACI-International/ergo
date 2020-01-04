@@ -1,5 +1,6 @@
 //! The AST definition for script files.
 
+use grease::future::Future;
 use std::fmt;
 use std::io::{BufRead, BufReader, Read};
 
@@ -7,7 +8,7 @@ mod parse;
 mod tokenize;
 
 /// A parsed expression.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Hash, PartialEq)]
 pub enum Expression {
     Empty,
     String(String),
@@ -22,7 +23,7 @@ pub enum Expression {
 }
 
 /// A location in the original (character) input stream.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Hash, PartialEq, Eq)]
 pub struct Location {
     pub start: usize,
     pub length: usize,
@@ -139,6 +140,15 @@ impl PartialEq for SourceFactoryRef {
     }
 }
 
+impl std::hash::Hash for SourceFactoryRef {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        match &self.0 {
+            None => (233498237u128).hash(h),
+            Some(v) => std::ptr::hash(v.as_ref(), h),
+        }
+    }
+}
+
 /// A string-based source.
 pub struct StringSource(pub String);
 
@@ -182,7 +192,8 @@ impl SourceFactory for NoSource {
 }
 
 /// A type which adds source location to a value.
-#[derive(Clone, Debug)]
+// TODO Hash should probably agree with PartialEq
+#[derive(Clone, Debug, Hash)]
 pub struct Source<T> {
     value: T,
     pub location: Location,
@@ -210,7 +221,7 @@ impl Source<()> {
 
     /// Open a source, returning a Source around the iterator over the source's characters.
     pub fn open(self) -> std::io::Result<Source<impl IntoIterator<Item = char>>> {
-        let src = self.source().unwrap();
+        let src = self.source_factory().unwrap();
         let mut r = src
             .read()
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
@@ -228,14 +239,32 @@ impl Source<()> {
 }
 
 impl<T> Source<T> {
-    /// Convert a source into the inner value.
-    pub fn into_value(self) -> T {
+    /// Create a value that has internal source.
+    pub fn builtin(v: T) -> Self {
+        Source {
+            value: v,
+            location: Location::default(),
+            source: SourceFactoryRef(Some(std::sync::Arc::new(NoSource))),
+        }
+    }
+
+    /// Get the inner value.
+    pub fn unwrap(self) -> T {
         self.value
     }
 
     /// Get the inner source factory.
-    pub fn source(&self) -> Option<std::sync::Arc<dyn SourceFactory + Send + Sync>> {
+    pub fn source_factory(&self) -> Option<std::sync::Arc<dyn SourceFactory + Send + Sync>> {
         self.source.0.clone()
+    }
+
+    /// Get a copy of the source.
+    pub fn source(&self) -> Source<()> {
+        Source {
+            value: (),
+            location: self.location.clone(),
+            source: self.source.clone(),
+        }
     }
 
     /// Map the inner value of the source.
@@ -268,15 +297,49 @@ impl<T> Source<T> {
     }
 }
 
+impl<T, E> Source<Result<T, E>> {
+    pub fn transpose(self) -> Result<Source<T>, Source<E>> {
+        let (source, v) = self.take();
+        match v {
+            Ok(t) => Ok(source.with(t)),
+            Err(e) => Err(source.with(e)),
+        }
+    }
+
+    pub fn transpose_ok(self) -> Result<Source<T>, E> {
+        let (source, v) = self.take();
+        v.map(move |t| source.with(t))
+    }
+
+    pub fn transpose_err(self) -> Result<T, Source<E>> {
+        let (source, v) = self.take();
+        v.map_err(move |e| source.with(e))
+    }
+}
+
 impl<T: PartialEq> Source<T> {
     pub fn total_eq(this: &Self, other: &Self) -> bool {
         this.value == other.value && this.location == other.location && this.source == other.source
     }
 }
 
+impl<T: Eq> Eq for Source<T> {}
+
 impl<T: PartialEq> PartialEq for Source<T> {
     fn eq(&self, other: &Self) -> bool {
         self.value == other.value
+    }
+}
+
+impl<T: PartialOrd> PartialOrd for Source<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.value.partial_cmp(&other.value)
+    }
+}
+
+impl<T: Ord> Ord for Source<T> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.value.cmp(&other.value)
     }
 }
 
@@ -306,6 +369,19 @@ impl<T> AsMut<T> for Source<T> {
     }
 }
 
+impl<T: Future> Future for Source<T> {
+    type Output = Source<T::Output>;
+
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context,
+    ) -> std::task::Poll<Self::Output> {
+        let source = self.source();
+        Future::poll(unsafe { self.map_unchecked_mut(|s| &mut s.value) }, cx)
+            .map(|v| source.with(v))
+    }
+}
+
 impl<T> IntoSource for Source<T> {
     type Output = T;
     fn into_source(self) -> Source<T> {
@@ -329,7 +405,7 @@ impl<T: IntoSource> IntoSource for Vec<T> {
             .into_iter()
             .map(|t| {
                 let s = t.into_source();
-                let source = s.source();
+                let source = s.source_factory();
                 let loc = s.location.clone();
                 (s, (loc, SourceFactoryRef(source)))
             })

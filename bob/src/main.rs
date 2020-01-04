@@ -6,7 +6,8 @@ mod output;
 mod script;
 
 use output::Output;
-use script::{FileSource, Script, Source};
+use script::types::*;
+use script::{script_deep_eval, FileSource, Script, Source};
 
 trait AppErr {
     type Output;
@@ -97,47 +98,37 @@ fn main() {
         .map(|strs| strs.iter().map(|s| s.as_ref()).collect())
         .and_then(|ps: Vec<&str>| if ps.is_empty() { None } else { Some(ps) });
 
-    let result = match script_output {
-        script::Data::Map(mut m) if params.is_some() || m.contains_key("*") => {
-            let mut params = params.unwrap_or(vec!["*"]);
+    let value_roots = match (
+        script_output.map(|v| v.typed::<ScriptMap>()).transpose(),
+        params,
+    ) {
+        (Ok(val), Some(mut params)) => {
+            let ScriptMap(mut m) = val
+                .map(|v| v.get())
+                .transpose_err()
+                .app_err("failed to get value")
+                .owned();
+
             params.sort_unstable();
             params.dedup();
             // Get all data values based on parameters
-            let mut vals = params
+            params
                 .into_iter()
                 .map(|p| m.remove(p).ok_or(p))
                 .collect::<Result<Vec<_>, _>>()
-                .app_err("target not found");
-
-            // Evaluate any maps down to default values.
-            for v in &mut vals {
-                loop {
-                    if let script::Data::Map(m) = v {
-                        if let Some(nv) = m.remove("*") {
-                            *v = nv;
-                            continue;
-                        }
-                    }
-                    break;
-                }
-            }
-
-            // Drop map to get rid of any unnecessary values. Their presence or absence may affect
-            // value behavior.
-            drop(m);
-
-            // Force outputs from parameters
-            futures::executor::block_on(futures::future::join_all(vals))
-                .into_iter()
-                .collect::<Result<(), _>>()
+                .app_err("target not found")
         }
-        v => {
+        (Ok(val), None) => vec![val.map(Into::into)],
+        (Err(v), params) => {
             params.is_none().app_err(
                 "cannot specify additional parameters unless the script evaluates to a map",
             );
-            futures::executor::block_on(v)
+            vec![v]
         }
     };
+
+    let to_eval = script_deep_eval(Source::builtin(ScriptArray(value_roots).into()));
+    let result = futures::executor::block_on(to_eval).transpose_err();
 
     let mut l = logger.lock().unwrap();
     l.clear_status();
