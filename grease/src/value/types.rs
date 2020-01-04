@@ -1,6 +1,6 @@
 //! GetValueType implementations for std types.
 
-use super::{GetValueType, TypedValue, Value, ValueType};
+use super::{GetValueType, IntoValue, TypedValue, Value, ValueType};
 use crate::uuid::*;
 use crate::{Trait, TraitImpl, TraitType};
 
@@ -120,9 +120,21 @@ where
 }
 
 pub(crate) fn trait_generator(tp: std::sync::Arc<ValueType>) -> Vec<TraitImpl> {
-    vec![IntoTrait {
+    let mut b = vec![IntoTrait {
         into: std::convert::identity,
-        tp,
+        tp: tp.clone(),
     }
-    .into()]
+    .into()];
+
+    // () should convert to a bool (always false)
+    if *tp == <()>::value_type() {
+        b.push(
+            IntoTrait {
+                into: |_| false.into_value(),
+                tp: bool::value_type().into(),
+            }
+            .into(),
+        );
+    }
+    b
 }

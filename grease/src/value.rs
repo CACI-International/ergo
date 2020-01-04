@@ -192,7 +192,8 @@ impl ValueDataBuffer {
 /// Value data with a stored drop function.
 ///
 /// The drop function is called when the ValueData instance itself is dropped.
-pub struct ValueData(ValueDataBuffer, extern "C" fn(&mut ValueDataBuffer));
+/// The bool flag indicates whether the stored data is a Box.
+pub struct ValueData(ValueDataBuffer, extern "C" fn(&mut ValueDataBuffer), bool);
 
 // ValueData should always be Send, and should be Sync if the value it stores is Sync. However, we
 // cannot enforce the Sync restriction, so we instead ensure values are Sync in the Alias struct,
@@ -212,18 +213,18 @@ impl ValueData {
         if std::mem::size_of_val(&v) <= std::mem::size_of::<ValueDataBuffer>()
             && std::mem::align_of_val(&v) <= std::mem::align_of::<ValueDataBuffer>()
         {
-            Self::from_type(v)
+            Self::from_type(v, false)
         } else {
             // Box<T> is defined as having the same size as usize/pointer, so the size
             // assertions should be true on any platform.
-            Self::from_type(Box::new(v))
+            Self::from_type(Box::new(v), true)
         }
     }
 
     /// Create a ValueData from the given type, assuming the size and alignment of the type will
     /// fit in the ValueDataBuffer. Panics if these constraints are not satisfied (in debug
     /// builds).
-    fn from_type<T>(v: T) -> Self {
+    fn from_type<T>(v: T, boxed: bool) -> Self {
         debug_assert!(std::mem::size_of::<T>() <= std::mem::size_of::<ValueDataBuffer>());
         debug_assert!(std::mem::align_of::<T>() <= std::mem::align_of::<ValueDataBuffer>());
         ValueData(
@@ -233,6 +234,7 @@ impl ValueData {
             } else {
                 no_drop
             },
+            boxed,
         )
     }
 
@@ -240,7 +242,12 @@ impl ValueData {
     ///
     /// Unsafe because callers must ensure the data is a T.
     pub unsafe fn as_ref<T: Sync>(&self) -> &T {
-        self.0.as_ref()
+        if self.2 {
+            let b: &Box<T> = self.0.as_ref();
+            b.as_ref()
+        } else {
+            self.0.as_ref()
+        }
     }
 
     /// Get the ValueData as an owned value.
@@ -249,9 +256,14 @@ impl ValueData {
     pub unsafe fn owned<T>(mut self) -> T {
         let mut v: ValueDataBuffer = std::mem::MaybeUninit::uninit().assume_init();
         std::mem::swap(&mut v, &mut self.0);
-        let v = v.as_value::<T>();
         self.1 = no_drop;
-        v
+        if self.2 {
+            let v = v.as_value::<Box<T>>();
+            *v
+        } else {
+            let v = v.as_value::<T>();
+            v
+        }
     }
 }
 
@@ -390,15 +402,26 @@ impl Value {
             tp,
             data: value.boxed().shared(),
             dependencies: Arc::from_iter(deps.into_iter().filter_map(|v| match v {
-                Dependency::Value(val) => Some(val),
+                Dependency::Value(val) => Some(val.unevaluated()),
                 _ => None,
             })),
             id,
         }
     }
 
+    /// Cause an error to occur if this value's future is ever evaluated.
+    pub fn unevaluated(self) -> Value {
+        Value {
+            data: futures::future::err("unevaluated value".into())
+                .boxed()
+                .shared(),
+            ..self
+        }
+    }
+
+    /// Return a value that computes this value, discards the result, and returns the given value.
     pub fn then(self, v: Value) -> Value {
-        let deps = Dependencies::unordered(depends![self, v]);
+        let deps = Dependencies::ordered(depends![self, v]);
         Self::new(v.value_type(), FutureExt::then(self, move |_| v), deps)
     }
 
@@ -452,6 +475,32 @@ impl FusedFuture for Value {
     }
 }
 
+/// Match expression for Values.
+///
+/// Matching is based on types, not patterns, and each type must implement GetValueType.  The else
+/// case is required. All cases must be in the form `|name| body` that evaluate to a final type T,
+/// and expressions must all agree on this final type. For each `body`, `name` will be bound to a
+/// TypedValue according to the case type.
+///
+/// The evaluation context is similar to regular match expressions, in that flow-control statements
+/// will pertain to the calling code.
+#[macro_export]
+macro_rules! match_value {
+    ( $value:expr => { $( $t:ty => |$bind:pat| $e:expr $(,)? )+ => |$elsebind:pat| $else:expr } ) => {
+        loop {
+            let mut match_value__val = $value;
+            $( match_value__val = match match_value__val.typed::<$t>() {
+                Ok($bind) => break $e,
+                Err(v) => v
+            };)*
+            {
+                let $elsebind = match_value__val;
+                break $else
+            }
+        }
+    }
+}
+
 /// An alias of ValueData that can be dereferenced to T.
 pub struct Alias<T>(Arc<ValueData>, std::marker::PhantomData<T>);
 
@@ -461,6 +510,14 @@ impl<T> Alias<T> {
     /// Unsafe because callers must ensure that the ValueData stores T.
     unsafe fn new(inner: Arc<ValueData>) -> Self {
         Alias(inner, Default::default())
+    }
+}
+
+impl<T> std::fmt::Debug for Alias<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.debug_struct("Alias")
+            .field("data", &format_args!("{:p}", self.0))
+            .finish()
     }
 }
 
@@ -488,6 +545,12 @@ impl<T: Sync> std::ops::Deref for Alias<T> {
     }
 }
 
+impl<T: Sync> AsRef<T> for Alias<T> {
+    fn as_ref(&self) -> &T {
+        &**self
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TypedValue<T> {
     inner: Value,
@@ -511,12 +574,21 @@ impl<T: GetValueType> TypedValue<T> {
         }
     }
 
-    /// Create a constant value with the given type and data.
+    /// Create a constant value.
     pub fn constant(data: T) -> Self
     where
         T: Hash + Send + 'static,
     {
         let deps = depends![data];
+        Self::constant_deps(data, deps)
+    }
+
+    /// Create a constant value with the given dependencies.
+    pub fn constant_deps<'a, D>(data: T, deps: D) -> Self
+    where
+        T: Send + 'static,
+        D: IntoDependencies<'a>,
+    {
         Self::new(futures::future::ok(data), deps)
     }
 
@@ -549,6 +621,29 @@ where
 {
     fn from(v: T) -> Self {
         TypedValue::constant(v)
+    }
+}
+
+/// A convenience trait for converting directly to a value.
+pub trait IntoValue {
+    fn into_value(self) -> Value;
+}
+
+impl<T> IntoValue for T
+where
+    T: Into<TypedValue<T>>,
+{
+    fn into_value(self) -> Value {
+        self.into().into()
+    }
+}
+
+impl<T> From<T> for Value
+where
+    T: IntoValue,
+{
+    fn from(v: T) -> Value {
+        v.into_value()
     }
 }
 
