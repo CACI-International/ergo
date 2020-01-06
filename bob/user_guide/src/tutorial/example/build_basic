@@ -1,0 +1,4 @@
+#!/usr/bin/env bob
+
+# Compile our code!
+c++ -o forty_two main.cpp lib.cpp { env = {PATH=$} }

@@ -1,0 +1,27 @@
+#!/usr/bin/env bob
+
+# Convenience binding for following functions
+use_path = { env = { PATH = $ } }
+
+# Compile function, taking one argument indicating the file to compile.
+compile = fn { c++ -o { file = obj } -c (track $@:0) $use_path; obj }
+
+# Executable-linking function, which links all arguments.
+link = fn { c++ -o { file = exe } $@ $use_path; exe }
+link_exe = link
+
+# Library-linking function, which links all arguments.
+link_so = fn link -shared $@
+
+
+# Create a library from lib.cpp.
+lib = link_so "-Wl,-hlibadd2.so" (compile lib.cpp) 
+
+# Create an executable using the library.
+exe = link_exe (compile main.cpp) $lib
+
+# Link results into the current directory.
+[
+    ln -f $exe forty_two
+    ln -f $lib libadd2.so
+]

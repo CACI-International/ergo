@@ -1,0 +1,6 @@
+#!/usr/bin/env bob
+
+# Compile our code, specifying an output file binding.
+c++ -o { file = exe } (track main.cpp) (track lib.cpp) { env = {PATH=$} }
+# Refer to the output file binding and link to a file in the current directory.
+ln -f $exe forty_two

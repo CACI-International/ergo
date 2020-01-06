@@ -1,0 +1,6 @@
+[book]
+authors = ["Alex Franchuk"]
+language = "en"
+multilingual = false
+src = "src"
+title = "Bob (bobbers)"
