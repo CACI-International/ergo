@@ -36,7 +36,7 @@ fn has(ctx: &mut Context<FunctionContext>) -> Result<Value, EvalError> {
                     Ok(ind) => val.get().map(|v| v.0.get(ind).is_some())
                 }
                 ScriptMap => |val| val.get().map(|v| v.0.get(ind.as_ref()).is_some()),
-                => |_| Err("expected an array or map".into())
+                => |_| Ok(false)
             })
         })
         .transpose_err()?
