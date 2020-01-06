@@ -114,13 +114,16 @@ impl Item {
     /// Open an item using the provided OpenOptions.
     pub fn open(&self, options: &OpenOptions) -> io::Result<ItemContent> {
         std::fs::create_dir_all(&self.path)?;
-        Ok(ItemContent { file: options.open(self.path())? })
+        Ok(ItemContent {
+            file: options.open(self.path())?,
+        })
     }
 
     /// Get the path this item uses.
     pub fn path(&self) -> PathBuf {
         std::fs::create_dir_all(&self.path).unwrap();
-        let mut path = self.path.clone();
+        let mut path = std::env::current_dir().unwrap();
+        path.push(&self.path);
         path.push(&self.item);
         path
     }

@@ -419,10 +419,11 @@ impl Value {
         }
     }
 
-    /// Return a value that computes this value, discards the result, and returns the given value.
+    /// Return a value that computes this value, discards the result (on success), and returns the
+    /// given value.
     pub fn then(self, v: Value) -> Value {
         let deps = Dependencies::ordered(depends![self, v]);
-        Self::new(v.value_type(), FutureExt::then(self, move |_| v), deps)
+        Self::new(v.value_type(), self.and_then(move |_| v), deps)
     }
 
     /// Try to convert this Value to a TypedValue.
@@ -604,12 +605,12 @@ impl<T: GetValueType> TypedValue<T> {
     pub fn map<U, F>(self, f: F) -> TypedValue<U>
     where
         U: GetValueType,
-        F: FnOnce(&T) -> Result<U, String> + Send + 'static,
+        F: FnOnce(Alias<T>) -> Result<U, String> + Send + 'static,
         T: Sync + 'static,
     {
         let deps = depends![self];
         TypedValue::new(
-            FutureExt::map(self, move |result| result.and_then(move |at| f(&*at))),
+            FutureExt::map(self, move |result| result.and_then(move |at| f(at))),
             deps,
         )
     }

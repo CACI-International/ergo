@@ -52,7 +52,7 @@ fn vec_to_os_string_impl<T: From<OsString> + GetValueType>() -> TraitImpl {
         v.typed::<Vec<u8>>()
             .unwrap()
             .map(|vec| {
-                OsString::from_bytes(vec)
+                OsString::from_bytes(&*vec)
                     .map(T::from)
                     .map_err(|e| e.to_string())
             })
@@ -75,7 +75,7 @@ pub fn trait_generator(v: std::sync::Arc<ValueType>) -> Vec<TraitImpl> {
                     .unwrap()
                     .map(|path| {
                         let mut v = Vec::new();
-                        std::fs::File::open(path)
+                        std::fs::File::open(&*path)
                             .map_err(|e| e.to_string())?
                             .read_to_end(&mut v)
                             .map_err(|e| e.to_string())?;
@@ -481,7 +481,11 @@ impl Plan for Config {
             if !did_complete.exists() {
                 run_command.await?;
             }
-            Ok(())
+            if !did_complete.exists() {
+                Err("command failed".into())
+            } else {
+                Ok(())
+            }
         });
 
         Ok(ExecResult {
