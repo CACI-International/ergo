@@ -127,7 +127,7 @@ the map evaluates to the unit type (all bindings do):
 }
 ```
 
-This is valid since these are not merely disparete key-value pairs, but instead
+This is valid since these are not merely disparate key-value pairs, but instead
 top-to-bottom evaluated bindings in an environment.
 
 ### Commands
