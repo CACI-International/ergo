@@ -58,3 +58,8 @@ c++ -o { file = test } $main $influx:lib $use_path
 * Data-manipulation functions (maybe as a plugin).
 * Consider making arrays and maps always argument-position by default, and only
   command-position when in a nested expression.
+* Consider requiring `exec` explicitly, rather than falling back to it. This
+  allows certain errors to be obvious immediately (otherwise, for instance, a
+  command that is mistyped will be "hidden" behind the future returned by exec,
+  and will only become apparent at future execution time).
+* Better function syntax, to make `map` less ugly?
