@@ -2,11 +2,10 @@
 
 Let's start with a common workflow that is typically automated with tools like
 GNU `make`: compiling C/C++ source code. This tutorial will build from a simple,
-one-command build step to a concurrent build including unit tests, integration
-tests, and release deployment. While bob may support plugins to perform these
-tasks in even more consistent ways and cross-platform ways, this tutorial will
-stick with only using external commands for the tasks, and assumes a unix-like
-environment.
+one-command build step to a concurrent build including unit tests and release
+deployment. While bob may support plugins to perform these tasks in even more
+consistent ways and cross-platform ways, this tutorial will stick with only
+using external commands for the tasks, and assumes a unix-like environment.
 
 Before we begin, let's cover some nomenclature.
 
