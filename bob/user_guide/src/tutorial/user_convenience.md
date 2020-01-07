@@ -10,9 +10,9 @@ running it (the only change is at the end of the script):
 We're returning a map with keys that can be accessed on the command-line. In
 order, a user can run:
 * `build build` to only build the exe and library,
-* `build test` to build and run the test suite, and
+* `build test` to build and run the test suite,
 * `build release` to ensure tests pass and link the results to the current
-  directory,
+  directory, and
 * `build` to link the results to the current directory.
 
 Here, `*` is a (somewhat) special key which indicates that, if no explicit keys

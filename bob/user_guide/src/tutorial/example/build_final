@@ -70,9 +70,9 @@ link_result = [
     build = [exe,lib]
     test = test,
     release = do $[
+        # Only link outputs if the tests pass.
         test:once
         link_result
     ],
-    # Only link outputs if the tests pass.
     * = link_result
 }

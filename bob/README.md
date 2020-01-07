@@ -63,3 +63,6 @@ c++ -o { file = test } $main $influx:lib $use_path
   command that is mistyped will be "hidden" behind the future returned by exec,
   and will only become apparent at future execution time).
 * Better function syntax, to make `map` less ugly?
+* Change 'once' to be a command itself rather than a key on exec results (it can
+  be generalized to arbitrary values). Add 'cache' command to execute once and
+  store result (or merge the two).
