@@ -9,7 +9,6 @@
 
 use proc_macro_hack::proc_macro_hack;
 
-mod prelude;
 mod runtime;
 mod traits;
 mod uuid;

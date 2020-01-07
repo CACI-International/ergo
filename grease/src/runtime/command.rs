@@ -1,5 +1,6 @@
 //! Command/process management.
 
+use log::{debug, trace};
 use std::collections::BTreeMap;
 use std::env;
 use std::ffi::{OsStr, OsString};
@@ -7,8 +8,6 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
-
-use crate::prelude::*;
 
 /// Tracks external command usage.
 #[derive(Debug, Default)]

@@ -2,8 +2,7 @@
 
 use futures::executor::ThreadPool;
 use futures::future::{lazy, Future, FutureExt, RemoteHandle};
-
-use crate::prelude::*;
+use log::debug;
 
 /// The task manager.
 ///
