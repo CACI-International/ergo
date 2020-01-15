@@ -22,12 +22,13 @@ pub fn script_context(
 
     // Add initial environment functions
     let env = vec![
-        ("exec", runtime::exec::exec_builtin()),
-        ("track", runtime::track::track_builtin()),
-        ("map", runtime::map::map_builtin()),
-        ("do", runtime::do_::do_builtin()),
-        ("path", runtime::path::path_builtin()),
-        ("has", runtime::has::has_builtin()),
+        ("do", runtime::do_::builtin()),
+        ("exec", runtime::exec::builtin()),
+        ("has", runtime::has::builtin()),
+        //("load", runtime::load::builtin()),
+        ("map", runtime::map::builtin()),
+        ("path", runtime::path::builtin()),
+        ("track", runtime::track::builtin()),
     ];
     for (k, v) in env.into_iter() {
         ctx.env_insert(k.into(), Source::builtin(v));

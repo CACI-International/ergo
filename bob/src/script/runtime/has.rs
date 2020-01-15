@@ -1,13 +1,10 @@
 //! Check whether an index exists
 
-use super::script_types::*;
-use super::{EvalError, FunctionContext};
-use grease::{match_value, Context, IntoValue, Value};
+use super::builtin_function_prelude::*;
+use grease::{match_value, IntoValue};
 use std::str::FromStr;
 
-pub fn has_builtin() -> Value {
-    ScriptFunction::BuiltinFunction(Box::new(has)).into()
-}
+def_builtin!(has);
 
 fn has(ctx: &mut Context<FunctionContext>) -> Result<Value, EvalError> {
     let mut args = Vec::new();

@@ -1,12 +1,8 @@
 //! Join path components.
 
-use super::script_types::*;
-use super::{EvalError, FunctionContext};
-use grease::{Context, Value};
+use super::builtin_function_prelude::*;
 
-pub fn path_builtin() -> Value {
-    ScriptFunction::BuiltinFunction(Box::new(path)).into()
-}
+def_builtin!(path);
 
 fn path(ctx: &mut Context<FunctionContext>) -> Result<Value, EvalError> {
     let mut args = Vec::new();

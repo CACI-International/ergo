@@ -11,6 +11,7 @@ use std::str::FromStr;
 pub mod do_;
 pub mod exec;
 pub mod has;
+pub mod load;
 pub mod map;
 pub mod path;
 pub mod track;
@@ -81,6 +82,23 @@ pub mod script_types {
             }
         }
     }
+}
+
+pub mod builtin_function_prelude {
+    pub use super::script_types::*;
+    pub use super::{EvalError, FunctionContext};
+    pub use grease::{Context, Value};
+
+    #[macro_export]
+    macro_rules! def_builtin {
+        ( $name:ident ) => {
+            pub fn builtin() -> ::grease::Value {
+                $crate::script::runtime::ScriptFunction::BuiltinFunction(Box::new($name)).into()
+            }
+        }
+    }
+    
+    pub use crate::def_builtin;
 }
 
 use script_types::*;

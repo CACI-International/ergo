@@ -1,15 +1,13 @@
 //! Wrapper around exec calls.
 
-use super::script_types::*;
-use super::{Error, EvalError, FunctionContext, Source};
+use super::builtin_function_prelude::*;
+use super::{Error, Source};
 use exec::{CommandString, Config, StdinString};
-use grease::{make_value, match_value, Plan, Value};
+use grease::{make_value, match_value, Plan};
 use log::trace;
 use std::collections::BTreeMap;
 
-pub fn exec_builtin() -> Value {
-    ScriptFunction::BuiltinFunction(Box::new(exec)).into()
-}
+def_builtin!(exec);
 
 fn exec(ctx: &mut grease::Context<FunctionContext>) -> Result<Value, EvalError> {
     // FunctionContext is only used once, so swap out args.

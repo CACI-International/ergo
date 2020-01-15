@@ -1,12 +1,10 @@
 //! Execute commands in order.
 
-use super::script_types::*;
-use super::{script_deep_eval, EvalError, FunctionContext, Source};
-use grease::{Context, IntoValue, Value};
+use super::builtin_function_prelude::*;
+use super::{script_deep_eval, Source};
+use grease::IntoValue;
 
-pub fn do_builtin() -> Value {
-    ScriptFunction::BuiltinFunction(Box::new(do_f)).into()
-}
+def_builtin!(do_f);
 
 fn do_f(ctx: &mut Context<FunctionContext>) -> Result<Value, EvalError> {
     let mut args = Vec::new();

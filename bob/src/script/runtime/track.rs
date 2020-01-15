@@ -1,15 +1,12 @@
 //! Tracking file changes.
 
-use super::script_types::*;
-use super::{EvalError, FunctionContext};
-use grease::{item_name, make_value, Context, Plan, TypedValue, Value};
+use super::builtin_function_prelude::*;
+use grease::{item_name, make_value, Plan, TypedValue};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-pub fn track_builtin() -> Value {
-    ScriptFunction::BuiltinFunction(Box::new(track)).into()
-}
+def_builtin!(track);
 
 struct Config {
     path: PathBuf,

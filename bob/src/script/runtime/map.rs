@@ -1,12 +1,9 @@
 //! Mapping over arrays.
 
-use super::script_types::*;
-use super::{EvalError, FunctionContext};
-use grease::{Context, Plan, SplitInto, Value};
+use super::builtin_function_prelude::*;
+use grease::{Plan, SplitInto};
 
-pub fn map_builtin() -> Value {
-    ScriptFunction::BuiltinFunction(Box::new(map)).into()
-}
+def_builtin!(map);
 
 fn map(ctx: &mut Context<FunctionContext>) -> Result<Value, EvalError> {
     let mut args = Vec::new();
