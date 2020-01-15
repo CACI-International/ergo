@@ -6,13 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-def_builtin!(track);
-
-struct Config {
-    path: PathBuf,
-}
-
-fn track(ctx: &mut Context<FunctionContext>) -> Result<Value, EvalError> {
+def_builtin!(ctx => {
     let mut args = Vec::new();
     std::mem::swap(&mut args, &mut ctx.inner.args);
 
@@ -35,6 +29,10 @@ fn track(ctx: &mut Context<FunctionContext>) -> Result<Value, EvalError> {
         .plan_split(ctx)
         .map(|v| v.into())
         .map_err(|e| e.into())
+});
+
+struct Config {
+    path: PathBuf,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

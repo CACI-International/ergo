@@ -4,9 +4,7 @@ use super::builtin_function_prelude::*;
 use super::{script_deep_eval, Source};
 use grease::IntoValue;
 
-def_builtin!(do_f);
-
-fn do_f(ctx: &mut Context<FunctionContext>) -> Result<Value, EvalError> {
+def_builtin!(ctx => {
     let mut args = Vec::new();
     std::mem::swap(&mut args, &mut ctx.inner.args);
 
@@ -32,4 +30,4 @@ fn do_f(ctx: &mut Context<FunctionContext>) -> Result<Value, EvalError> {
     }
 
     Ok(val.unwrap())
-}
+});

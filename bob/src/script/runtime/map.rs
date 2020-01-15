@@ -3,9 +3,7 @@
 use super::builtin_function_prelude::*;
 use grease::{Plan, SplitInto};
 
-def_builtin!(map);
-
-fn map(ctx: &mut Context<FunctionContext>) -> Result<Value, EvalError> {
+def_builtin!(ctx => {
     let mut args = Vec::new();
     std::mem::swap(&mut args, &mut ctx.inner.args);
 
@@ -42,4 +40,4 @@ fn map(ctx: &mut Context<FunctionContext>) -> Result<Value, EvalError> {
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(ScriptArray(arr).into())
-}
+});

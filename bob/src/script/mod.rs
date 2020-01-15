@@ -25,7 +25,7 @@ pub fn script_context(
         ("do", runtime::do_::builtin()),
         ("exec", runtime::exec::builtin()),
         ("has", runtime::has::builtin()),
-        //("load", runtime::load::builtin()),
+        ("load", runtime::load::builtin()),
         ("map", runtime::map::builtin()),
         ("path", runtime::path::builtin()),
         ("track", runtime::track::builtin()),

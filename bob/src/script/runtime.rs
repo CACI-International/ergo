@@ -91,9 +91,13 @@ pub mod builtin_function_prelude {
 
     #[macro_export]
     macro_rules! def_builtin {
-        ( $name:ident ) => {
+        ( $ctx:ident => $body:expr ) => {
             pub fn builtin() -> ::grease::Value {
-                $crate::script::runtime::ScriptFunction::BuiltinFunction(Box::new($name)).into()
+                $crate::script::runtime::ScriptFunction::BuiltinFunction(Box::new(builtin_impl)).into()
+            }
+
+            fn builtin_impl($ctx: &mut Context<FunctionContext>) -> Result<Value, EvalError> {
+                $body
             }
         }
     }

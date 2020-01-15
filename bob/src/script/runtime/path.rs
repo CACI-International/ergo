@@ -2,9 +2,7 @@
 
 use super::builtin_function_prelude::*;
 
-def_builtin!(path);
-
-fn path(ctx: &mut Context<FunctionContext>) -> Result<Value, EvalError> {
+def_builtin!(ctx => {
     let mut args = Vec::new();
     std::mem::swap(&mut args, &mut ctx.inner.args);
 
@@ -34,4 +32,4 @@ fn path(ctx: &mut Context<FunctionContext>) -> Result<Value, EvalError> {
         .into_string()
         .map(|v| v.into())
         .map_err(|_| "invalid path".into())
-}
+});

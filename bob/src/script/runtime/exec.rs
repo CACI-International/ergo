@@ -7,9 +7,7 @@ use grease::{make_value, match_value, Plan};
 use log::trace;
 use std::collections::BTreeMap;
 
-def_builtin!(exec);
-
-fn exec(ctx: &mut grease::Context<FunctionContext>) -> Result<Value, EvalError> {
+def_builtin!(ctx => {
     // FunctionContext is only used once, so swap out args.
     let mut args = Vec::new();
     std::mem::swap(&mut args, &mut ctx.inner.args);
@@ -86,7 +84,7 @@ fn exec(ctx: &mut grease::Context<FunctionContext>) -> Result<Value, EvalError> 
     }
 
     Ok(ScriptMap(ret_map).into())
-}
+});
 
 fn make_dir_function(v: grease::TypedValue<std::path::PathBuf>) -> Value {
     ScriptFunction::BuiltinFunction(Box::new(move |ctx| {

@@ -4,9 +4,7 @@ use super::builtin_function_prelude::*;
 use grease::{match_value, IntoValue};
 use std::str::FromStr;
 
-def_builtin!(has);
-
-fn has(ctx: &mut Context<FunctionContext>) -> Result<Value, EvalError> {
+def_builtin!(ctx => {
     let mut args = Vec::new();
     std::mem::swap(&mut args, &mut ctx.inner.args);
 
@@ -38,4 +36,4 @@ fn has(ctx: &mut Context<FunctionContext>) -> Result<Value, EvalError> {
         })
         .transpose_err()?
         .into_value())
-}
+});
