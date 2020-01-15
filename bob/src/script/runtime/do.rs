@@ -4,10 +4,7 @@ use super::builtin_function_prelude::*;
 use super::{script_deep_eval, Source};
 use grease::IntoValue;
 
-def_builtin!(ctx => {
-    let mut args = Vec::new();
-    std::mem::swap(&mut args, &mut ctx.inner.args);
-
+def_builtin!(ctx,args => {
     let mut args = args.into_iter();
     let arr = args.next().ok_or(EvalError::from("no commands provided"))?;
     if args.next().is_some() {

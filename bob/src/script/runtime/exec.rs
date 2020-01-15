@@ -7,11 +7,7 @@ use grease::{make_value, match_value, Plan};
 use log::trace;
 use std::collections::BTreeMap;
 
-def_builtin!(ctx => {
-    // FunctionContext is only used once, so swap out args.
-    let mut args = Vec::new();
-    std::mem::swap(&mut args, &mut ctx.inner.args);
-
+def_builtin!(ctx,args => {
     let mut arg_iter = args.into_iter();
 
     let cmd = arg_iter.next().ok_or("no command provided")?;

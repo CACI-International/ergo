@@ -91,12 +91,15 @@ pub mod builtin_function_prelude {
 
     #[macro_export]
     macro_rules! def_builtin {
-        ( $ctx:ident => $body:expr ) => {
+        ( $ctx:ident , $args:ident => $body:expr ) => {
             pub fn builtin() -> ::grease::Value {
                 $crate::script::runtime::ScriptFunction::BuiltinFunction(Box::new(builtin_impl)).into()
             }
 
             fn builtin_impl($ctx: &mut Context<FunctionContext>) -> Result<Value, EvalError> {
+                let mut $args = Vec::new();
+                std::mem::swap(&mut $args, &mut $ctx.inner.args);
+
                 $body
             }
         }

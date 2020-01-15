@@ -4,10 +4,7 @@ use super::builtin_function_prelude::*;
 use grease::{match_value, IntoValue};
 use std::str::FromStr;
 
-def_builtin!(ctx => {
-    let mut args = Vec::new();
-    std::mem::swap(&mut args, &mut ctx.inner.args);
-
+def_builtin!(ctx,args => {
     let mut args = args.into_iter();
     let val = args.next().ok_or("value not provided")?;
     let ind = args.next().ok_or("index not provided")?;

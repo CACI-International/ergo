@@ -6,10 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-def_builtin!(ctx => {
-    let mut args = Vec::new();
-    std::mem::swap(&mut args, &mut ctx.inner.args);
-
+def_builtin!(ctx,args => {
     if args.len() != 1 {
         return Err("track expects a single argument".into());
     }

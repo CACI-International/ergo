@@ -2,10 +2,7 @@
 
 use super::builtin_function_prelude::*;
 
-def_builtin!(ctx => {
-    let mut args = Vec::new();
-    std::mem::swap(&mut args, &mut ctx.inner.args);
-
+def_builtin!(ctx,args => {
     let mut args = args
         .into_iter()
         .map(|sv| {

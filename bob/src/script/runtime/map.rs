@@ -3,10 +3,7 @@
 use super::builtin_function_prelude::*;
 use grease::{Plan, SplitInto};
 
-def_builtin!(ctx => {
-    let mut args = Vec::new();
-    std::mem::swap(&mut args, &mut ctx.inner.args);
-
+def_builtin!(ctx,args => {
     let mut args = args.into_iter();
     let func = args.next().ok_or("map function not provided")?;
     let arr = args.next().ok_or("map array not provided")?;
