@@ -69,8 +69,10 @@ c++ -o { file = test } $main $influx:lib $use_path
 * Change 'once' to be a command itself rather than a key on exec results (it can
   be generalized to arbitrary values). Add 'cache' command to execute once and
   store result (or merge the two).
+* Improve runtime to be able to get multiple errors with one invocation.
+* Improve errors to contain trace-backs of values.
 
-### Plugin Notes
+### Plugin notes
 * Ideally, plugins are loaded just like other scripts: `load [path to plugin]`.
   Duplication is handled as one would expect (only load things once). The loaded
   plugin must return a Value (just like loading another script).
@@ -82,3 +84,44 @@ c++ -o { file = test } $main $influx:lib $use_path
     files) or extensions must be loaded in a particular order (though this
     precludes circular dependency resolution).
 * ABI must be stable at plugin boundaries.
+
+### Configuration/definition notes
+* The program should support two modes of operation (though a clever
+  implementation may not need to make these explicit):
+  * Basic: Writing and running scripts anywhere.
+  * Project: Writing scripts that are self-contained within a project
+    directory/hierarchy.
+* In project-mode, the program should not look at any files outside of the
+  project (so that consistency and repeatability is all within the project
+  boundaries).
+* In project-mode, there should be some notion of top-level scripts which are
+  available to all scripts. Loaded scripts should only have access to the
+  environment resulting from loading the top-level scripts (no inheritance of
+  the environment from the script loading another script). This is beneficial to
+  reduce complexity of analysis when, say, trying to find where a binding is
+  defined. It also allows one to execute any file from any subdirectory in a
+  consistent way.
+  * Or, should scripts always have a clean environment, but be allowed to load
+    from the top-level scripts in some convenient/directory-agnostic way?
+* In basic-mode, there should be a number of standard user/global directories
+  where scripts are loaded from (and/or that serve as a load path when looking
+  up a script to load).
+
+#### Possible implementation
+Project-mode is detected by the presence of a particular dotfile somewhere in
+the parent hierarchy. That dotfile (or maybe folder) is where project top-level
+scripts reside. In the "inherit top-level environment" case, maybe it just loads
+the dotfile, and the (map) result of loading the dotfile is put in the
+environment. In the "load top-level scripts" case, a folder is used as the root
+directory from which other things can load scripts.
+
+Since the program is fairly permissive, it's not necessarily easy to enforce
+referral to files only within the project folder. It can, however, be a feature
+of the `track` command, among other things (maybe a general path-resolution
+context feature would be useful here).
+
+In basic-mode (detected by the lack of a project-mode dotfile), a `.config` and an
+`/etc` file/folder will be used, maybe in addition to a different dotfile/folder
+in all parent directories. Parent directories will have higher priority than
+`.config`, and that will have higher priority than `/etc`. The "load all into
+environment" case will simply load from lowest to highest priority.
