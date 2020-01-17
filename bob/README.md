@@ -51,7 +51,9 @@ c++ -o { file = test } $main $influx:lib $use_path
 }
 ```
 
-## TODO
+## Developer's Corner
+
+### TODO
 * Consider whether index notation is necessary at all, or whether it's more
   uniform to use command notation for indexing (some shorthand notation may
   still be useful on the command-line).
@@ -67,3 +69,16 @@ c++ -o { file = test } $main $influx:lib $use_path
 * Change 'once' to be a command itself rather than a key on exec results (it can
   be generalized to arbitrary values). Add 'cache' command to execute once and
   store result (or merge the two).
+
+### Plugin Notes
+* Ideally, plugins are loaded just like other scripts: `load [path to plugin]`.
+  Duplication is handled as one would expect (only load things once). The loaded
+  plugin must return a Value (just like loading another script).
+* When loaded, plugins may also provide extensions to share interfaces/memory
+  with other plugins or the runtime. This may include hooks into certain events
+  (execution complete, loading, etc). Extensions may rely on other extensions.
+  * If extension dependency resolution is necessary, there either needs to be a
+    single point at which resolution occurs (maybe after loading certain prelude
+    files) or extensions must be loaded in a particular order (though this
+    precludes circular dependency resolution).
+* ABI must be stable at plugin boundaries.
