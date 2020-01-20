@@ -85,6 +85,17 @@ c++ -o { file = test } $main $influx:lib $use_path
     precludes circular dependency resolution).
 * ABI must be stable at plugin boundaries.
 
+#### Native vs WASM plugins
+* Both types of plugins could be made in other languages if desired (though not
+  as convenient as types would have to be redefined to be ABI-compatible).
+  With regard to Rust:
+  * Native plugins could be smaller, but would need to be built for separate
+    platforms.
+  * WASM code by default is kind of large: a hello world comes out over a MB.
+    With std disabled it gets much smaller. This may be appropriate anyway since
+    std is not ABI-stable. Size may not be a big concern since they won't be
+    downloaded often. WASM allows the plugins to be loaded on any platform.
+
 ### Configuration/definition notes
 * The program should support two modes of operation (though a clever
   implementation may not need to make these explicit):
