@@ -71,6 +71,15 @@ c++ -o { file = test } $main $influx:lib $use_path
   store result (or merge the two).
 * Improve runtime to be able to get multiple errors with one invocation.
 * Improve errors to contain trace-backs of values.
+* Consider unifying the CLI so something like:
+  ```
+  binary filename args...
+  ```
+  is exactly equivalent to:
+  ```
+  (load filename) args...
+  ```
+  in a script.
 
 ### Plugin notes
 * Ideally, plugins are loaded just like other scripts: `load [path to plugin]`.
