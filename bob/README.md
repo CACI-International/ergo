@@ -79,7 +79,10 @@ c++ -o { file = test } $main $influx:lib $use_path
   ```
   (load filename) args...
   ```
-  in a script.
+  in a script. Or better yet, extend `load` to apply additional arguments to the
+  loaded value and rename from `load` to the binary (thinking of `so` as the new
+  binary name). Then the command-line and the load functionality look and behave
+  identically, aside from when values are forced.
 
 ### Plugin notes
 * Ideally, plugins are loaded just like other scripts: `load [path to plugin]`.
