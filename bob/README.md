@@ -83,6 +83,8 @@ c++ -o { file = test } $main $influx:lib $use_path
   loaded value and rename from `load` to the binary (thinking of `so` as the new
   binary name). Then the command-line and the load functionality look and behave
   identically, aside from when values are forced.
+* Add file/directory name hint to exec `file`/`dir` directives to specify final
+  path component (often relevant for other programs ingesting the files).
 
 ### Plugin notes
 * Ideally, plugins are loaded just like other scripts: `load [path to plugin]`.
