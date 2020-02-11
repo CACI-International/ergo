@@ -1,6 +1,6 @@
 [package]
-name = "bob"
-version = "1.0.0-alpha.0"
+name = "so"
+version = "1.0.0-alpha.1"
 authors = ["Alex Franchuk <afranchuk@caci.com>"]
 edition = "2018"
 
