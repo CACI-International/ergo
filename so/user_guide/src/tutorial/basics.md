@@ -35,7 +35,7 @@ Now that we have a directory with C++ source files, we probably want to compile
 them! At the moment, we just want to create a final executable, although later
 we'll also make a shared library.
 
-Let's create a new bob script file, called `build` (though you can call it
+Let's create a new so script file, called `build` (though you can call it
 whatever you want, with or without an extension):
 ```sh
 {{#include example/build_basic}}
@@ -45,7 +45,7 @@ Simple enough, right? Let's break down exactly what's happening here:
 
 __Line 1__: The shebang at the top is optional, but with it we can make this
 script file executable and run it directly. Like any shebang, it could just be
-the direct path to the `bob` executable, but using `/usr/bin/env` is encouraged.
+the direct path to the `so` executable, but using `/usr/bin/env` is encouraged.
 
 __Line 3__: A comment! Just like many other languages, `#` begins comments. The
 commented portion will continue until the end of the line.
@@ -62,11 +62,11 @@ syntax, so you could invoke `sh build` if you wanted after commenting out the
 ### Closer examination
 While our script is currently functionally identical to a shell script, under
 the hood the representation of our script is much different. When line 4 is
-executed in the bob runtime, it *is not* immediately executing `c++`.
+executed in the so runtime, it *is not* immediately executing `c++`.
 
 Instead,
 
-1. The bob runtime tries to find `c++` in the environment bindings.
+1. The so runtime tries to find `c++` in the environment bindings.
 2. When it does not find `c++`, it treats the line as if it were written as
    `exec c++ ...`. That is, it instead uses `exec` from the environment bindings
    (this is built in) as the command to run.

@@ -18,7 +18,7 @@ make the compile step a repeatable block. It'd also be nice to use a list of
 files as our input data.
 
 ## Enter the function
-Bob scripts support creating functions. The functions actually behave more like
+So scripts support creating functions. The functions actually behave more like
 macros in other languages; they are late-bound and any environment lookups occur
 at the call site.
 

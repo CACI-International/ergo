@@ -53,7 +53,7 @@ exists. The output file path is generated based on other arguments to the
 command, so if the input files change, the output file path will be different
 and `c++` will be run to make sure it exists.
 
-These output paths are stored in a local `.bob_work` directory, so to get a
+These output paths are stored in a local `.so_work` directory, so to get a
 user-friendly version of the path we can either link or copy it from there.
 
 Since the `ln` command uses `$exe` (which evaluates to the output file) and is

@@ -3,13 +3,13 @@
 Let's start with a common workflow that is typically automated with tools like
 GNU `make`: compiling C/C++ source code. This tutorial will build from a simple,
 one-command build step to a concurrent build including unit tests and release
-deployment. While bob may support plugins to perform these tasks in even more
+deployment. While so may support plugins to perform these tasks in even more
 consistent ways and cross-platform ways, this tutorial will stick with only
 using external commands for the tasks, and assumes a unix-like environment.
 
 Before we begin, let's cover some nomenclature.
 
-A __script__ is a file conforming to the expected bob syntax, which describes a
+A __script__ is a file conforming to the expected so syntax, which describes a
 dependency tree of commands.
 
 A __command__ is a single logical operation in a script. It may involve running

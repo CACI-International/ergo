@@ -1,4 +1,4 @@
-#!/usr/bin/env bob
+#!/usr/bin/env so
 
 # Compile function, taking one argument indicating the file to compile.
 compile = fn {

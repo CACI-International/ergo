@@ -101,7 +101,7 @@ For reference, the `test.cpp` file contains:
 ```
 
 ## Final thoughts
-This bob script may seem like a lot to write, but remember that this is just a
+This script may seem like a lot to write, but remember that this is just a
 tutorial; many of these functions would and should be abstracted into reusable
 libraries or plugins of commands, to ensure consistency and/or provide more
 granular control over behavior.

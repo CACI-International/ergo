@@ -1,4 +1,4 @@
-#!/usr/bin/env bob
+#!/usr/bin/env so
 
 # Compile our code, specifying an output file binding.
 c++ -o { file = exe } (track main.cpp) (track lib.cpp) { env = {PATH=$} }
