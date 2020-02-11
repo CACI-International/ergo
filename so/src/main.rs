@@ -77,7 +77,7 @@ fn main() {
     let mut ctx = script::script_context(
         Context::builder()
             .logger_ref(logger.clone())
-            .storage_directory(".bob_work".into()),
+            .storage_directory(".so_work".into()),
     )
     .expect("failed to create script context");
 

@@ -1,4 +1,4 @@
-# bob program
+# so program
 
 Current features include:
 
@@ -15,7 +15,7 @@ used to estimate future performance.
 ## Script Example
 
 ```sh
-#!/usr/bin/env bob1
+#!/usr/bin/env so
 
 use_path = { env = { PATH = $ } }
 
