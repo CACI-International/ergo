@@ -1,8 +1,8 @@
 //! Script runtime definitions.
 
 use super::ast::{Expression, IntoSource, Source};
-use grease::{make_value, match_value, IntoValue, Plan, SplitInto, Value};
 use grease::future::{BoxFuture, FutureExt};
+use grease::{make_value, match_value, IntoValue, Plan, SplitInto, Value};
 use log::trace;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -58,7 +58,7 @@ pub mod script_types {
     /// Script function type.
     #[derive(GetValueType)]
     pub enum ScriptFunction {
-        UserFunction(Source<Expression>,BTreeMap<String, Source<Value>>),
+        UserFunction(Source<Expression>, BTreeMap<String, Source<Value>>),
         BuiltinFunction(Box<Builtin>),
     }
 
@@ -69,7 +69,7 @@ pub mod script_types {
     impl std::hash::Hash for ScriptFunction {
         fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
             match self {
-                Self::UserFunction(s,_) => s.hash(h),
+                Self::UserFunction(s, _) => s.hash(h),
                 Self::BuiltinFunction(b) => std::ptr::hash(b, h),
             }
         }
@@ -78,7 +78,7 @@ pub mod script_types {
     impl fmt::Debug for ScriptFunction {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
             match self {
-                Self::UserFunction(e,_) => write!(f, "UserFunction: {:?}", e),
+                Self::UserFunction(e, _) => write!(f, "UserFunction: {:?}", e),
                 Self::BuiltinFunction(_) => write!(f, "BuiltinFunction"),
             }
         }
@@ -94,7 +94,8 @@ pub mod builtin_function_prelude {
     macro_rules! def_builtin {
         ( $ctx:ident , $args:ident => $body:expr ) => {
             pub fn builtin() -> ::grease::Value {
-                $crate::script::runtime::ScriptFunction::BuiltinFunction(Box::new(builtin_impl)).into()
+                $crate::script::runtime::ScriptFunction::BuiltinFunction(Box::new(builtin_impl))
+                    .into()
             }
 
             fn builtin_impl($ctx: &mut Context<FunctionContext>) -> Result<Value, EvalError> {
@@ -103,18 +104,21 @@ pub mod builtin_function_prelude {
 
                 $body
             }
-        }
+        };
     }
-    
+
     pub use crate::def_builtin;
 }
 
 use script_types::*;
 
-fn get_values<'a> (v: Source<Value>, set: &'a mut BTreeSet<Source<Value>>) -> BoxFuture<'a, Result<(), Source<String>>> {
+fn get_values<'a>(
+    v: Source<Value>,
+    set: &'a mut BTreeSet<Source<Value>>,
+) -> BoxFuture<'a, Result<(), Source<String>>> {
     async move {
         let (source, v) = v.take();
-        
+
         let res = async {
             match_value!(v => {
                 ScriptMap => |val| {
@@ -139,23 +143,26 @@ fn get_values<'a> (v: Source<Value>, set: &'a mut BTreeSet<Source<Value>>) -> Bo
                     Ok(Some(v))
                 }
             })
-        }.await;
-        source.with(res)
-        .transpose()
-        .map_err(
-            |e: Source<Result<Source<String>, String>>| match e.transpose_err() {
-                Ok(e) => e,
-                Err(e) => e,
-            },
-        )
-        .map(|v| {
-            let (source, v) = v.take();
-            if let Some(v) = v {
-                set.insert(source.with(v));
-            }
-            ()
-        })
-    }.boxed()
+        }
+        .await;
+        source
+            .with(res)
+            .transpose()
+            .map_err(
+                |e: Source<Result<Source<String>, String>>| match e.transpose_err() {
+                    Ok(e) => e,
+                    Err(e) => e,
+                },
+            )
+            .map(|v| {
+                let (source, v) = v.take();
+                if let Some(v) = v {
+                    set.insert(source.with(v));
+                }
+                ()
+            })
+    }
+    .boxed()
 }
 
 /// Create a value which deeply evaluates all script types within the given value.
@@ -214,7 +221,7 @@ impl Context {
     }
 
     pub fn env_flatten(&self) -> BTreeMap<String, Source<Value>> {
-        self.env.iter().fold(Default::default(), |mut e,m| {
+        self.env.iter().fold(Default::default(), |mut e, m| {
             e.append(&mut m.clone());
             e
         })
@@ -223,9 +230,7 @@ impl Context {
 
 impl From<BTreeMap<String, Source<Value>>> for Context {
     fn from(v: BTreeMap<String, Source<Value>>) -> Self {
-        Context {
-            env: vec![v]
-        }
+        Context { env: vec![v] }
     }
 }
 
@@ -272,26 +277,24 @@ pub enum Error {
     InvalidIndex,
     /// An expression is in call-position (had arguments) but is not callable.
     NonCallableExpression(Value),
-    /// No exec bindings is available in the current environment.
-    ExecMissing,
-    /// The unit type is passed more than one argument.
-    UnitTooManyArguments,
+    /// No binding with the given name is available in the current environment.
+    MissingBinding(String),
     /// An error occured while evaluating a value.
     ValueError(String),
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use Error::*;
         match self {
-            Self::NonIntegerIndex => write!(f, "positive integer index expected"),
-            Self::MissingIndex(s) => write!(f, "index missing: {}", s),
-            Self::InvalidIndex => write!(f, "type is not an array or map; cannot index"),
-            Self::NonCallableExpression(d) => {
+            NonIntegerIndex => write!(f, "positive integer index expected"),
+            MissingIndex(s) => write!(f, "index missing: {}", s),
+            InvalidIndex => write!(f, "type is not an array or map; cannot index"),
+            NonCallableExpression(d) => {
                 write!(f, "cannot pass arguments to non-callable value {:?}", d)
             }
-            Self::ExecMissing => write!(f, "'exec' is not available in the current environment"),
-            Self::UnitTooManyArguments => write!(f, "only one argument allowed"),
-            Self::ValueError(s) => write!(f, "{}", s),
+            MissingBinding(s) => write!(f, "'{}' is not available in the current environment", s),
+            ValueError(s) => write!(f, "{}", s),
         }
     }
 }
@@ -301,7 +304,7 @@ impl Plan<FunctionContext> for &'_ ScriptFunction {
 
     fn plan(self, ctx: &mut grease::Context<FunctionContext>) -> Self::Output {
         match self {
-            ScriptFunction::UserFunction(e,env) => {
+            ScriptFunction::UserFunction(e, env) => {
                 // A FunctionContext is only used once, so swap out the arguments.
                 let mut args = Vec::new();
                 std::mem::swap(&mut ctx.inner.args, &mut args);
@@ -312,7 +315,8 @@ impl Plan<FunctionContext> for &'_ ScriptFunction {
 
                 let mut nctx: Context = env.clone().into();
                 nctx.env_insert("@".to_owned(), args);
-                let v = ctx.split_map(|ctx: &mut grease::Context<()>| e.clone().plan_join(ctx, nctx));
+                let v =
+                    ctx.split_map(|ctx: &mut grease::Context<()>| e.clone().plan_join(ctx, nctx));
                 v.map(Source::unwrap).map_err(EvalError::Nested)
             }
             ScriptFunction::BuiltinFunction(f) => f(ctx),
@@ -423,8 +427,7 @@ impl Plan<Context> for Expression {
                 ScriptMap => |val| value_now!(val).0.get(&i).cloned().map(Source::unwrap).ok_or(Error::MissingIndex(i).into()),
                 => |_| Err(Error::InvalidIndex.into())
             }),
-            Command(cmd, mut args) => {
-                let cmdsource = cmd.source();
+            Command(cmd, args) => {
                 match_value!(cmd.plan(ctx)?.unwrap() => {
                     ScriptString => |val| {
                         let s = value_now!(val).owned();
@@ -436,14 +439,7 @@ impl Plan<Context> for Expression {
                                 (value, args)
                             },
                             None => {
-                                trace!("using exec for '{}'", s);
-                                // Fall back to 'exec' command.
-                                let exec = match ctx.inner.env_get("exec") {
-                                    Some(v) => v,
-                                    None => return Err(Error::ExecMissing.into()),
-                                };
-                                args.insert(0, cmdsource.with(Expression::String(s)));
-                                (exec, args)
+                                return Err(Error::MissingBinding(s).into());
                             }
                         };
 
@@ -471,25 +467,6 @@ impl Plan<Context> for Expression {
                             }
                         })
                     },
-                    std::path::PathBuf => |val| {
-                        // Fall back to 'exec' command.
-                        let exec = match ctx.inner.env_get("exec") {
-                            Some(f) => match f.clone().unwrap().typed::<ScriptFunction>() {
-                                Ok(f) => f,
-                                Err(_) => return Err(Error::ExecMissing.into())
-                            }
-                            _ => return Err(Error::ExecMissing.into()),
-                        };
-                        let mut args = args
-                            .into_iter()
-                            .map(|a| a.plan(ctx))
-                            .collect::<Result<Vec<_>, _>>()?;
-                        args.insert(0, cmdsource.with(val.into()));
-
-                        let exec = value_now!(exec);
-
-                        exec.plan_join(ctx, args)
-                    },
                     ScriptFunction => |val| {
                         if !args.is_empty() {
                             let f = value_now!(val);
@@ -502,19 +479,6 @@ impl Plan<Context> for Expression {
                             Ok(val.into())
                         }
                     },
-                    ScriptUnit => |_| {
-                        // Return a single argument if provided, else return unit
-                        let mut args = args.into_iter();
-                        if let Some(v) = args.next() {
-                            if args.next().is_some() {
-                                Err(Error::UnitTooManyArguments.into())
-                            } else {
-                                v.plan(ctx).map(Source::unwrap).map_err(Into::into)
-                            }
-                        } else {
-                            Ok(().into_value())
-                        }
-                    },
                     => |v| {
                         if !args.is_empty() {
                             Err(Error::NonCallableExpression(v).into())
@@ -525,7 +489,9 @@ impl Plan<Context> for Expression {
                 })
             }
             Block(es) => es.plan(ctx).map(Source::unwrap).map_err(Into::into),
-            Function(e) => Ok(ScriptFunction::UserFunction(*e, ctx.inner.env_flatten()).into_value()),
+            Function(e) => {
+                Ok(ScriptFunction::UserFunction(*e, ctx.inner.env_flatten()).into_value())
+            }
             If(cond, t, f) => {
                 let cond = cond.plan(ctx)?.unwrap();
 

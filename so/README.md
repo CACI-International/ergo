@@ -58,11 +58,6 @@ c++ -o { file = test } $main $influx:lib $use_path
   uniform to use command notation for indexing (some shorthand notation may
   still be useful on the command-line).
 * Data-manipulation functions (maybe as a plugin).
-* Consider requiring `exec` explicitly, rather than falling back to it. This
-  allows certain errors to be obvious immediately (otherwise, for instance, a
-  command that is mistyped will be "hidden" behind the future returned by exec,
-  and will only become apparent at future execution time). This could also be
-  changed with a setting, or by rebinding and clearing exec in the environment.
 * Better function syntax, to make `map` less ugly?
 * Change 'once' to be a command itself rather than a key on exec results (it can
   be generalized to arbitrary values). Add 'cache' command to execute once and
