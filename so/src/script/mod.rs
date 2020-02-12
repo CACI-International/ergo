@@ -107,9 +107,9 @@ mod test {
 
     #[test]
     fn bindings() -> Result<(), String> {
-        script_eval_to("var = $ something; var", SRString("something"))?;
+        script_eval_to("var = something; var", SRString("something"))?;
         script_eval_to(
-            "var = $ {inner=[blah,{v=\"test()\"}]}; var:inner:1:v",
+            "var = {inner=[blah,{v=\"test()\"}]}; var:inner:1:v",
             SRString("test()"),
         )
     }
@@ -128,10 +128,10 @@ mod test {
 
     #[test]
     fn function() -> Result<(), String> {
-        script_eval_to("f = fn $ a\nf something", SRString("a"))?;
-        script_eval_to("second = fn @:1\nsecond a b", SRString("b"))?;
+        script_eval_to("f = fn a\nf something", SRString("a"))?;
+        script_eval_to("second = fn $@:1\nsecond a b", SRString("b"))?;
         script_eval_to(
-            "f = fn {\n  a = $ ($ $@:0)\n  b = @:2\n}\nf 1 2 3",
+            "f = fn {\n  a = $@:0\n  b = $@:2\n}\nf 1 2 3",
             SRMap(&[("a", SRString("1")), ("b", SRString("3"))]),
         )
     }

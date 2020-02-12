@@ -58,8 +58,6 @@ c++ -o { file = test } $main $influx:lib $use_path
   uniform to use command notation for indexing (some shorthand notation may
   still be useful on the command-line).
 * Data-manipulation functions (maybe as a plugin).
-* Consider making arrays and maps always argument-position by default, and only
-  command-position when in a nested expression.
 * Consider requiring `exec` explicitly, rather than falling back to it. This
   allows certain errors to be obvious immediately (otherwise, for instance, a
   command that is mistyped will be "hidden" behind the future returned by exec,
@@ -80,9 +78,9 @@ c++ -o { file = test } $main $influx:lib $use_path
   (load filename) args...
   ```
   in a script. Or better yet, extend `load` to apply additional arguments to the
-  loaded value and rename from `load` to the binary (thinking of `so` as the new
-  binary name). Then the command-line and the load functionality look and behave
-  identically, aside from when values are forced.
+  loaded value and rename from `load` to the binary. Then the command-line and
+  the load functionality look and behave identically, aside from when values are
+  forced.
 * Add file/directory name hint to exec `file`/`dir` directives to specify final
   path component (often relevant for other programs ingesting the files).
 * Consider a syntax to expand an array into arguments to a command. Commands

@@ -9,6 +9,8 @@ use output::Output;
 use script::types::*;
 use script::{script_deep_eval, FileSource, Script, Source};
 
+const PROGRAM_NAME: &'static str = env!("CARGO_PKG_NAME");
+
 trait AppErr {
     type Output;
 
@@ -77,7 +79,7 @@ fn main() {
     let mut ctx = script::script_context(
         Context::builder()
             .logger_ref(logger.clone())
-            .storage_directory(".so_work".into()),
+            .storage_directory(format!(".{}_work", PROGRAM_NAME).into()),
     )
     .expect("failed to create script context");
 

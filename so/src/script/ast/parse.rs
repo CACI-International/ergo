@@ -10,14 +10,12 @@ pub type Parser<'a, T> = pom::parser::Parser<'a, Tok, T>;
 
 /// Return a parser for a script.
 pub fn script<'a>() -> Parser<'a, Script> {
-    spacenl() * list(expression(None), eoe()) - spacenl() - end()
+    spacenl() * list(expression(), eoe()) - spacenl() - end()
 }
 
-type ExprFactory<'a> = fn() -> Parser<'a, Expr>;
-
 /// A set variable expression.
-fn set_variable<'a>(inner: ExprFactory<'a>) -> Parser<'a, Expr> {
-    let parsed = word() - space() - sym(Token::Equal).discard() - space() + inner();
+fn set_variable<'a>() -> Parser<'a, Expr> {
+    let parsed = word() - space() - sym(Token::Equal).discard() - space() + extarg();
     parsed.map(|res| {
         res.into_source()
             .map(|(var, expr)| Expression::SetVariable(var.unwrap(), expr.into()))
@@ -39,16 +37,15 @@ fn nested<'a>() -> Parser<'a, Expr> {
         _ => false,
     })
     .repeat(1..)
-    .convert(|e| expression(None).parse(&e));
+    .convert(|e| expression().parse(&e));
     let self_nested =
         call(|| nested()).map(|e| e.clone().with(Expression::Command(e.into(), vec![])));
 
     let paren_expr =
-        sym(Token::OpenParen) * spacenl() * expression(None) - spacenl() - sym(Token::CloseParen);
+        sym(Token::OpenParen) * spacenl() * expression() - spacenl() - sym(Token::CloseParen);
     let empty_parens = (sym(Token::OpenParen) + sym(Token::CloseParen))
         .map(|res| res.into_source().with(Expression::Empty));
-    let dollar =
-        sym(Token::Dollar) * (word_nested | array(expression(None)) | block(None) | self_nested);
+    let dollar = sym(Token::Dollar) * (word_nested | array() | block() | self_nested);
     let empty_dollar = sym(Token::Dollar).map(|res: Source<_>| res.with(Expression::Empty));
 
     paren_expr | empty_parens | dollar | empty_dollar
@@ -56,12 +53,12 @@ fn nested<'a>() -> Parser<'a, Expr> {
 
 /// An expression in argument position (words are interpreted as strings rather than as commands).
 fn arg<'a>() -> Parser<'a, Expr> {
-    call(|| {
-        nested()
-            | eqword().map(|s| s.map(Expression::String))
-            | array(arg())
-            | block(Some(|| arg()))
-    })
+    call(|| nested() | eqword().map(|s| s.map(Expression::String)) | array() | block())
+}
+
+/// An expression in argument position, or special expressions (if and fn)
+fn extarg<'a>() -> Parser<'a, Expr> {
+    function() | if_expr() | arg()
 }
 
 /// A command expression.
@@ -79,7 +76,7 @@ fn command<'a>() -> Parser<'a, Expr> {
 /// A function expression.
 fn function<'a>() -> Parser<'a, Expr> {
     let tok = tag("fn");
-    let rest = req_space() * expression(None);
+    let rest = req_space() * call(|| extarg());
     (tok + rest.expect("fn argument")).map(|res| {
         let p: Source<_> = res.into_source();
         p.map(|(_, e)| Expression::Function(Box::new(e)))
@@ -102,32 +99,32 @@ fn if_expr<'a>() -> Parser<'a, Expr> {
 }
 
 /// An array expression.
-fn array<'a>(inner: Parser<'a, Expr>) -> Parser<'a, Expr> {
+fn array<'a>() -> Parser<'a, Expr> {
     sym(Token::OpenBracket)
         * spacenl()
-        * list(inner, eoe()).map(|e| e.into_source().map(Expression::Array))
+        * list(arg(), eoe()).map(|e| e.into_source().map(Expression::Array))
         - spacenl()
         - sym(Token::CloseBracket)
 }
 
 /// A block expression.
-fn block<'a>(inner: Option<ExprFactory<'a>>) -> Parser<'a, Expr> {
+fn block<'a>() -> Parser<'a, Expr> {
     sym(Token::OpenCurly)
         * spacenl()
-        * list(expression(inner), eoe()).map(|e| e.into_source().map(Expression::Block))
+        * list(expression(), eoe()).map(|e| e.into_source().map(Expression::Block))
         - spacenl()
         - sym(Token::CloseCurly)
 }
 
 /// A single expression.
-fn expression<'a>(set_expr: Option<ExprFactory<'a>>) -> Parser<'a, Expr> {
+fn expression<'a>() -> Parser<'a, Expr> {
     call(move || {
         let expr = function()
             | if_expr()
-            | set_variable(set_expr.unwrap_or(|| expression(None)))
+            | set_variable()
             | unset_variable()
-            | array(expression(None))
-            | block(None)
+            | array()
+            | block()
             | command();
         (expr + (sym(Token::Colon) * list(word(), sym(Token::Colon))).opt()).map(|(exp, inds)| {
             let mut e = exp;
@@ -258,7 +255,6 @@ mod test {
         )?;
         assert_parse(
             &[
-                Dollar,
                 OpenCurly,
                 Whitespace,
                 Token::String("a".into()),
@@ -269,21 +265,20 @@ mod test {
             |_| super::arg(),
             Expression::Block(vec![src(Expression::SetVariable(
                 "a".into(),
-                src(Expression::Command(
-                    src(Expression::String("ls".into())).into(),
-                    vec![],
-                ))
-                .into(),
+                src(Expression::String("ls".into())).into(),
             ))]),
         )?;
         assert_parse(
             &[
-                Dollar,
                 OpenBracket,
                 Newline,
+                OpenParen,
                 Token::String("a".into()),
+                CloseParen,
                 Newline,
+                OpenParen,
                 Token::String("b".into()),
+                CloseParen,
                 Newline,
                 CloseBracket,
             ],
@@ -314,17 +309,6 @@ mod test {
     }
 
     #[test]
-    fn expr_as_arg() -> Result {
-        assert_expr(
-            &[Dollar, Whitespace, Token::String("hello".into())],
-            Expression::Command(
-                src(Expression::Empty).into(),
-                vec![src(Expression::String("hello".into()))],
-            ),
-        )
-    }
-
-    #[test]
     fn array() -> Result {
         assert_expr(
             &[
@@ -344,22 +328,10 @@ mod test {
                 CloseBracket,
             ],
             Expression::Array(vec![
-                src(Expression::Command(
-                    src(Expression::String("a".into())).into(),
-                    vec![],
-                )),
-                src(Expression::Command(
-                    src(Expression::String("b".into())).into(),
-                    vec![],
-                )),
-                src(Expression::Command(
-                    src(Expression::String("c".into())).into(),
-                    vec![],
-                )),
-                src(Expression::Command(
-                    src(Expression::String("d".into())).into(),
-                    vec![],
-                )),
+                src(Expression::String("a".into())).into(),
+                src(Expression::String("b".into())).into(),
+                src(Expression::String("c".into())).into(),
+                src(Expression::String("d".into())).into(),
             ]),
         )
     }
@@ -370,7 +342,9 @@ mod test {
             &[
                 Token::String("a".to_owned()),
                 Token::Equal,
+                Token::OpenParen,
                 Token::String("echo".to_owned()),
+                Token::CloseParen,
             ],
             Expression::SetVariable(
                 "a".to_owned(),
@@ -407,7 +381,9 @@ mod test {
                 Token::Whitespace,
                 Token::Equal,
                 Token::Whitespace,
+                Token::OpenParen,
                 Token::String("echo".to_owned()),
+                Token::CloseParen,
                 Token::Newline,
                 Token::CloseCurly,
             ],
@@ -439,10 +415,7 @@ mod test {
                 Token::Whitespace,
                 Token::String("howdy".to_owned()),
             ],
-            Expression::Function(Box::new(src(Expression::Command(
-                Box::new(src(Expression::String("howdy".to_owned()))),
-                vec![],
-            )))),
+            Expression::Function(src(Expression::String("howdy".to_owned())).into()),
         )
     }
 
@@ -487,10 +460,11 @@ mod test {
                 Token::String("a".to_owned()),
             ],
             Expression::Index(
-                Box::new(src(Expression::Command(
-                    Box::new(src(Expression::String("hi".to_owned()))),
+                src(Expression::Command(
+                    src(Expression::String("hi".to_owned())).into(),
                     vec![],
-                ))),
+                ))
+                .into(),
                 "a".to_owned(),
             ),
         )?;
@@ -518,7 +492,7 @@ mod test {
     }
 
     fn assert_expr(s: &[Token], expected: Expression) -> Result {
-        assert_parse(s, |_| expression(None), expected)
+        assert_parse(s, |_| expression(), expected)
     }
 
     fn assert_parse<T: PartialEq<I> + std::fmt::Debug, I>(
