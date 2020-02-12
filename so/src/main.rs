@@ -5,11 +5,15 @@ use std::io::Write;
 mod output;
 mod script;
 
+/// Constant values shared throughout the program.
+mod constants {
+    pub const PROGRAM_NAME: &'static str = env!("CARGO_PKG_NAME");
+}
+
+use constants::PROGRAM_NAME;
 use output::Output;
 use script::types::*;
 use script::{script_deep_eval, FileSource, Script, Source};
-
-const PROGRAM_NAME: &'static str = env!("CARGO_PKG_NAME");
 
 trait AppErr {
     type Output;

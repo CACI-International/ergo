@@ -64,18 +64,6 @@ c++ -o { file = test } $main $influx:lib $use_path
   store result (or merge the two).
 * Improve runtime to be able to get multiple errors with one invocation.
 * Improve errors to contain trace-backs of values.
-* Consider unifying the CLI so something like:
-  ```
-  binary filename args...
-  ```
-  is exactly equivalent to:
-  ```
-  (load filename) args...
-  ```
-  in a script. Or better yet, extend `load` to apply additional arguments to the
-  loaded value and rename from `load` to the binary. Then the command-line and
-  the load functionality look and behave identically, aside from when values are
-  forced.
 * Add file/directory name hint to exec `file`/`dir` directives to specify final
   path component (often relevant for other programs ingesting the files).
 * Consider a syntax to expand an array into arguments to a command. Commands

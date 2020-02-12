@@ -396,6 +396,69 @@ impl From<Source<String>> for EvalError {
     }
 }
 
+/// Apply the value to the given arguments.
+pub fn apply_value(
+    ctx: &mut grease::Context<Context>,
+    v: Source<Value>,
+    args: Vec<Source<Value>>,
+) -> Result<Value, EvalError> {
+    v.map(move |v| {
+        match_value!(v => {
+            ScriptString => |val| {
+                let s = value_now!(val).owned();
+                trace!("looking up '{}' in environment", s);
+                // Lookup string in environment, and apply result to remaining arguments
+                let cmd = match ctx.inner.env_get(&s) {
+                    Some(value) => {
+                        trace!("found match in environment for '{}': {}", s, value.id());
+                        value
+                    },
+                    None => {
+                        return Err(Error::MissingBinding(s).into());
+                    }
+                };
+
+                let has_args = !args.is_empty();
+
+                match_value!(cmd.clone().unwrap() => {
+                    ScriptFunction => |val| {
+                        if has_args {
+                            let f = value_now!(val);
+                            f.plan_join(ctx, args)
+                        } else {
+                            Ok(val.into())
+                        }
+                    },
+                    => |v| {
+                        if has_args {
+                            Err(Error::NonCallableExpression(v).into())
+                        } else {
+                            Ok(v)
+                        }
+                    }
+                })
+            },
+            ScriptFunction => |val| {
+                if !args.is_empty() {
+                    let f = value_now!(val);
+                    f.plan_join(ctx, args)
+                } else {
+                    Ok(val.into())
+                }
+            },
+            => |v| {
+                if !args.is_empty() {
+                    Err(Error::NonCallableExpression(v).into())
+                } else {
+                    Ok(v)
+                }
+            }
+        })
+    })
+    .transpose_err()
+    .map_err(Into::into)
+}
+
 impl Plan<Context> for Expression {
     type Output = Result<Value, EvalError>;
 
@@ -428,65 +491,12 @@ impl Plan<Context> for Expression {
                 => |_| Err(Error::InvalidIndex.into())
             }),
             Command(cmd, args) => {
-                match_value!(cmd.plan(ctx)?.unwrap() => {
-                    ScriptString => |val| {
-                        let s = value_now!(val).owned();
-                        trace!("looking up '{}' in environment", s);
-                        // Lookup string in environment, and apply result to remaining arguments
-                        let (cmd, args) = match ctx.inner.env_get(&s) {
-                            Some(value) => {
-                                trace!("found match in environment for '{}': {}", s, value.id());
-                                (value, args)
-                            },
-                            None => {
-                                return Err(Error::MissingBinding(s).into());
-                            }
-                        };
-
-                        let has_args = !args.is_empty();
-
-                        match_value!(cmd.clone().unwrap() => {
-                            ScriptFunction => |val| {
-                                if has_args {
-                                    let f = value_now!(val);
-                                    let args =
-                                        args.into_iter()
-                                            .map(|a| a.plan(ctx))
-                                            .collect::<Result<Vec<_>, _>>()?;
-                                    f.plan_join(ctx, args)
-                                } else {
-                                    Ok(val.into())
-                                }
-                            },
-                            => |v| {
-                                if has_args {
-                                    Err(Error::NonCallableExpression(v).into())
-                                } else {
-                                    Ok(v)
-                                }
-                            }
-                        })
-                    },
-                    ScriptFunction => |val| {
-                        if !args.is_empty() {
-                            let f = value_now!(val);
-                            let args =
-                                args.into_iter()
-                                    .map(|a| a.plan(ctx))
-                                    .collect::<Result<Vec<_>, _>>()?;
-                            f.plan_join(ctx, args)
-                        } else {
-                            Ok(val.into())
-                        }
-                    },
-                    => |v| {
-                        if !args.is_empty() {
-                            Err(Error::NonCallableExpression(v).into())
-                        } else {
-                            Ok(v)
-                        }
-                    }
-                })
+                let f = cmd.plan(ctx)?;
+                let args = args
+                    .into_iter()
+                    .map(|a| a.plan(ctx))
+                    .collect::<Result<Vec<_>, _>>()?;
+                apply_value(ctx, f, args)
             }
             Block(es) => es.plan(ctx).map(Source::unwrap).map_err(Into::into),
             Function(e) => {

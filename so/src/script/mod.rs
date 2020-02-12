@@ -1,5 +1,6 @@
 //! Script loading and execution.
 
+use crate::constants::PROGRAM_NAME;
 use grease::{Context, Plan};
 
 mod ast;
@@ -25,7 +26,7 @@ pub fn script_context(
         ("do", runtime::do_::builtin()),
         ("exec", runtime::exec::builtin()),
         ("has", runtime::has::builtin()),
-        ("load", runtime::load::builtin()),
+        (PROGRAM_NAME, runtime::load::builtin()),
         ("map", runtime::map::builtin()),
         ("path", runtime::path::builtin()),
         ("track", runtime::track::builtin()),
