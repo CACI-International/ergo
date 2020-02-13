@@ -21,33 +21,33 @@ use_path = { env = { PATH = $ } }
 
 # Get influxdb-cxx
 influx = {
-  git clone "https://github.com/awegrzyn/influxdb-cxx.git" { dir = checkout }
+  exec git clone https://github.com/awegrzyn/influxdb-cxx.git { dir = checkout }
   influx-include = checkout include .
-  cmake -DCMAKE_BUILD_TYPE=Release -S (checkout .) -B { dir = builddir } $use_path
-  make InfluxDB $use_path ${
-    pwd = builddir .
+  exec cmake -DCMAKE_BUILD_TYPE=Release -S (checkout .) -B { dir = builddir } $use_path
+  exec make InfluxDB $use_path {
+    pwd = (builddir .)
     creates = {
-      influx-lib = builddir lib libInfluxDB.so .
+      influx-lib = (builddir lib libInfluxDB.so .)
     }
   }
 
   {
-    include = checkout include .
-    lib = influx-lib
-    libpath = builddir lib .
+    include = (checkout include .)
+    lib = $influx-lib
+    libpath = (builddir lib .)
   }
 }
 
 # Compile main
-c++ -std=c++17 -c -o { file = main } -I $influx:include (track main.cpp)
+exec c++ -std=c++17 -c -o { file = main } -I (influx include) (track main.cpp)
 # Link program
-c++ -o { file = test } $main $influx:lib $use_path
+exec c++ -o { file = test } $main (influx lib) $use_path
 
 # Create output map
 {
-  dist = ln -f $test influx-test
-  clean = rm -f influx-test
-  * = $test { env = { LD_LIBRARY_PATH = $influx:libpath } }
+  dist = (exec ln -f $test influx-test)
+  clean = (exec rm -f influx-test)
+  * = ($test { env = { LD_LIBRARY_PATH = (influx libpath) } })
 }
 ```
 
