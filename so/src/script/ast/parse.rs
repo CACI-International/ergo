@@ -33,7 +33,6 @@ fn unset_variable<'a>() -> Parser<'a, Expr> {
 fn nested<'a>() -> Parser<'a, Expr> {
     let word_nested = is_a(|t: Tok| match t.as_ref() {
         Token::String(_) => true,
-        Token::Colon => true,
         _ => false,
     })
     .repeat(1..)
@@ -118,24 +117,7 @@ fn block<'a>() -> Parser<'a, Expr> {
 
 /// A single expression.
 fn expression<'a>() -> Parser<'a, Expr> {
-    call(move || {
-        let expr = function()
-            | if_expr()
-            | set_variable()
-            | unset_variable()
-            | array()
-            | block()
-            | command();
-        (expr + (sym(Token::Colon) * list(word(), sym(Token::Colon))).opt()).map(|(exp, inds)| {
-            let mut e = exp;
-            for i in inds.unwrap_or(vec![]) {
-                e = (e, i)
-                    .into_source()
-                    .map(|(e, i)| Expression::Index(Box::new(e), i.unwrap()));
-            }
-            e
-        })
-    })
+    call(move || function() | if_expr() | set_variable() | unset_variable() | command())
 }
 
 /// A single string.
@@ -327,12 +309,16 @@ mod test {
                 Whitespace,
                 CloseBracket,
             ],
-            Expression::Array(vec![
-                src(Expression::String("a".into())).into(),
-                src(Expression::String("b".into())).into(),
-                src(Expression::String("c".into())).into(),
-                src(Expression::String("d".into())).into(),
-            ]),
+            Expression::Command(
+                src(Expression::Array(vec![
+                    src(Expression::String("a".into())).into(),
+                    src(Expression::String("b".into())).into(),
+                    src(Expression::String("c".into())).into(),
+                    src(Expression::String("d".into())).into(),
+                ]))
+                .into(),
+                vec![],
+            ),
         )
     }
 
@@ -387,23 +373,27 @@ mod test {
                 Token::Newline,
                 Token::CloseCurly,
             ],
-            Expression::Block(vec![
-                src(Expression::Command(
-                    Box::new(src(Expression::String("a".to_owned()))),
-                    vec![],
-                )),
-                src(Expression::Command(
-                    Box::new(src(Expression::String("b".to_owned()))),
-                    vec![],
-                )),
-                src(Expression::SetVariable(
-                    "c".to_owned(),
-                    Box::new(src(Expression::Command(
-                        Box::new(src(Expression::String("echo".to_owned()))),
+            Expression::Command(
+                src(Expression::Block(vec![
+                    src(Expression::Command(
+                        Box::new(src(Expression::String("a".to_owned()))),
                         vec![],
-                    ))),
-                )),
-            ]),
+                    )),
+                    src(Expression::Command(
+                        Box::new(src(Expression::String("b".to_owned()))),
+                        vec![],
+                    )),
+                    src(Expression::SetVariable(
+                        "c".to_owned(),
+                        Box::new(src(Expression::Command(
+                            Box::new(src(Expression::String("echo".to_owned()))),
+                            vec![],
+                        ))),
+                    )),
+                ]))
+                .into(),
+                vec![],
+            ),
         )
     }
 
@@ -452,41 +442,24 @@ mod test {
     }
 
     #[test]
-    fn index() -> Result {
+    fn index_call() -> Result {
         assert_expr(
             &[
-                Token::String("hi".to_owned()),
-                Token::Colon,
-                Token::String("a".to_owned()),
+                OpenBracket,
+                Token::String("a".into()),
+                Comma,
+                Token::String("b".into()),
+                CloseBracket,
+                Whitespace,
+                Token::String("0".into()),
             ],
-            Expression::Index(
-                src(Expression::Command(
-                    src(Expression::String("hi".to_owned())).into(),
-                    vec![],
-                ))
+            Expression::Command(
+                src(Expression::Array(vec![
+                    src(Expression::String("a".into())).into(),
+                    src(Expression::String("b".into())).into(),
+                ]))
                 .into(),
-                "a".to_owned(),
-            ),
-        )?;
-        assert_expr(
-            &[
-                Token::String("hi".to_owned()),
-                Token::Colon,
-                Token::String("a".to_owned()),
-                Token::Colon,
-                Token::String("b".to_owned()),
-            ],
-            Expression::Index(
-                src(Expression::Index(
-                    src(Expression::Command(
-                        src(Expression::String("hi".into())).into(),
-                        vec![],
-                    ))
-                    .into(),
-                    "a".into(),
-                ))
-                .into(),
-                "b".into(),
+                vec![src(Expression::String("0".into())).into()],
             ),
         )
     }

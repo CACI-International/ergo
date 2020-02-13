@@ -17,7 +17,6 @@ pub enum Token {
     Dollar,
     Comma,
     Semicolon,
-    Colon,
     Equal,
     Newline,
     /// One or more whitespace characters (except newlines).
@@ -40,7 +39,6 @@ impl fmt::Display for Token {
             Token::Dollar => write!(f, "$"),
             Token::Comma => write!(f, ","),
             Token::Semicolon => write!(f, ";"),
-            Token::Colon => write!(f, ":"),
             Token::Equal => write!(f, "="),
             Token::Newline => write!(f, "\n"),
             Token::Whitespace => write!(f, " "),
@@ -77,7 +75,7 @@ where
     T: IntoIterator<IntoIter = I, Item = I::Item>,
 {
     fn from(s: Source<T>) -> Self {
-        let (source,i) = s.take();
+        let (source, i) = s.take();
         Tokens {
             iter: i.into_iter().peekable(),
             source,
@@ -176,8 +174,6 @@ impl<I: Iterator<Item = char>> Iterator for Tokens<I> {
                         Ok(Token::Comma)
                     } else if c == ';' {
                         Ok(Token::Semicolon)
-                    } else if c == ':' {
-                        Ok(Token::Colon)
                     } else if c == '=' {
                         Ok(Token::Equal)
                     }
@@ -186,7 +182,7 @@ impl<I: Iterator<Item = char>> Iterator for Tokens<I> {
                         let mut s = String::new();
                         s.push(c);
                         while let Some(c) = self.iter.peek() {
-                            if c.is_whitespace() || "[](){},;:$=".contains(*c) {
+                            if c.is_whitespace() || "[](){},;$=".contains(*c) {
                                 break;
                             } else {
                                 s.push(self.iter.next().unwrap());
@@ -211,7 +207,7 @@ mod test {
     #[test]
     fn symbols() -> Result<(), Source<Error>> {
         assert_tokens(
-            "[]{}()$,;:=\n",
+            "[]{}()$,;=\n",
             &[
                 Token::OpenBracket,
                 Token::CloseBracket,
@@ -222,7 +218,6 @@ mod test {
                 Token::Dollar,
                 Token::Comma,
                 Token::Semicolon,
-                Token::Colon,
                 Token::Equal,
                 Token::Newline,
             ],
@@ -246,11 +241,11 @@ mod test {
     #[test]
     fn strings() -> Result<(), Source<Error>> {
         assert_tokens(
-            "hello \"world[]{}()$:,;:=\" \"escape\\\"quote\\n\"",
+            "hello \"world[]{}()$,;=\" \"escape\\\"quote\\n\"",
             &[
                 Token::String("hello".to_owned()),
                 Token::Whitespace,
-                Token::String("world[]{}()$:,;:=".to_owned()),
+                Token::String("world[]{}()$,;=".to_owned()),
                 Token::Whitespace,
                 Token::String("escape\"quote\n".to_owned()),
             ],
@@ -260,7 +255,7 @@ mod test {
     #[test]
     fn string_ends() -> Result<(), Source<Error>> {
         assert_tokens(
-            "a[b]c{d}e(f)g$h,i;j:k=l\nm ",
+            "a[b]c{d}e(f)g$h,i;j k=l\nm ",
             &[
                 Token::String("a".to_owned()),
                 Token::OpenBracket,
@@ -281,7 +276,7 @@ mod test {
                 Token::String("i".to_owned()),
                 Token::Semicolon,
                 Token::String("j".to_owned()),
-                Token::Colon,
+                Token::Whitespace,
                 Token::String("k".to_owned()),
                 Token::Equal,
                 Token::String("l".to_owned()),
@@ -318,11 +313,15 @@ mod test {
     }
 
     fn assert_tokens(s: &str, expected: &[Token]) -> Result<(), Source<Error>> {
-        let toks: Vec<_> = Tokens::from(Source::new(super::super::StringSource(s.to_owned())).open().unwrap())
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .map(|t| t.unwrap())
-            .collect();
+        let toks: Vec<_> = Tokens::from(
+            Source::new(super::super::StringSource::new("<string>", s.to_owned()))
+                .open()
+                .unwrap(),
+        )
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(|t| t.unwrap())
+        .collect();
         assert!(toks == expected);
         Ok(())
     }

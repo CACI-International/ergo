@@ -12,8 +12,7 @@ mod constants {
 
 use constants::PROGRAM_NAME;
 use output::Output;
-use script::types::*;
-use script::{script_deep_eval, FileSource, Script, Source};
+use script::{script_deep_eval, Script, Source, StringSource};
 
 trait AppErr {
     type Output;
@@ -60,8 +59,6 @@ impl AppErr for bool {
 }
 
 fn main() {
-    let args: Vec<_> = std::env::args().collect();
-
     TermLogger::init(
         if cfg!(debug_assertions) {
             simplelog::LevelFilter::Trace
@@ -93,47 +90,21 @@ fn main() {
         l.set_thread_ids(ctx.task.thread_ids().iter().cloned());
     }
 
-    let script = args.get(1).app_err("first argument must be a script file");
-    let source = Source::new(FileSource(script.into()));
+    let mut args = std::env::args().skip(1);
+
+    let mut to_eval = String::from(PROGRAM_NAME);
+    while let Some(arg) = args.next() {
+        to_eval.push(' ');
+        to_eval.push_str(&arg);
+    }
+
+    let source = Source::new(StringSource::new("<command line>", to_eval));
+    //let source = Source::new(FileSource(script.into()));
     let loaded = Script::load(source).app_err("failed to parse script file");
 
     let script_output = loaded.plan(&mut ctx).app_err("script runtime error");
 
-    let params = args
-        .get(2..)
-        .map(|strs| strs.iter().map(|s| s.as_ref()).collect())
-        .and_then(|ps: Vec<&str>| if ps.is_empty() { None } else { Some(ps) });
-
-    let value_roots = match (
-        script_output.map(|v| v.typed::<ScriptMap>()).transpose(),
-        params,
-    ) {
-        (Ok(val), Some(mut params)) => {
-            let ScriptMap(mut m) = val
-                .map(|v| v.get())
-                .transpose_err()
-                .app_err("failed to get value")
-                .owned();
-
-            params.sort_unstable();
-            params.dedup();
-            // Get all data values based on parameters
-            params
-                .into_iter()
-                .map(|p| m.remove(p).ok_or(p))
-                .collect::<Result<Vec<_>, _>>()
-                .app_err("target not found")
-        }
-        (Ok(val), None) => vec![val.map(Into::into)],
-        (Err(v), params) => {
-            params.is_none().app_err(
-                "cannot specify additional parameters unless the script evaluates to a map",
-            );
-            vec![v]
-        }
-    };
-
-    let to_eval = script_deep_eval(Source::builtin(ScriptArray(value_roots).into()));
+    let to_eval = script_deep_eval(script_output);
     let result = futures::executor::block_on(to_eval).transpose_err();
 
     let mut l = logger.lock().unwrap();

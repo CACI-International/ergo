@@ -15,7 +15,6 @@ pub enum Expression {
     Array(Vec<Expr>),
     SetVariable(String, Box<Expr>),
     UnsetVariable(String),
-    Index(Box<Expr>, String),
     Command(Box<Expr>, Vec<Expr>),
     Block(Vec<Expr>),
     Function(Box<Expr>),
@@ -150,15 +149,27 @@ impl std::hash::Hash for SourceFactoryRef {
 }
 
 /// A string-based source.
-pub struct StringSource(pub String);
+pub struct StringSource {
+    name: String,
+    src: String,
+}
+
+impl StringSource {
+    pub fn new<N: Into<String>>(name: N, src: String) -> Self {
+        StringSource {
+            name: name.into(),
+            src,
+        }
+    }
+}
 
 impl SourceFactory for StringSource {
     fn name(&self) -> String {
-        "<string>".into()
+        self.name.clone()
     }
 
     fn read<'a>(&'a self) -> Result<Box<dyn Read + 'a>, String> {
-        let r: &'a [u8] = self.0.as_ref();
+        let r: &'a [u8] = self.src.as_ref();
         Ok(Box::new(r))
     }
 }
@@ -509,7 +520,7 @@ impl<T: fmt::Display + fmt::Debug> fmt::Display for Source<T> {
                         if remaining < chars {
                             if start.is_none() {
                                 start = Some((linecount, remaining + 1));
-                                startline = Some(line);
+                                startline = Some(line.trim_end().to_owned());
                                 remaining += self.location.length - 1;
                                 if remaining <= chars {
                                     end = Some((linecount, remaining + 1));
@@ -545,7 +556,7 @@ impl<T: fmt::Display + fmt::Debug> fmt::Display for Source<T> {
                             }
                             write!(
                                 f,
-                                " ({}:{}-{}:{}): {}\n{}{}",
+                                " ({}:{}-{}:{}): {}\n{}\n{}",
                                 start.0, start.1, end.0, end.1, &self.value, startline, underline
                             )
                         }

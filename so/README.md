@@ -54,9 +54,6 @@ c++ -o { file = test } $main $influx:lib $use_path
 ## Developer's Corner
 
 ### TODO
-* Consider whether index notation is necessary at all, or whether it's more
-  uniform to use command notation for indexing (some shorthand notation may
-  still be useful on the command-line).
 * Data-manipulation functions (maybe as a plugin).
 * Better function syntax, to make `map` less ugly?
 * Change 'once' to be a command itself rather than a key on exec results (it can

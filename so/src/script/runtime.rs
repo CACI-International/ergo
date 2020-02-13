@@ -397,61 +397,92 @@ impl From<Source<String>> for EvalError {
 }
 
 /// Apply the value to the given arguments.
-pub fn apply_value(
+///
+/// If `env_lookup` is true and `v` is a `ScriptString`, it will be looked up in the environment.
+pub fn apply_value<I: IntoIterator<Item = Source<Value>>>(
     ctx: &mut grease::Context<Context>,
     v: Source<Value>,
-    args: Vec<Source<Value>>,
+    args: I,
+    env_lookup: bool,
 ) -> Result<Value, EvalError> {
+    _apply_value(ctx, v, args.into_iter().peekable(), env_lookup)
+}
+
+fn _apply_value<I: Iterator<Item = Source<Value>>>(
+    ctx: &mut grease::Context<Context>,
+    v: Source<Value>,
+    mut args: std::iter::Peekable<I>,
+    env_lookup: bool,
+) -> Result<Value, EvalError> {
+    let v_source = v.source();
     v.map(move |v| {
+        let v = if env_lookup {
+            match v.typed::<ScriptString>() {
+                Ok(val) => {
+                    let s = value_now!(val).owned();
+                    trace!("looking up '{}' in environment", s);
+                    // Lookup string in environment, and apply result to remaining arguments
+                    match ctx.inner.env_get(&s) {
+                        Some(value) => {
+                            trace!("found match in environment for '{}': {}", s, value.id());
+                            value.clone().unwrap()
+                        }
+                        None => {
+                            return Err(Error::MissingBinding(s).into());
+                        }
+                    }
+                }
+                Err(v) => v,
+            }
+        } else {
+            v
+        };
+
+        if args.peek().is_none() {
+            return Ok(v);
+        }
+
         match_value!(v => {
-            ScriptString => |val| {
-                let s = value_now!(val).owned();
-                trace!("looking up '{}' in environment", s);
-                // Lookup string in environment, and apply result to remaining arguments
-                let cmd = match ctx.inner.env_get(&s) {
-                    Some(value) => {
-                        trace!("found match in environment for '{}': {}", s, value.id());
-                        value
-                    },
-                    None => {
-                        return Err(Error::MissingBinding(s).into());
-                    }
-                };
+            ScriptArray => |val| {
+                let index = args.next().unwrap().map(|v|
+                    v.typed::<ScriptString>()
+                        .map_err(|_| "index must be a string".into())
+                        .and_then(|v| v.get())
+                    )
+                    .transpose()?;
+                let val = index.map(|index| match usize::from_str(index.as_ref()) {
+                    Err(_) => Err(EvalError::from(Error::NonIntegerIndex)),
+                    Ok(ind) => value_now!(val).0.get(ind).cloned().map(Source::unwrap)
+                        .ok_or(Error::MissingIndex(index.to_owned()).into())
+                }).transpose()?;
 
-                let has_args = !args.is_empty();
+                let (source,val) = val.take();
 
-                match_value!(cmd.clone().unwrap() => {
-                    ScriptFunction => |val| {
-                        if has_args {
-                            let f = value_now!(val);
-                            f.plan_join(ctx, args)
-                        } else {
-                            Ok(val.into())
-                        }
-                    },
-                    => |v| {
-                        if has_args {
-                            Err(Error::NonCallableExpression(v).into())
-                        } else {
-                            Ok(v)
-                        }
-                    }
-                })
+                _apply_value(ctx, Source::from((source,v_source)).with(val), args, false)
+            },
+            ScriptMap => |val| {
+                let index = args.next().unwrap().map(|v|
+                    v.typed::<ScriptString>()
+                        .map_err(|_| "index must be a string".into())
+                        .and_then(|v| v.get())
+                    )
+                    .transpose()?;
+
+                let val = index.map(|index|
+                        value_now!(val).0.get(index.as_ref()).cloned().map(Source::unwrap)
+                            .ok_or(EvalError::from(Error::MissingIndex(index.as_ref().into())))
+                    )
+                    .transpose()?;
+
+                let (source,val) = val.take();
+
+                _apply_value(ctx, Source::from((source,v_source)).with(val), args, false)
             },
             ScriptFunction => |val| {
-                if !args.is_empty() {
-                    let f = value_now!(val);
-                    f.plan_join(ctx, args)
-                } else {
-                    Ok(val.into())
-                }
+                value_now!(val).plan_join(ctx, args.collect())
             },
             => |v| {
-                if !args.is_empty() {
-                    Err(Error::NonCallableExpression(v).into())
-                } else {
-                    Ok(v)
-                }
+                Err(Error::NonCallableExpression(v).into())
             }
         })
     })
@@ -482,21 +513,13 @@ impl Plan<Context> for Expression {
                 ctx.inner.env_remove(&var);
                 Ok(().into_value())
             }
-            Index(e, i) => match_value!(e.plan(ctx)?.unwrap() => {
-                ScriptArray => |val| match usize::from_str(&i) {
-                    Err(_) => Err(Error::NonIntegerIndex.into()),
-                    Ok(ind) => value_now!(val).0.get(ind).cloned().map(Source::unwrap).ok_or(Error::MissingIndex(i.clone()).into())
-                },
-                ScriptMap => |val| value_now!(val).0.get(&i).cloned().map(Source::unwrap).ok_or(Error::MissingIndex(i).into()),
-                => |_| Err(Error::InvalidIndex.into())
-            }),
             Command(cmd, args) => {
                 let f = cmd.plan(ctx)?;
                 let args = args
                     .into_iter()
                     .map(|a| a.plan(ctx))
                     .collect::<Result<Vec<_>, _>>()?;
-                apply_value(ctx, f, args)
+                apply_value(ctx, f, args, true)
             }
             Block(es) => es.plan(ctx).map(Source::unwrap).map_err(Into::into),
             Function(e) => {

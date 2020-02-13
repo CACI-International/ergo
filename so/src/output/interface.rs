@@ -2,22 +2,22 @@ use std::io::Write;
 use term::Terminal;
 
 pub fn stdout() -> OutputInterface {
-    match (term::stdout(),atty::is(atty::Stream::Stdout)) {
-        (Some(v),true) => OutputInterface::Term(v),
-        _ => OutputInterface::Dumb(Box::new(std::io::stdout()))
+    match (term::stdout(), atty::is(atty::Stream::Stdout)) {
+        (Some(v), true) => OutputInterface::Term(v),
+        _ => OutputInterface::Dumb(Box::new(std::io::stdout())),
     }
 }
 
 pub enum OutputInterface {
     Term(Box<term::StdoutTerminal>),
-    Dumb(Box<dyn Write + Send>)
+    Dumb(Box<dyn Write + Send>),
 }
 
 impl OutputInterface {
     pub fn is_tty(&self) -> bool {
         match self {
             OutputInterface::Term(_) => true,
-            OutputInterface::Dumb(_) => false
+            OutputInterface::Dumb(_) => false,
         }
     }
 }
@@ -26,14 +26,14 @@ impl Write for OutputInterface {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         match self {
             OutputInterface::Term(v) => v.write(buf),
-            OutputInterface::Dumb(v) => v.write(buf)
+            OutputInterface::Dumb(v) => v.write(buf),
         }
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
         match self {
             OutputInterface::Term(v) => v.flush(),
-            OutputInterface::Dumb(v) => v.flush()
+            OutputInterface::Dumb(v) => v.flush(),
         }
     }
 }
@@ -56,7 +56,6 @@ macro_rules! forward {
         }
     );
 }
-
 
 impl Terminal for OutputInterface {
     type Output = Self;

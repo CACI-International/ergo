@@ -81,13 +81,13 @@ mod test {
 
     #[test]
     fn array() -> Result<(), String> {
-        script_eval_to("$ [a,b]", SRArray(&[SRString("a"), SRString("b")]))
+        script_eval_to("[a,b]", SRArray(&[SRString("a"), SRString("b")]))
     }
 
     #[test]
     fn block() -> Result<(), String> {
         script_eval_to(
-            "$ {alpha=one,beta=two}",
+            "{alpha=one,beta=two}",
             SRMap(&[("alpha", SRString("one")), ("beta", SRString("two"))]),
         )
     }
@@ -95,34 +95,36 @@ mod test {
     #[test]
     fn comment() -> Result<(), String> {
         script_eval_to(
-            "# comment comment comment\n$ something",
+            "# comment comment comment\na = something\na",
             SRString("something"),
         )
     }
 
     #[test]
     fn index() -> Result<(), String> {
-        script_eval_to("$ [a,b]:0", SRString("a"))?;
-        script_eval_to("$ {alpha=one,beta=two}:beta", SRString("two"))
+        script_eval_to("[a,b] 0", SRString("a"))?;
+        script_eval_to("{alpha=one,beta=two} beta", SRString("two"))?;
+        script_eval_to("{alpha=[a,{key=b}]} alpha 1 key", SRString("b"))?;
+        Ok(())
     }
 
     #[test]
     fn bindings() -> Result<(), String> {
         script_eval_to("var = something; var", SRString("something"))?;
         script_eval_to(
-            "var = {inner=[blah,{v=\"test()\"}]}; var:inner:1:v",
+            "var = {inner=[blah,{v=\"test()\"}]}; var inner 1 v",
             SRString("test()"),
         )
     }
 
     #[test]
     fn exec() -> Result<(), String> {
-        script_eval_to("(echo hello):stdout", SRAny)
+        script_eval_to("(exec echo hello) stdout", SRAny)
     }
 
     #[test]
     fn exec_failure() -> Result<(), String> {
-        let mut fail = script_eval("false:stdout")?;
+        let mut fail = script_eval("(exec false) stdout")?;
         assert!(futures::executor::block_on(&mut fail).is_err());
         Ok(())
     }
@@ -130,9 +132,9 @@ mod test {
     #[test]
     fn function() -> Result<(), String> {
         script_eval_to("f = fn a\nf something", SRString("a"))?;
-        script_eval_to("second = fn $@:1\nsecond a b", SRString("b"))?;
+        script_eval_to("second = fn (@ 1)\nsecond a b", SRString("b"))?;
         script_eval_to(
-            "f = fn {\n  a = $@:0\n  b = $@:2\n}\nf 1 2 3",
+            "f = fn {\n  a = (@ 0)\n  b = (@ 2)\n}\nf 1 2 3",
             SRMap(&[("a", SRString("1")), ("b", SRString("3"))]),
         )
     }
@@ -212,8 +214,11 @@ mod test {
 
     fn script_eval(s: &str) -> Result<Value, String> {
         let mut ctx = script_context(Context::builder()).map_err(|e| e.to_string())?;
-        ctx.plan(Script::load(Source::new(StringSource(s.to_owned()))).map_err(|e| e.to_string())?)
-            .map_err(|e| e.to_string())
-            .map(|sv| sv.unwrap())
+        ctx.plan(
+            Script::load(Source::new(StringSource::new("<string>", s.to_owned())))
+                .map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())
+        .map(|sv| sv.unwrap())
     }
 }
