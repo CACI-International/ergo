@@ -57,6 +57,8 @@ exec c++ -o { file = test } $main (influx lib) $use_path
 * Data-manipulation functions (maybe as a plugin).
 * Better function syntax, to make `map` less ugly?
 * Remove the unit type; use an empty map instead?
+* Add a `seq` directive and runtime support to manually add value dependencies.
+  This would replace the builtin `do` command (which is a bit hacky anyway).
 * Change 'once' to be a command itself rather than a key on exec results (it can
   be generalized to arbitrary values). Add 'cache' command to execute once and
   store result (or merge the two).
