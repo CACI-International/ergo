@@ -9,18 +9,19 @@ def_builtin!(ctx,args => {
     let val = args.next().ok_or("value not provided")?;
     let ind = args.next().ok_or("index not provided")?;
     if let Some(v) = args.next() {
-        return Err(v.with("extraneous arguments to has").into());
+        ctx.error(v.with("extraneous arguments to has"));
+        return Ok(Eval::Error);
     }
 
-    let ind = ind
+    let ind = eval_error!(ctx, ind
         .map(|i| {
             i.typed::<String>()
                 .map_err(|_| "index must be a string".into())
                 .and_then(|v| v.get())
         })
-        .transpose_err()?;
+        .transpose_err());
 
-    Ok(val
+    Ok(eval_error!(ctx, val
         .map(|v| {
             match_value!(v => {
                 ScriptArray => |val| match usize::from_str(&ind) {
@@ -31,6 +32,6 @@ def_builtin!(ctx,args => {
                 => |_| Ok(false)
             })
         })
-        .transpose_err()?
-        .into_value())
+        .transpose_err())
+        .into_value().into())
 });

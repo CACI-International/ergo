@@ -12,7 +12,7 @@ mod constants {
 
 use constants::PROGRAM_NAME;
 use output::Output;
-use script::{script_deep_eval, Script, Source, StringSource};
+use script::{script_deep_eval, Error, Eval, Script, Source, StringSource};
 
 trait AppErr {
     type Output;
@@ -26,6 +26,27 @@ fn err_exit(s: &str) -> ! {
     std::process::exit(1);
 }
 
+struct Errors(Vec<Source<Error>>);
+
+impl std::fmt::Display for Errors {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        for e in &self.0 {
+            writeln!(f, "{}", e)?
+        }
+        Ok(())
+    }
+}
+
+impl AppErr for Errors {
+    type Output = ();
+
+    fn app_err(self, s: &str) -> Self::Output {
+        if !self.0.is_empty() {
+            err_exit(&format!("{}:\n{}", s, self))
+        }
+    }
+}
+
 impl<T, E: std::fmt::Display> AppErr for Result<T, E> {
     type Output = T;
 
@@ -33,6 +54,17 @@ impl<T, E: std::fmt::Display> AppErr for Result<T, E> {
         match self {
             Ok(v) => v,
             Err(e) => err_exit(&format!("{}:\n{}", s, e)),
+        }
+    }
+}
+
+impl<T> AppErr for Eval<T> {
+    type Output = T;
+
+    fn app_err(self, s: &str) -> Self::Output {
+        match self {
+            Eval::Value(v) => v,
+            Eval::Error => err_exit(s),
         }
     }
 }
@@ -99,10 +131,11 @@ fn main() {
     }
 
     let source = Source::new(StringSource::new("<command line>", to_eval));
-    //let source = Source::new(FileSource(script.into()));
     let loaded = Script::load(source).app_err("failed to parse script file");
 
-    let script_output = loaded.plan(&mut ctx).app_err("script runtime error");
+    let script_output = loaded.plan(&mut ctx);
+    Errors(ctx.get_errors()).app_err("error(s) while executing script");
+    let script_output = script_output.app_err("an evaluation error occurred");
 
     let to_eval = script_deep_eval(script_output);
     let result = futures::executor::block_on(to_eval).transpose_err();

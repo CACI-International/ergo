@@ -586,7 +586,7 @@ impl PartialEq<Source<Self>> for tokenize::Token {
 pub type Expr = Source<Expression>;
 
 /// A parsed script.
-pub type Script = Vec<Expr>;
+pub type Script = Source<Vec<Expr>>;
 
 /// A script loading error.
 pub enum Error {

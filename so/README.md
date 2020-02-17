@@ -56,10 +56,10 @@ exec c++ -o { file = test } $main (influx lib) $use_path
 ### TODO
 * Data-manipulation functions (maybe as a plugin).
 * Better function syntax, to make `map` less ugly?
+* Remove the unit type; use an empty map instead?
 * Change 'once' to be a command itself rather than a key on exec results (it can
   be generalized to arbitrary values). Add 'cache' command to execute once and
   store result (or merge the two).
-* Improve runtime to be able to get multiple errors with one invocation.
 * Improve errors to contain trace-backs of values.
 * Add file/directory name hint to exec `file`/`dir` directives to specify final
   path component (often relevant for other programs ingesting the files).

@@ -3,18 +3,29 @@
 use super::builtin_function_prelude::*;
 
 def_builtin!(ctx,args => {
-    let mut args = args
+    let args = args
         .into_iter()
         .map(|sv| {
-            sv.map(|v| {
+            let ret = sv.map(|v| {
+                // TODO support PathBuf?
                 v.typed::<ScriptString>()
                     .map_err(|_| "all arguments must be strings".into())
                     .and_then(|v| v.get())
             })
-            .transpose_err()
+            .transpose_err();
+            match ret {
+                Err(e) => {
+                    ctx.error(e);
+                    Eval::Error
+                }
+                Ok(v) => Eval::Value(v)
+            }
         })
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter();
+        .collect::<Eval<Vec<_>>>();
+    let mut args = match args {
+        Eval::Error => return Ok(Eval::Error),
+        Eval::Value(v) => v.into_iter()
+    };
     let first = args
         .next()
         .ok_or("at least one path component is required".to_owned())?
@@ -27,6 +38,6 @@ def_builtin!(ctx,args => {
 
     path.into_os_string()
         .into_string()
-        .map(|v| v.into())
+        .map(|v| Eval::Value(v.into()))
         .map_err(|_| "invalid path".into())
 });

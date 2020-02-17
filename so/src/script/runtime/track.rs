@@ -13,18 +13,18 @@ def_builtin!(ctx,args => {
 
     let path = args.into_iter().next().unwrap();
 
-    let path = path
+    let path = eval_error!(ctx, path
         .map(|p| {
             p.typed::<ScriptString>()
                 .map_err(|_| "track argument must be a string".into())
                 .and_then(TypedValue::get)
                 .map(|v| v.owned())
         })
-        .transpose_err()?;
+        .transpose_err());
 
     Config { path: path.into() }
         .plan_split(ctx)
-        .map(|v| v.into())
+        .map(|v| Eval::Value(v.into()))
         .map_err(|e| e.into())
 });
 

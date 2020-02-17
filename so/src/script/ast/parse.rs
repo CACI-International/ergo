@@ -10,7 +10,7 @@ pub type Parser<'a, T> = pom::parser::Parser<'a, Tok, T>;
 
 /// Return a parser for a script.
 pub fn script<'a>() -> Parser<'a, Script> {
-    spacenl() * list(expression(), eoe()) - spacenl() - end()
+    spacenl() * list(expression(), eoe()).map(|e| e.into_source()) - spacenl() - end()
 }
 
 /// A set variable expression.
