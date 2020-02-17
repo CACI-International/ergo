@@ -265,3 +265,17 @@ impl<T> Context<T> {
         plan.plan_join(self, e)
     }
 }
+
+impl<T> std::ops::Deref for Context<T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.inner
+    }
+}
+
+impl<T> std::ops::DerefMut for Context<T> {
+    fn deref_mut(&mut self) -> &mut T {
+        &mut self.inner
+    }
+}
