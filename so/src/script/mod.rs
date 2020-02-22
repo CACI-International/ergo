@@ -7,7 +7,7 @@ mod ast;
 mod runtime;
 
 pub use ast::{FileSource, Source, StringSource};
-pub use runtime::{script_deep_eval, Eval, Error};
+pub use runtime::{script_deep_eval, Eval, Error, SourceContext};
 pub use runtime::script_types as types;
 
 /// A loaded script.

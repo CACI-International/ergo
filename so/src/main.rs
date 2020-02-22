@@ -12,7 +12,7 @@ mod constants {
 
 use constants::PROGRAM_NAME;
 use output::Output;
-use script::{script_deep_eval, Error, Eval, Script, Source, StringSource};
+use script::{script_deep_eval, Error, Eval, Script, Source, SourceContext, StringSource};
 
 trait AppErr {
     type Output;
@@ -26,7 +26,7 @@ fn err_exit(s: &str) -> ! {
     std::process::exit(1);
 }
 
-struct Errors(Vec<Source<Error>>);
+struct Errors(Vec<SourceContext<Error>>);
 
 impl std::fmt::Display for Errors {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {

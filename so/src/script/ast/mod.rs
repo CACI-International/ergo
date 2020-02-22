@@ -492,7 +492,7 @@ impl<T, U> From<(Source<T>, Source<U>)> for Source<(Source<T>, Source<U>)> {
     }
 }
 
-impl<T: fmt::Display + fmt::Debug> fmt::Display for Source<T> {
+impl<T: fmt::Display> fmt::Display for Source<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mut start = None;
         let mut end = None;

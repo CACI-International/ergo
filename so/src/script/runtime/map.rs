@@ -36,7 +36,6 @@ def_builtin!(ctx,args => {
             match ctx.split_map(|ctx: &mut Context<super::Context>| func.plan_join(ctx, vec![d])) {
                 Ok(v) => v.map(|v| source.with(v)),
                 Err(e) => {
-                    // TODO error context
                     ctx.error(source.with(e));
                     Eval::Error
                 }

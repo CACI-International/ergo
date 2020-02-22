@@ -63,6 +63,7 @@ exec c++ -o { file = test } $main (influx lib) $use_path
   be generalized to arbitrary values). Add 'cache' command to execute once and
   store result (or merge the two).
 * Improve errors to contain trace-backs of values.
+  * Find specific examples where this is useful.
 * Add file/directory name hint to exec `file`/`dir` directives to specify final
   path component (often relevant for other programs ingesting the files).
 * Consider a syntax to expand an array into arguments to a command. Commands

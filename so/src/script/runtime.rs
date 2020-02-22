@@ -91,7 +91,7 @@ pub mod script_types {
 
 pub mod builtin_function_prelude {
     pub use super::script_types::*;
-    pub use super::{Error, Eval, FunctionContext};
+    pub use super::{Error, Eval, FunctionContext, SourceContext};
     pub use grease::{Context, Value};
 
     #[macro_export]
@@ -121,7 +121,7 @@ pub mod builtin_function_prelude {
         ($ctx:expr , $val:expr , $then:expr) => {
             match $val {
                 Err(e) => {
-                    $ctx.inner.error(e);
+                    $ctx.error(e);
                     $then
                 }
                 Ok(v) => v,
@@ -212,7 +212,7 @@ pub fn script_deep_eval(v: Source<Value>) -> Source<Value> {
 /// The script context.
 pub struct Context {
     env: Vec<Env>,
-    errors: Vec<Source<Error>>,
+    errors: Vec<SourceContext<Error>>,
 }
 
 impl Default for Context {
@@ -253,11 +253,11 @@ impl Context {
         })
     }
 
-    pub fn error<E: Into<Source<Error>>>(&mut self, err: E) {
+    pub fn error<E: Into<SourceContext<Error>>>(&mut self, err: E) {
         self.errors.push(err.into());
     }
 
-    pub fn get_errors(&mut self) -> Vec<Source<Error>> {
+    pub fn get_errors(&mut self) -> Vec<SourceContext<Error>> {
         let mut v = Vec::new();
         std::mem::swap(&mut self.errors, &mut v);
         v
@@ -359,6 +359,40 @@ impl From<Source<&'_ str>> for Source<Error> {
 impl From<Source<String>> for Source<Error> {
     fn from(s: Source<String>) -> Self {
         s.map(Error::ValueError)
+    }
+}
+
+#[derive(Debug)]
+pub struct SourceContext<T> {
+    value: Source<T>,
+    context: Vec<Source<String>>,
+}
+
+impl<T> SourceContext<T> {
+    pub fn add_context(&mut self, ctx: Source<String>) {
+        self.context.push(ctx)
+    }
+}
+
+impl<U> From<Source<U>> for SourceContext<Error>
+where
+    Error: From<U>,
+{
+    fn from(u: Source<U>) -> SourceContext<Error> {
+        SourceContext {
+            value: u.map(Error::from),
+            context: vec![],
+        }
+    }
+}
+
+impl<T: fmt::Display> fmt::Display for SourceContext<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(f, "{}", self.value)?;
+        for c in &self.context {
+            writeln!(f, "{}", c)?;
+        }
+        Ok(())
     }
 }
 
@@ -627,7 +661,7 @@ impl Plan<Context> for Source<Expression> {
             match expr.plan(ctx) {
                 Ok(val) => val.map(|v| source.with(v)),
                 Err(e) => {
-                    ctx.inner.error(source.with(e));
+                    ctx.error(source.with(e));
                     Eval::Error
                 }
             }
