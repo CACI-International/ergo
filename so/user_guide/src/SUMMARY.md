@@ -12,3 +12,7 @@
   - [Syntax](details/syntax.md)
   - [Type System](details/type_system.md)
   - [Semantics](details/semantics.md)
+- [RFC](rfc/intro.md)
+  - [Functions](rfc/functions.md)
+  - [Merge](rfc/merge.md)
+  - [Macros](rfc/macros.md)
