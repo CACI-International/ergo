@@ -74,7 +74,7 @@ impl From<&'_ Value> for Dependency {
 
 impl From<Value> for Dependency {
     fn from(v: Value) -> Self {
-        Dependency::Value(v)
+        Dependency::Value(v.unevaluated())
     }
 }
 
@@ -282,7 +282,7 @@ type ValueResult = Result<Arc<ValueData>, String>;
 pub struct Value {
     tp: Arc<ValueType>,
     data: Shared<BoxFuture<'static, ValueResult>>,
-    dependencies: Arc<[Value]>,
+    dependencies: Arc<Dependencies>,
     id: u128,
 }
 
@@ -355,19 +355,16 @@ impl std::ops::Add for Dependencies {
 
     /// Combine two Dependencies into one. The order matter with respect
     /// to any ordered dependencies that are stored.
-    fn add(self, other: Self) -> Self {
-        Dependencies {
-            unordered: self
-                .unordered
-                .into_iter()
-                .chain(other.unordered.into_iter())
-                .collect(),
-            ordered: self
-                .ordered
-                .into_iter()
-                .chain(other.ordered.into_iter())
-                .collect(),
-        }
+    fn add(mut self, other: Self) -> Self {
+        self += other;
+        self
+    }
+}
+
+impl std::ops::AddAssign for Dependencies {
+    fn add_assign(&mut self, other: Self) {
+        self.unordered.extend(other.unordered);
+        self.ordered.extend(other.ordered);
     }
 }
 
@@ -401,10 +398,21 @@ impl Value {
         Value {
             tp,
             data: value.boxed().shared(),
-            dependencies: Arc::from_iter(deps.into_iter().filter_map(|v| match v {
-                Dependency::Value(val) => Some(val.unevaluated()),
-                _ => None,
-            })),
+            dependencies: Arc::from(deps),
+            id,
+        }
+    }
+
+    /// Add dependencies to this value, producing a new value with a new identifier.
+    ///
+    /// The value will have the same type and evaluate to the same value as the original.
+    pub fn add_dependencies(self, deps: Dependencies) -> Value {
+        let deps = self.dependencies.as_ref().clone() + deps;
+        let id = deps.value_id_with(&self.tp);
+        Value {
+            tp: self.tp,
+            data: self.data,
+            dependencies: Arc::from(deps),
             id,
         }
     }
