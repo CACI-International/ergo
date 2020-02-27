@@ -7,8 +7,8 @@ mod ast;
 mod runtime;
 
 pub use ast::{FileSource, Source, StringSource};
-pub use runtime::{script_deep_eval, Eval, Error, SourceContext};
 pub use runtime::script_types as types;
+pub use runtime::{script_deep_eval, Error, Eval, SourceContext};
 
 /// A loaded script.
 pub struct Script {
@@ -23,12 +23,12 @@ pub fn script_context(
 
     // Add initial environment functions
     let env = vec![
-        ("do", runtime::do_::builtin()),
+        (PROGRAM_NAME, runtime::load::builtin()),
         ("exec", runtime::exec::builtin()),
         ("has", runtime::has::builtin()),
-        (PROGRAM_NAME, runtime::load::builtin()),
         ("map", runtime::map::builtin()),
         ("path", runtime::path::builtin()),
+        ("seq", runtime::seq::builtin()),
         ("track", runtime::track::builtin()),
     ];
     for (k, v) in env.into_iter() {

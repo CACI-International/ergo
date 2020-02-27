@@ -72,7 +72,8 @@ pub trait LogTarget {
     fn timer_pending(&mut self, _id: &[String]) {}
 
     /// Indicates that a unique timer for the given id has completed with the given total duration.
-    fn timer_complete(&mut self, _id: &[String], _duration: std::time::Duration) {}
+    /// If the timer is cancelled, the duration will be None.
+    fn timer_complete(&mut self, _id: &[String], _duration: Option<std::time::Duration>) {}
 }
 
 /// A heap-allocated reference to a LogTarget.
@@ -102,6 +103,7 @@ pub struct Work {
     logger: LoggerRef,
     id: Box<[String]>,
     duration: Duration,
+    recorded: bool,
     errored: bool,
 }
 
@@ -155,6 +157,7 @@ impl Log {
             logger: self.logger.clone(),
             id: Box::from(v),
             duration: Duration::default(),
+            recorded: false,
             errored: false,
         };
         {
@@ -188,6 +191,7 @@ impl std::ops::Drop for Log {
 impl Work {
     /// Start the unit of work.
     pub fn start(&mut self) -> RecordingWork {
+        self.recorded = true;
         RecordingWork {
             work: self,
             at: Instant::now(),
@@ -212,7 +216,14 @@ impl fmt::Debug for Work {
 impl std::ops::Drop for Work {
     fn drop(&mut self) {
         let mut l = self.logger.lock().unwrap();
-        l.timer_complete(&self.id, self.duration);
+        l.timer_complete(
+            &self.id,
+            if self.recorded {
+                Some(self.duration)
+            } else {
+                None
+            },
+        )
     }
 }
 

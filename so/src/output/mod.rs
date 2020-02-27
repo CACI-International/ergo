@@ -18,6 +18,9 @@ pub struct Output {
 
 impl Output {
     fn send(&mut self, entry: &LogEntry) {
+        if self.out.is_tty() {
+            self.out.delete_line().unwrap();
+        }
         // Output should already be at the stream location
         writeln!(self.out, "{}", entry).expect("failed to write to output");
     }
@@ -55,6 +58,7 @@ impl Output {
 
         let t = chrono::naive::NaiveTime::from_hms(0, 0, 0)
             + chrono::Duration::from_std(duration_remaining).unwrap();
+        self.out.delete_line().unwrap();
         write!(self.out, "Progress: {} remaining", count_remaining).unwrap();
         if duration_remaining != std::time::Duration::default() {
             write!(self.out, " ({})", t).unwrap();
@@ -86,7 +90,6 @@ impl Output {
             let mut lines_to_clear = 0;
             for l in final_logs {
                 if let Some(v) = l {
-                    self.out.delete_line().unwrap();
                     self.send(&v);
                 } else {
                     lines_to_clear += 1;
@@ -132,7 +135,6 @@ impl LogTarget for Output {
             let id = std::thread::current().id();
             if let Some(v) = self.thread_mapping.get_mut(&id) {
                 if let Some(previous) = v.replace(entry) {
-                    self.out.delete_line().unwrap();
                     self.send(&previous);
                 }
             }
@@ -149,7 +151,6 @@ impl LogTarget for Output {
         let id = std::thread::current().id();
         if let Some(v) = self.thread_mapping.get_mut(&id) {
             if let Some(previous) = v.take() {
-                self.out.delete_line().unwrap();
                 self.send(&previous);
             }
 
@@ -162,7 +163,7 @@ impl LogTarget for Output {
         self.print_thread_status();
     }
 
-    fn timer_complete(&mut self, id: &[String], duration: std::time::Duration) {
+    fn timer_complete(&mut self, id: &[String], duration: Option<std::time::Duration>) {
         if let Some(v) = self.pending.get_mut(id) {
             if *v > 0 {
                 *v -= 1;
@@ -172,9 +173,11 @@ impl LogTarget for Output {
         } else {
             warn!("timer count inconsistent: {:?}", id);
         }
-        let mut times = self.timings.entry(Vec::from(id)).or_default();
-        times.0 += duration;
-        times.1 += 1;
+        if let Some(duration) = duration {
+            let mut times = self.timings.entry(Vec::from(id)).or_default();
+            times.0 += duration;
+            times.1 += 1;
+        }
         self.print_thread_status();
     }
 }

@@ -300,10 +300,10 @@ impl Plan for Config {
         let mut deps = Dependencies::ordered(&args)
             + Dependencies::unordered(depends![join vec![command_dep],&env_deps]);
         if let Some(SomeValue::Delayed(v)) = &input {
-            deps = deps + Dependencies::unordered(vec![v]);
+            deps += Dependencies::unordered(vec![v]);
         }
         if let Some(SomeValue::Delayed(v)) = &dir {
-            deps = deps + Dependencies::unordered(vec![v]);
+            deps += Dependencies::unordered(vec![v]);
         }
 
         // Get value id from dependencies and use it as part of the item output path
@@ -333,12 +333,12 @@ impl Plan for Config {
         let (send_stderr, rcv_stderr) = channel::oneshot::channel();
         let (send_status, rcv_status) = channel::oneshot::channel();
 
+        let name = match &cmd {
+            Ok((n, _)) => (*n).clone(),
+            Err(_) => format!("cmd{}", value_id).into(),
+        };
+        let mut work = log.work(name.to_string_lossy());
         let run_command = make_value!([^deps] {
-            let name = match &cmd {
-                Ok((n,_)) => (*n).clone(),
-                Err(v) => format!("cmd{}", v.id()).into()
-            };
-            let mut work = log.work(name.to_string_lossy());
             tsk.spawn(async move {
                 let (name, mut cmd) = match cmd {
                     Ok(v) => v,
@@ -466,27 +466,35 @@ impl Plan for Config {
         let output_paths: Vec<_> = files
             .into_iter()
             .map(|(_, item)| {
-                make_value!((run_command) {
-                    if !item.exists() {
-                        run_command.await?;
-                    }
-                    Ok(item.path())
-                })
+                if item.exists() {
+                    make_value!([run_command] { Ok(item.path()) })
+                } else {
+                    make_value!((run_command) {
+                        if !item.exists() {
+                            run_command.await?;
+                        }
+                        Ok(item.path())
+                    })
+                }
             })
             .collect();
         let stdout = make_value!((run_command) { run_command.await?; rcv_stdout.await.map_err(|e| format!("{}", e)) });
         let stderr = make_value!((run_command) { run_command.await?; rcv_stderr.await.map_err(|e| format!("{}", e)) });
         let exit_status = make_value!((run_command) { run_command.await?; rcv_status.await.map_err(|e| format!("{}", e)) });
-        let complete_once = make_value!((run_command) {
-            if !did_complete.exists() {
-                run_command.await?;
-            }
-            if !did_complete.exists() {
-                Err("command failed".into())
-            } else {
-                Ok(())
-            }
-        });
+        let complete_once = if did_complete.exists() {
+            make_value!([run_command] { Ok(()) })
+        } else {
+            make_value!((run_command) {
+                if !did_complete.exists() {
+                    run_command.await?;
+                }
+                if !did_complete.exists() {
+                    Err("command failed".into())
+                } else {
+                    Ok(())
+                }
+            })
+        };
 
         Ok(ExecResult {
             output_paths,

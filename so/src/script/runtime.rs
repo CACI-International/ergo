@@ -9,13 +9,12 @@ use std::fmt;
 use std::iter::FromIterator;
 use std::str::FromStr;
 
-#[path = "runtime/do.rs"]
-pub mod do_;
 pub mod exec;
 pub mod has;
 pub mod load;
 pub mod map;
 pub mod path;
+pub mod seq;
 pub mod track;
 
 pub mod script_types {
