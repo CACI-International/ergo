@@ -214,11 +214,20 @@ mod test {
 
     fn script_eval(s: &str) -> Result<Value, String> {
         let mut ctx = script_context(Context::builder()).map_err(|e| e.to_string())?;
-        ctx.plan(
-            Script::load(Source::new(StringSource::new("<string>", s.to_owned())))
-                .map_err(|e| e.to_string())?,
-        )
-        .map_err(|e| e.to_string())
-        .map(|sv| sv.unwrap())
+        let ev = ctx
+            .plan(
+                Script::load(Source::new(StringSource::new("<string>", s.to_owned())))
+                    .map_err(|e| e.to_string())?,
+            )
+            .map(|sv| sv.unwrap());
+        let errs = ctx.get_errors();
+        if errs.is_empty() {
+            match ev {
+                Eval::Value(v) => Ok(v),
+                Eval::Error => Err("unknown value error".into()),
+            }
+        } else {
+            Err(format!("{:?}", errs))
+        }
     }
 }
