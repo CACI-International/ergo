@@ -22,7 +22,7 @@ use_path = { env = { PATH = $ } }
 # Get influxdb-cxx
 influx = {
   exec git clone https://github.com/awegrzyn/influxdb-cxx.git { dir = checkout }
-  influx-include = checkout include .
+  influx-include = (checkout include .)
   exec cmake -DCMAKE_BUILD_TYPE=Release -S (checkout .) -B { dir = builddir } $use_path
   exec make InfluxDB $use_path {
     pwd = (builddir .)
@@ -80,6 +80,11 @@ exec c++ -o { file = test } $main (influx lib) $use_path
   most commands can already use maps as directives to achieve this in some cases
   (like `exec` does), but it might make more sense and be easier to read by
   distinguishing positional from non-positional arguments.
+* Self-documentation. Accessed and printed directly while evaluating scripts
+  and/or accessed with a `--doc` command-line argument. Add a way to attach
+  documentation to arbitrary values in scripts.
+* Allow access to logging from scripts. Allow access to stdin/stdout/stderr.
+* Add options to suppress status output.
 
 ### Plugin notes
 * Ideally, plugins are loaded just like other scripts: `load [path to plugin]`.
