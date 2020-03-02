@@ -124,9 +124,7 @@ mod test {
 
     #[test]
     fn exec_failure() -> Result<(), String> {
-        let mut fail = script_eval("(exec false) stdout")?;
-        assert!(futures::executor::block_on(&mut fail).is_err());
-        Ok(())
+        script_result_fail("(exec false) stdout")
     }
 
     #[test]
@@ -139,8 +137,101 @@ mod test {
         )
     }
 
+    mod merge {
+        use super::*;
+
+        #[test]
+        fn array() -> Result<(), String> {
+            script_eval_to(
+                "arr = [b,c]\n[a,^$arr,d]",
+                SRArray(&[SRString("a"), SRString("b"), SRString("c"), SRString("d")]),
+            )
+        }
+
+        #[test]
+        fn array_invalid() -> Result<(), String> {
+            script_fail("[a,^b,c]")?;
+            script_fail("[^{a=1}]")?;
+            Ok(())
+        }
+
+        #[test]
+        fn block() -> Result<(), String> {
+            script_eval_to(
+                "{ a = 1, b = 2, ^{ c = 3, d = 4 }, e = $c }",
+                SRMap(&[
+                    ("a", SRString("1")),
+                    ("b", SRString("2")),
+                    ("c", SRString("3")),
+                    ("d", SRString("4")),
+                    ("e", SRString("3")),
+                ]),
+            )
+        }
+
+        #[test]
+        fn block_script_scope() -> Result<(), String> {
+            script_eval_to(
+                "a = 1\n^{b = 2}\nc = $b",
+                SRMap(&[
+                    ("a", SRString("1")),
+                    ("b", SRString("2")),
+                    ("c", SRString("2")),
+                ]),
+            )
+        }
+
+        #[test]
+        fn block_invalid() -> Result<(), String> {
+            script_fail("{^a}")?;
+            script_fail("{^[1,2]}")?;
+            Ok(())
+        }
+
+        #[test]
+        fn command_array() -> Result<(), String> {
+            script_eval_to(
+                "to_array = fn $@\nto_array a ^[b,c] d ^[e,f]",
+                SRArray(&[
+                    SRString("a"),
+                    SRString("b"),
+                    SRString("c"),
+                    SRString("d"),
+                    SRString("e"),
+                    SRString("f"),
+                ]),
+            )
+        }
+
+        #[test]
+        fn command_block() -> Result<(), String> {
+            script_eval_to(
+                "to_array = fn $@\nto_array a ^{k=3} b",
+                SRArray(&[SRString("a"), SRString("b")]),
+            )
+        }
+
+        #[test]
+        fn command_invalid() -> Result<(), String> {
+            script_fail("f = fn a\nf ^hello")
+        }
+    }
+
     fn script_eval_to(s: &str, expected: ScriptResult) -> Result<(), String> {
         val_match(script_eval(s)?, expected)
+    }
+
+    fn script_result_fail(s: &str) -> Result<(), String> {
+        let mut fail = script_eval(s)?;
+        assert!(futures::executor::block_on(&mut fail).is_err());
+        Ok(())
+    }
+
+    fn script_fail(s: &str) -> Result<(), String> {
+        match script_eval(s) {
+            Ok(v) => Err(format!("expected failure, got {:?}", v)),
+            Err(_) => Ok(()),
+        }
     }
 
     trait ExpectOk {

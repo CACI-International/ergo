@@ -64,17 +64,6 @@ exec c++ -o { file = test } $main (influx lib) $use_path
   * Find specific examples where this is useful.
 * Add file/directory name hint to exec `file`/`dir` directives to specify final
   path component (often relevant for other programs ingesting the files).
-* Consider a syntax to expand an array into arguments to a command. Commands
-  receive an array of arguments as parsed on the command-line. It'd be useful if
-  there were a unified way to splice an array into this command array, rather
-  than certain commands (like `exec`) implementing their own special treatment
-  of arrays. This probably wouldn't extend to maps, unless the general command
-  calling syntax supported a way to provide non-positional arguments as a map.
-  This is getting fairly close to python, except we still want to preserve
-  string-first parsing and spaces separating arguments. Maybe use `^` as the
-  splice syntax? It doesn't necessary have to be special syntax, but the
-  expression would have to at least evaluate to a special type which can be
-  checked at script evaluation time.
 * Should command non-positional arguments be supported? How could they be
   passed? Maybe a special syntax or a special type that is checked? Note that
   most commands can already use maps as directives to achieve this in some cases

@@ -1,6 +1,6 @@
 //! Script runtime definitions.
 
-use super::ast::{Expression, IntoSource, Source};
+use super::ast::{Expression, IntoSource, MergeExpression, Source};
 use grease::future::{BoxFuture, FutureExt};
 use grease::{make_value, match_value, IntoValue, Plan, Value};
 use log::trace;
@@ -317,6 +317,8 @@ pub enum Error {
     NonCallableExpression(Value),
     /// No binding with the given name is available in the current environment.
     MissingBinding(String),
+    /// A merge expression cannot be evaluated.
+    CannotMerge(String),
     /// An error occured while evaluating a value.
     ValueError(String),
 }
@@ -332,6 +334,7 @@ impl fmt::Display for Error {
                 write!(f, "cannot pass arguments to non-callable value {:?}", d)
             }
             MissingBinding(s) => write!(f, "'{}' is not available in the current environment", s),
+            CannotMerge(s) => write!(f, "cannot merge: {}", s),
             ValueError(s) => write!(f, "{}", s),
         }
     }
@@ -595,11 +598,39 @@ impl Plan<Context> for Expression {
             Empty => Ok(().into_value().into()),
             Expression::String(s) => Ok(s.into_value().into()),
             Array(es) => {
-                let vals = es
+                let all_vals = es
                     .into_iter()
                     .map(|e| e.plan(ctx))
-                    .collect::<Eval<Vec<Source<Value>>>>();
-                Ok(vals.map(|vals| ScriptArray(vals).into_value()))
+                    .collect::<Eval<Vec<_>>>();
+                let all_vals = match all_vals {
+                    Eval::Error => return Ok(Eval::Error),
+                    Eval::Value(v) => v,
+                };
+                let mut had_error = false;
+                let mut vals = Vec::new();
+                for v in all_vals {
+                    let (_merge_source, (merge, val)) = v.take();
+                    if merge {
+                        let (val_source, val) = val.take();
+                        match val.typed::<ScriptArray>() {
+                            Ok(val) => vals.extend(value_now!(val).owned().0),
+                            Err(_) => {
+                                ctx.error(
+                                    val_source.with(Error::CannotMerge("non-array value".into())),
+                                );
+                                had_error = true;
+                            }
+                        }
+                    } else {
+                        vals.push(val);
+                    }
+                }
+
+                Ok(if had_error {
+                    Eval::Error
+                } else {
+                    Eval::Value(ScriptArray(vals).into_value())
+                })
             }
             SetVariable(var, e) => {
                 let data = e.plan(ctx);
@@ -620,9 +651,43 @@ impl Plan<Context> for Expression {
                     .into_iter()
                     .map(|a| a.plan(ctx))
                     .collect::<Eval<Vec<_>>>();
-                match (f, args) {
-                    (Eval::Value(f), Eval::Value(args)) => apply_value(ctx, f, args, true),
-                    _ => Ok(Eval::Error),
+                let args = match args {
+                    Eval::Error => return Ok(Eval::Error),
+                    Eval::Value(v) => v,
+                };
+
+                let mut had_error = false;
+                let mut vals = Vec::new();
+                for a in args {
+                    let (_merge_source, (merge, val)) = a.take();
+                    if merge {
+                        let (val_source, val) = val.take();
+                        match_value!(val => {
+                            ScriptArray => |val| {
+                                vals.extend(value_now!(val).owned().0);
+                            },
+                            ScriptMap => |_| {
+                                // TODO
+                            },
+                            => |_| {
+                                ctx.error(
+                                    val_source.with(Error::CannotMerge("non-array/map value".into())),
+                                );
+                                had_error = true;
+                            }
+                        });
+                    } else {
+                        vals.push(val);
+                    }
+                }
+
+                if had_error {
+                    return Ok(Eval::Error);
+                }
+
+                match f {
+                    Eval::Value(f) => apply_value(ctx, f, vals, true),
+                    Eval::Error => Ok(Eval::Error),
                 }
             }
             Block(_) => panic!("Block expression must be evaluated at a higher level"),
@@ -668,7 +733,17 @@ impl Plan<Context> for Source<Expression> {
     }
 }
 
-impl Plan<Context> for Source<Vec<Source<Expression>>> {
+impl Plan<Context> for Source<MergeExpression> {
+    type Output = Eval<Source<(bool, Source<Value>)>>;
+
+    fn plan(self, ctx: &mut grease::Context<Context>) -> Self::Output {
+        let (source, val) = self.take();
+        let merge = val.merge;
+        val.expr.plan(ctx).map(move |e| source.with((merge, e)))
+    }
+}
+
+impl Plan<Context> for Source<Vec<Source<MergeExpression>>> {
     type Output = Eval<Source<Value>>;
 
     fn plan(self, ctx: &mut grease::Context<Context>) -> Self::Output {
@@ -677,7 +752,37 @@ impl Plan<Context> for Source<Vec<Source<Expression>>> {
         let (self_source, this) = self.take();
         let mut val = Eval::Value(self_source.clone().with(().into_value()));
         for e in this {
-            val &= e.plan(ctx);
+            val &= match e.plan(ctx) {
+                Eval::Value(merge) => {
+                    let (merge_source, (merge, val)) = merge.take();
+                    if merge {
+                        let (val_source, val) = val.take();
+                        match val.typed::<ScriptMap>() {
+                            Ok(val) => match val.get() {
+                                Ok(val) => {
+                                    for (k, v) in val.owned().0 {
+                                        ctx.env_insert(k, Eval::Value(v));
+                                    }
+                                    Eval::Value(merge_source.with(().into_value()))
+                                }
+                                Err(e) => {
+                                    ctx.error(val_source.with(e));
+                                    Eval::Error
+                                }
+                            },
+                            Err(_) => {
+                                ctx.error(
+                                    val_source.with(Error::CannotMerge("non-map value".into())),
+                                );
+                                Eval::Error
+                            }
+                        }
+                    } else {
+                        Eval::Value(val)
+                    }
+                }
+                Eval::Error => Eval::Error,
+            };
         }
 
         // Pop the pushed scope

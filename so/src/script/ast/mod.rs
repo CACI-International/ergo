@@ -12,13 +12,23 @@ mod tokenize;
 pub enum Expression {
     Empty,
     String(String),
-    Array(Vec<Expr>),
+    Array(Exprs),
     SetVariable(String, Box<Expr>),
     UnsetVariable(String),
-    Command(Box<Expr>, Vec<Expr>),
-    Block(Vec<Expr>),
+    Command(Box<Expr>, Exprs),
+    Block(Exprs),
     Function(Box<Expr>),
     If(Box<Expr>, Box<Expr>, Box<Expr>),
+}
+
+/// A parsed merge expression.
+///
+/// A merge expression is an expression with a merge parameter. The parameter indicates whether the
+/// contents of the value should be merged into the parent expression.
+#[derive(Clone, Debug, Hash, PartialEq)]
+pub struct MergeExpression {
+    pub merge: bool,
+    pub expr: Expr,
 }
 
 /// A location in the original (character) input stream.
@@ -26,6 +36,52 @@ pub enum Expression {
 pub struct Location {
     pub start: usize,
     pub length: usize,
+}
+
+/// Expressions with source information.
+pub type Expr = Source<Expression>;
+
+/// A merge expression with source information.
+pub type MergeExpr = Source<MergeExpression>;
+
+/// Multiple expressions.
+///
+/// Anything that accepts multiple expressions should also support merging.
+pub type Exprs = Vec<MergeExpr>;
+
+/// A parsed script.
+pub type Script = Source<Exprs>;
+
+/// A script loading error.
+pub enum Error {
+    Io(std::io::Error),
+    /// A tokenization error.
+    Tokenize(Source<tokenize::Error>),
+    /// A parsing error.
+    Parse(Source<pom::Error>),
+}
+
+/// Load an AST from the given character stream.
+pub fn load(src: Source<()>) -> Result<Script, Error> {
+    let toks = tokenize::Tokens::from(src.clone().open().map_err(Error::Io)?)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(Error::Tokenize)?;
+    let parser = parse::script();
+    let parse_error = |e: pom::Error, pos: Option<usize>| {
+        pos.and_then(|pos| toks.get(pos))
+            .map(|p| p.clone().with(()))
+            .unwrap_or(src)
+            .with(e)
+    };
+    parser.parse(&toks).map_err(move |e| {
+        Error::Parse(match e {
+            pom::Error::Incomplete => parse_error(e, None),
+            pom::Error::Mismatch { position, .. } => parse_error(e, Some(position)),
+            pom::Error::Conversion { position, .. } => parse_error(e, Some(position)),
+            pom::Error::Expect { position, .. } => parse_error(e, Some(position)),
+            pom::Error::Custom { position, .. } => parse_error(e, Some(position)),
+        })
+    })
 }
 
 impl Location {
@@ -582,21 +638,6 @@ impl PartialEq<Source<Self>> for tokenize::Token {
     }
 }
 
-/// Expressions with source information.
-pub type Expr = Source<Expression>;
-
-/// A parsed script.
-pub type Script = Source<Vec<Expr>>;
-
-/// A script loading error.
-pub enum Error {
-    Io(std::io::Error),
-    /// A tokenization error.
-    Tokenize(Source<tokenize::Error>),
-    /// A parsing error.
-    Parse(Source<pom::Error>),
-}
-
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
@@ -605,27 +646,4 @@ impl fmt::Display for Error {
             Self::Parse(e) => write!(f, "{}", e),
         }
     }
-}
-
-/// Load an AST from the given character stream.
-pub fn load(src: Source<()>) -> Result<Script, Error> {
-    let toks = tokenize::Tokens::from(src.clone().open().map_err(Error::Io)?)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(Error::Tokenize)?;
-    let parser = parse::script();
-    let parse_error = |e: pom::Error, pos: Option<usize>| {
-        pos.and_then(|pos| toks.get(pos))
-            .map(|p| p.clone().with(()))
-            .unwrap_or(src)
-            .with(e)
-    };
-    parser.parse(&toks).map_err(move |e| {
-        Error::Parse(match e {
-            pom::Error::Incomplete => parse_error(e, None),
-            pom::Error::Mismatch { position, .. } => parse_error(e, Some(position)),
-            pom::Error::Conversion { position, .. } => parse_error(e, Some(position)),
-            pom::Error::Expect { position, .. } => parse_error(e, Some(position)),
-            pom::Error::Custom { position, .. } => parse_error(e, Some(position)),
-        })
-    })
 }

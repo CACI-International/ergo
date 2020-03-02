@@ -18,6 +18,7 @@ pub enum Token {
     Comma,
     Semicolon,
     Equal,
+    Caret,
     Newline,
     /// One or more whitespace characters (except newlines).
     Whitespace,
@@ -40,6 +41,7 @@ impl fmt::Display for Token {
             Token::Comma => write!(f, ","),
             Token::Semicolon => write!(f, ";"),
             Token::Equal => write!(f, "="),
+            Token::Caret => write!(f, "^"),
             Token::Newline => write!(f, "\n"),
             Token::Whitespace => write!(f, " "),
         }
@@ -116,9 +118,9 @@ impl<I: Iterator<Item = char>> Iterator for Tokens<I> {
                                 if "\"\\".contains(c) {
                                     s.push(c)
                                 } else if c == 'n' {
-                                    s.push('\n');
+                                    s.push('\n')
                                 } else if c == 't' {
-                                    s.push('\t');
+                                    s.push('\t')
                                 } else {
                                     let mut val = self.source.clone().with(Error::UnrecognizedEscapeSequence);
                                     val.location.start = val.location.start + val.location.length - 2;
@@ -176,13 +178,15 @@ impl<I: Iterator<Item = char>> Iterator for Tokens<I> {
                         Ok(Token::Semicolon)
                     } else if c == '=' {
                         Ok(Token::Equal)
+                    } else if c == '^' {
+                        Ok(Token::Caret)
                     }
                     // Words
                     else {
                         let mut s = String::new();
                         s.push(c);
                         while let Some(c) = self.iter.peek() {
-                            if c.is_whitespace() || "[](){},;$=".contains(*c) {
+                            if c.is_whitespace() || "[](){},;$=^".contains(*c) {
                                 break;
                             } else {
                                 s.push(self.iter.next().unwrap());
@@ -207,7 +211,7 @@ mod test {
     #[test]
     fn symbols() -> Result<(), Source<Error>> {
         assert_tokens(
-            "[]{}()$,;=\n",
+            "[]{}()$,;=^\n",
             &[
                 Token::OpenBracket,
                 Token::CloseBracket,
@@ -219,6 +223,7 @@ mod test {
                 Token::Comma,
                 Token::Semicolon,
                 Token::Equal,
+                Token::Caret,
                 Token::Newline,
             ],
         )
@@ -241,11 +246,11 @@ mod test {
     #[test]
     fn strings() -> Result<(), Source<Error>> {
         assert_tokens(
-            "hello \"world[]{}()$,;=\" \"escape\\\"quote\\n\"",
+            "hello \"world[]{}()$,;=^\" \"escape\\\"quote\\n\"",
             &[
                 Token::String("hello".to_owned()),
                 Token::Whitespace,
-                Token::String("world[]{}()$,;=".to_owned()),
+                Token::String("world[]{}()$,;=^".to_owned()),
                 Token::Whitespace,
                 Token::String("escape\"quote\n".to_owned()),
             ],
@@ -255,7 +260,7 @@ mod test {
     #[test]
     fn string_ends() -> Result<(), Source<Error>> {
         assert_tokens(
-            "a[b]c{d}e(f)g$h,i;j k=l\nm ",
+            "a[b]c{d}e(f)g$h,i;j^k=l\nm ",
             &[
                 Token::String("a".to_owned()),
                 Token::OpenBracket,
@@ -276,7 +281,7 @@ mod test {
                 Token::String("i".to_owned()),
                 Token::Semicolon,
                 Token::String("j".to_owned()),
-                Token::Whitespace,
+                Token::Caret,
                 Token::String("k".to_owned()),
                 Token::Equal,
                 Token::String("l".to_owned()),

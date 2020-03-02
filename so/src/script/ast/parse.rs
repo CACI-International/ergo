@@ -10,7 +10,7 @@ pub type Parser<'a, T> = pom::parser::Parser<'a, Tok, T>;
 
 /// Return a parser for a script.
 pub fn script<'a>() -> Parser<'a, Script> {
-    spacenl() * list(expression(), eoe()).map(|e| e.into_source()) - spacenl() - end()
+    spacenl() * list(merge_with(expression()), eoe()).map(|e| e.into_source()) - spacenl() - end()
 }
 
 /// A set variable expression.
@@ -62,7 +62,7 @@ fn extarg<'a>() -> Parser<'a, Expr> {
 
 /// A command expression.
 fn command<'a>() -> Parser<'a, Expr> {
-    (arg() + (req_space() * list(arg(), req_space())).opt()).map(|res| {
+    (arg() + (req_space() * list(merge_with(arg()), req_space())).opt()).map(|res| {
         res.into_source().map(|(cmd, args)| {
             Expression::Command(
                 Box::new(cmd),
@@ -101,7 +101,7 @@ fn if_expr<'a>() -> Parser<'a, Expr> {
 fn array<'a>() -> Parser<'a, Expr> {
     sym(Token::OpenBracket)
         * spacenl()
-        * list(arg(), eoe()).map(|e| e.into_source().map(Expression::Array))
+        * list(merge_with(arg()), eoe()).map(|e| e.into_source().map(Expression::Array))
         - spacenl()
         - sym(Token::CloseBracket)
 }
@@ -110,14 +110,30 @@ fn array<'a>() -> Parser<'a, Expr> {
 fn block<'a>() -> Parser<'a, Expr> {
     sym(Token::OpenCurly)
         * spacenl()
-        * list(expression(), eoe()).map(|e| e.into_source().map(Expression::Block))
+        * list(merge_with(expression()), eoe()).map(|e| e.into_source().map(Expression::Block))
         - spacenl()
         - sym(Token::CloseCurly)
 }
 
 /// A single expression.
 fn expression<'a>() -> Parser<'a, Expr> {
-    call(move || function() | if_expr() | set_variable() | unset_variable() | command())
+    call(|| function() | if_expr() | set_variable() | unset_variable() | command())
+}
+
+/// A merge expression generator.
+fn merge_with<'a>(p: Parser<'a, Expr>) -> Parser<'a, MergeExpr> {
+    (sym(Token::Caret) + arg()).map(|es| {
+        es.into_source().map(|(_, e)| MergeExpression {
+            merge: true,
+            expr: e,
+        })
+    }) | p.map(|e| {
+        let src = e.source();
+        src.with(MergeExpression {
+            merge: false,
+            expr: e,
+        })
+    })
 }
 
 /// A single string.
@@ -187,6 +203,20 @@ mod test {
         Source::new(NoSource).with(e)
     }
 
+    fn nomerge(e: Expression) -> Source<MergeExpression> {
+        src(MergeExpression {
+            merge: false,
+            expr: src(e),
+        })
+    }
+
+    fn merge(e: Expression) -> Source<MergeExpression> {
+        src(MergeExpression {
+            merge: true,
+            expr: src(e),
+        })
+    }
+
     #[test]
     fn word() -> Result {
         assert_parse(
@@ -206,7 +236,7 @@ mod test {
             ],
             Expression::Command(
                 Box::new(src(Expression::String("echo".to_owned()))),
-                vec![src(Expression::String("howdy".to_owned()))],
+                vec![nomerge(Expression::String("howdy".to_owned()))],
             ),
         )
     }
@@ -232,7 +262,7 @@ mod test {
             |_| super::arg(),
             Expression::Command(
                 Box::new(src(Expression::String("hello".to_owned()))),
-                vec![src(Expression::String("world".to_owned()))],
+                vec![nomerge(Expression::String("world".to_owned()))],
             ),
         )?;
         assert_parse(
@@ -245,7 +275,7 @@ mod test {
                 CloseCurly,
             ],
             |_| super::arg(),
-            Expression::Block(vec![src(Expression::SetVariable(
+            Expression::Block(vec![nomerge(Expression::SetVariable(
                 "a".into(),
                 src(Expression::String("ls".into())).into(),
             ))]),
@@ -266,11 +296,11 @@ mod test {
             ],
             |_| super::arg(),
             Expression::Array(vec![
-                src(Expression::Command(
+                nomerge(Expression::Command(
                     src(Expression::String("a".into())).into(),
                     vec![],
                 )),
-                src(Expression::Command(
+                nomerge(Expression::Command(
                     src(Expression::String("b".into())).into(),
                     vec![],
                 )),
@@ -311,10 +341,10 @@ mod test {
             ],
             Expression::Command(
                 src(Expression::Array(vec![
-                    src(Expression::String("a".into())).into(),
-                    src(Expression::String("b".into())).into(),
-                    src(Expression::String("c".into())).into(),
-                    src(Expression::String("d".into())).into(),
+                    nomerge(Expression::String("a".into())).into(),
+                    nomerge(Expression::String("b".into())).into(),
+                    nomerge(Expression::String("c".into())).into(),
+                    nomerge(Expression::String("d".into())).into(),
                 ]))
                 .into(),
                 vec![],
@@ -375,15 +405,15 @@ mod test {
             ],
             Expression::Command(
                 src(Expression::Block(vec![
-                    src(Expression::Command(
+                    nomerge(Expression::Command(
                         Box::new(src(Expression::String("a".to_owned()))),
                         vec![],
                     )),
-                    src(Expression::Command(
+                    nomerge(Expression::Command(
                         Box::new(src(Expression::String("b".to_owned()))),
                         vec![],
                     )),
-                    src(Expression::SetVariable(
+                    nomerge(Expression::SetVariable(
                         "c".to_owned(),
                         Box::new(src(Expression::Command(
                             Box::new(src(Expression::String("echo".to_owned()))),
@@ -455,11 +485,91 @@ mod test {
             ],
             Expression::Command(
                 src(Expression::Array(vec![
-                    src(Expression::String("a".into())).into(),
-                    src(Expression::String("b".into())).into(),
+                    nomerge(Expression::String("a".into())).into(),
+                    nomerge(Expression::String("b".into())).into(),
                 ]))
                 .into(),
-                vec![src(Expression::String("0".into())).into()],
+                vec![nomerge(Expression::String("0".into())).into()],
+            ),
+        )
+    }
+
+    #[test]
+    fn merge_array() -> Result {
+        assert_expr(
+            &[
+                OpenBracket,
+                Caret,
+                OpenBracket,
+                Token::String("b".into()),
+                CloseBracket,
+                CloseBracket,
+            ],
+            Expression::Command(
+                src(Expression::Array(vec![merge(Expression::Array(vec![
+                    nomerge(Expression::String("b".into())).into(),
+                ]))]))
+                .into(),
+                vec![],
+            ),
+        )
+    }
+
+    #[test]
+    fn merge_block() -> Result {
+        assert_expr(
+            &[
+                OpenCurly,
+                Caret,
+                OpenCurly,
+                Token::String("a".into()),
+                Equal,
+                Token::String("b".into()),
+                CloseCurly,
+                CloseCurly,
+            ],
+            Expression::Command(
+                src(Expression::Block(vec![merge(Expression::Block(vec![
+                    nomerge(Expression::SetVariable(
+                        "a".into(),
+                        src(Expression::String("b".into())).into(),
+                    )),
+                ]))]))
+                .into(),
+                vec![],
+            ),
+        )
+    }
+
+    #[test]
+    fn merge_command() -> Result {
+        assert_expr(
+            &[
+                Token::String("a".into()),
+                Whitespace,
+                Caret,
+                OpenBracket,
+                Token::String("b".into()),
+                CloseBracket,
+                Whitespace,
+                Caret,
+                OpenCurly,
+                Token::String("c".into()),
+                Equal,
+                Token::String("d".into()),
+                CloseCurly,
+            ],
+            Expression::Command(
+                src(Expression::String("a".into())).into(),
+                vec![
+                    merge(Expression::Array(vec![nomerge(Expression::String(
+                        "b".into(),
+                    ))])),
+                    merge(Expression::Block(vec![nomerge(Expression::SetVariable(
+                        "c".into(),
+                        src(Expression::String("d".into())).into(),
+                    ))])),
+                ],
             ),
         )
     }
