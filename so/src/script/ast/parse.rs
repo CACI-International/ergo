@@ -122,7 +122,7 @@ mod expression {
 
     /// An expression in argument position, or special expressions (if and fn)
     pub fn extarg<'a>() -> Parser<'a, Expr> {
-        function() | if_expr() | arg()
+        call(|| function() | if_expr() | match_expr() | arg())
     }
 
     /// A command expression.
@@ -142,7 +142,7 @@ mod expression {
         let tok = tag("fn");
         let pat =
             space() * sym(Token::OpenParen) * pattern::command_pattern() - sym(Token::CloseParen);
-        let rest = req_space() * call(|| extarg());
+        let rest = req_space() * extarg();
         (tok + pat + rest.expect("fn argument")).map(|res| {
             let p = res.into_source();
             p.map(|(pat, e)| {
@@ -157,11 +157,26 @@ mod expression {
         let tok = tag("if");
         let rest = req_space() * arg() - req_space() + arg() - req_space() + arg();
         (tok + rest.expect("if arguments")).map(|res| {
-            let p: Source<_> = res.into_source();
-            p.map(|(_, vals)| {
+            res.into_source().map(|(_, vals)| {
                 let (condt, f) = vals.unwrap();
                 let (cond, t) = condt.unwrap();
                 Expression::If(cond.into(), t.into(), f.into())
+            })
+        })
+    }
+
+    /// A match expression.
+    fn match_expr<'a>() -> Parser<'a, Expr> {
+        let tok = tag("match");
+        let item = pattern::pattern() - space() - sym(Token::Equal) - space() + extarg();
+        let rest = req_space() * arg() - req_space() + block_syntax(item);
+        (tok + rest.expect("match arguments")).map(|res| {
+            res.into_source().map(|(_, vs)| {
+                let (val, pats) = vs.unwrap();
+                Expression::Match(
+                    val.into(),
+                    pats.unwrap().into_iter().map(Source::unwrap).collect(),
+                )
             })
         })
     }
@@ -194,19 +209,19 @@ mod expression {
 
     /// A single expression.
     pub fn expression<'a>() -> Parser<'a, Expr> {
-        call(|| function() | if_expr() | set() | unset() | command())
+        call(|| function() | if_expr() | match_expr() | set() | unset() | command())
     }
 }
 
 /// Parses array syntax, with an inner value parser.
-fn array_syntax<'a, T: 'a>(inner: Parser<'a, Source<T>>) -> Parser<'a, Vec<Source<T>>> {
+fn array_syntax<'a, T: 'a>(inner: Parser<'a, T>) -> Parser<'a, Vec<T>> {
     sym(Token::OpenBracket) * spacenl() * list(inner, delim())
         - spacenl()
         - sym(Token::CloseBracket)
 }
 
 /// Parses block syntax, with an inner value parser.
-fn block_syntax<'a, T: 'a>(inner: Parser<'a, Source<T>>) -> Parser<'a, Vec<Source<T>>> {
+fn block_syntax<'a, T: 'a>(inner: Parser<'a, T>) -> Parser<'a, Vec<T>> {
     sym(Token::OpenCurly) * spacenl() * list(inner, delim()) - spacenl() - sym(Token::CloseCurly)
 }
 

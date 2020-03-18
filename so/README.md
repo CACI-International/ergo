@@ -55,7 +55,6 @@ exec c++ -o { file = test } $main (influx lib) $use_path
 
 ### TODO
 * Data-manipulation functions (maybe as a plugin).
-* Generalized pattern matching for script types.
 * Remove the unit type; use an empty map instead?
 * Change 'once' to be a command itself rather than a key on exec results (it can
   be generalized to arbitrary values). Add 'cache' command to execute once and
@@ -73,6 +72,7 @@ exec c++ -o { file = test } $main (influx lib) $use_path
   and/or accessed with a `--doc` command-line argument. Add a way to attach
   documentation to arbitrary values in scripts.
 * Allow access to logging from scripts. Allow access to stdin/stdout/stderr.
+  Allow mutually exclusive use of stdin/stdout/stderr for interactive programs.
 * Add options to suppress status output.
 
 ### Plugin notes

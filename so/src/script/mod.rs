@@ -137,6 +137,31 @@ mod test {
         )
     }
 
+    #[test]
+    fn if_expr() -> Result<(), String> {
+        script_eval_to("if () a b", SRString("b"))?;
+        script_eval_to("if r a b", SRString("a"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn match_expr() -> Result<(), String> {
+        script_eval_to(
+            "match [1,2,3] { {^keys} = $keys, [a,b] = $a, [a,b,c] = $a }",
+            SRString("1"),
+        )?;
+        script_eval_to(
+            "match [1,2,3] { a = $a, [a,b,c] = $b }",
+            SRArray(&[SRString("1"), SRString("2"), SRString("3")]),
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn match_failure() -> Result<(), String> {
+        script_fail("match {a=[1,2]} { {b} = $b, [a,b] = $b }")
+    }
+
     mod merge {
         use super::*;
 

@@ -335,6 +335,8 @@ pub enum Error {
     PatternArrayRestUndecidable,
     /// A pattern did not match a value.
     PatternMismatch(Value),
+    /// No patterns in a match expression matched a value.
+    MatchFailed(Value),
     /// Arguments to a function did not match the function definition.
     ArgumentMismatch,
     /// An error occured while evaluating a value.
@@ -348,17 +350,14 @@ impl fmt::Display for Error {
             NonIntegerIndex => write!(f, "positive integer index expected"),
             MissingIndex(s) => write!(f, "index missing: {}", s),
             InvalidIndex => write!(f, "type is not an array or map; cannot index"),
-            NonCallableExpression(d) => {
-                write!(f, "cannot pass arguments to non-callable value {:?}", d)
-            }
+            NonCallableExpression(_) => write!(f, "cannot pass arguments to non-callable value"),
             MissingBinding(s) => write!(f, "'{}' is not available in the current environment", s),
             CannotMerge(s) => write!(f, "cannot merge: {}", s),
             PatternMapTooManyRest => write!(f, "map pattern may only have one merge subpattern"),
-            PatternMapExtraKeys(v) => {
-                write!(f, "map pattern doesn't match all values in map: {:?}", v)
-            }
+            PatternMapExtraKeys(_) => write!(f, "map pattern doesn't match all values in map"),
             PatternArrayRestUndecidable => write!(f, "array merge pattern is undecidable"),
-            PatternMismatch(v) => write!(f, "value could not be matched to pattern: {:?}", v),
+            PatternMismatch(_) => write!(f, "value could not be matched to pattern"),
+            MatchFailed(_) => write!(f, "no patterns matched the value"),
             ArgumentMismatch => write!(f, "arguments mismatch in function call"),
             ValueError(s) => write!(f, "{}", s),
         }
@@ -1164,6 +1163,23 @@ impl Plan<Context> for Expression {
                     None => true,
                 };
                 Ok(if cond { t.plan(ctx) } else { f.plan(ctx) }.map(Source::unwrap))
+            }
+            Match(val, pats) => {
+                let val = match val.plan(ctx) {
+                    Eval::Value(v) => v,
+                    Eval::Error => return Ok(Eval::Error),
+                };
+
+                for (p, e) in pats {
+                    if let Ok(env) = apply_pattern(ctx, p, Eval::Value(val.clone())) {
+                        ctx.inner.env.push(env);
+                        let ret = e.plan(ctx);
+                        ctx.inner.env.pop();
+                        return Ok(ret.map(Source::unwrap));
+                    }
+                }
+
+                Err(Error::MatchFailed(val.unwrap()))
             }
         }
     }
