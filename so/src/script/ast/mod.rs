@@ -13,12 +13,34 @@ pub enum Expression {
     Empty,
     String(String),
     Array(Exprs),
-    SetVariable(String, Box<Expr>),
-    UnsetVariable(String),
+    Set(Box<Pat>, Box<Expr>),
+    Unset(String),
     Command(Box<Expr>, Exprs),
     Block(Exprs),
-    Function(Box<Expr>),
+    Function(CmdPat, Box<Expr>),
     If(Box<Expr>, Box<Expr>, Box<Expr>),
+}
+
+/// A parsed pattern.
+#[derive(Clone, Debug, Hash, PartialEq)]
+pub enum Pattern {
+    Any,
+    Literal(Expr),
+    Binding(String),
+    Array(Vec<Source<ArrayPattern>>),
+    Map(Vec<Source<MapPattern>>),
+}
+
+#[derive(Clone, Debug, Hash, PartialEq)]
+pub enum ArrayPattern {
+    Item(Pat),
+    Rest(Pat),
+}
+
+#[derive(Clone, Debug, Hash, PartialEq)]
+pub enum MapPattern {
+    Item(String, Pat),
+    Rest(Pat),
 }
 
 /// A parsed merge expression.
@@ -43,6 +65,14 @@ pub type Expr = Source<Expression>;
 
 /// A merge expression with source information.
 pub type MergeExpr = Source<MergeExpression>;
+
+/// Patterns with source information.
+pub type Pat = Source<Pattern>;
+
+/// A parsed command pattern.
+///
+/// This is of primary use in function definitions.
+pub type CmdPat = Source<Vec<Source<ArrayPattern>>>;
 
 /// Multiple expressions.
 ///
@@ -362,6 +392,12 @@ impl<T> Source<T> {
             self.value,
         )
     }
+
+    /// Convert a &Source<T> to a Source<&T>.
+    pub fn as_ref(&self) -> Source<&T> {
+        let r: &T = AsRef::<T>::as_ref(self);
+        self.source().map(move |()| r)
+    }
 }
 
 impl<T, E> Source<Result<T, E>> {
@@ -451,8 +487,17 @@ impl<T: Future> Future for Source<T> {
 
 impl<T> IntoSource for Source<T> {
     type Output = T;
+
     fn into_source(self) -> Source<T> {
         self
+    }
+}
+
+impl<'a, T> IntoSource for &'a Source<T> {
+    type Output = &'a T;
+
+    fn into_source(self) -> Source<Self::Output> {
+        self.as_ref()
     }
 }
 
@@ -466,6 +511,35 @@ impl<T: IntoSource, U: IntoSource> IntoSource for (T, U) {
 
 impl<T: IntoSource> IntoSource for Vec<T> {
     type Output = Vec<Source<T::Output>>;
+
+    fn into_source(self) -> Source<Self::Output> {
+        let (value, rest): (Vec<_>, Vec<_>) = self
+            .into_iter()
+            .map(|t| {
+                let s = t.into_source();
+                let source = s.source_factory();
+                let loc = s.location.clone();
+                (s, (loc, SourceFactoryRef(source)))
+            })
+            .unzip();
+
+        let (locs, srcs): (Vec<_>, Vec<_>) = rest.into_iter().unzip();
+        let location = locs.into_iter().sum();
+        let source = srcs.into_iter().sum();
+
+        Source {
+            value,
+            location,
+            source,
+        }
+    }
+}
+
+impl<'a, T> IntoSource for &'a [T]
+where
+    &'a T: IntoSource,
+{
+    type Output = Vec<Source<<&'a T as IntoSource>::Output>>;
 
     fn into_source(self) -> Source<Self::Output> {
         let (value, rest): (Vec<_>, Vec<_>) = self

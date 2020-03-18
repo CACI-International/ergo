@@ -10,137 +10,211 @@ pub type Parser<'a, T> = pom::parser::Parser<'a, Tok, T>;
 
 /// Return a parser for a script.
 pub fn script<'a>() -> Parser<'a, Script> {
-    spacenl() * list(merge_with(expression()), eoe()).map(|e| e.into_source()) - spacenl() - end()
+    spacenl()
+        * list(expression::merge_with(expression::expression()), delim()).map(|e| e.into_source())
+        - spacenl()
+        - end()
 }
 
-/// A set variable expression.
-fn set_variable<'a>() -> Parser<'a, Expr> {
-    let parsed = word() - space() - sym(Token::Equal).discard() - space() + extarg();
-    parsed.map(|res| {
-        res.into_source()
-            .map(|(var, expr)| Expression::SetVariable(var.unwrap(), expr.into()))
-    })
-}
+/// Pattern parsing.
+mod pattern {
+    use super::*;
 
-/// An unset variable expression.
-fn unset_variable<'a>() -> Parser<'a, Expr> {
-    (word() - space() - sym(Token::Equal).discard()).map(|e| e.map(Expression::UnsetVariable))
-}
+    /// A pattern.
+    pub fn pattern<'a>() -> Parser<'a, Pat> {
+        call(|| {
+            let any = tag("_").map(|s| s.with(Pattern::Any));
+            let binding = word().map(|s| s.map(Pattern::Binding));
 
-/// A nested expression.
-///
-/// Expressions may be nested with parentheses or the shorthand $expr.
-fn nested<'a>() -> Parser<'a, Expr> {
-    let word_nested = is_a(|t: Tok| match t.as_ref() {
-        Token::String(_) => true,
-        _ => false,
-    })
-    .repeat(1..)
-    .convert(|e| expression().parse(&e));
-    let self_nested =
-        call(|| nested()).map(|e| e.clone().with(Expression::Command(e.into(), vec![])));
-
-    let paren_expr =
-        sym(Token::OpenParen) * spacenl() * expression() - spacenl() - sym(Token::CloseParen);
-    let empty_parens = (sym(Token::OpenParen) + sym(Token::CloseParen))
-        .map(|res| res.into_source().with(Expression::Empty));
-    let dollar = sym(Token::Dollar) * (word_nested | array() | block() | self_nested);
-    let empty_dollar = sym(Token::Dollar).map(|res: Source<_>| res.with(Expression::Empty));
-
-    paren_expr | empty_parens | dollar | empty_dollar
-}
-
-/// An expression in argument position (words are interpreted as strings rather than as commands).
-fn arg<'a>() -> Parser<'a, Expr> {
-    call(|| nested() | eqword().map(|s| s.map(Expression::String)) | array() | block())
-}
-
-/// An expression in argument position, or special expressions (if and fn)
-fn extarg<'a>() -> Parser<'a, Expr> {
-    function() | if_expr() | arg()
-}
-
-/// A command expression.
-fn command<'a>() -> Parser<'a, Expr> {
-    (arg() + (req_space() * list(merge_with(arg()), req_space())).opt()).map(|res| {
-        res.into_source().map(|(cmd, args)| {
-            Expression::Command(
-                Box::new(cmd),
-                args.unwrap().map(|e| e.unwrap()).unwrap_or(vec![]),
-            )
+            map() | array() | literal() | any | binding
         })
-    })
-}
+    }
 
-/// A function expression.
-fn function<'a>() -> Parser<'a, Expr> {
-    let tok = tag("fn");
-    let rest = req_space() * call(|| extarg());
-    (tok + rest.expect("fn argument")).map(|res| {
-        let p: Source<_> = res.into_source();
-        p.map(|(_, e)| Expression::Function(Box::new(e)))
-    })
-}
+    /// A command pattern.
+    pub fn command_pattern<'a>() -> Parser<'a, CmdPat> {
+        list(array_item(), req_space()).map(|args| args.into_source())
+    }
 
-/// An if expression.
-fn if_expr<'a>() -> Parser<'a, Expr> {
-    let tok = tag("if");
-    let rest = req_space() * arg() - req_space() + arg() - req_space() + arg();
-    //.map(|((cond, t), f)| Expression::If(Box::new(cond), Box::new(t), Box::new(f)));
-    (tok + rest.expect("if arguments")).map(|res| {
-        let p: Source<_> = res.into_source();
-        p.map(|(_, vals)| {
-            let (condt, f) = vals.unwrap();
-            let (cond, t) = condt.unwrap();
-            Expression::If(cond.into(), t.into(), f.into())
+    /// A literal pattern.
+    fn literal<'a>() -> Parser<'a, Pat> {
+        (sym(Token::Equal) + expression::extarg())
+            .map(|m| m.into_source().map(|(_, e)| Pattern::Literal(e)))
+    }
+
+    /// An array pattern.
+    fn array<'a>() -> Parser<'a, Pat> {
+        array_syntax(array_item()).map(|e| e.into_source().map(Pattern::Array))
+    }
+
+    /// A map pattern.
+    fn map<'a>() -> Parser<'a, Pat> {
+        let bind_map_item = (word() + (space() * sym(Token::Equal) * space() * pattern()).opt())
+            .map(|(name, binding)| match binding {
+                Some(pat) => (name.source(), pat.source())
+                    .into_source()
+                    .with(MapPattern::Item(name.unwrap(), pat)),
+                None => {
+                    let src = name.source();
+                    name.map(|n| MapPattern::Item(n.clone(), src.with(Pattern::Binding(n))))
+                }
+            });
+        let rest_map_item = (sym(Token::Caret) + pattern())
+            .map(|e| e.into_source().map(|(_, p)| MapPattern::Rest(p)));
+        let map_item = rest_map_item | bind_map_item;
+        block_syntax(map_item).map(|e| e.into_source().map(Pattern::Map))
+    }
+
+    /// An array item pattern.
+    fn array_item<'a>() -> Parser<'a, Source<ArrayPattern>> {
+        (sym(Token::Caret).opt() + pattern()).map(|(c, p)| match c {
+            Some(c) => (c, p).into_source().map(|(_, p)| ArrayPattern::Rest(p)),
+            None => p.source().with(ArrayPattern::Item(p)),
         })
-    })
+    }
 }
 
-/// An array expression.
-fn array<'a>() -> Parser<'a, Expr> {
-    sym(Token::OpenBracket)
-        * spacenl()
-        * list(merge_with(arg()), eoe()).map(|e| e.into_source().map(Expression::Array))
+/// Expression parsing.
+mod expression {
+    use super::*;
+
+    /// A set expression.
+    fn set<'a>() -> Parser<'a, Expr> {
+        let parsed =
+            pattern::pattern() - space() - sym(Token::Equal).discard() - space() + extarg();
+        parsed.map(|res| {
+            res.into_source()
+                .map(|(pat, expr)| Expression::Set(pat.into(), expr.into()))
+        })
+    }
+
+    /// An unset expression.
+    fn unset<'a>() -> Parser<'a, Expr> {
+        (word() - space() - sym(Token::Equal).discard()).map(|e| e.map(Expression::Unset))
+    }
+
+    /// A nested expression.
+    ///
+    /// Expressions may be nested with parentheses or the shorthand $expr.
+    fn nested<'a>() -> Parser<'a, Expr> {
+        let word_nested = is_a(|t: Tok| match *t {
+            Token::String(_) => true,
+            _ => false,
+        })
+        .repeat(1..)
+        .convert(|e| expression().parse(&e));
+        let self_nested =
+            call(|| nested()).map(|e| e.clone().with(Expression::Command(e.into(), vec![])));
+
+        let paren_expr =
+            sym(Token::OpenParen) * spacenl() * expression() - spacenl() - sym(Token::CloseParen);
+        let empty_parens = (sym(Token::OpenParen) + sym(Token::CloseParen))
+            .map(|res| res.into_source().with(Expression::Empty));
+        let dollar = sym(Token::Dollar) * (word_nested | array() | block() | self_nested);
+        let empty_dollar = sym(Token::Dollar).map(|res: Source<_>| res.with(Expression::Empty));
+
+        paren_expr | empty_parens | dollar | empty_dollar
+    }
+
+    /// An expression in argument position (words are interpreted as strings rather than as commands).
+    pub fn arg<'a>() -> Parser<'a, Expr> {
+        call(|| nested() | eqword().map(|s| s.map(Expression::String)) | array() | block())
+    }
+
+    /// An expression in argument position, or special expressions (if and fn)
+    pub fn extarg<'a>() -> Parser<'a, Expr> {
+        function() | if_expr() | arg()
+    }
+
+    /// A command expression.
+    fn command<'a>() -> Parser<'a, Expr> {
+        (arg() + (req_space() * list(merge_with(arg()), req_space())).opt()).map(|res| {
+            res.into_source().map(|(cmd, args)| {
+                Expression::Command(
+                    Box::new(cmd),
+                    args.unwrap().map(|e| e.unwrap()).unwrap_or(vec![]),
+                )
+            })
+        })
+    }
+
+    /// A function expression.
+    fn function<'a>() -> Parser<'a, Expr> {
+        let tok = tag("fn");
+        let pat =
+            space() * sym(Token::OpenParen) * pattern::command_pattern() - sym(Token::CloseParen);
+        let rest = req_space() * call(|| extarg());
+        (tok + pat + rest.expect("fn argument")).map(|res| {
+            let p = res.into_source();
+            p.map(|(pat, e)| {
+                let (_, pat) = pat.unwrap();
+                Expression::Function(pat.into(), e.into())
+            })
+        })
+    }
+
+    /// An if expression.
+    fn if_expr<'a>() -> Parser<'a, Expr> {
+        let tok = tag("if");
+        let rest = req_space() * arg() - req_space() + arg() - req_space() + arg();
+        (tok + rest.expect("if arguments")).map(|res| {
+            let p: Source<_> = res.into_source();
+            p.map(|(_, vals)| {
+                let (condt, f) = vals.unwrap();
+                let (cond, t) = condt.unwrap();
+                Expression::If(cond.into(), t.into(), f.into())
+            })
+        })
+    }
+
+    /// An array expression.
+    fn array<'a>() -> Parser<'a, Expr> {
+        array_syntax(merge_with(arg())).map(|e| e.into_source().map(Expression::Array))
+    }
+
+    /// A block expression.
+    fn block<'a>() -> Parser<'a, Expr> {
+        block_syntax(merge_with(expression())).map(|e| e.into_source().map(Expression::Block))
+    }
+
+    /// A merge expression generator.
+    pub fn merge_with<'a>(p: Parser<'a, Expr>) -> Parser<'a, MergeExpr> {
+        (sym(Token::Caret) + arg()).map(|es| {
+            es.into_source().map(|(_, e)| MergeExpression {
+                merge: true,
+                expr: e,
+            })
+        }) | p.map(|e| {
+            let src = e.source();
+            src.with(MergeExpression {
+                merge: false,
+                expr: e,
+            })
+        })
+    }
+
+    /// A single expression.
+    pub fn expression<'a>() -> Parser<'a, Expr> {
+        call(|| function() | if_expr() | set() | unset() | command())
+    }
+}
+
+/// Parses array syntax, with an inner value parser.
+fn array_syntax<'a, T: 'a>(inner: Parser<'a, Source<T>>) -> Parser<'a, Vec<Source<T>>> {
+    sym(Token::OpenBracket) * spacenl() * list(inner, delim())
         - spacenl()
         - sym(Token::CloseBracket)
 }
 
-/// A block expression.
-fn block<'a>() -> Parser<'a, Expr> {
-    sym(Token::OpenCurly)
-        * spacenl()
-        * list(merge_with(expression()), eoe()).map(|e| e.into_source().map(Expression::Block))
-        - spacenl()
-        - sym(Token::CloseCurly)
-}
-
-/// A single expression.
-fn expression<'a>() -> Parser<'a, Expr> {
-    call(|| function() | if_expr() | set_variable() | unset_variable() | command())
-}
-
-/// A merge expression generator.
-fn merge_with<'a>(p: Parser<'a, Expr>) -> Parser<'a, MergeExpr> {
-    (sym(Token::Caret) + arg()).map(|es| {
-        es.into_source().map(|(_, e)| MergeExpression {
-            merge: true,
-            expr: e,
-        })
-    }) | p.map(|e| {
-        let src = e.source();
-        src.with(MergeExpression {
-            merge: false,
-            expr: e,
-        })
-    })
+/// Parses block syntax, with an inner value parser.
+fn block_syntax<'a, T: 'a>(inner: Parser<'a, Source<T>>) -> Parser<'a, Vec<Source<T>>> {
+    sym(Token::OpenCurly) * spacenl() * list(inner, delim()) - spacenl() - sym(Token::CloseCurly)
 }
 
 /// A single string.
 fn word<'a>() -> Parser<'a, Source<String>> {
     Parser::new(|a, s| {
         if let Some(t) = a.get(s) {
-            if let Token::String(st) = t.as_ref() {
+            if let Token::String(st) = &**t {
                 Ok((t.clone().with(st.clone()), s + 1))
             } else {
                 Err(pom::Error::Mismatch {
@@ -187,13 +261,15 @@ fn spacenl<'a>() -> Parser<'a, ()> {
         .discard()
 }
 
-/// End of expression delimiter.
-fn eoe<'a>() -> Parser<'a, ()> {
+/// A separating delimiter.
+fn delim<'a>() -> Parser<'a, ()> {
     space() * one_of([Token::Newline, Token::Comma, Token::Semicolon].as_ref()) * spacenl()
 }
 
 #[cfg(test)]
 mod test {
+    use super::expression;
+    use super::pattern;
     use super::*;
     use Token::*;
 
@@ -201,381 +277,6 @@ mod test {
 
     fn src<T>(e: T) -> Source<T> {
         Source::new(NoSource).with(e)
-    }
-
-    fn nomerge(e: Expression) -> Source<MergeExpression> {
-        src(MergeExpression {
-            merge: false,
-            expr: src(e),
-        })
-    }
-
-    fn merge(e: Expression) -> Source<MergeExpression> {
-        src(MergeExpression {
-            merge: true,
-            expr: src(e),
-        })
-    }
-
-    #[test]
-    fn word() -> Result {
-        assert_parse(
-            &[Token::String("hello".to_owned())],
-            |_| super::word(),
-            "hello".to_owned(),
-        )
-    }
-
-    #[test]
-    fn command() -> Result {
-        assert_expr(
-            &[
-                Token::String("echo".to_owned()),
-                Whitespace,
-                Token::String("howdy".to_owned()),
-            ],
-            Expression::Command(
-                Box::new(src(Expression::String("echo".to_owned()))),
-                vec![nomerge(Expression::String("howdy".to_owned()))],
-            ),
-        )
-    }
-
-    #[test]
-    fn arg() -> Result {
-        assert_parse(
-            &[Dollar, Token::String("howdy".to_owned())],
-            |_| super::arg(),
-            Expression::Command(
-                Box::new(src(Expression::String("howdy".to_owned()))),
-                vec![],
-            ),
-        )?;
-        assert_parse(
-            &[
-                OpenParen,
-                Token::String("hello".to_owned()),
-                Whitespace,
-                Token::String("world".to_owned()),
-                CloseParen,
-            ],
-            |_| super::arg(),
-            Expression::Command(
-                Box::new(src(Expression::String("hello".to_owned()))),
-                vec![nomerge(Expression::String("world".to_owned()))],
-            ),
-        )?;
-        assert_parse(
-            &[
-                OpenCurly,
-                Whitespace,
-                Token::String("a".into()),
-                Equal,
-                Token::String("ls".into()),
-                CloseCurly,
-            ],
-            |_| super::arg(),
-            Expression::Block(vec![nomerge(Expression::SetVariable(
-                "a".into(),
-                src(Expression::String("ls".into())).into(),
-            ))]),
-        )?;
-        assert_parse(
-            &[
-                OpenBracket,
-                Newline,
-                OpenParen,
-                Token::String("a".into()),
-                CloseParen,
-                Newline,
-                OpenParen,
-                Token::String("b".into()),
-                CloseParen,
-                Newline,
-                CloseBracket,
-            ],
-            |_| super::arg(),
-            Expression::Array(vec![
-                nomerge(Expression::Command(
-                    src(Expression::String("a".into())).into(),
-                    vec![],
-                )),
-                nomerge(Expression::Command(
-                    src(Expression::String("b".into())).into(),
-                    vec![],
-                )),
-            ]),
-        )
-    }
-
-    #[test]
-    fn empty() -> Result {
-        assert_expr(
-            &[Dollar],
-            Expression::Command(src(Expression::Empty).into(), vec![]),
-        )?;
-        assert_expr(
-            &[OpenParen, CloseParen],
-            Expression::Command(src(Expression::Empty).into(), vec![]),
-        )
-    }
-
-    #[test]
-    fn array() -> Result {
-        assert_expr(
-            &[
-                OpenBracket,
-                Whitespace,
-                Token::String("a".to_owned()),
-                Whitespace,
-                Comma,
-                Token::String("b".to_owned()),
-                Whitespace,
-                Semicolon,
-                Newline,
-                Token::String("c".to_owned()),
-                Newline,
-                Token::String("d".to_owned()),
-                Whitespace,
-                CloseBracket,
-            ],
-            Expression::Command(
-                src(Expression::Array(vec![
-                    nomerge(Expression::String("a".into())).into(),
-                    nomerge(Expression::String("b".into())).into(),
-                    nomerge(Expression::String("c".into())).into(),
-                    nomerge(Expression::String("d".into())).into(),
-                ]))
-                .into(),
-                vec![],
-            ),
-        )
-    }
-
-    #[test]
-    fn set_variable() -> Result {
-        assert_expr(
-            &[
-                Token::String("a".to_owned()),
-                Token::Equal,
-                Token::OpenParen,
-                Token::String("echo".to_owned()),
-                Token::CloseParen,
-            ],
-            Expression::SetVariable(
-                "a".to_owned(),
-                src(Expression::Command(
-                    src(Expression::String("echo".to_owned())).into(),
-                    vec![],
-                ))
-                .into(),
-            ),
-        )
-    }
-
-    #[test]
-    fn unset_variable() -> Result {
-        assert_expr(
-            &[Token::String("a".to_owned()), Token::Equal],
-            Expression::UnsetVariable("a".to_owned()),
-        )
-    }
-
-    #[test]
-    fn block() -> Result {
-        assert_expr(
-            &[
-                Token::OpenCurly,
-                Token::Whitespace,
-                Token::String("a".to_owned()),
-                Token::Newline,
-                Token::Whitespace,
-                Token::String("b".to_owned()),
-                Token::Whitespace,
-                Token::Newline,
-                Token::String("c".to_owned()),
-                Token::Whitespace,
-                Token::Equal,
-                Token::Whitespace,
-                Token::OpenParen,
-                Token::String("echo".to_owned()),
-                Token::CloseParen,
-                Token::Newline,
-                Token::CloseCurly,
-            ],
-            Expression::Command(
-                src(Expression::Block(vec![
-                    nomerge(Expression::Command(
-                        Box::new(src(Expression::String("a".to_owned()))),
-                        vec![],
-                    )),
-                    nomerge(Expression::Command(
-                        Box::new(src(Expression::String("b".to_owned()))),
-                        vec![],
-                    )),
-                    nomerge(Expression::SetVariable(
-                        "c".to_owned(),
-                        Box::new(src(Expression::Command(
-                            Box::new(src(Expression::String("echo".to_owned()))),
-                            vec![],
-                        ))),
-                    )),
-                ]))
-                .into(),
-                vec![],
-            ),
-        )
-    }
-
-    #[test]
-    fn function() -> Result {
-        assert_expr(
-            &[
-                Token::String("fn".to_owned()),
-                Token::Whitespace,
-                Token::String("howdy".to_owned()),
-            ],
-            Expression::Function(src(Expression::String("howdy".to_owned())).into()),
-        )
-    }
-
-    #[test]
-    fn ifexpr() -> Result {
-        assert_expr(
-            &[
-                Token::String("if".to_owned()),
-                Token::Whitespace,
-                Token::Dollar,
-                Token::String("a".to_owned()),
-                Token::Whitespace,
-                Token::Dollar,
-                Token::String("b".to_owned()),
-                Token::Whitespace,
-                Token::Dollar,
-                Token::String("c".to_owned()),
-            ],
-            Expression::If(
-                Box::new(src(Expression::Command(
-                    Box::new(src(Expression::String("a".to_owned()))),
-                    vec![],
-                ))),
-                Box::new(src(Expression::Command(
-                    Box::new(src(Expression::String("b".to_owned()))),
-                    vec![],
-                ))),
-                Box::new(src(Expression::Command(
-                    Box::new(src(Expression::String("c".to_owned()))),
-                    vec![],
-                ))),
-            ),
-        )
-    }
-
-    #[test]
-    fn index_call() -> Result {
-        assert_expr(
-            &[
-                OpenBracket,
-                Token::String("a".into()),
-                Comma,
-                Token::String("b".into()),
-                CloseBracket,
-                Whitespace,
-                Token::String("0".into()),
-            ],
-            Expression::Command(
-                src(Expression::Array(vec![
-                    nomerge(Expression::String("a".into())).into(),
-                    nomerge(Expression::String("b".into())).into(),
-                ]))
-                .into(),
-                vec![nomerge(Expression::String("0".into())).into()],
-            ),
-        )
-    }
-
-    #[test]
-    fn merge_array() -> Result {
-        assert_expr(
-            &[
-                OpenBracket,
-                Caret,
-                OpenBracket,
-                Token::String("b".into()),
-                CloseBracket,
-                CloseBracket,
-            ],
-            Expression::Command(
-                src(Expression::Array(vec![merge(Expression::Array(vec![
-                    nomerge(Expression::String("b".into())).into(),
-                ]))]))
-                .into(),
-                vec![],
-            ),
-        )
-    }
-
-    #[test]
-    fn merge_block() -> Result {
-        assert_expr(
-            &[
-                OpenCurly,
-                Caret,
-                OpenCurly,
-                Token::String("a".into()),
-                Equal,
-                Token::String("b".into()),
-                CloseCurly,
-                CloseCurly,
-            ],
-            Expression::Command(
-                src(Expression::Block(vec![merge(Expression::Block(vec![
-                    nomerge(Expression::SetVariable(
-                        "a".into(),
-                        src(Expression::String("b".into())).into(),
-                    )),
-                ]))]))
-                .into(),
-                vec![],
-            ),
-        )
-    }
-
-    #[test]
-    fn merge_command() -> Result {
-        assert_expr(
-            &[
-                Token::String("a".into()),
-                Whitespace,
-                Caret,
-                OpenBracket,
-                Token::String("b".into()),
-                CloseBracket,
-                Whitespace,
-                Caret,
-                OpenCurly,
-                Token::String("c".into()),
-                Equal,
-                Token::String("d".into()),
-                CloseCurly,
-            ],
-            Expression::Command(
-                src(Expression::String("a".into())).into(),
-                vec![
-                    merge(Expression::Array(vec![nomerge(Expression::String(
-                        "b".into(),
-                    ))])),
-                    merge(Expression::Block(vec![nomerge(Expression::SetVariable(
-                        "c".into(),
-                        src(Expression::String("d".into())).into(),
-                    ))])),
-                ],
-            ),
-        )
-    }
-
-    fn assert_expr(s: &[Token], expected: Expression) -> Result {
-        assert_parse(s, |_| expression(), expected)
     }
 
     fn assert_parse<T: PartialEq<I> + std::fmt::Debug, I>(
@@ -593,5 +294,500 @@ mod test {
         dbg!(&r);
         assert!(r == expected);
         Ok(())
+    }
+
+    #[test]
+    fn word() -> Result {
+        assert_parse(
+            &[String("hello".to_owned())],
+            |_| super::word(),
+            "hello".to_owned(),
+        )
+    }
+
+    mod pattern_test {
+        use super::pattern::*;
+        use super::*;
+
+        fn assert(s: &[Token], expected: Pattern) -> Result {
+            assert_parse(s, |_| pattern(), expected)
+        }
+
+        #[test]
+        fn any() -> Result {
+            assert(&[String("_".into())], Pattern::Any)
+        }
+
+        #[test]
+        fn literal() -> Result {
+            assert(
+                &[Equal, String("howdy".into())],
+                Pattern::Literal(src(Expression::String("howdy".into()))),
+            )
+        }
+
+        #[test]
+        fn binding() -> Result {
+            assert(&[String("a".into())], Pattern::Binding("a".into()))
+        }
+
+        #[test]
+        fn array() -> Result {
+            assert(
+                &[
+                    OpenBracket,
+                    String("a".into()),
+                    Comma,
+                    String("b".into()),
+                    Comma,
+                    Caret,
+                    String("rest".into()),
+                    CloseBracket,
+                ],
+                Pattern::Array(vec![
+                    src(ArrayPattern::Item(src(Pattern::Binding("a".into())))),
+                    src(ArrayPattern::Item(src(Pattern::Binding("b".into())))),
+                    src(ArrayPattern::Rest(src(Pattern::Binding("rest".into())))),
+                ]),
+            )
+        }
+
+        #[test]
+        fn map() -> Result {
+            assert(
+                &[
+                    OpenCurly,
+                    String("a".into()),
+                    Comma,
+                    String("b".into()),
+                    Equal,
+                    Equal,
+                    String("c".into()),
+                    Comma,
+                    Caret,
+                    String("rest".into()),
+                    CloseCurly,
+                ],
+                Pattern::Map(vec![
+                    src(MapPattern::Item(
+                        "a".into(),
+                        src(Pattern::Binding("a".into())),
+                    )),
+                    src(MapPattern::Item(
+                        "b".into(),
+                        src(Pattern::Literal(src(Expression::String("c".into())))),
+                    )),
+                    src(MapPattern::Rest(src(Pattern::Binding("rest".into())))),
+                ]),
+            )
+        }
+
+        #[test]
+        fn command() -> Result {
+            assert_parse(
+                &[
+                    Caret,
+                    OpenCurly,
+                    Caret,
+                    String("keys".into()),
+                    CloseCurly,
+                    Whitespace,
+                    String("a".into()),
+                    Whitespace,
+                    Caret,
+                    String("rest".into()),
+                ],
+                |_| command_pattern(),
+                src(vec![
+                    src(ArrayPattern::Rest(src(Pattern::Map(vec![src(
+                        MapPattern::Rest(src(Pattern::Binding("keys".into()))),
+                    )])))),
+                    src(ArrayPattern::Item(src(Pattern::Binding("a".into())))),
+                    src(ArrayPattern::Rest(src(Pattern::Binding("rest".into())))),
+                ]),
+            )
+        }
+    }
+
+    mod expression_test {
+        use super::expression::*;
+        use super::*;
+
+        fn nomerge(e: Expression) -> Source<MergeExpression> {
+            src(MergeExpression {
+                merge: false,
+                expr: src(e),
+            })
+        }
+
+        fn merge(e: Expression) -> Source<MergeExpression> {
+            src(MergeExpression {
+                merge: true,
+                expr: src(e),
+            })
+        }
+
+        fn pat(s: &str) -> Box<Pat> {
+            src(Pattern::Binding(s.into())).into()
+        }
+
+        fn assert(s: &[Token], expected: Expression) -> Result {
+            assert_parse(s, |_| expression(), expected)
+        }
+
+        #[test]
+        fn command() -> Result {
+            assert(
+                &[
+                    String("echo".to_owned()),
+                    Whitespace,
+                    String("howdy".to_owned()),
+                ],
+                Expression::Command(
+                    Box::new(src(Expression::String("echo".to_owned()))),
+                    vec![nomerge(Expression::String("howdy".to_owned()))],
+                ),
+            )
+        }
+
+        #[test]
+        fn args() -> Result {
+            assert_parse(
+                &[Dollar, String("howdy".to_owned())],
+                |_| arg(),
+                Expression::Command(
+                    Box::new(src(Expression::String("howdy".to_owned()))),
+                    vec![],
+                ),
+            )?;
+            assert_parse(
+                &[
+                    OpenParen,
+                    String("hello".to_owned()),
+                    Whitespace,
+                    String("world".to_owned()),
+                    CloseParen,
+                ],
+                |_| arg(),
+                Expression::Command(
+                    Box::new(src(Expression::String("hello".to_owned()))),
+                    vec![nomerge(Expression::String("world".to_owned()))],
+                ),
+            )?;
+            assert_parse(
+                &[
+                    OpenCurly,
+                    Whitespace,
+                    String("a".into()),
+                    Equal,
+                    String("ls".into()),
+                    CloseCurly,
+                ],
+                |_| arg(),
+                Expression::Block(vec![nomerge(Expression::Set(
+                    pat("a"),
+                    src(Expression::String("ls".into())).into(),
+                ))]),
+            )?;
+            assert_parse(
+                &[
+                    OpenBracket,
+                    Newline,
+                    OpenParen,
+                    String("a".into()),
+                    CloseParen,
+                    Newline,
+                    OpenParen,
+                    String("b".into()),
+                    CloseParen,
+                    Newline,
+                    CloseBracket,
+                ],
+                |_| arg(),
+                Expression::Array(vec![
+                    nomerge(Expression::Command(
+                        src(Expression::String("a".into())).into(),
+                        vec![],
+                    )),
+                    nomerge(Expression::Command(
+                        src(Expression::String("b".into())).into(),
+                        vec![],
+                    )),
+                ]),
+            )
+        }
+
+        #[test]
+        fn empty() -> Result {
+            assert(
+                &[Dollar],
+                Expression::Command(src(Expression::Empty).into(), vec![]),
+            )?;
+            assert(
+                &[OpenParen, CloseParen],
+                Expression::Command(src(Expression::Empty).into(), vec![]),
+            )
+        }
+
+        #[test]
+        fn array() -> Result {
+            assert(
+                &[
+                    OpenBracket,
+                    Whitespace,
+                    String("a".to_owned()),
+                    Whitespace,
+                    Comma,
+                    String("b".to_owned()),
+                    Whitespace,
+                    Semicolon,
+                    Newline,
+                    String("c".to_owned()),
+                    Newline,
+                    String("d".to_owned()),
+                    Whitespace,
+                    CloseBracket,
+                ],
+                Expression::Command(
+                    src(Expression::Array(vec![
+                        nomerge(Expression::String("a".into())).into(),
+                        nomerge(Expression::String("b".into())).into(),
+                        nomerge(Expression::String("c".into())).into(),
+                        nomerge(Expression::String("d".into())).into(),
+                    ]))
+                    .into(),
+                    vec![],
+                ),
+            )
+        }
+
+        #[test]
+        fn set() -> Result {
+            assert(
+                &[
+                    String("a".to_owned()),
+                    Equal,
+                    OpenParen,
+                    String("echo".to_owned()),
+                    CloseParen,
+                ],
+                Expression::Set(
+                    pat("a"),
+                    src(Expression::Command(
+                        src(Expression::String("echo".to_owned())).into(),
+                        vec![],
+                    ))
+                    .into(),
+                ),
+            )
+        }
+
+        #[test]
+        fn unset() -> Result {
+            assert(
+                &[String("a".to_owned()), Equal],
+                Expression::Unset("a".to_owned()),
+            )
+        }
+
+        #[test]
+        fn block() -> Result {
+            assert(
+                &[
+                    OpenCurly,
+                    Whitespace,
+                    String("a".to_owned()),
+                    Newline,
+                    Whitespace,
+                    String("b".to_owned()),
+                    Whitespace,
+                    Newline,
+                    String("c".to_owned()),
+                    Whitespace,
+                    Equal,
+                    Whitespace,
+                    OpenParen,
+                    String("echo".to_owned()),
+                    CloseParen,
+                    Newline,
+                    CloseCurly,
+                ],
+                Expression::Command(
+                    src(Expression::Block(vec![
+                        nomerge(Expression::Command(
+                            Box::new(src(Expression::String("a".to_owned()))),
+                            vec![],
+                        )),
+                        nomerge(Expression::Command(
+                            Box::new(src(Expression::String("b".to_owned()))),
+                            vec![],
+                        )),
+                        nomerge(Expression::Set(
+                            pat("c"),
+                            Box::new(src(Expression::Command(
+                                Box::new(src(Expression::String("echo".to_owned()))),
+                                vec![],
+                            ))),
+                        )),
+                    ]))
+                    .into(),
+                    vec![],
+                ),
+            )
+        }
+
+        #[test]
+        fn function() -> Result {
+            assert(
+                &[
+                    String("fn".into()),
+                    OpenParen,
+                    Caret,
+                    String("_".into()),
+                    CloseParen,
+                    Whitespace,
+                    String("howdy".into()),
+                ],
+                Expression::Function(
+                    src(vec![src(ArrayPattern::Rest(src(Pattern::Any)))]),
+                    src(Expression::String("howdy".into())).into(),
+                ),
+            )
+        }
+
+        #[test]
+        fn ifexpr() -> Result {
+            assert(
+                &[
+                    String("if".to_owned()),
+                    Whitespace,
+                    Dollar,
+                    String("a".to_owned()),
+                    Whitespace,
+                    Dollar,
+                    String("b".to_owned()),
+                    Whitespace,
+                    Dollar,
+                    String("c".to_owned()),
+                ],
+                Expression::If(
+                    Box::new(src(Expression::Command(
+                        Box::new(src(Expression::String("a".to_owned()))),
+                        vec![],
+                    ))),
+                    Box::new(src(Expression::Command(
+                        Box::new(src(Expression::String("b".to_owned()))),
+                        vec![],
+                    ))),
+                    Box::new(src(Expression::Command(
+                        Box::new(src(Expression::String("c".to_owned()))),
+                        vec![],
+                    ))),
+                ),
+            )
+        }
+
+        #[test]
+        fn index_call() -> Result {
+            assert(
+                &[
+                    OpenBracket,
+                    String("a".into()),
+                    Comma,
+                    String("b".into()),
+                    CloseBracket,
+                    Whitespace,
+                    String("0".into()),
+                ],
+                Expression::Command(
+                    src(Expression::Array(vec![
+                        nomerge(Expression::String("a".into())).into(),
+                        nomerge(Expression::String("b".into())).into(),
+                    ]))
+                    .into(),
+                    vec![nomerge(Expression::String("0".into())).into()],
+                ),
+            )
+        }
+
+        #[test]
+        fn merge_array() -> Result {
+            assert(
+                &[
+                    OpenBracket,
+                    Caret,
+                    OpenBracket,
+                    String("b".into()),
+                    CloseBracket,
+                    CloseBracket,
+                ],
+                Expression::Command(
+                    src(Expression::Array(vec![merge(Expression::Array(vec![
+                        nomerge(Expression::String("b".into())).into(),
+                    ]))]))
+                    .into(),
+                    vec![],
+                ),
+            )
+        }
+
+        #[test]
+        fn merge_block() -> Result {
+            assert(
+                &[
+                    OpenCurly,
+                    Caret,
+                    OpenCurly,
+                    String("a".into()),
+                    Equal,
+                    String("b".into()),
+                    CloseCurly,
+                    CloseCurly,
+                ],
+                Expression::Command(
+                    src(Expression::Block(vec![merge(Expression::Block(vec![
+                        nomerge(Expression::Set(
+                            pat("a"),
+                            src(Expression::String("b".into())).into(),
+                        )),
+                    ]))]))
+                    .into(),
+                    vec![],
+                ),
+            )
+        }
+
+        #[test]
+        fn merge_command() -> Result {
+            assert(
+                &[
+                    String("a".into()),
+                    Whitespace,
+                    Caret,
+                    OpenBracket,
+                    String("b".into()),
+                    CloseBracket,
+                    Whitespace,
+                    Caret,
+                    OpenCurly,
+                    String("c".into()),
+                    Equal,
+                    String("d".into()),
+                    CloseCurly,
+                ],
+                Expression::Command(
+                    src(Expression::String("a".into())).into(),
+                    vec![
+                        merge(Expression::Array(vec![nomerge(Expression::String(
+                            "b".into(),
+                        ))])),
+                        merge(Expression::Block(vec![nomerge(Expression::Set(
+                            pat("c"),
+                            src(Expression::String("d".into())).into(),
+                        ))])),
+                    ],
+                ),
+            )
+        }
     }
 }

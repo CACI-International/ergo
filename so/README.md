@@ -55,7 +55,7 @@ exec c++ -o { file = test } $main (influx lib) $use_path
 
 ### TODO
 * Data-manipulation functions (maybe as a plugin).
-* Better function syntax, to make `map` less ugly?
+* Generalized pattern matching for script types.
 * Remove the unit type; use an empty map instead?
 * Change 'once' to be a command itself rather than a key on exec results (it can
   be generalized to arbitrary values). Add 'cache' command to execute once and

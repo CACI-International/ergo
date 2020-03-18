@@ -1,6 +1,8 @@
 //! Script runtime definitions.
 
-use super::ast::{Expression, IntoSource, MergeExpression, Source};
+use super::ast::{
+    ArrayPattern, CmdPat, Expression, IntoSource, MapPattern, MergeExpression, Pat, Pattern, Source,
+};
 use grease::future::{BoxFuture, FutureExt};
 use grease::{make_value, match_value, IntoValue, Plan, Value};
 use log::trace;
@@ -18,8 +20,7 @@ pub mod seq;
 pub mod track;
 
 pub mod script_types {
-    use super::super::ast::{Expression, Source};
-    use super::{Error, Eval};
+    use super::{CmdPat, Error, Eval, Expression, Source};
     use grease::{depends, GetValueType, TypedValue, Value};
     use std::collections::BTreeMap;
     use std::fmt;
@@ -36,7 +37,7 @@ pub mod script_types {
 
     impl From<ScriptArray> for TypedValue<ScriptArray> {
         fn from(v: ScriptArray) -> Self {
-            let deps = depends![join v.0.iter().map(|s| s.as_ref())];
+            let deps = depends![join v.0.iter().map(|s| &**s)];
             Self::constant_deps(v, deps)
         }
     }
@@ -61,7 +62,7 @@ pub mod script_types {
     /// Script function type.
     #[derive(GetValueType)]
     pub enum ScriptFunction {
-        UserFunction(Source<Expression>, Env),
+        UserFunction(CmdPat, Source<Expression>, Env),
         BuiltinFunction(Box<Builtin>),
     }
 
@@ -72,7 +73,10 @@ pub mod script_types {
     impl std::hash::Hash for ScriptFunction {
         fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
             match self {
-                Self::UserFunction(s, _) => s.hash(h),
+                Self::UserFunction(p, s, _) => {
+                    p.hash(h);
+                    s.hash(h);
+                }
                 Self::BuiltinFunction(b) => std::ptr::hash(b, h),
             }
         }
@@ -81,7 +85,7 @@ pub mod script_types {
     impl fmt::Debug for ScriptFunction {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
             match self {
-                Self::UserFunction(e, _) => write!(f, "UserFunction: {:?}", e),
+                Self::UserFunction(p, e, _) => write!(f, "UserFunction: {:?} -> {:?}", p, e),
                 Self::BuiltinFunction(_) => write!(f, "BuiltinFunction"),
             }
         }
@@ -229,6 +233,10 @@ impl Context {
         self.env.last_mut().unwrap().insert(k, v.into());
     }
 
+    pub fn env_extend<T: IntoIterator<Item = (String, Eval<Source<Value>>)>>(&mut self, v: T) {
+        self.env.last_mut().unwrap().extend(v);
+    }
+
     pub fn env_remove<Q: ?Sized>(&mut self, k: &Q) -> Option<Eval<Source<Value>>>
     where
         String: std::borrow::Borrow<Q>,
@@ -319,6 +327,16 @@ pub enum Error {
     MissingBinding(String),
     /// A merge expression cannot be evaluated.
     CannotMerge(String),
+    /// A map pattern has too many rest patterns.
+    PatternMapTooManyRest,
+    /// A map pattern had unmatched keys.
+    PatternMapExtraKeys(Value),
+    /// A rest pattern in an array is undecidable.
+    PatternArrayRestUndecidable,
+    /// A pattern did not match a value.
+    PatternMismatch(Value),
+    /// Arguments to a function did not match the function definition.
+    ArgumentMismatch,
     /// An error occured while evaluating a value.
     ValueError(String),
 }
@@ -335,6 +353,13 @@ impl fmt::Display for Error {
             }
             MissingBinding(s) => write!(f, "'{}' is not available in the current environment", s),
             CannotMerge(s) => write!(f, "cannot merge: {}", s),
+            PatternMapTooManyRest => write!(f, "map pattern may only have one merge subpattern"),
+            PatternMapExtraKeys(v) => {
+                write!(f, "map pattern doesn't match all values in map: {:?}", v)
+            }
+            PatternArrayRestUndecidable => write!(f, "array merge pattern is undecidable"),
+            PatternMismatch(v) => write!(f, "value could not be matched to pattern: {:?}", v),
+            ArgumentMismatch => write!(f, "arguments mismatch in function call"),
             ValueError(s) => write!(f, "{}", s),
         }
     }
@@ -376,6 +401,22 @@ impl<T> SourceContext<T> {
     }
 }
 
+impl<T: ToString> SourceContext<T> {
+    pub fn nest_into<U, V>(self, v: V) -> SourceContext<U>
+    where
+        V: Into<SourceContext<U>>,
+    {
+        let mut ret = v.into();
+        ret.context.push(self.value.map(|v| v.to_string()));
+        ret.context.extend(self.context);
+        ret
+    }
+
+    pub fn nest<V: Into<Self>>(self, v: V) -> Self {
+        self.nest_into(v)
+    }
+}
+
 impl<U> From<Source<U>> for SourceContext<Error>
 where
     Error: From<U>,
@@ -384,6 +425,27 @@ where
         SourceContext {
             value: u.map(Error::from),
             context: vec![],
+        }
+    }
+}
+
+impl<T> std::iter::Extend<Source<String>> for SourceContext<T> {
+    fn extend<U>(&mut self, iter: U)
+    where
+        U: IntoIterator<Item = Source<String>>,
+    {
+        self.context.extend(iter);
+    }
+}
+
+impl<T, U: ToString> std::iter::Extend<SourceContext<U>> for SourceContext<T> {
+    fn extend<I>(&mut self, iter: I)
+    where
+        I: IntoIterator<Item = SourceContext<U>>,
+    {
+        for i in iter {
+            self.context.push(i.value.map(|v| v.to_string()));
+            self.context.extend(i.context);
         }
     }
 }
@@ -418,6 +480,30 @@ impl<T> Eval<T> {
         match self {
             Eval::Value(v) => Eval::Value(f(v)),
             Eval::Error => Eval::Error,
+        }
+    }
+
+    pub fn then<F, U>(self, f: F) -> Eval<U>
+    where
+        F: FnOnce(T) -> Eval<U>,
+    {
+        match self {
+            Eval::Error => Eval::Error,
+            Eval::Value(v) => f(v),
+        }
+    }
+
+    pub fn as_ref(&self) -> Eval<&T> {
+        match *self {
+            Eval::Error => Eval::Error,
+            Eval::Value(ref v) => Eval::Value(v),
+        }
+    }
+
+    pub fn as_mut(&mut self) -> Eval<&mut T> {
+        match *self {
+            Eval::Error => Eval::Error,
+            Eval::Value(ref mut v) => Eval::Value(v),
         }
     }
 }
@@ -562,27 +648,386 @@ fn _apply_value<I: Iterator<Item = Source<Value>>>(
     Ok(eval_error!(ctx, result))
 }
 
+pub fn apply_pattern(
+    ctx: &mut grease::Context<Context>,
+    pat: Pat,
+    val: Eval<Source<Value>>,
+) -> Result<Env, Vec<SourceContext<Error>>> {
+    let mut ret = Env::new();
+    let mut errs = Vec::new();
+
+    _apply_pattern(ctx, &mut ret, &mut errs, pat, val);
+    if errs.is_empty() {
+        Ok(ret)
+    } else {
+        Err(errs)
+    }
+}
+
+fn _apply_pattern(
+    ctx: &mut grease::Context<Context>,
+    env: &mut Env,
+    errs: &mut Vec<SourceContext<Error>>,
+    pat: Pat,
+    val: Eval<Source<Value>>,
+) {
+    use Pattern::*;
+    let (source, pat) = pat.take();
+    match pat {
+        Any => (),
+        Literal(e) => match (e.plan(ctx), val) {
+            (Eval::Value(result), Eval::Value(val)) => {
+                // FIXME do deep comparison instead of by value id
+                if *result != *val {
+                    let mut err: SourceContext<Error> = source
+                        .with(Error::PatternMismatch((*result).clone()))
+                        .into();
+                    err.add_context(result.with("value definition".into()));
+                    errs.push(err);
+                }
+            }
+            _ => (),
+        },
+        Binding(name) => {
+            env.insert(name, val);
+            ()
+        }
+        Array(inner) => {
+            let mut orig_val = None;
+            let val = val.then(|v| {
+                orig_val = Some(v.clone());
+                let (vsource, v) = v.take();
+                match v.typed::<ScriptArray>() {
+                    Ok(v) => match v.get() {
+                        Ok(v) => Eval::Value(v.owned().0),
+                        Err(e) => {
+                            errs.push(vsource.with(Error::ValueError(e)).into());
+                            Eval::Error
+                        }
+                    },
+                    Err(o) => {
+                        let mut err: SourceContext<Error> =
+                            source.clone().with(Error::PatternMismatch(o)).into();
+                        err.add_context(vsource.with("value definition".into()));
+                        errs.push(err);
+                        Eval::Error
+                    }
+                }
+            });
+            let vals: Vec<Eval<Source<Value>>> = match val {
+                Eval::Error => std::iter::repeat(Eval::Error).take(inner.len()).collect(),
+                Eval::Value(v) => v.into_iter().map(Eval::Value).collect(),
+            };
+
+            match pattern_array(ctx, &inner, &vals) {
+                Ok(mut n_env) => {
+                    env.append(&mut n_env);
+                }
+                Err(n_errs) => {
+                    for e in n_errs {
+                        errs.push(match &orig_val {
+                            None => e.nest(
+                                source
+                                    .clone()
+                                    .with(Error::ValueError("pattern could not be matched".into())),
+                            ),
+                            Some(orig_val) => {
+                                let mut err = e.nest(
+                                    source
+                                        .clone()
+                                        .with(Error::PatternMismatch(orig_val.clone().unwrap())),
+                                );
+                                err.add_context(
+                                    orig_val.source().with("value being matched".into()),
+                                );
+                                err
+                            }
+                        });
+                    }
+                }
+            }
+        }
+        Map(inner) => {
+            let mut val = val.then(|v| {
+                let orig = v.clone();
+                let (vsource, v) = v.take();
+                match v.typed::<ScriptMap>() {
+                    Ok(v) => match v.get() {
+                        Ok(v) => Eval::Value((orig, v.owned().0)),
+                        Err(e) => {
+                            errs.push(vsource.with(Error::ValueError(e)).into());
+                            Eval::Error
+                        }
+                    },
+                    Err(o) => {
+                        let mut err: SourceContext<Error> =
+                            source.clone().with(Error::PatternMismatch(o)).into();
+                        err.add_context(vsource.with("value definition".into()));
+                        errs.push(err);
+                        Eval::Error
+                    }
+                }
+            });
+            let mut rest_pattern = None;
+            let mut matched_keys = BTreeMap::new();
+            for i in inner {
+                let (isource, i) = i.take();
+                match i {
+                    MapPattern::Item(key, pat) => {
+                        let result = match val.as_mut() {
+                            Eval::Value((orig_value, m)) => match m.remove(&key) {
+                                Some(v) => {
+                                    matched_keys.insert(key, v.source());
+                                    Eval::Value(v.clone())
+                                }
+                                None => {
+                                    let (vsource, v) = orig_value.clone().take();
+                                    let mut err: SourceContext<Error> =
+                                        source.clone().with(Error::PatternMismatch(v)).into();
+                                    err.add_context(isource.with(format!("missing key '{}'", key)));
+                                    if let Some(src) = matched_keys.get(&key) {
+                                        err.add_context(
+                                            src.clone().with("key previously matched here".into()),
+                                        );
+                                    }
+                                    err.add_context(vsource.with("value definition".into()));
+                                    errs.push(err);
+                                    Eval::Error
+                                }
+                            },
+                            Eval::Error => Eval::Error,
+                        };
+                        _apply_pattern(ctx, env, errs, pat, result);
+                    }
+                    MapPattern::Rest(pat) => {
+                        if let Some((src, _)) = rest_pattern.replace((isource.clone(), pat)) {
+                            let mut err: SourceContext<Error> =
+                                isource.with(Error::PatternMapTooManyRest).into();
+                            err.add_context(src.with("previous definition".into()));
+                            errs.push(err);
+                        }
+                    }
+                }
+            }
+
+            // Match rest pattern with remaining values
+            if let Some((src, rest)) = rest_pattern {
+                _apply_pattern(
+                    ctx,
+                    env,
+                    errs,
+                    rest,
+                    val.map(move |(_, m)| src.with(ScriptMap(m).into())),
+                )
+            } else {
+                match val {
+                    Eval::Value((orig_value, m)) => {
+                        if !m.is_empty() {
+                            let (vsource, v) = orig_value.take();
+                            let mut err: SourceContext<Error> =
+                                source.with(Error::PatternMapExtraKeys(v)).into();
+                            err.add_context(vsource.with("value definition".into()));
+                            errs.push(err);
+                        }
+                    }
+                    _ => (),
+                }
+            }
+        }
+    }
+}
+
+fn is_fixed_point(pat: &Pattern) -> bool {
+    use Pattern::*;
+    match pat {
+        Any | Binding(_) => false,
+        _ => true,
+    }
+}
+
+fn pattern_array(
+    ctx: &mut grease::Context<Context>,
+    pats: &[Source<ArrayPattern>],
+    vals: &[Eval<Source<Value>>],
+) -> Result<Env, Vec<SourceContext<Error>>> {
+    let mut ret = Env::new();
+    let mut errs = Vec::new();
+
+    _pattern_array(ctx, &mut ret, &mut errs, pats, vals);
+    if errs.is_empty() {
+        Ok(ret)
+    } else {
+        Err(errs)
+    }
+}
+
+fn _pattern_array(
+    ctx: &mut grease::Context<Context>,
+    env: &mut Env,
+    errs: &mut Vec<SourceContext<Error>>,
+    pats: &[Source<ArrayPattern>],
+    vals: &[Eval<Source<Value>>],
+) {
+    let mut vali = 0;
+    let mut pati = 0;
+    loop {
+        let pat = if let Some(i) = pats.get(pati) {
+            pati += 1;
+            i
+        } else {
+            if vali != vals.len() {
+                let err: SourceContext<Error> = pats
+                    .into_source()
+                    .with(Error::ValueError(
+                        "not enough patterns to match with value items".into(),
+                    ))
+                    .into();
+                errs.push(err);
+            }
+            break;
+        };
+        let (psource, pat) = pat.as_ref().take();
+        match pat {
+            ArrayPattern::Item(p) => {
+                if let Some(v) = vals.get(vali) {
+                    vali += 1;
+                    _apply_pattern(ctx, env, errs, p.clone(), v.clone());
+                } else {
+                    let err: SourceContext<Error> = psource
+                        .with(Error::ValueError("no nested value matches pattern".into()))
+                        .into();
+                    errs.push(err);
+                    break;
+                }
+            }
+            ArrayPattern::Rest(p) => {
+                let rest_end = pattern_array_rest(ctx, env, errs, &pats[pati..], &vals[vali..]);
+                _apply_pattern(
+                    ctx,
+                    env,
+                    errs,
+                    p.clone(),
+                    rest_end.map(|vs| vs.into_source().map(|vs| ScriptArray(vs).into_value())),
+                );
+                break;
+            }
+        }
+    }
+}
+
+fn pattern_array_rest(
+    ctx: &mut grease::Context<Context>,
+    env: &mut Env,
+    errs: &mut Vec<SourceContext<Error>>,
+    pats: &[Source<ArrayPattern>],
+    vals: &[Eval<Source<Value>>],
+) -> Eval<Vec<Source<Value>>> {
+    let pat = if let Some(i) = pats.first() {
+        i
+    } else {
+        return vals.into_iter().cloned().collect::<Eval<Vec<_>>>();
+    };
+    let (psource, pat) = pat.as_ref().take();
+    match pat {
+        ArrayPattern::Item(p) => {
+            if is_fixed_point(&*p) {
+                // If we have a fixed point pattern, try to match at different locations
+                let mut vali = 0;
+                while vali < vals.len() {
+                    match pattern_array(ctx, &pats, &vals[vali..]) {
+                        Ok(mut n_env) => {
+                            env.append(&mut n_env);
+                            return vals[..vali].into_iter().cloned().collect::<Eval<Vec<_>>>();
+                        }
+                        Err(_) => (),
+                    }
+                    vali += 1;
+                }
+                errs.push(
+                    psource
+                        .with(Error::ValueError(
+                            "no value matched the given pattern".into(),
+                        ))
+                        .into(),
+                );
+                Eval::Error
+            } else {
+                // Go forward to try to find a fixed point
+                pattern_array_rest(ctx, env, errs, &pats[1..], &vals[..]).then(|values| {
+                    if values.is_empty() {
+                        errs.push(
+                            psource
+                                .with(Error::ValueError("no value to match with pattern".into()))
+                                .into(),
+                        );
+                        Eval::Error
+                    } else {
+                        let mut remaining = values.len() - 1;
+                        let mut ret = Vec::with_capacity(remaining);
+                        let mut val = None;
+                        for v in values {
+                            if remaining > 0 {
+                                ret.push(v);
+                                remaining -= 1;
+                            } else {
+                                val = Some(v);
+                            }
+                        }
+                        _apply_pattern(ctx, env, errs, p.clone(), Eval::Value(val.unwrap()));
+                        Eval::Value(ret)
+                    }
+                })
+            }
+        }
+        ArrayPattern::Rest(_) => {
+            errs.push(psource.with(Error::PatternArrayRestUndecidable).into());
+            return Eval::Error;
+        }
+    }
+}
+
+pub fn apply_command_pattern(
+    ctx: &mut grease::Context<Context>,
+    pat: CmdPat,
+    vals: Vec<Source<Value>>,
+) -> Result<Env, Vec<SourceContext<Error>>> {
+    let pat = pat.unwrap();
+    let vals: Vec<_> = vals.into_iter().map(Eval::Value).collect();
+    pattern_array(ctx, &pat, &vals)
+}
+
 impl Plan<FunctionContext> for &'_ ScriptFunction {
     type Output = Result<Eval<Value>, Error>;
 
     fn plan(self, ctx: &mut grease::Context<FunctionContext>) -> Self::Output {
         match self {
-            ScriptFunction::UserFunction(e, env) => {
+            ScriptFunction::UserFunction(pat, e, env) => {
                 // A FunctionContext is only used once, so swap out the arguments.
                 let mut args = Vec::new();
                 std::mem::swap(&mut ctx.inner.args, &mut args);
 
-                let args = args
-                    .into_source()
-                    .map(|args| ScriptArray(args).into_value());
+                let src = e.source();
 
                 let mut env = vec![env.clone()];
                 std::mem::swap(&mut env, &mut ctx.inner.env);
-                ctx.env_insert("@".to_owned(), args);
-                let v = e.clone().plan_split(ctx);
+                use grease::SplitInto;
+                let ret =
+                    match ctx.split_map(move |ctx| apply_command_pattern(ctx, pat.clone(), args)) {
+                        Ok(bindings) => {
+                            ctx.inner.env.push(bindings);
+                            e.clone().plan_split(ctx).map(Source::unwrap)
+                        }
+                        Err(errs) => {
+                            let mut err = SourceContext::from(src.with(Error::ArgumentMismatch));
+                            err.extend(errs);
+                            ctx.error(err);
+                            Eval::Error
+                        }
+                    };
+
                 std::mem::swap(&mut env, &mut ctx.inner.env);
 
-                Ok(v.map(Source::unwrap))
+                Ok(ret)
             }
             ScriptFunction::BuiltinFunction(f) => f(ctx),
         }
@@ -632,16 +1077,26 @@ impl Plan<Context> for Expression {
                     Eval::Value(ScriptArray(vals).into_value())
                 })
             }
-            SetVariable(var, e) => {
+            Set(pat, e) => {
                 let data = e.plan(ctx);
-                let ret = Ok(match data {
+                let ok_ret = match data {
                     Eval::Error => Eval::Error,
                     _ => ().into_value().into(),
-                });
-                ctx.inner.env_insert(var, data);
-                ret
+                };
+                Ok(match apply_pattern(ctx, *pat, data) {
+                    Ok(env) => {
+                        ctx.env_extend(env);
+                        ok_ret
+                    }
+                    Err(errs) => {
+                        for e in errs {
+                            ctx.error(e);
+                        }
+                        Eval::Error
+                    }
+                })
             }
-            UnsetVariable(var) => {
+            Unset(var) => {
                 ctx.inner.env_remove(&var);
                 Ok(().into_value().into())
             }
@@ -691,8 +1146,8 @@ impl Plan<Context> for Expression {
                 }
             }
             Block(_) => panic!("Block expression must be evaluated at a higher level"),
-            Function(e) => Ok(Eval::Value(
-                ScriptFunction::UserFunction(*e, ctx.inner.env_flatten()).into_value(),
+            Function(pat, e) => Ok(Eval::Value(
+                ScriptFunction::UserFunction(pat, *e, ctx.inner.env_flatten()).into_value(),
             )),
             If(cond, t, f) => {
                 let cond = match cond.plan(ctx) {

@@ -129,10 +129,10 @@ mod test {
 
     #[test]
     fn function() -> Result<(), String> {
-        script_eval_to("f = fn a\nf something", SRString("a"))?;
-        script_eval_to("second = fn (@ 1)\nsecond a b", SRString("b"))?;
+        script_eval_to("f = fn(^_) a\nf something", SRString("a"))?;
+        script_eval_to("second = fn(_ b ^_) $b\nsecond a b", SRString("b"))?;
         script_eval_to(
-            "f = fn {\n  a = (@ 0)\n  b = (@ 2)\n}\nf 1 2 3",
+            "f = fn(a _ b ^_) {\n  a = $a\n  b = $b\n}\nf 1 2 3",
             SRMap(&[("a", SRString("1")), ("b", SRString("3"))]),
         )
     }
@@ -191,7 +191,7 @@ mod test {
         #[test]
         fn command_array() -> Result<(), String> {
             script_eval_to(
-                "to_array = fn $@\nto_array a ^[b,c] d ^[e,f]",
+                "to_array = fn(^args) $args\nto_array a ^[b,c] d ^[e,f]",
                 SRArray(&[
                     SRString("a"),
                     SRString("b"),
@@ -206,14 +206,139 @@ mod test {
         #[test]
         fn command_block() -> Result<(), String> {
             script_eval_to(
-                "to_array = fn $@\nto_array a ^{k=3} b",
+                "to_array = fn(^args) $args\nto_array a ^{k=3} b",
                 SRArray(&[SRString("a"), SRString("b")]),
             )
         }
 
         #[test]
         fn command_invalid() -> Result<(), String> {
-            script_fail("f = fn a\nf ^hello")
+            script_fail("f = fn(^_) a\nf ^hello")
+        }
+    }
+
+    mod pattern_binding {
+        use super::*;
+
+        #[test]
+        fn any() -> Result<(), String> {
+            script_eval_to("_ = a", SRMap(&[]))?;
+            script_eval_to("_ = {a=1,b=2}", SRMap(&[]))?;
+            script_eval_to("_ = [4,5,6]", SRMap(&[]))?;
+            Ok(())
+        }
+
+        #[test]
+        fn literal() -> Result<(), String> {
+            script_eval_to("=hello = hello", SRMap(&[]))?;
+            script_eval_to("=[1,2,3] = [1,2,3]", SRMap(&[]))?;
+            script_eval_to("={a=b} = {a=b}", SRMap(&[]))?;
+            script_eval_to(
+                "something = {a=b}; =$something = {a=b}; something=",
+                SRMap(&[]),
+            )?;
+            Ok(())
+        }
+
+        #[test]
+        fn literal_mismatch() -> Result<(), String> {
+            script_fail("=hello = goodbye")?;
+            script_fail("=[1,2,3] = [1,2,3,4]")?;
+            script_fail("={a=1} = {a=b}")?;
+            Ok(())
+        }
+
+        #[test]
+        fn binding() -> Result<(), String> {
+            script_eval_to("a = hello; a", SRString("hello"))
+        }
+
+        #[test]
+        fn array() -> Result<(), String> {
+            script_eval_to(
+                "[a,b,_] = [1,2,3]",
+                SRMap(&[("a", SRString("1")), ("b", SRString("2"))]),
+            )
+        }
+
+        #[test]
+        fn array_mismatch() -> Result<(), String> {
+            script_fail("[a,b] = [1,2,3]")
+        }
+
+        #[test]
+        fn array_merge() -> Result<(), String> {
+            script_eval_to(
+                "[a,b,^rest] = [1,2,3,4,5]",
+                SRMap(&[
+                    ("a", SRString("1")),
+                    ("b", SRString("2")),
+                    (
+                        "rest",
+                        SRArray(&[SRString("3"), SRString("4"), SRString("5")]),
+                    ),
+                ]),
+            )?;
+            script_eval_to(
+                "[a,b,^=[3,4,5]] = [1,2,3,4,5]",
+                SRMap(&[("a", SRString("1")), ("b", SRString("2"))]),
+            )?;
+            Ok(())
+        }
+
+        #[test]
+        fn array_undecidable() -> Result<(), String> {
+            script_fail("[^_,^_] = [1,2,3]")?;
+            script_fail("[^_,a,^_] = [1,2,3]")?;
+            Ok(())
+        }
+
+        #[test]
+        fn array_complex() -> Result<(), String> {
+            script_eval_to(
+                "[a,^rest1,b,c,=anchor,d,^rest2,e] = [1,2,3,anchor,4,5,6,7]",
+                SRMap(&[
+                    ("a", SRString("1")),
+                    ("b", SRString("2")),
+                    ("c", SRString("3")),
+                    ("d", SRString("4")),
+                    ("e", SRString("7")),
+                    ("rest1", SRArray(&[])),
+                    ("rest2", SRArray(&[SRString("5"), SRString("6")])),
+                ]),
+            )
+        }
+
+        #[test]
+        fn map() -> Result<(), String> {
+            script_eval_to(
+                "{a,b=binding} = {a=1,b=2}",
+                SRMap(&[("a", SRString("1")), ("binding", SRString("2"))]),
+            )
+        }
+
+        #[test]
+        fn map_merge() -> Result<(), String> {
+            script_eval_to(
+                "{a,b=binding,^keys} = {a=1,b=2,c=3,d=4}",
+                SRMap(&[
+                    ("a", SRString("1")),
+                    ("binding", SRString("2")),
+                    ("keys", SRMap(&[("c", SRString("3")), ("d", SRString("4"))])),
+                ]),
+            )?;
+            script_eval_to(
+                "{a,b=binding,^={c=3,d=4}} = {a=1,b=2,c=3,d=4}",
+                SRMap(&[("a", SRString("1")), ("binding", SRString("2"))]),
+            )?;
+            Ok(())
+        }
+
+        #[test]
+        fn map_mismatch() -> Result<(), String> {
+            script_fail("{a,b,c} = {a=1,b=2}")?;
+            script_fail("{a,^keys,^keys2} = {a=1}")?;
+            Ok(())
         }
     }
 
@@ -262,7 +387,11 @@ mod test {
                     if st.as_ref() == s {
                         Ok(())
                     } else {
-                        Err("string mismatch".into())
+                        Err(format!(
+                            "string mismatch, expected \"{}\", got \"{}\"",
+                            s,
+                            st.as_ref()
+                        ))
                     }
                 }),
             SRArray(arr) => v
