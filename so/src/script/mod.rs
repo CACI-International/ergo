@@ -231,9 +231,14 @@ mod test {
         #[test]
         fn command_block() -> Result<(), String> {
             script_eval_to(
-                "to_array = fn(^args) $args\nto_array a ^{k=3} b",
+                "to_array = fn(^args ^{^_}) $args\nto_array a ^{k=3} b",
                 SRArray(&[SRString("a"), SRString("b")]),
             )
+        }
+
+        #[test]
+        fn command_block_no_pattern() -> Result<(), String> {
+            script_fail("to_array = fn(^args) $args\nto_array a ^{k=3} b")
         }
 
         #[test]

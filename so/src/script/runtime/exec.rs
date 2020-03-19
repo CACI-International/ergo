@@ -7,10 +7,8 @@ use grease::{make_value, match_value, Plan};
 use log::trace;
 use std::collections::BTreeMap;
 
-def_builtin!(ctx,args => {
-    let mut arg_iter = args.into_iter();
-
-    let cmd = arg_iter.next().ok_or("no command provided")?;
+def_builtin!(ctx => {
+    let cmd = ctx.args.next().ok_or("no command provided")?;
 
     let (cmdsource, cmd) = cmd.take();
 
@@ -29,9 +27,90 @@ def_builtin!(ctx,args => {
     let mut output_path_bindings = Vec::new();
     let mut creates = Vec::new();
     let mut all_success = true;
-    for a in arg_iter {
-        all_success &= to_cfg(a, ctx, &mut cfg, &mut output_path_bindings, &mut creates);
+    while let Some(a) = ctx.args.next() {
+        all_success &= to_cfg(a, ctx, &mut cfg, &mut output_path_bindings);
     }
+
+    if let Some(v) = ctx.args.kw("env") {
+        match v.map(|v| v.typed::<ScriptMap>()
+            .map_err(|_| "env must be a map".into())
+            .and_then(|v| v.get())
+            .map(|v| v.owned())).transpose_err() {
+            Err(e) => {
+                ctx.error(e);
+                all_success = false;
+            }
+            Ok(ScriptMap(env)) => {
+                for (k, v) in env.into_iter() {
+                    eval_error!(ctx, v.map(|v| match_value!(v => {
+                        () => |_| {
+                            cfg.env.insert(k, None);
+                            Ok(())
+                        },
+                        => |v| {
+                            let t: grease::IntoTyped<CommandString> =
+                                ctx.traits.get(&v).ok_or("cannot convert env value into command string")?;
+                            cfg.env.insert(k, Some(t.into_typed(v).into()));
+                            Ok(())
+                        }
+                    })).transpose_err().map_err(|e: Source<Error>| e), all_success = false);
+                }
+            }
+        }
+    }
+    if let Some(v) = ctx.args.kw("pwd") {
+        match v.map(|v| {
+                let t: grease::IntoTyped<std::path::PathBuf> =
+                    ctx.traits
+                        .get(&v)
+                        .ok_or("cannot convert value into path")?;
+                Ok(t.into_typed(v).into())
+            }).transpose_err().map_err(|e: Source<Error>| e) {
+            Err(e) => {
+                ctx.error(e);
+                all_success = false;
+            }
+            Ok(v) => cfg.dir = Some(v)
+        }
+    }
+    if let Some(v) = ctx.args.kw("creates") {
+        match v.map(|v| v.typed::<ScriptMap>()
+            .map_err(|_| "creates must be a map".into())
+            .and_then(|v| v.get())
+            .map(|v| v.owned())).transpose_err() {
+            Err(e) => {
+                ctx.error(e);
+                all_success = false;
+            }
+            Ok(ScriptMap(bindings)) => {
+                for (k, v) in bindings.into_iter() {
+                    let v = eval_error!(ctx, v.map(|v| {
+                        let t: grease::IntoTyped<std::path::PathBuf> =
+                            ctx.traits.get(&v).ok_or("cannot convert creates value into path")?;
+                        Ok(t.into_typed(v))
+                    }).transpose().map_err(|e: Source<Error>| e), { all_success = false; continue; });
+                    creates.push((k, v));
+                }
+            }
+        }
+    }
+    if let Some(v) = ctx.args.kw("stdin") {
+        match v.map(|v| {
+            let t: grease::IntoTyped<StdinString> =
+                ctx.traits
+                    .get(&v)
+                    .ok_or("cannot convert value into stdin string")?;
+            Ok(t.into_typed(v).into())
+        }).transpose_err().map_err(|e: Source<Error>| e) {
+            Err(e) => {
+                ctx.error(e);
+                all_success = false;
+            }
+            Ok(v) => cfg.stdin = Some(v)
+        }
+    }
+
+    all_success &= !ctx.unused_arguments();
 
     if !all_success {
         return Ok(Eval::Error);
@@ -91,12 +170,9 @@ def_builtin!(ctx,args => {
 
 fn make_dir_function(v: grease::TypedValue<std::path::PathBuf>) -> Value {
     ScriptFunction::BuiltinFunction(Box::new(move |ctx| {
-        let mut args = Vec::new();
-        std::mem::swap(&mut args, &mut ctx.args);
-
         let mut v = v.clone();
         let mut any_error = false;
-        for a in args {
+        while let Some(a) = ctx.args.next() {
             let s = eval_error!(
                 ctx,
                 a.map(|v| {
@@ -122,6 +198,10 @@ fn make_dir_function(v: grease::TypedValue<std::path::PathBuf>) -> Value {
             }
         }
 
+        if ctx.unused_arguments() {
+            return Ok(Eval::Error);
+        }
+
         if any_error {
             Ok(Eval::Error)
         } else {
@@ -136,93 +216,39 @@ fn to_cfg(
     ctx: &mut grease::Context<FunctionContext>,
     cfg: &mut Config,
     output_path_bindings: &mut Vec<(Source<String>, bool)>,
-    creates: &mut Vec<(String, Source<grease::TypedValue<std::path::PathBuf>>)>,
 ) -> bool {
-    let result = value.map(|value| match_value!(value => {
-        ScriptUnit => |_| Ok(true),
-        ScriptArray => |val| {
-            let ScriptArray(arr) = val.get()?.owned();
-            let mut all_success = true;
-            for v in arr {
-                all_success &= to_cfg(v, ctx, cfg, output_path_bindings, creates);
-            }
-            Ok(all_success)
-        },
-        ScriptMap => |val| {
-            let ScriptMap(m) = val.get()?.owned();
-            let mut any_error = false;
-            for (k,v) in m.into_iter() {
-                if k == "file" || k == "dir" {
-                    let s = eval_error!(ctx, v.map(|v| v.typed::<ScriptString>()
-                        .map_err(|_| "must be a string to use for the binding name".into())
-                        .and_then(|v| v.get())
-                        .map(|v| v.owned())).transpose(), { any_error = true; continue; });
-                    output_path_bindings.push((s, k == "dir"));
-                    cfg.push_path();
-                } else if k == "env" {
-                    let ScriptMap(env) = eval_error!(ctx, v.map(|v| v.typed::<ScriptMap>()
-                        .map_err(|_| "env must be a map".into())
-                        .and_then(|v| v.get())
-                        .map(|v| v.owned())).transpose_err(), { any_error = true; continue; });
-                    for (k, v) in env.into_iter() {
-                        eval_error!(ctx, v.map(|v| match_value!(v => {
-                            () => |_| {
-                                cfg.env.insert(k, None);
-                                Ok(())
-                            },
-                            => |v| {
-                                let t: grease::IntoTyped<CommandString> =
-                                    ctx.traits.get(&v).ok_or("cannot convert env value into command string")?;
-                                cfg.env.insert(k, Some(t.into_typed(v).into()));
-                                Ok(())
-                            }
-                        })).transpose_err().map_err(|e: Source<Error>| e), any_error = true);
+    let result = value
+        .map(|value| {
+            match_value!(value => {
+                ScriptMap => |val| {
+                    let ScriptMap(m) = val.get()?.owned();
+                    let mut any_error = false;
+                    for (k,v) in m.into_iter() {
+                        if k == "file" || k == "dir" {
+                            let s = eval_error!(ctx, v.map(|v| v.typed::<ScriptString>()
+                                .map_err(|_| "must be a string to use for the binding name".into())
+                                .and_then(|v| v.get())
+                                .map(|v| v.owned())).transpose(), { any_error = true; continue; });
+                            output_path_bindings.push((s, k == "dir"));
+                            cfg.push_path();
+                        } else {
+                            return Err(format!("unrecognized map directive: {}", k).into());
+                        }
                     }
-                } else if k == "pwd" {
-                    cfg.dir = Some(eval_error!(ctx, v.map(|v| {
-                            let t: grease::IntoTyped<std::path::PathBuf> =
-                                ctx.traits
-                                    .get(&v)
-                                    .ok_or("cannot convert value into path")?;
-                            Ok(t.into_typed(v).into())
-                        }).transpose_err().map_err(|e: Source<Error>| e), { any_error = true; continue; }));
-                } else if k == "creates" {
-                    let ScriptMap(bindings) = eval_error!(ctx, v.map(|v| v.typed::<ScriptMap>()
-                        .map_err(|_| "creates must be a map".into())
-                        .and_then(|v| v.get())
-                        .map(|v| v.owned())).transpose_err(), { any_error = true; continue; });
-                    for (k, v) in bindings.into_iter() {
-                        let v = eval_error!(ctx, v.map(|v| {
-                            let t: grease::IntoTyped<std::path::PathBuf> =
-                                ctx.traits.get(&v).ok_or("cannot convert creates value into path")?;
-                            Ok(t.into_typed(v))
-                        }).transpose().map_err(|e: Source<Error>| e), { any_error = true; continue; });
-                        creates.push((k, v));
-                    }
-                } else if k == "stdin" {
-                    let v = eval_error!(ctx, v.map(|v| {
-                        let t: grease::IntoTyped<StdinString> =
-                            ctx.traits
-                                .get(&v)
-                                .ok_or("cannot convert value into stdin string")?;
-                        Ok(t.into_typed(v).into())
-                    }).transpose_err().map_err(|e: Source<Error>| e), { any_error = true; continue; });
-                    cfg.stdin = Some(v);
-                } else {
-                    return Err(format!("unrecognized map directive: {}", k).into());
+                    Ok(!any_error)
+                },
+                => |v| {
+                    let t: grease::IntoTyped<CommandString> = ctx
+                        .traits
+                        .get(&v)
+                        .ok_or("cannot convert value into command string")?;
+                    cfg.push_arg(t.into_typed(v));
+                    Ok(true)
                 }
-            }
-            Ok(!any_error)
-        },
-        => |v| {
-            let t: grease::IntoTyped<CommandString> = ctx
-                .traits
-                .get(&v)
-                .ok_or("cannot convert value into command string")?;
-            cfg.push_arg(t.into_typed(v));
-            Ok(true)
-        }
-    })).transpose_err().map_err(|e: Source<Error>| e);
+            })
+        })
+        .transpose_err()
+        .map_err(|e: Source<Error>| e);
     match result {
         Ok(v) => v,
         Err(e) => {

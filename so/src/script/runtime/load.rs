@@ -8,9 +8,8 @@ use crate::script::{
 use grease::{Plan, SplitInto};
 use std::path::PathBuf;
 
-def_builtin!(ctx,args => {
-    let mut args = args.into_iter();
-    let path = args.next().ok_or("no path provided")?;
+def_builtin!(ctx => {
+    let path = ctx.args.next().ok_or("no path provided")?;
 
     let (source,path) = eval_error!(ctx, path.map(|i| i.typed::<String>().map_err(|_| "path must be a string".into())
         .and_then(|v| v.get()))
@@ -22,5 +21,6 @@ def_builtin!(ctx,args => {
         Eval::Error => return Ok(Eval::Error),
         Eval::Value(v) => v
     };
-    ctx.split_map(|ctx| apply_value(ctx, val, args, false))
+    let args = std::mem::take(&mut ctx.args);
+    ctx.split_map(move |ctx| apply_value(ctx, val, args, false))
 });

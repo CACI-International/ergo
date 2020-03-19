@@ -4,12 +4,11 @@ use super::builtin_function_prelude::*;
 use grease::{match_value, IntoValue};
 use std::str::FromStr;
 
-def_builtin!(ctx,args => {
-    let mut args = args.into_iter();
-    let val = args.next().ok_or("value not provided")?;
-    let ind = args.next().ok_or("index not provided")?;
-    if let Some(v) = args.next() {
-        ctx.error(v.with("extraneous arguments to has"));
+def_builtin!(ctx => {
+    let val = ctx.args.next().ok_or("value not provided")?;
+    let ind = ctx.args.next().ok_or("index not provided")?;
+
+    if ctx.unused_arguments() {
         return Ok(Eval::Error);
     }
 

@@ -1,13 +1,17 @@
-//! Execute commands in order.
+//! Execute values in order, returning the result of the last one.
 
 use super::builtin_function_prelude::*;
 use super::script_deep_eval;
 
-def_builtin!(ctx,args => {
-    let mut args = args.into_iter();
-    let mut val = args.next().ok_or("no commands provided")?;
-    while let Some(next) = args.next() {
+def_builtin!(ctx => {
+    let mut val = ctx.args.next().ok_or("no values provided")?;
+    while let Some(next) = ctx.args.next() {
         val = next.map(|n| script_deep_eval(val).unwrap().then(n));
     }
+
+    if ctx.unused_arguments() {
+        return Ok(Eval::Error);
+    }
+
     Ok(val.unwrap().into())
 });

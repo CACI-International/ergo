@@ -63,16 +63,12 @@ exec c++ -o { file = test } $main (influx lib) $use_path
   * Find specific examples where this is useful.
 * Add file/directory name hint to exec `file`/`dir` directives to specify final
   path component (often relevant for other programs ingesting the files).
-* Should command non-positional arguments be supported? How could they be
-  passed? Maybe a special syntax or a special type that is checked? Note that
-  most commands can already use maps as directives to achieve this in some cases
-  (like `exec` does), but it might make more sense and be easier to read by
-  distinguishing positional from non-positional arguments.
 * Self-documentation. Accessed and printed directly while evaluating scripts
   and/or accessed with a `--doc` command-line argument. Add a way to attach
   documentation to arbitrary values in scripts.
 * Allow access to logging from scripts. Allow access to stdin/stdout/stderr.
   Allow mutually exclusive use of stdin/stdout/stderr for interactive programs.
+* Allow explicit error signalling from scripts. Maybe allow catching errors?
 * Add options to suppress status output.
 
 ### Plugin notes

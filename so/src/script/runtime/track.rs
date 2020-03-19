@@ -6,12 +6,12 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-def_builtin!(ctx,args => {
-    if args.len() != 1 {
-        return Err("track expects a single argument".into());
-    }
+def_builtin!(ctx => {
+    let path = ctx.args.next().ok_or("no file provided to track")?;
 
-    let path = args.into_iter().next().unwrap();
+    if ctx.unused_arguments() {
+        return Ok(Eval::Error);
+    }
 
     let path = eval_error!(ctx, path
         .map(|p| {

@@ -3,12 +3,11 @@
 use super::builtin_function_prelude::*;
 use grease::{Plan, SplitInto};
 
-def_builtin!(ctx,args => {
-    let mut args = args.into_iter();
-    let func = args.next().ok_or("map function not provided")?;
-    let arr = args.next().ok_or("map array not provided")?;
-    if let Some(v) = args.next() {
-        ctx.error(v.with("extraneous argument to map"));
+def_builtin!(ctx => {
+    let func = ctx.args.next().ok_or("map function not provided")?;
+    let arr = ctx.args.next().ok_or("map array not provided")?;
+
+    if ctx.unused_arguments() {
         return Ok(Eval::Error);
     }
 
@@ -33,7 +32,7 @@ def_builtin!(ctx,args => {
         .into_iter()
         .map(|d| {
             let source = d.source();
-            match ctx.split_map(|ctx: &mut Context<super::Context>| func.plan_join(ctx, vec![d])) {
+            match ctx.split_map(|ctx: &mut Context<super::Context>| func.plan_join(ctx, FunctionArguments::positional(vec![d]))) {
                 Ok(v) => v.map(|v| source.with(v)),
                 Err(e) => {
                     ctx.error(source.with(e));

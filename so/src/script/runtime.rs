@@ -94,21 +94,18 @@ pub mod script_types {
 
 pub mod builtin_function_prelude {
     pub use super::script_types::*;
-    pub use super::{Error, Eval, FunctionContext, SourceContext};
+    pub use super::{Error, Eval, FunctionArguments, FunctionContext, SourceContext};
     pub use grease::{Context, Value};
 
     #[macro_export]
     macro_rules! def_builtin {
-        ( $ctx:ident , $args:ident => $body:expr ) => {
+        ( $ctx:ident => $body:expr ) => {
             pub fn builtin() -> ::grease::Value {
                 $crate::script::runtime::ScriptFunction::BuiltinFunction(Box::new(builtin_impl))
                     .into()
             }
 
             fn builtin_impl($ctx: &mut Context<FunctionContext>) -> Result<Eval<Value>, Error> {
-                let mut $args = Vec::new();
-                std::mem::swap(&mut $args, &mut $ctx.inner.args);
-
                 $body
             }
         };
@@ -280,10 +277,103 @@ impl From<Env> for Context {
     }
 }
 
+/// Function call arguments.
+#[derive(Debug)]
+pub struct FunctionArguments {
+    pub positional: std::iter::Peekable<<Vec<Source<Value>> as IntoIterator>::IntoIter>,
+    pub non_positional: BTreeMap<String, Source<Value>>,
+}
+
+impl FunctionArguments {
+    pub fn new(
+        positional: Vec<Source<Value>>,
+        non_positional: BTreeMap<String, Source<Value>>,
+    ) -> Self {
+        FunctionArguments {
+            positional: positional.into_iter().peekable(),
+            non_positional,
+        }
+    }
+
+    pub fn positional(positional: Vec<Source<Value>>) -> Self {
+        Self::new(positional, Default::default())
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn len(&self) -> usize {
+        self.positional.len()
+    }
+
+    pub fn kw(&mut self, key: &str) -> Option<Source<Value>> {
+        self.non_positional.remove(key)
+    }
+
+    pub fn peek(&mut self) -> Option<&Source<Value>> {
+        self.positional.peek()
+    }
+}
+
+impl Default for FunctionArguments {
+    fn default() -> Self {
+        Self::new(Default::default(), Default::default())
+    }
+}
+
+impl Drop for FunctionArguments {
+    /// Asserts that the function arguments have all been consumed prior to being dropped.
+    fn drop(&mut self) {
+        assert!(self.is_empty() && self.non_positional.is_empty());
+    }
+}
+
+impl Iterator for FunctionArguments {
+    type Item = Source<Value>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.positional.next()
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.positional.size_hint()
+    }
+}
+
 /// Function call context.
 pub struct FunctionContext {
     ctx: Context,
-    args: Vec<Source<Value>>,
+    args: FunctionArguments,
+}
+
+impl FunctionContext {
+    #[must_use]
+    pub fn unused_non_positional(&mut self) -> bool {
+        let kw = std::mem::take(&mut self.args.non_positional);
+        let ret = !kw.is_empty();
+        for e in kw
+            .into_iter()
+            .map(|(k, v)| v.with(Error::UnexpectedNonPositionalArgument(k)))
+        {
+            self.ctx.error(e)
+        }
+        ret
+    }
+
+    #[must_use]
+    pub fn unused_positional(&mut self) -> bool {
+        let ret = !self.args.is_empty();
+        while let Some(v) = self.args.next() {
+            self.ctx.error(v.with(Error::UnexpectedPositionalArguments));
+        }
+        ret
+    }
+
+    #[must_use]
+    pub fn unused_arguments(&mut self) -> bool {
+        self.unused_positional() | self.unused_non_positional()
+    }
 }
 
 impl std::ops::Deref for FunctionContext {
@@ -301,7 +391,7 @@ impl std::ops::DerefMut for FunctionContext {
 }
 
 impl grease::SplitInto<Context> for FunctionContext {
-    type Extra = Vec<Source<Value>>;
+    type Extra = FunctionArguments;
 
     fn split(self) -> (Context, Self::Extra) {
         (self.ctx, self.args)
@@ -335,8 +425,16 @@ pub enum Error {
     PatternArrayRestUndecidable,
     /// A pattern did not match a value.
     PatternMismatch(Value),
+    /// A command pattern has too many non-positional patterns.
+    PatternCommandTooManyNonPositional,
     /// No patterns in a match expression matched a value.
     MatchFailed(Value),
+    /// A command does not accept non-positional arguments.
+    NoNonPositionalArguments,
+    /// A command does not accept a particular non-positional argument.
+    UnexpectedNonPositionalArgument(String),
+    /// A command does not accept one or more positional arguments.
+    UnexpectedPositionalArguments,
     /// Arguments to a function did not match the function definition.
     ArgumentMismatch,
     /// An error occured while evaluating a value.
@@ -357,8 +455,21 @@ impl fmt::Display for Error {
             PatternMapExtraKeys(_) => write!(f, "map pattern doesn't match all values in map"),
             PatternArrayRestUndecidable => write!(f, "array merge pattern is undecidable"),
             PatternMismatch(_) => write!(f, "value could not be matched to pattern"),
+            PatternCommandTooManyNonPositional => write!(
+                f,
+                "command patterns can only have one non-positional pattern"
+            ),
             MatchFailed(_) => write!(f, "no patterns matched the value"),
-            ArgumentMismatch => write!(f, "arguments mismatch in function call"),
+            NoNonPositionalArguments => {
+                write!(f, "the function does not accept non-positional arguments")
+            }
+            UnexpectedNonPositionalArgument(s) => write!(
+                f,
+                "the function does not accept a non-positional argument with key '{}'",
+                s
+            ),
+            UnexpectedPositionalArguments => write!(f, "extraneous positional arguments"),
+            ArgumentMismatch => write!(f, "argument mismatch in command"),
             ValueError(s) => write!(f, "{}", s),
         }
     }
@@ -554,21 +665,13 @@ impl<T> std::ops::BitAndAssign for Eval<T> {
 /// Apply the value to the given arguments.
 ///
 /// If `env_lookup` is true and `v` is a `ScriptString`, it will be looked up in the environment.
-pub fn apply_value<I: IntoIterator<Item = Source<Value>>>(
+pub fn apply_value(
     ctx: &mut grease::Context<Context>,
     v: Source<Value>,
-    args: I,
+    args: FunctionArguments,
     env_lookup: bool,
 ) -> Result<Eval<Value>, Error> {
-    _apply_value(ctx, v, args.into_iter().peekable(), env_lookup)
-}
-
-fn _apply_value<I: Iterator<Item = Source<Value>>>(
-    ctx: &mut grease::Context<Context>,
-    v: Source<Value>,
-    mut args: std::iter::Peekable<I>,
-    env_lookup: bool,
-) -> Result<Eval<Value>, Error> {
+    let mut args = args.into_iter();
     let v_source = v.source();
 
     let result = v.map(|v| {
@@ -615,7 +718,7 @@ fn _apply_value<I: Iterator<Item = Source<Value>>>(
 
                 let (source,val) = val.take();
 
-                _apply_value(ctx, Source::from((v_source,source)).with(val), args, false)
+                apply_value(ctx, Source::from((v_source,source)).with(val), args, false)
             },
             ScriptMap => |val| {
                 let index = eval_error!(ctx, args.next().unwrap().map(|v|
@@ -633,10 +736,10 @@ fn _apply_value<I: Iterator<Item = Source<Value>>>(
 
                 let (source,val) = val.take();
 
-                _apply_value(ctx, Source::from((v_source,source)).with(val), args, false)
+                apply_value(ctx, Source::from((v_source,source)).with(val), args, false)
             },
             ScriptFunction => |val| {
-                value_now!(val).plan_join(ctx, args.collect())
+                value_now!(val).plan_join(ctx, args)
             },
             => |v| {
                 Err(Error::NonCallableExpression(v).into())
@@ -676,7 +779,7 @@ fn _apply_pattern(
         Any => (),
         Literal(e) => match (e.plan(ctx), val) {
             (Eval::Value(result), Eval::Value(val)) => {
-                // FIXME do deep comparison instead of by value id
+                // FIXME do deep comparison instead of by value id?
                 if *result != *val {
                     let mut err: SourceContext<Error> = source
                         .with(Error::PatternMismatch((*result).clone()))
@@ -988,11 +1091,70 @@ fn pattern_array_rest(
 pub fn apply_command_pattern(
     ctx: &mut grease::Context<Context>,
     pat: CmdPat,
-    vals: Vec<Source<Value>>,
+    mut args: FunctionArguments,
 ) -> Result<Env, Vec<SourceContext<Error>>> {
     let pat = pat.unwrap();
-    let vals: Vec<_> = vals.into_iter().map(Eval::Value).collect();
-    pattern_array(ctx, &pat, &vals)
+    let kw = std::mem::take(&mut args.non_positional);
+    let vals: Vec<_> = args.map(Eval::Value).collect();
+
+    // Partition non-positional/positional argument patterns
+    let mut pos_args = Vec::new();
+    let mut non_pos_args = Vec::new();
+    for p in pat {
+        let (psource, p) = p.take();
+        if let ArrayPattern::Rest(p) = p {
+            if let Pattern::Map(_) = &*p {
+                non_pos_args.push(p);
+            } else {
+                pos_args.push(psource.with(ArrayPattern::Rest(p)));
+            }
+        } else {
+            pos_args.push(psource.with(p));
+        }
+    }
+
+    // If more than one non-positional pattern, error
+    if non_pos_args.len() > 1 {
+        let vals = non_pos_args.get(1..).unwrap();
+        let mut err: SourceContext<Error> = non_pos_args
+            .as_slice()
+            .into_source()
+            .with(Error::PatternCommandTooManyNonPositional)
+            .into();
+        for a in vals {
+            err.add_context(a.source().with("extra non-positional argument".into()));
+        }
+        Err(vec![err])
+    } else {
+        // Get non-positional pattern bindings
+        let non_pos_bindings = if let Some(non_pos_arg) = non_pos_args.into_iter().next() {
+            apply_pattern(
+                ctx,
+                non_pos_arg,
+                Eval::Value(kw.into_source().map(|kw| ScriptMap(kw).into_value())),
+            )
+        } else if !kw.is_empty() {
+            Err(kw
+                .into_iter()
+                .map(|(k, v)| v.with(Error::UnexpectedNonPositionalArgument(k)).into())
+                .collect())
+        } else {
+            Ok(Env::default())
+        };
+        // Merge with positional pattern bindings, if applicable
+        let pos_bindings = pattern_array(ctx, &pos_args, &vals);
+        match (non_pos_bindings, pos_bindings) {
+            (Ok(mut a), Ok(mut b)) => {
+                a.append(&mut b);
+                Ok(a)
+            }
+            (Err(mut a), Err(mut b)) => {
+                a.append(&mut b);
+                Err(a)
+            }
+            (a, b) => a.and(b),
+        }
+    }
 }
 
 impl Plan<FunctionContext> for &'_ ScriptFunction {
@@ -1001,14 +1163,11 @@ impl Plan<FunctionContext> for &'_ ScriptFunction {
     fn plan(self, ctx: &mut grease::Context<FunctionContext>) -> Self::Output {
         match self {
             ScriptFunction::UserFunction(pat, e, env) => {
-                // A FunctionContext is only used once, so swap out the arguments.
-                let mut args = Vec::new();
-                std::mem::swap(&mut ctx.inner.args, &mut args);
-
                 let src = e.source();
 
                 let mut env = vec![env.clone()];
                 std::mem::swap(&mut env, &mut ctx.inner.env);
+                let args = std::mem::take(&mut ctx.args);
                 use grease::SplitInto;
                 let ret =
                     match ctx.split_map(move |ctx| apply_command_pattern(ctx, pat.clone(), args)) {
@@ -1112,6 +1271,7 @@ impl Plan<Context> for Expression {
 
                 let mut had_error = false;
                 let mut vals = Vec::new();
+                let mut kw_vals = BTreeMap::new();
                 for a in args {
                     let (_merge_source, (merge, val)) = a.take();
                     if merge {
@@ -1120,8 +1280,8 @@ impl Plan<Context> for Expression {
                             ScriptArray => |val| {
                                 vals.extend(value_now!(val).owned().0);
                             },
-                            ScriptMap => |_| {
-                                // TODO
+                            ScriptMap => |val| {
+                                kw_vals.extend(value_now!(val).owned().0);
                             },
                             => |_| {
                                 ctx.error(
@@ -1140,7 +1300,9 @@ impl Plan<Context> for Expression {
                 }
 
                 match f {
-                    Eval::Value(f) => apply_value(ctx, f, vals, true),
+                    Eval::Value(f) => {
+                        apply_value(ctx, f, FunctionArguments::new(vals, kw_vals), true)
+                    }
                     Eval::Error => Ok(Eval::Error),
                 }
             }

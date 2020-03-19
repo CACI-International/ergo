@@ -565,6 +565,35 @@ where
     }
 }
 
+impl<'a, T, U> IntoSource for std::collections::BTreeMap<T, U>
+where
+    T: Ord,
+    U: IntoSource,
+{
+    type Output = std::collections::BTreeMap<T, Source<U::Output>>;
+
+    fn into_source(self) -> Source<Self::Output> {
+        let (value, rest): (Vec<_>, Vec<_>) = self
+            .into_iter()
+            .map(|(k, v)| {
+                let v = v.into_source();
+                let source = v.source_factory();
+                let loc = v.location.clone();
+                ((k, v), (loc, SourceFactoryRef(source)))
+            })
+            .unzip();
+        let (locs, srcs): (Vec<_>, Vec<_>) = rest.into_iter().unzip();
+        let location = locs.into_iter().sum();
+        let source = srcs.into_iter().sum();
+
+        Source {
+            value: value.into_iter().collect(),
+            location,
+            source,
+        }
+    }
+}
+
 impl<T: IntoSource> IntoSource for Option<T> {
     type Output = Option<Source<T::Output>>;
 
