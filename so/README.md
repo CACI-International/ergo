@@ -17,19 +17,19 @@ used to estimate future performance.
 ```sh
 #!/usr/bin/env so
 
-use_path = { env = { PATH = $ } }
+use_path = {env = {PATH = $}}
 
 # Get influxdb-cxx
 influx = {
   exec git clone https://github.com/awegrzyn/influxdb-cxx.git { dir = checkout }
   influx-include = (checkout include .)
-  exec cmake -DCMAKE_BUILD_TYPE=Release -S (checkout .) -B { dir = builddir } $use_path
-  exec make InfluxDB $use_path {
+  exec ^$use_path cmake -DCMAKE_BUILD_TYPE=Release -S (checkout .) -B { dir = builddir }
+  exec ^{
     pwd = (builddir .)
     creates = {
       influx-lib = (builddir lib libInfluxDB.so .)
     }
-  }
+  } ^$use_path make InfluxDB
 
   {
     include = (checkout include .)
@@ -41,13 +41,13 @@ influx = {
 # Compile main
 exec c++ -std=c++17 -c -o { file = main } -I (influx include) (track main.cpp)
 # Link program
-exec c++ -o { file = test } $main (influx lib) $use_path
+exec ^$use_path c++ -o { file = test } $main (influx lib)
 
 # Create output map
 {
   dist = (exec ln -f $test influx-test)
   clean = (exec rm -f influx-test)
-  * = ($test { env = { LD_LIBRARY_PATH = (influx libpath) } })
+  * = ($test ^{env = {LD_LIBRARY_PATH = (influx libpath)}})
 }
 ```
 
