@@ -66,10 +66,11 @@ mod pattern {
 
     /// An array item pattern.
     fn array_item<'a>() -> Parser<'a, Source<ArrayPattern>> {
-        (sym(Token::Caret).opt() + pattern()).map(|(c, p)| match c {
-            Some(c) => (c, p).into_source().map(|(_, p)| ArrayPattern::Rest(p)),
-            None => p.source().with(ArrayPattern::Item(p)),
-        })
+        !function_delim()
+            * (sym(Token::Caret).opt() + pattern()).map(|(c, p)| match c {
+                Some(c) => (c, p).into_source().map(|(_, p)| ArrayPattern::Rest(p)),
+                None => p.source().with(ArrayPattern::Item(p)),
+            })
     }
 }
 
@@ -140,8 +141,8 @@ mod expression {
     /// A function expression.
     fn function<'a>() -> Parser<'a, Expr> {
         let tok = tag("fn");
-        let pat =
-            space() * sym(Token::OpenParen) * pattern::command_pattern() - sym(Token::CloseParen);
+        let end_tok = function_delim();
+        let pat = req_space() * pattern::command_pattern() - req_space() - end_tok;
         let rest = req_space() * extarg();
         (tok + pat + rest.expect("fn argument")).map(|res| {
             let p = res.into_source();
@@ -279,6 +280,11 @@ fn spacenl<'a>() -> Parser<'a, ()> {
 /// A separating delimiter.
 fn delim<'a>() -> Parser<'a, ()> {
     space() * one_of([Token::Newline, Token::Comma, Token::Semicolon].as_ref()) * spacenl()
+}
+
+/// A function parameter delimiter.
+fn function_delim<'a>() -> Parser<'a, Source<()>> {
+    tag("->")
 }
 
 #[cfg(test)]
@@ -656,10 +662,11 @@ mod test {
             assert(
                 &[
                     String("fn".into()),
-                    OpenParen,
+                    Whitespace,
                     Caret,
                     String("_".into()),
-                    CloseParen,
+                    Whitespace,
+                    String("->".into()),
                     Whitespace,
                     String("howdy".into()),
                 ],

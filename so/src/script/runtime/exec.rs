@@ -113,6 +113,12 @@ def_builtin!(ctx => {
     all_success &= !ctx.unused_arguments();
 
     if !all_success {
+        for (binding, _) in output_path_bindings {
+            ctx.env_insert(binding.unwrap(), Eval::Error);
+        }
+        for (binding, _) in creates {
+            ctx.env_insert(binding, Eval::Error);
+        }
         return Ok(Eval::Error);
     }
 

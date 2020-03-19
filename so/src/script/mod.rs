@@ -129,10 +129,10 @@ mod test {
 
     #[test]
     fn function() -> Result<(), String> {
-        script_eval_to("f = fn(^_) a\nf something", SRString("a"))?;
-        script_eval_to("second = fn(_ b ^_) $b\nsecond a b", SRString("b"))?;
+        script_eval_to("f = fn ^_ -> a\nf something", SRString("a"))?;
+        script_eval_to("second = fn _ b ^_ -> $b\nsecond a b", SRString("b"))?;
         script_eval_to(
-            "f = fn(a _ b ^_) {\n  a = $a\n  b = $b\n}\nf 1 2 3",
+            "f = fn a _ b ^_ -> {\n  a = $a\n  b = $b\n}\nf 1 2 3",
             SRMap(&[("a", SRString("1")), ("b", SRString("3"))]),
         )
     }
@@ -216,7 +216,7 @@ mod test {
         #[test]
         fn command_array() -> Result<(), String> {
             script_eval_to(
-                "to_array = fn(^args) $args\nto_array a ^[b,c] d ^[e,f]",
+                "to_array = fn ^args -> $args\nto_array a ^[b,c] d ^[e,f]",
                 SRArray(&[
                     SRString("a"),
                     SRString("b"),
@@ -231,19 +231,19 @@ mod test {
         #[test]
         fn command_block() -> Result<(), String> {
             script_eval_to(
-                "to_array = fn(^args ^{^_}) $args\nto_array a ^{k=3} b",
+                "to_array = fn ^args ^{^_} -> $args\nto_array a ^{k=3} b",
                 SRArray(&[SRString("a"), SRString("b")]),
             )
         }
 
         #[test]
         fn command_block_no_pattern() -> Result<(), String> {
-            script_fail("to_array = fn(^args) $args\nto_array a ^{k=3} b")
+            script_fail("to_array = fn ^args -> $args\nto_array a ^{k=3} b")
         }
 
         #[test]
         fn command_invalid() -> Result<(), String> {
-            script_fail("f = fn(^_) a\nf ^hello")
+            script_fail("f = fn ^_ -> a\nf ^hello")
         }
     }
 
