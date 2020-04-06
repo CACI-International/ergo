@@ -1,7 +1,7 @@
 //! Script loading and execution.
 
-use crate::constants::PROGRAM_NAME;
-use grease::{Context, Plan};
+use crate::constants::*;
+use grease::{Context, IntoValue, Plan};
 
 mod ast;
 mod runtime;
@@ -21,6 +21,8 @@ pub fn script_context(
 ) -> Result<Context<runtime::Context>, grease::BuilderError> {
     let mut ctx = runtime::Context::default();
 
+    let mut insert = |k: &str, v| ctx.env_insert(k.into(), Source::builtin(v));
+
     // Add initial environment functions
     let env = vec![
         (PROGRAM_NAME, runtime::load::builtin()),
@@ -32,7 +34,39 @@ pub fn script_context(
         ("track", runtime::track::builtin()),
     ];
     for (k, v) in env.into_iter() {
-        ctx.env_insert(k.into(), Source::builtin(v));
+        insert(k, v);
+    }
+
+    // Check whether we're in a project hierarchy
+    let proj_dir_name = format!("{}proj", PROGRAM_NAME);
+    let proj_dir = std::env::current_dir()
+        .unwrap()
+        .ancestors()
+        .find(|p| {
+            let mut d = p.to_path_buf();
+            d.push(&proj_dir_name);
+            d.is_dir()
+        })
+        .map(ToOwned::to_owned);
+
+    if let Some(mut dir) = proj_dir {
+        insert(PROJECT_ROOT_BINDING, dir.clone().into_value());
+        dir.push(proj_dir_name);
+        insert(
+            LOAD_PATH_BINDING,
+            types::ScriptArray(vec![Source::builtin(dir.into_value())]).into_value(),
+        );
+    } else {
+        insert(PROJECT_ROOT_BINDING, ().into_value());
+        if let Some(dirs) = app_dirs() {
+            insert(
+                LOAD_PATH_BINDING,
+                types::ScriptArray(vec![Source::builtin(
+                    dirs.config_dir().to_owned().into_value(),
+                )])
+                .into_value(),
+            );
+        }
     }
 
     cb.build_with(ctx).map(|mut ctx| {

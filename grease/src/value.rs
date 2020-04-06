@@ -448,6 +448,17 @@ impl Value {
         }
     }
 
+    /// Try to convert this Value by reference to a TypedValue reference.
+    ///
+    /// If the conversion fails, a unit Err result is returned.
+    pub fn typed_ref<'a, T: GetValueType>(&'a mut self) -> Result<TypedValueRef<'a, T>, ()> {
+        if *self.value_type() == T::value_type() {
+            Ok(TypedValueRef::new(self))
+        } else {
+            Err(())
+        }
+    }
+
     /// Get the value identifier.
     ///
     /// This identifier is deterministically derived from the value type and dependencies, so is
@@ -511,7 +522,7 @@ macro_rules! match_value {
 }
 
 /// An alias of ValueData that can be dereferenced to T.
-pub struct Alias<T>(Arc<ValueData>, std::marker::PhantomData<T>);
+pub struct Alias<T>(Arc<ValueData>, std::marker::PhantomData<Arc<T>>);
 
 impl<T> Alias<T> {
     /// Create a new alias from a ValueData.
@@ -563,7 +574,7 @@ impl<T: Sync> AsRef<T> for Alias<T> {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TypedValue<T> {
     inner: Value,
-    phantom: std::marker::PhantomData<T>,
+    phantom: std::marker::PhantomData<Arc<T>>,
 }
 
 impl<T: GetValueType> TypedValue<T> {
@@ -622,6 +633,10 @@ impl<T: GetValueType> TypedValue<T> {
             deps,
         )
     }
+
+    pub fn as_ref<'a>(&'a mut self) -> TypedValueRef<'a, T> {
+        TypedValueRef::new(&mut self.inner)
+    }
 }
 
 impl<T> From<T> for TypedValue<T>
@@ -630,6 +645,30 @@ where
 {
     fn from(v: T) -> Self {
         TypedValue::constant(v)
+    }
+}
+
+pub struct TypedValueRef<'a, T> {
+    inner: &'a mut Value,
+    phantom: std::marker::PhantomData<&'a T>,
+}
+
+impl<'a, T> TypedValueRef<'a, T> {
+    fn new(inner: &'a mut Value) -> Self {
+        TypedValueRef {
+            inner,
+            phantom: Default::default(),
+        }
+    }
+}
+
+impl<'a, T: Sync> TypedValueRef<'a, T> {
+    /// Get the result of the value.
+    ///
+    /// In general, this should only be called on a top-level value. This will block the caller
+    /// until the result is available.
+    pub fn get(self) -> Result<&'a T, String> {
+        futures::executor::block_on(self)
     }
 }
 
@@ -665,6 +704,15 @@ impl<T> Future for TypedValue<T> {
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         Future::poll(unsafe { self.map_unchecked_mut(|s| &mut s.inner) }, cx)
             .map(|v| v.map(|data| unsafe { Alias::new(data) }))
+    }
+}
+
+impl<'a, T: 'a + Sync> Future for TypedValueRef<'a, T> {
+    type Output = Result<&'a T, String>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        Future::poll(unsafe { self.map_unchecked_mut(|s| s.inner) }, cx)
+            .map(|v| v.map(|v| unsafe { std::mem::transmute::<&T, &'a T>((*v).as_ref::<T>()) }))
     }
 }
 

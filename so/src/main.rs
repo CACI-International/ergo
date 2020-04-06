@@ -8,6 +8,13 @@ mod script;
 /// Constant values shared throughout the program.
 mod constants {
     pub const PROGRAM_NAME: &'static str = env!("CARGO_PKG_NAME");
+    pub const PROJECT_ROOT_BINDING: &'static str = "project-root";
+    pub const LOAD_PATH_BINDING: &'static str = "load-path";
+
+    use directories;
+    pub fn app_dirs() -> Option<directories::ProjectDirs> {
+        directories::ProjectDirs::from("", "", PROGRAM_NAME)
+    }
 }
 
 use constants::PROGRAM_NAME;
@@ -116,7 +123,7 @@ fn main() {
     )
     .expect("failed to create script context");
 
-    // Set therad ids in the logger, as reported by the task manager.
+    // Set thread ids in the logger, as reported by the task manager.
     {
         let mut l = logger.lock().unwrap();
         l.set_thread_ids(ctx.task.thread_ids().iter().cloned());

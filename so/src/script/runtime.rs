@@ -5,10 +5,12 @@ use super::ast::{
 };
 use grease::future::{BoxFuture, FutureExt};
 use grease::{make_value, match_value, IntoValue, Plan, Value};
+use crate::constants::LOAD_PATH_BINDING;
 use log::trace;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::iter::FromIterator;
+use std::path::PathBuf;
 use std::str::FromStr;
 
 pub mod exec;
@@ -94,7 +96,7 @@ pub mod script_types {
 
 pub mod builtin_function_prelude {
     pub use super::script_types::*;
-    pub use super::{Error, Eval, FunctionArguments, FunctionContext, SourceContext};
+    pub use super::{Error, Eval, FunctionArguments, FunctionContext, LoadScript, SourceContext};
     pub use grease::{Context, Value};
 
     #[macro_export]
@@ -129,11 +131,28 @@ pub mod builtin_function_prelude {
         };
     }
 
+    #[macro_export]
+    macro_rules! script_value_as {
+        ($ctx:expr , $val:expr , $ty:ty , $err:expr) => {
+            $crate::eval_error!(
+                $ctx,
+                $val.map(|v| {
+                    v.typed::<$ty>()
+                        .map_err(|_| $err.into())
+                        .and_then(|v| v.get())
+                })
+                .transpose_err()
+            )
+        };
+    }
+
     pub use crate::def_builtin;
     pub use crate::eval_error;
+    pub use crate::script_value_as;
 }
 
 use builtin_function_prelude::eval_error;
+use builtin_function_prelude::script_value_as;
 use script_types::*;
 
 fn get_values<'a>(
@@ -213,6 +232,8 @@ pub fn script_deep_eval(v: Source<Value>) -> Source<Value> {
 pub struct Context {
     env: Vec<Env>,
     errors: Vec<SourceContext<Error>>,
+    working_dir: PathBuf,
+    load_cache: BTreeMap<PathBuf, Eval<Source<Value>>>,
 }
 
 impl Default for Context {
@@ -221,6 +242,8 @@ impl Default for Context {
             // The default context should start with an empty map as the base.
             env: vec![Default::default()],
             errors: vec![],
+            working_dir: std::env::current_dir().unwrap(),
+            load_cache: Default::default(),
         }
     }
 }
@@ -242,7 +265,7 @@ impl Context {
         self.env.last_mut().unwrap().remove(k)
     }
 
-    pub fn env_get<Q: ?Sized>(&mut self, k: &Q) -> Option<&Eval<Source<Value>>>
+    pub fn env_get<Q: ?Sized>(&self, k: &Q) -> Option<&Eval<Source<Value>>>
     where
         String: std::borrow::Borrow<Q>,
         Q: Ord,
@@ -268,11 +291,58 @@ impl Context {
     }
 }
 
-impl From<Env> for Context {
-    fn from(v: Env) -> Self {
-        Context {
-            env: vec![v],
-            errors: vec![],
+pub trait LoadScript {
+    fn load(&mut self, s: &str) -> Result<Eval<Source<Value>>, Error>;
+}
+
+impl LoadScript for grease::Context<Context> {
+    fn load(&mut self, s: &str) -> Result<Eval<Source<Value>>, Error> {
+        let loadpath = match self.env_get(LOAD_PATH_BINDING) {
+            Some(v) => match v {
+                Eval::Error => return Ok(Eval::Error),
+                Eval::Value(v) => {
+                    script_value_as!(self, v.clone(), ScriptArray, format!("{} must be an array", LOAD_PATH_BINDING))
+                        .owned()
+                        .0
+                }
+            },
+            None => vec![],
+        };
+
+        let mut paths: Vec<PathBuf> = Vec::new();
+        paths.push(self.working_dir.clone());
+        for path in loadpath {
+            paths.push(
+                script_value_as!(self, path, PathBuf, format!("{} item must be a path", LOAD_PATH_BINDING))
+                    .to_path_buf(),
+            );
+        }
+
+        let full_path = paths.iter().find_map(|path| {
+            let mut p = path.to_path_buf();
+            p.push(s);
+            if p.is_file() {
+                Some(p)
+            } else {
+                None
+            }
+        });
+        if let Some(p) = full_path {
+            let p = p.canonicalize().unwrap(); // unwrap because is_file() should guarantee that canonicalize will succeed
+            if !self.load_cache.contains_key(&p) {
+                let mut old_work_dir = p.parent().unwrap().into(); // unwrap because is_file() necessitates a parent exists
+                std::mem::swap(&mut old_work_dir, &mut self.working_dir);
+                let result =
+                    match super::Script::load(Source::new(super::ast::FileSource(p.clone()))) {
+                        Err(e) => return Err(Error::ValueError(e.to_string())),
+                        Ok(script) => script.plan(self),
+                    };
+                self.load_cache.insert(p.clone(), result);
+                std::mem::swap(&mut old_work_dir, &mut self.working_dir);
+            }
+            Ok(self.load_cache.get(&p).unwrap().clone()) // unwrap because prior statement ensures the key exists
+        } else {
+            Err(Error::LoadFailed(s.to_owned()))
         }
     }
 }
@@ -437,6 +507,8 @@ pub enum Error {
     UnexpectedPositionalArguments,
     /// Arguments to a function did not match the function definition.
     ArgumentMismatch,
+    /// A load failed to find a module.
+    LoadFailed(String),
     /// An error occured while evaluating a value.
     ValueError(String),
 }
@@ -470,6 +542,7 @@ impl fmt::Display for Error {
             ),
             UnexpectedPositionalArguments => write!(f, "extraneous positional arguments"),
             ArgumentMismatch => write!(f, "argument mismatch in command"),
+            LoadFailed(s) => write!(f, "failed to find module matching {}", s),
             ValueError(s) => write!(f, "{}", s),
         }
     }

@@ -399,6 +399,13 @@ impl<T> Source<T> {
         let r: &T = AsRef::<T>::as_ref(self);
         self.source().map(move |()| r)
     }
+
+    /// Convert a &mut Source<T> to a Source<&mut T>.
+    pub fn as_mut(&mut self) -> Source<&mut T> {
+        let src = self.source();
+        let r: &mut T = AsMut::<T>::as_mut(self);
+        src.map(move |()| r)
+    }
 }
 
 impl<T, E> Source<Result<T, E>> {
