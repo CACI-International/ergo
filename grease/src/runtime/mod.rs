@@ -23,9 +23,16 @@ trait CallMut {
     {
         let selfptr = self as *mut Self;
         unsafe {
-            let (nself, o) = f(selfptr.read());
-            selfptr.write(nself);
-            o
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(selfptr.read()))) {
+                Ok((nself, o)) => {
+                    selfptr.write(nself);
+                    o
+                }
+                Err(_) => {
+                    // inconsistent memory ownership, no choice but to abort
+                    std::process::abort()
+                }
+            }
         }
     }
 }
