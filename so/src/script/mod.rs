@@ -327,7 +327,9 @@ mod test {
 
         #[test]
         fn array_mismatch() -> Result<(), String> {
-            script_fail("[a,b] = [1,2,3]")
+            script_fail("[a,b] = [1,2,3]")?;
+            script_fail("[a,b,c] = [1,2]")?;
+            Ok(())
         }
 
         #[test]

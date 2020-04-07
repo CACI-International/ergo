@@ -15,5 +15,5 @@ def_builtin!(ctx => {
         Eval::Value(v) => v
     };
     let args = std::mem::take(&mut ctx.args);
-    ctx.split_map(move |ctx| apply_value(ctx, source.with(val.unwrap()), args, false))
+    ctx.split_map(move |ctx| apply_value(ctx, source.with(val.unwrap()), args.unchecked(), false))
 });

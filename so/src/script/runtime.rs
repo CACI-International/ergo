@@ -3,9 +3,9 @@
 use super::ast::{
     ArrayPattern, CmdPat, Expression, IntoSource, MapPattern, MergeExpression, Pat, Pattern, Source,
 };
+use crate::constants::LOAD_PATH_BINDING;
 use grease::future::{BoxFuture, FutureExt};
 use grease::{make_value, match_value, IntoValue, Plan, Value};
-use crate::constants::LOAD_PATH_BINDING;
 use log::trace;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -301,9 +301,14 @@ impl LoadScript for grease::Context<Context> {
             Some(v) => match v {
                 Eval::Error => return Ok(Eval::Error),
                 Eval::Value(v) => {
-                    script_value_as!(self, v.clone(), ScriptArray, format!("{} must be an array", LOAD_PATH_BINDING))
-                        .owned()
-                        .0
+                    script_value_as!(
+                        self,
+                        v.clone(),
+                        ScriptArray,
+                        format!("{} must be an array", LOAD_PATH_BINDING)
+                    )
+                    .owned()
+                    .0
                 }
             },
             None => vec![],
@@ -313,8 +318,13 @@ impl LoadScript for grease::Context<Context> {
         paths.push(self.working_dir.clone());
         for path in loadpath {
             paths.push(
-                script_value_as!(self, path, PathBuf, format!("{} item must be a path", LOAD_PATH_BINDING))
-                    .to_path_buf(),
+                script_value_as!(
+                    self,
+                    path,
+                    PathBuf,
+                    format!("{} item must be a path", LOAD_PATH_BINDING)
+                )
+                .to_path_buf(),
             );
         }
 
@@ -347,26 +357,22 @@ impl LoadScript for grease::Context<Context> {
     }
 }
 
-/// Function call arguments.
+/// Function call arguments interface.
 #[derive(Debug)]
-pub struct FunctionArguments {
+pub struct UncheckedFunctionArguments {
     pub positional: std::iter::Peekable<<Vec<Source<Value>> as IntoIterator>::IntoIter>,
     pub non_positional: BTreeMap<String, Source<Value>>,
 }
 
-impl FunctionArguments {
-    pub fn new(
+impl UncheckedFunctionArguments {
+    fn new(
         positional: Vec<Source<Value>>,
         non_positional: BTreeMap<String, Source<Value>>,
     ) -> Self {
-        FunctionArguments {
+        UncheckedFunctionArguments {
             positional: positional.into_iter().peekable(),
             non_positional,
         }
-    }
-
-    pub fn positional(positional: Vec<Source<Value>>) -> Self {
-        Self::new(positional, Default::default())
     }
 
     pub fn is_empty(&self) -> bool {
@@ -384,22 +390,20 @@ impl FunctionArguments {
     pub fn peek(&mut self) -> Option<&Source<Value>> {
         self.positional.peek()
     }
+
+    pub fn clear(&mut self) {
+        while self.positional.next().is_some() {}
+        self.non_positional.clear()
+    }
 }
 
-impl Default for FunctionArguments {
+impl Default for UncheckedFunctionArguments {
     fn default() -> Self {
         Self::new(Default::default(), Default::default())
     }
 }
 
-impl Drop for FunctionArguments {
-    /// Asserts that the function arguments have all been consumed prior to being dropped.
-    fn drop(&mut self) {
-        assert!(self.is_empty() && self.non_positional.is_empty());
-    }
-}
-
-impl Iterator for FunctionArguments {
+impl Iterator for UncheckedFunctionArguments {
     type Item = Source<Value>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -408,6 +412,72 @@ impl Iterator for FunctionArguments {
 
     fn size_hint(&self) -> (usize, Option<usize>) {
         self.positional.size_hint()
+    }
+}
+
+/// Function call arguments.
+///
+/// Checks whether all arguments have been consumed.
+#[derive(Debug, Default)]
+pub struct FunctionArguments {
+    inner: UncheckedFunctionArguments,
+}
+
+impl FunctionArguments {
+    pub fn new(
+        positional: Vec<Source<Value>>,
+        non_positional: BTreeMap<String, Source<Value>>,
+    ) -> Self {
+        FunctionArguments {
+            inner: UncheckedFunctionArguments::new(positional, non_positional),
+        }
+    }
+
+    pub fn positional(positional: Vec<Source<Value>>) -> Self {
+        Self::new(positional, Default::default())
+    }
+
+    pub fn unchecked(mut self) -> UncheckedFunctionArguments {
+        std::mem::take(&mut self.inner)
+    }
+}
+
+impl Iterator for FunctionArguments {
+    type Item = Source<Value>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next()
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
+}
+
+impl std::ops::Deref for FunctionArguments {
+    type Target = UncheckedFunctionArguments;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl std::ops::DerefMut for FunctionArguments {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
+
+impl Drop for FunctionArguments {
+    /// Asserts that the function arguments have all been consumed prior to being dropped.
+    fn drop(&mut self) {
+        assert!(self.inner.is_empty() && self.inner.non_positional.is_empty());
+    }
+}
+
+impl From<UncheckedFunctionArguments> for FunctionArguments {
+    fn from(inner: UncheckedFunctionArguments) -> Self {
+        FunctionArguments { inner }
     }
 }
 
@@ -741,10 +811,9 @@ impl<T> std::ops::BitAndAssign for Eval<T> {
 pub fn apply_value(
     ctx: &mut grease::Context<Context>,
     v: Source<Value>,
-    args: FunctionArguments,
+    mut args: UncheckedFunctionArguments,
     env_lookup: bool,
 ) -> Result<Eval<Value>, Error> {
-    let mut args = args.into_iter();
     let v_source = v.source();
 
     let result = v.map(|v| {
@@ -812,7 +881,7 @@ pub fn apply_value(
                 apply_value(ctx, Source::from((v_source,source)).with(val), args, false)
             },
             ScriptFunction => |val| {
-                value_now!(val).plan_join(ctx, args)
+                value_now!(val).plan_join(ctx, args.into())
             },
             => |v| {
                 Err(Error::NonCallableExpression(v).into())
@@ -1260,7 +1329,13 @@ impl Plan<FunctionContext> for &'_ ScriptFunction {
 
                 Ok(ret)
             }
-            ScriptFunction::BuiltinFunction(f) => f(ctx),
+            ScriptFunction::BuiltinFunction(f) => match f(ctx) {
+                Err(e) => {
+                    ctx.args.clear();
+                    Err(e)
+                }
+                v => v,
+            },
         }
     }
 }
@@ -1374,7 +1449,7 @@ impl Plan<Context> for Expression {
 
                 match f {
                     Eval::Value(f) => {
-                        apply_value(ctx, f, FunctionArguments::new(vals, kw_vals), true)
+                        apply_value(ctx, f, UncheckedFunctionArguments::new(vals, kw_vals), true)
                     }
                     Eval::Error => Ok(Eval::Error),
                 }
