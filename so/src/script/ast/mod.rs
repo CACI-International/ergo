@@ -198,7 +198,7 @@ impl std::ops::Add for SourceFactoryRef {
                 if std::sync::Arc::ptr_eq(a, b) {
                     self
                 } else {
-                    panic!("Cannot combine inequivalent source factories.");
+                    SourceFactoryRef(None)
                 }
             }
             (Some(_), _) => self,

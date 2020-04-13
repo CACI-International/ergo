@@ -27,6 +27,7 @@ pub fn script_context(
     let env = vec![
         (PROGRAM_NAME, runtime::load::builtin()),
         ("exec", runtime::exec::builtin()),
+        ("fold", runtime::fold::builtin()),
         ("has", runtime::has::builtin()),
         ("map", runtime::map::builtin()),
         ("path", runtime::path::builtin()),

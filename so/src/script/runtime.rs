@@ -14,6 +14,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 pub mod exec;
+pub mod fold;
 pub mod has;
 pub mod load;
 pub mod map;
