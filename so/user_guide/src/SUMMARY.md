@@ -13,7 +13,6 @@
   - [Type System](details/type_system.md)
   - [Semantics](details/semantics.md)
 - [RFC](rfc/intro.md)
-  - [Bind Syntax](rfc/bind_syntax.md)
   - [Macros](rfc/macros.md)
   - [Merge](rfc/merge.md)
   - [Closure Environment](rfc/closure_env.md)

@@ -11,7 +11,11 @@ pub type Parser<'a, T> = pom::parser::Parser<'a, Tok, T>;
 /// Return a parser for a script.
 pub fn script<'a>() -> Parser<'a, Script> {
     spacenl()
-        * list(expression::merge_with(expression::expression()), delim()).map(|e| e.into_source())
+        * list(
+            expression::merge_with(expression::expression(true)),
+            delim(),
+        )
+        .map(|e| e.into_source())
         - spacenl()
         - end()
 }
@@ -37,7 +41,7 @@ mod pattern {
 
     /// A literal pattern.
     fn literal<'a>() -> Parser<'a, Pat> {
-        (sym(Token::Equal) + expression::extarg())
+        (sym(Token::Equal) + expression::arg())
             .map(|m| m.into_source().map(|(_, e)| Pattern::Literal(e)))
     }
 
@@ -81,7 +85,7 @@ mod expression {
     /// A set expression.
     fn set<'a>() -> Parser<'a, Expr> {
         let parsed =
-            pattern::pattern() - space() - sym(Token::Equal).discard() - space() + extarg();
+            pattern::pattern() - space() - sym(Token::Equal).discard() - space() + expression(true);
         parsed.map(|res| {
             res.into_source()
                 .map(|(pat, expr)| Expression::Set(pat.into(), expr.into()))
@@ -102,12 +106,13 @@ mod expression {
             _ => false,
         })
         .repeat(1..)
-        .convert(|e| expression().parse(&e));
+        .convert(|e| expression(false).parse(&e));
         let self_nested =
             call(|| nested()).map(|e| e.clone().with(Expression::Command(e.into(), vec![])));
 
-        let paren_expr =
-            sym(Token::OpenParen) * spacenl() * expression() - spacenl() - sym(Token::CloseParen);
+        let paren_expr = sym(Token::OpenParen) * spacenl() * expression(false)
+            - spacenl()
+            - sym(Token::CloseParen);
         let empty_parens = (sym(Token::OpenParen) + sym(Token::CloseParen))
             .map(|res| res.into_source().with(Expression::Empty));
         let dollar = sym(Token::Dollar) * (word_nested | array() | block() | self_nested);
@@ -121,19 +126,34 @@ mod expression {
         call(|| nested() | eqword().map(|s| s.map(Expression::String)) | array() | block())
     }
 
-    /// An expression in argument position, or special expressions (if and fn)
-    pub fn extarg<'a>() -> Parser<'a, Expr> {
-        call(|| function() | if_expr() | match_expr() | arg())
-    }
-
     /// A command expression.
-    fn command<'a>() -> Parser<'a, Expr> {
-        (arg() + (req_space() * list(merge_with(arg()), req_space())).opt()).map(|res| {
-            res.into_source().map(|(cmd, args)| {
-                Expression::Command(
-                    Box::new(cmd),
-                    args.unwrap().map(|e| e.unwrap()).unwrap_or(vec![]),
-                )
+    ///
+    /// If `string_literal` is true, a lone string will be interpreted as a string literal (rather
+    /// than a command with no arguments).
+    ///
+    /// Specifically, if `string_literal` is true then:
+    /// `something` -> string
+    /// `(binding)` or `$binding` -> single-string command
+    /// `command arg1 ...` -> command
+    fn command<'a>(string_literal: bool) -> Parser<'a, Expr> {
+        (arg() + (req_space() * list(merge_with(arg()), req_space())).opt()).map(move |res| {
+            res.into_source().map(move |(cmd, args)| {
+                let is_string = match &*cmd {
+                    Expression::String(_) => true,
+                    _ => false,
+                };
+                let no_args = match &*args {
+                    None => true,
+                    Some(v) => v.is_empty(),
+                };
+                if no_args && (!is_string || (is_string && string_literal)) {
+                    cmd.unwrap()
+                } else {
+                    Expression::Command(
+                        Box::new(cmd),
+                        args.unwrap().map(|e| e.unwrap()).unwrap_or(vec![]),
+                    )
+                }
             })
         })
     }
@@ -143,7 +163,7 @@ mod expression {
         let tok = tag("fn");
         let end_tok = function_delim();
         let pat = req_space() * pattern::command_pattern() - req_space() - end_tok;
-        let rest = req_space() * extarg();
+        let rest = req_space() * expression(true);
         (tok + pat + rest.expect("fn argument")).map(|res| {
             let p = res.into_source();
             p.map(|(pat, e)| {
@@ -169,7 +189,7 @@ mod expression {
     /// A match expression.
     fn match_expr<'a>() -> Parser<'a, Expr> {
         let tok = tag("match");
-        let item = pattern::pattern() - space() - sym(Token::Equal) - space() + extarg();
+        let item = pattern::pattern() - space() - sym(Token::Equal) - space() + expression(true);
         let rest = req_space() * arg() - req_space() + block_syntax(item);
         (tok + rest.expect("match arguments")).map(|res| {
             res.into_source().map(|(_, vs)| {
@@ -184,12 +204,12 @@ mod expression {
 
     /// An array expression.
     fn array<'a>() -> Parser<'a, Expr> {
-        array_syntax(merge_with(arg())).map(|e| e.into_source().map(Expression::Array))
+        array_syntax(merge_with(expression(true))).map(|e| e.into_source().map(Expression::Array))
     }
 
     /// A block expression.
     fn block<'a>() -> Parser<'a, Expr> {
-        block_syntax(merge_with(expression())).map(|e| e.into_source().map(Expression::Block))
+        block_syntax(merge_with(expression(true))).map(|e| e.into_source().map(Expression::Block))
     }
 
     /// A merge expression generator.
@@ -208,9 +228,14 @@ mod expression {
         })
     }
 
+    /// Expressions with an opening keyword.
+    pub fn kw_expr<'a>() -> Parser<'a, Expr> {
+        function() | if_expr() | match_expr()
+    }
+
     /// A single expression.
-    pub fn expression<'a>() -> Parser<'a, Expr> {
-        call(|| function() | if_expr() | match_expr() | set() | unset() | command())
+    pub fn expression<'a>(string_literal: bool) -> Parser<'a, Expr> {
+        call(move || kw_expr() | set() | unset() | command(string_literal))
     }
 }
 
@@ -453,7 +478,15 @@ mod test {
         }
 
         fn assert(s: &[Token], expected: Expression) -> Result {
-            assert_parse(s, |_| expression(), expected)
+            assert_parse(s, |_| expression(true), expected)
+        }
+
+        #[test]
+        fn string() -> Result {
+            assert(
+                &[String("str".to_owned())],
+                Expression::String("str".to_owned()),
+            )
         }
 
         #[test]
@@ -518,9 +551,8 @@ mod test {
                     String("a".into()),
                     CloseParen,
                     Newline,
-                    OpenParen,
+                    Dollar,
                     String("b".into()),
-                    CloseParen,
                     Newline,
                     CloseBracket,
                 ],
@@ -535,19 +567,15 @@ mod test {
                         vec![],
                     )),
                 ]),
-            )
+            )?;
+            Ok(())
         }
 
         #[test]
         fn empty() -> Result {
-            assert(
-                &[Dollar],
-                Expression::Command(src(Expression::Empty).into(), vec![]),
-            )?;
-            assert(
-                &[OpenParen, CloseParen],
-                Expression::Command(src(Expression::Empty).into(), vec![]),
-            )
+            assert(&[Dollar], Expression::Empty)?;
+            assert(&[OpenParen, CloseParen], Expression::Empty)?;
+            Ok(())
         }
 
         #[test]
@@ -569,16 +597,12 @@ mod test {
                     Whitespace,
                     CloseBracket,
                 ],
-                Expression::Command(
-                    src(Expression::Array(vec![
-                        nomerge(Expression::String("a".into())).into(),
-                        nomerge(Expression::String("b".into())).into(),
-                        nomerge(Expression::String("c".into())).into(),
-                        nomerge(Expression::String("d".into())).into(),
-                    ]))
-                    .into(),
-                    vec![],
-                ),
+                Expression::Array(vec![
+                    nomerge(Expression::String("a".into())).into(),
+                    nomerge(Expression::String("b".into())).into(),
+                    nomerge(Expression::String("c".into())).into(),
+                    nomerge(Expression::String("d".into())).into(),
+                ]),
             )
         }
 
@@ -633,27 +657,17 @@ mod test {
                     Newline,
                     CloseCurly,
                 ],
-                Expression::Command(
-                    src(Expression::Block(vec![
-                        nomerge(Expression::Command(
-                            Box::new(src(Expression::String("a".to_owned()))),
+                Expression::Block(vec![
+                    nomerge(Expression::String("a".to_owned())),
+                    nomerge(Expression::String("b".to_owned())),
+                    nomerge(Expression::Set(
+                        pat("c"),
+                        Box::new(src(Expression::Command(
+                            Box::new(src(Expression::String("echo".to_owned()))),
                             vec![],
-                        )),
-                        nomerge(Expression::Command(
-                            Box::new(src(Expression::String("b".to_owned()))),
-                            vec![],
-                        )),
-                        nomerge(Expression::Set(
-                            pat("c"),
-                            Box::new(src(Expression::Command(
-                                Box::new(src(Expression::String("echo".to_owned()))),
-                                vec![],
-                            ))),
-                        )),
-                    ]))
-                    .into(),
-                    vec![],
-                ),
+                        ))),
+                    )),
+                ]),
             )
         }
 
@@ -743,13 +757,10 @@ mod test {
                     CloseBracket,
                     CloseBracket,
                 ],
-                Expression::Command(
-                    src(Expression::Array(vec![merge(Expression::Array(vec![
-                        nomerge(Expression::String("b".into())).into(),
-                    ]))]))
-                    .into(),
-                    vec![],
-                ),
+                Expression::Array(vec![merge(Expression::Array(vec![nomerge(
+                    Expression::String("b".into()),
+                )
+                .into()]))]),
             )
         }
 
@@ -766,16 +777,9 @@ mod test {
                     CloseCurly,
                     CloseCurly,
                 ],
-                Expression::Command(
-                    src(Expression::Block(vec![merge(Expression::Block(vec![
-                        nomerge(Expression::Set(
-                            pat("a"),
-                            src(Expression::String("b".into())).into(),
-                        )),
-                    ]))]))
-                    .into(),
-                    vec![],
-                ),
+                Expression::Block(vec![merge(Expression::Block(vec![nomerge(
+                    Expression::Set(pat("a"), src(Expression::String("b".into())).into()),
+                )]))]),
             )
         }
 

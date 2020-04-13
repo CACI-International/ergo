@@ -129,7 +129,7 @@ mod test {
     #[test]
     fn comment() -> Result<(), String> {
         script_eval_to(
-            "# comment comment comment\na = something\na",
+            "# comment comment comment\na = something\n$a",
             SRString("something"),
         )
     }
@@ -144,11 +144,12 @@ mod test {
 
     #[test]
     fn bindings() -> Result<(), String> {
-        script_eval_to("var = something; var", SRString("something"))?;
+        script_eval_to("var = something; $var", SRString("something"))?;
         script_eval_to(
             "var = {inner=[blah,{v=\"test()\"}]}; var inner 1 v",
             SRString("test()"),
-        )
+        )?;
+        Ok(())
     }
 
     #[test]
@@ -314,7 +315,7 @@ mod test {
 
         #[test]
         fn binding() -> Result<(), String> {
-            script_eval_to("a = hello; a", SRString("hello"))
+            script_eval_to("a = hello; $a", SRString("hello"))
         }
 
         #[test]
