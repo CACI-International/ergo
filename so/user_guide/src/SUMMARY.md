@@ -14,6 +14,4 @@
   - [Semantics](details/semantics.md)
 - [RFC](rfc/intro.md)
   - [Macros](rfc/macros.md)
-  - [Merge](rfc/merge.md)
-  - [Closure Environment](rfc/closure_env.md)
 

@@ -113,12 +113,6 @@ def_builtin!(ctx => {
     all_success &= !ctx.unused_arguments();
 
     if !all_success {
-        for (binding, _) in output_path_bindings {
-            ctx.env_insert(binding.unwrap(), Eval::Error);
-        }
-        for (binding, _) in creates {
-            ctx.env_insert(binding, Eval::Error);
-        }
         return Ok(Eval::Error);
     }
 
@@ -143,21 +137,15 @@ def_builtin!(ctx => {
         "once".into(),
         cmdsource.clone().with(result.complete_once.into()),
     );
-    ret_map.insert("*".into(), cmdsource.with(result.complete.into()));
+
+    let mut paths = BTreeMap::new();
     for ((binding, is_dir), path) in output_path_bindings.into_iter().zip(result.output_paths) {
         let (source, binding) = binding.take();
-        ctx.env_insert(
-            binding,
-            source.with(if is_dir {
-                make_dir_function(path)
-            } else {
-                path.into()
-            }),
-        );
+        paths.insert(binding, source.with(if is_dir { make_dir_function(path) } else { path.into() }));
     }
+
     for (binding, value) in creates {
-        ctx.env_insert(
-            binding,
+        paths.insert(binding, 
             value.map(|v| {
                 make_value!((complete) [v] {
                     let path = v.await?;
@@ -167,9 +155,16 @@ def_builtin!(ctx => {
                     Ok(path.clone())
                 })
                 .into()
-            }),
+            })
         );
     }
+
+    ret_map.insert(
+        "paths".into(),
+        cmdsource.clone().with(ScriptMap(paths).into())
+    );
+
+    ret_map.insert("*".into(), cmdsource.with(result.complete.into()));
 
     Ok(Eval::Value(ScriptMap(ret_map).into()))
 });
