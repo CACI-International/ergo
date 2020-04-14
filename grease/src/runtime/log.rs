@@ -13,6 +13,33 @@ pub enum LogLevel {
     Error,
 }
 
+#[derive(Debug)]
+pub enum ParseLogLevelError {
+    InvalidLevel(String),
+}
+
+impl fmt::Display for ParseLogLevelError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        match self {
+            Self::InvalidLevel(s) => write!(f, "\"{}\" unrecognized", s),
+        }
+    }
+}
+
+impl std::str::FromStr for LogLevel {
+    type Err = ParseLogLevelError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "debug" => Ok(LogLevel::Debug),
+            "info" => Ok(LogLevel::Info),
+            "warn" => Ok(LogLevel::Warn),
+            "error" => Ok(LogLevel::Error),
+            _ => Err(ParseLogLevelError::InvalidLevel(s.to_lowercase())),
+        }
+    }
+}
+
 impl fmt::Display for LogLevel {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         write!(

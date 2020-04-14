@@ -1,7 +1,9 @@
 use grease::*;
-use simplelog::TermLogger;
+use simplelog::WriteLogger;
 use std::io::Write;
+use std::str::FromStr;
 
+mod options;
 mod output;
 mod script;
 
@@ -18,6 +20,7 @@ mod constants {
 }
 
 use constants::PROGRAM_NAME;
+use options::*;
 use output::Output;
 use script::{script_deep_eval, Error, Eval, Script, Source, SourceContext, StringSource};
 
@@ -98,21 +101,28 @@ impl AppErr for bool {
 }
 
 fn main() {
-    TermLogger::init(
-        if cfg!(debug_assertions) {
-            simplelog::LevelFilter::Trace
-        } else {
-            simplelog::LevelFilter::Warn
-        },
-        simplelog::Config::default(),
-        simplelog::TerminalMode::Stderr,
-    )
-    .unwrap();
+    // Install the application logger.
+    //
+    // We write all logs to the temp directory, and read from the {PROGRAM_NAME}_LOG environment
+    // variable to set the application log level (which defaults to warn).
+    {
+        let mut log_file = std::env::temp_dir();
+        log_file.push(format!("{}.log", PROGRAM_NAME));
+        WriteLogger::init(
+            std::env::var(format!("{}_LOG", PROGRAM_NAME.to_uppercase()))
+                .map(|v| simplelog::LevelFilter::from_str(&v).expect("invalid program log level"))
+                .unwrap_or(simplelog::LevelFilter::Warn),
+            simplelog::Config::default(),
+            std::fs::File::create(log_file).expect("failed to open log file for writing"),
+        )
+        .unwrap();
+    }
+
+    // Parse arguments
+    let opts = Opts::from_args();
 
     let mut output = Output::default();
-    if cfg!(debug_assertions) {
-        output.set_log_level(LogLevel::Debug);
-    }
+    output.set_log_level(opts.log_level.unwrap_or(LogLevel::Warn));
     let logger = logger_ref(output);
 
     // Create build context
@@ -129,10 +139,8 @@ fn main() {
         l.set_thread_ids(ctx.task.thread_ids().iter().cloned());
     }
 
-    let mut args = std::env::args().skip(1);
-
     let mut to_eval = String::from(PROGRAM_NAME);
-    while let Some(arg) = args.next() {
+    for arg in opts.args {
         to_eval.push(' ');
         to_eval.push_str(&arg);
     }
