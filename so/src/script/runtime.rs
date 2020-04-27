@@ -13,6 +13,7 @@ use std::iter::FromIterator;
 use std::path::PathBuf;
 use std::str::FromStr;
 
+pub mod cache;
 pub mod exec;
 pub mod fold;
 pub mod has;
@@ -21,6 +22,7 @@ pub mod map;
 pub mod path;
 pub mod seq;
 pub mod track;
+pub mod variable;
 
 pub mod script_types {
     use super::{CmdPat, Error, Eval, Expression, Source};

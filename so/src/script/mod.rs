@@ -23,21 +23,6 @@ pub fn script_context(
 
     let mut insert = |k: &str, v| ctx.env_insert(k.into(), Source::builtin(v));
 
-    // Add initial environment functions
-    let env = vec![
-        (PROGRAM_NAME, runtime::load::builtin()),
-        ("exec", runtime::exec::builtin()),
-        ("fold", runtime::fold::builtin()),
-        ("has", runtime::has::builtin()),
-        ("map", runtime::map::builtin()),
-        ("path", runtime::path::builtin()),
-        ("seq", runtime::seq::builtin()),
-        ("track", runtime::track::builtin()),
-    ];
-    for (k, v) in env.into_iter() {
-        insert(k, v);
-    }
-
     // Check whether we're in a project hierarchy
     let proj_dir_name = format!("{}proj", PROGRAM_NAME);
     let proj_dir = std::env::current_dir()
@@ -70,9 +55,30 @@ pub fn script_context(
         }
     }
 
-    cb.build_with(ctx).map(|mut ctx| {
+    let ctx = cb.build_with(ctx).map(|mut ctx| {
         // Add initial traits
         ctx.traits.add(::exec::trait_generator);
+        ctx.traits.add(runtime::cache::trait_generator);
+        ctx
+    });
+
+    // Add initial environment functions
+    ctx.map(|mut ctx| {
+        let env = vec![
+            (PROGRAM_NAME, runtime::load::builtin()),
+            ("cache", runtime::cache::builtin()),
+            ("exec", runtime::exec::builtin()),
+            ("fold", runtime::fold::builtin()),
+            ("has", runtime::has::builtin()),
+            ("map", runtime::map::builtin()),
+            ("path", runtime::path::builtin(&mut ctx)),
+            ("seq", runtime::seq::builtin()),
+            ("track", runtime::track::builtin()),
+            ("variable", runtime::variable::builtin()),
+        ];
+        for (k, v) in env.into_iter() {
+            ctx.env_insert(k.into(), Source::builtin(v));
+        }
         ctx
     })
 }

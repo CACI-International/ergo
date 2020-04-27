@@ -417,6 +417,23 @@ impl Value {
         }
     }
 
+    /// Set dependencies of this value, producing a new value with a new identifier.
+    ///
+    /// The value will have the same type and evaluate to the same value as the original.
+    pub fn set_dependencies<'a, D>(self, deps: D) -> Value
+    where
+        D: IntoDependencies<'a>,
+    {
+        let deps = Dependencies::ordered(deps);
+        let id = deps.value_id_with(&self.tp);
+        Value {
+            tp: self.tp,
+            data: self.data,
+            dependencies: Arc::from(deps),
+            id,
+        }
+    }
+
     /// Cause an error to occur if this value's future is ever evaluated.
     pub fn unevaluated(self) -> Value {
         Value {

@@ -308,7 +308,7 @@ impl Plan for Config {
 
         // Get value id from dependencies and use it as part of the item output path
         let value_id = deps.value_id::<()>();
-        let store = store.item::<&ItemName>(value_id.to_string().as_str().try_into().unwrap());
+        let store = store.value_id(value_id);
 
         // Create map of produced file id to item
         let mut files: BTreeMap<usize, grease::Item> = Default::default();

@@ -91,7 +91,7 @@ impl<T: GetValueType> IntoTyped<T> {
     }
 }
 
-impl<T: GetValueType> Trait for IntoTyped<T> {
+impl<T: GetValueType> Trait<'_> for IntoTyped<T> {
     type Impl = fn(Value) -> Value;
 
     fn trait_type() -> TraitType {

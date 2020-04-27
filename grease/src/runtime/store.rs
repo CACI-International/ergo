@@ -1,5 +1,6 @@
 //! Persistent storage.
 
+use crate::Value;
 use std::convert::TryFrom;
 use std::fs::{File, OpenOptions};
 use std::io;
@@ -91,6 +92,24 @@ impl Item {
         sub.push("-");
         path.push(sub);
         let item = PathBuf::from(name.as_ref());
+        Item { path, item }
+    }
+
+    /// Get the sub-item for the given value.
+    pub fn value(&self, v: &Value) -> Item {
+        self.value_id(v.id())
+    }
+
+    /// Get the sub-item for the given value id.
+    pub fn value_id(&self, id: u128) -> Item {
+        let mut path = self.path.clone();
+        let mut sub = self.item.clone().into_os_string();
+        sub.push("-v");
+        path.push(sub);
+        let id = format!("{:x}", id);
+        path.push(&id[..2]);
+        path.push(&id[2..4]);
+        let item = PathBuf::from(&id[4..]);
         Item { path, item }
     }
 

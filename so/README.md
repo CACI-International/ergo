@@ -63,9 +63,6 @@ configuration directory is used.
 ### TODO
 * Data-manipulation functions (maybe as a plugin).
 * Remove the unit type; use an empty map instead?
-* Change 'once' to be a command itself rather than a key on exec results (it can
-  be generalized to arbitrary values). Add 'cache' command to execute once and
-  store result (or merge the two).
 * Improve errors to contain trace-backs of values.
   * Find specific examples where this is useful.
 * Add file/directory name hint to exec `file`/`dir` directives to specify final
@@ -77,6 +74,15 @@ configuration directory is used.
   Allow mutually exclusive use of stdin/stdout/stderr for interactive programs.
 * Allow explicit error signalling from scripts. Maybe allow catching errors?
 * Add options to suppress status output.
+* Add 'force' to force a value to be immediately evaluated?
+* Change pattern matching destructuring to create dependencies on
+  destructured-from values (rather than creating new values which rely on
+  content)? This allows automatic variable propagation, otherwise one must mark
+  any downstream dependencies of a variable value. It's less error prone at the
+  cost of losing a little explicitness, and also removing the ability for
+  different paths to produce results which are considered the same. However,
+  if/when content-wise ids are desirable, an additional command could be added
+  to support this.
 
 ### Plugin notes
 * Ideally, plugins are loaded just like other scripts: `load [path to plugin]`.

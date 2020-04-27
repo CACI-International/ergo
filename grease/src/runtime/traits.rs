@@ -36,7 +36,7 @@ impl Traits {
     }
 
     /// Get a trait for a particular Value's type, if it is implemented.
-    pub fn get<T: Trait + Sync>(&mut self, v: &Value) -> Option<T> {
+    pub fn get<'a, T: 'a + Trait<'a> + Sync>(&'a mut self, v: &Value) -> Option<T> {
         let tp = v.value_type();
         if !self.traits.contains_key(tp.as_ref()) {
             let mut m = HashSet::new();

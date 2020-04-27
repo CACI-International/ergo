@@ -18,12 +18,34 @@ pub struct TraitImpl {
 }
 
 /// A runtime trait.
-pub trait Trait {
+pub trait Trait<'a> {
     type Impl: Sync;
 
     fn trait_type() -> TraitType;
 
-    fn create(imp: &Self::Impl) -> Self;
+    fn create(imp: &'a Self::Impl) -> Self;
+}
+
+pub struct TraitRef<'a, T>(&'a T);
+
+impl<'a, T: Trait<'a> + Sync> Trait<'a> for TraitRef<'a, T> {
+    type Impl = T;
+
+    fn trait_type() -> TraitType {
+        T::trait_type()
+    }
+
+    fn create(imp: &'a Self::Impl) -> Self {
+        TraitRef(imp)
+    }
+}
+
+impl<'a, T> std::ops::Deref for TraitRef<'a, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 impl TraitType {
@@ -46,7 +68,7 @@ impl TraitImpl {
         }
     }
 
-    pub fn for_trait<T: Trait>(v: T::Impl) -> Self {
+    pub fn for_trait<'a, T: Trait<'a>>(v: T::Impl) -> Self {
         Self {
             tt: T::trait_type(),
             data: ValueData::new(v),
