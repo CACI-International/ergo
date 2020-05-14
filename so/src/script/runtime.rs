@@ -5,7 +5,7 @@ use super::ast::{
 };
 use crate::constants::LOAD_PATH_BINDING;
 use grease::future::{BoxFuture, FutureExt};
-use grease::{make_value, match_value, IntoValue, Plan, Value};
+use grease::{depends, make_value, match_value, IntoValue, Plan, Value};
 use log::trace;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -920,11 +920,11 @@ fn _apply_pattern(
 ) {
     use Pattern::*;
     let (source, pat) = pat.take();
+    let desc = std::mem::discriminant(&pat);
     match pat {
         Any => (),
         Literal(e) => match (e.plan(ctx), val) {
             (Eval::Value(result), Eval::Value(val)) => {
-                // FIXME do deep comparison instead of by value id?
                 if *result != *val {
                     let mut err: SourceContext<Error> = source
                         .with(Error::PatternMismatch((*result).clone()))
@@ -963,7 +963,19 @@ fn _apply_pattern(
             });
             let vals: Vec<Eval<Source<Value>>> = match val {
                 Eval::Error => std::iter::repeat(Eval::Error).take(inner.len()).collect(),
-                Eval::Value(v) => v.into_iter().map(Eval::Value).collect(),
+                Eval::Value(v) => v
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, v)| {
+                        Eval::Value(v.map(|v| {
+                            v.set_dependencies(depends![
+                                *orig_val.as_ref().unwrap().as_ref().unwrap(),
+                                desc,
+                                i
+                            ])
+                        }))
+                    })
+                    .collect(),
             };
 
             match pattern_array(ctx, &inner, &vals) {
@@ -1019,13 +1031,20 @@ fn _apply_pattern(
             let mut matched_keys = BTreeMap::new();
             for i in inner {
                 let (isource, i) = i.take();
+                let itemdesc = std::mem::discriminant(&i);
                 match i {
                     MapPattern::Item(key, pat) => {
                         let result = match val.as_mut() {
                             Eval::Value((orig_value, m)) => match m.remove(&key) {
                                 Some(v) => {
+                                    let keydep = depends![key];
                                     matched_keys.insert(key, v.source());
-                                    Eval::Value(v.clone())
+                                    Eval::Value(v.clone().map(|v| {
+                                        v.set_dependencies(depends![join
+                                            depends![*orig_value.as_ref(),desc,itemdesc],
+                                            keydep
+                                        ])
+                                    }))
                                 }
                                 None => {
                                     let (vsource, v) = orig_value.clone().take();

@@ -75,14 +75,6 @@ configuration directory is used.
 * Allow explicit error signalling from scripts. Maybe allow catching errors?
 * Add options to suppress status output.
 * Add 'force' to force a value to be immediately evaluated?
-* Change pattern matching destructuring to create dependencies on
-  destructured-from values (rather than creating new values which rely on
-  content)? This allows automatic variable propagation, otherwise one must mark
-  any downstream dependencies of a variable value. It's less error prone at the
-  cost of losing a little explicitness, and also removing the ability for
-  different paths to produce results which are considered the same. However,
-  if/when content-wise ids are desirable, an additional command could be added
-  to support this.
 
 ### Plugin notes
 * Ideally, plugins are loaded just like other scripts: `load [path to plugin]`.

@@ -119,7 +119,7 @@ fn path_split_impl(ctx: &mut Context<FunctionContext>) -> Result<Eval<Value>, Er
 
     Ok(Eval::Value(make_value!(["path split", to_split] {
         let mut vals: Vec<Source<Value>> = Vec::new();
-        for c in to_split.await?.iter() {
+        for c in to_split.clone().await?.iter() {
             match c.to_str() {
                 Some(s) => vals.push(source.clone().with(
                         TypedValue::constant_deps(s.to_owned(), depends!["path split", to_split, vals.len()]).into()

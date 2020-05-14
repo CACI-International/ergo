@@ -1,6 +1,7 @@
 //! The AST definition for script files.
 
 use grease::future::Future;
+use grease::Dependency;
 use std::fmt;
 use std::io::{BufRead, BufReader, Read};
 
@@ -477,6 +478,12 @@ impl<T> AsRef<T> for Source<T> {
 impl<T> AsMut<T> for Source<T> {
     fn as_mut(&mut self) -> &mut T {
         &mut self.value
+    }
+}
+
+impl<T: Into<Dependency>> From<Source<T>> for Dependency {
+    fn from(v: Source<T>) -> Dependency {
+        v.unwrap().into()
     }
 }
 

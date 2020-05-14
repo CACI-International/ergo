@@ -16,7 +16,7 @@ def_builtin!(ctx => {
     let deps = if is_deps_flag {
         let deps = ctx.args.next().ok_or("no value given to --deps")?;
         v = ctx.args.next().ok_or("no variable value provided")?;
-        depends![deps]
+        depends![deps.unwrap()]
     }
     else { Default::default() };
 
