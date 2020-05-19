@@ -194,3 +194,65 @@ pub fn derive_get_value_type(input: TokenStream) -> TokenStream {
 
     TokenStream::from(expanded)
 }
+
+#[proc_macro_derive(Trait)]
+pub fn derive_grease_trait(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+
+    let name = input.ident;
+    let params = input.generics.params;
+    let param_reqs = params.clone().into_iter().map(|mut p| {
+        if let syn::GenericParam::Type(ref mut tp) = &mut p {
+            tp.bounds.push(parse_quote! {
+                    ::grease::GetValueType
+            });
+        }
+        p
+    });
+    let param_args = params.clone().into_iter().map(|e| match e {
+        syn::GenericParam::Type(tp) => {
+            let ident = tp.ident;
+            quote!(#ident)
+        }
+        syn::GenericParam::Lifetime(lt) => {
+            let lifetime = lt.lifetime;
+            quote!(#lifetime)
+        }
+        syn::GenericParam::Const(c) => {
+            let ident = c.ident;
+            quote!(#ident)
+        }
+    });
+    let set_data = params.into_iter().filter_map(|e| match e {
+        syn::GenericParam::Type(tp) => {
+            let ident = tp.ident;
+            Some(quote! {
+                {
+                    let tp = #ident::value_type();
+                    data.extend(tp.id.as_bytes());
+                    data.extend(tp.data);
+                }
+            })
+        }
+        _ => None,
+    });
+    let namestr = syn::LitStr::new(&format!("{}", name), name.span());
+
+    let expanded = quote! {
+        impl<#(#param_reqs),*> ::grease::Trait for #name<#(#param_args),*> {
+            type Impl = Self;
+
+            fn trait_type() -> ::grease::TraitType {
+                let mut data = Vec::new();
+                #(#set_data)*
+                ::grease::TraitType::with_data(::grease::type_uuid(concat![module_path!(), "::", #namestr].as_bytes()), data)
+            }
+
+            fn create(imp: ::grease::TraitImplRef<Self::Impl>) -> Self {
+                imp.clone()
+            }
+        }
+    };
+
+    TokenStream::from(expanded)
+}

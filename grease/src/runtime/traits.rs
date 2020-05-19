@@ -1,26 +1,62 @@
 //! Runtime trait tracking.
 
+use parking_lot::RwLock;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::{Trait, TraitImpl, Value, ValueType};
+use crate::{Trait, TraitImpl, TraitImplRef, Value, ValueType};
 
 /// A trait generator.
 pub type TraitGenerator = fn(Arc<ValueType>) -> Vec<TraitImpl>;
 
+/// Create a function (named `trait_generator` by default) which is a `TraitGenerator` using the
+/// given factory function and types.
+///
+/// The factory function must accept a single type parameter and no arguments.
+#[macro_export]
+macro_rules! trait_generator {
+    ( $name:ident $f:ident ( $( $t:ty ),+ ) ) => {
+        pub fn $name(v: std::sync::Arc<$crate::ValueType>) -> Vec<$crate::TraitImpl> {
+            use $crate::GetValueType;
+            $crate::match_value_type!(*v => {
+                $( $t => vec![$f::<$t>()] ),+
+                => vec![]
+            })
+        }
+    };
+
+    ( $f:ident ( $( $t:ty ),+ ) ) => {
+        $crate::trait_generator!(trait_generator $f($($t),+));
+    };
+}
+
 /// Trait interface.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Traits {
-    traits: HashMap<Arc<ValueType>, HashSet<TraitImpl>>,
+    inner: Arc<RwLock<Inner>>,
+}
+
+/// Trait interface implementation.
+#[derive(Debug, Default)]
+struct Inner {
+    traits: HashMap<Arc<ValueType>, HashSet<Arc<TraitImpl>>>,
     generators: Vec<TraitGenerator>,
+}
+
+impl Default for Traits {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Traits {
     /// Create a new instance.
     pub fn new() -> Self {
         Traits {
-            traits: Default::default(),
-            generators: vec![crate::value::trait_generator],
+            inner: Arc::new(RwLock::new(Inner {
+                traits: Default::default(),
+                generators: vec![crate::value::trait_generator],
+            })),
         }
     }
 
@@ -28,27 +64,39 @@ impl Traits {
     ///
     /// Trait implementors can provide any number of trait implementations for any
     /// number of types.
-    pub fn add(&mut self, gen: TraitGenerator) {
-        for (k, v) in &mut self.traits {
-            v.extend(gen(k.clone()));
+    pub fn add(&self, gen: TraitGenerator) {
+        let mut lock = self.inner.write();
+        for (k, v) in &mut lock.traits {
+            v.extend(gen(k.clone()).into_iter().map(Arc::new));
         }
-        self.generators.push(gen);
+        lock.generators.push(gen);
     }
 
     /// Get a trait for a particular Value's type, if it is implemented.
-    pub fn get<'a, T: 'a + Trait<'a> + Sync>(&'a mut self, v: &Value) -> Option<T> {
-        let tp = v.value_type();
-        if !self.traits.contains_key(tp.as_ref()) {
+    pub fn get<T: Trait + Sync>(&self, v: &Value) -> Option<T> {
+        self.get_type(v.value_type())
+    }
+
+    /// Get a trait for a ValueType, if it is implemented.
+    pub fn get_type<T: Trait + Sync>(&self, tp: Arc<ValueType>) -> Option<T> {
+        let lock = self.inner.upgradable_read();
+
+        let lock = if !lock.traits.contains_key(tp.clone().as_ref()) {
             let mut m = HashSet::new();
-            for g in &self.generators {
-                m.extend(g(v.value_type()));
+            for g in &lock.generators {
+                m.extend(g(tp.clone()).into_iter().map(Arc::new));
             }
-            self.traits.insert(tp, m);
-        }
-        self.traits
-            .get(v.value_type().as_ref())
+            let mut lock = parking_lot::RwLockUpgradableReadGuard::<Inner>::upgrade(lock);
+            lock.traits.insert(tp.clone(), m);
+            parking_lot::RwLockWriteGuard::<Inner>::downgrade(lock)
+        } else {
+            parking_lot::RwLockUpgradableReadGuard::<Inner>::downgrade(lock)
+        };
+
+        lock.traits
+            .get(tp.as_ref())
             .unwrap()
             .get(&T::trait_type())
-            .map(|imp| T::create(unsafe { imp.as_ref() }))
+            .map(|imp| T::create(unsafe { TraitImplRef::new(imp.clone()) }))
     }
 }

@@ -2,7 +2,7 @@
 
 use super::{GetValueType, IntoValue, TypedValue, Value, ValueType};
 use crate::uuid::*;
-use crate::{Trait, TraitImpl, TraitType};
+use crate::{Trait, TraitImpl, TraitImplRef, TraitType};
 
 // Primitive types
 
@@ -91,14 +91,14 @@ impl<T: GetValueType> IntoTyped<T> {
     }
 }
 
-impl<T: GetValueType> Trait<'_> for IntoTyped<T> {
+impl<T: GetValueType> Trait for IntoTyped<T> {
     type Impl = fn(Value) -> Value;
 
     fn trait_type() -> TraitType {
         into_trait_type(T::value_type())
     }
 
-    fn create(imp: &Self::Impl) -> Self {
+    fn create(imp: TraitImplRef<Self::Impl>) -> Self {
         Self {
             into: *imp,
             _phantom: Default::default(),

@@ -130,6 +130,11 @@ impl Item {
         self.open(OpenOptions::new().read(true).write(true).create(true))
     }
 
+    /// Open an existing item for reading.
+    pub fn read_existing(&self) -> io::Result<ItemContent> {
+        self.open(OpenOptions::new().read(true))
+    }
+
     /// Open an item using the provided OpenOptions.
     pub fn open(&self, options: &OpenOptions) -> io::Result<ItemContent> {
         std::fs::create_dir_all(&self.path)?;

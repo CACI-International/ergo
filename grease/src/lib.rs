@@ -56,3 +56,8 @@ pub use grease_macro::make_value;
 
 /// Derive GetValueType based on the item's full Rust path.
 pub use grease_macro::GetValueType;
+
+/// Derive Trait based on the item's full Rust path.
+///
+/// Traits derived in this way have `Impl` as `Self`, and must support `Clone`.
+pub use grease_macro::Trait;

@@ -169,7 +169,7 @@ pub struct Context<Inner = ()> {
     pub log: Log,
     /// The storage interface.
     pub store: Store,
-    /// The traits interface.
+    /// The type traits interface.
     pub traits: Traits,
     /// An inner context type.
     pub inner: Inner,

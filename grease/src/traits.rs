@@ -2,6 +2,7 @@
 
 use crate::ValueData;
 use std::fmt;
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// A type-description of a trait.
@@ -17,34 +18,39 @@ pub struct TraitImpl {
     data: ValueData,
 }
 
+pub struct TraitImplRef<T> {
+    v: Arc<TraitImpl>,
+    _phantom: std::marker::PhantomData<T>,
+}
+
 /// A runtime trait.
-pub trait Trait<'a> {
+pub trait Trait {
     type Impl: Sync;
 
     fn trait_type() -> TraitType;
 
-    fn create(imp: &'a Self::Impl) -> Self;
+    fn create(imp: TraitImplRef<Self::Impl>) -> Self;
 }
 
-pub struct TraitRef<'a, T>(&'a T);
+pub struct TraitRef<T>(TraitImplRef<T>);
 
-impl<'a, T: Trait<'a> + Sync> Trait<'a> for TraitRef<'a, T> {
+impl<T: Trait + Sync> Trait for TraitRef<T> {
     type Impl = T;
 
     fn trait_type() -> TraitType {
         T::trait_type()
     }
 
-    fn create(imp: &'a Self::Impl) -> Self {
+    fn create(imp: TraitImplRef<Self::Impl>) -> Self {
         TraitRef(imp)
     }
 }
 
-impl<'a, T> std::ops::Deref for TraitRef<'a, T> {
+impl<T: Sync> std::ops::Deref for TraitRef<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &*self.0
     }
 }
 
@@ -68,7 +74,7 @@ impl TraitImpl {
         }
     }
 
-    pub fn for_trait<'a, T: Trait<'a>>(v: T::Impl) -> Self {
+    pub fn for_trait<T: Trait>(v: T::Impl) -> Self {
         Self {
             tt: T::trait_type(),
             data: ValueData::new(v),
@@ -77,6 +83,24 @@ impl TraitImpl {
 
     pub unsafe fn as_ref<T: Sync>(&self) -> &T {
         self.data.as_ref()
+    }
+}
+
+impl<T: Sync> TraitImplRef<T> {
+    // Unsafe as callers must verify that TraitImpl has type T.
+    pub unsafe fn new(v: Arc<TraitImpl>) -> Self {
+        TraitImplRef {
+            v,
+            _phantom: Default::default(),
+        }
+    }
+}
+
+impl<T: Sync> std::ops::Deref for TraitImplRef<T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        unsafe { (*self.v).as_ref() }
     }
 }
 
@@ -101,6 +125,12 @@ impl std::hash::Hash for TraitImpl {
 }
 
 impl std::borrow::Borrow<TraitType> for TraitImpl {
+    fn borrow(&self) -> &TraitType {
+        &self.tt
+    }
+}
+
+impl std::borrow::Borrow<TraitType> for std::sync::Arc<TraitImpl> {
     fn borrow(&self) -> &TraitType {
         &self.tt
     }

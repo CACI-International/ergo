@@ -273,7 +273,7 @@ impl Drop for ValueData {
     }
 }
 
-type ValueResult = Result<Arc<ValueData>, String>;
+pub type ValueResult = Result<Arc<ValueData>, String>;
 
 /// A value shared amongst tasks.
 ///
@@ -282,7 +282,6 @@ type ValueResult = Result<Arc<ValueData>, String>;
 pub struct Value {
     tp: Arc<ValueType>,
     data: Shared<BoxFuture<'static, ValueResult>>,
-    dependencies: Arc<Dependencies>,
     id: u128,
 }
 
@@ -398,21 +397,15 @@ impl Value {
         Value {
             tp,
             data: value.boxed().shared(),
-            dependencies: Arc::from(deps),
             id,
         }
     }
 
-    /// Add dependencies to this value, producing a new value with a new identifier.
-    ///
-    /// The value will have the same type and evaluate to the same value as the original.
-    pub fn add_dependencies(self, deps: Dependencies) -> Value {
-        let deps = self.dependencies.as_ref().clone() + deps;
-        let id = deps.value_id_with(&self.tp);
+    /// Create a Value from raw components.
+    pub fn from_raw(tp: Arc<ValueType>, data: Arc<ValueData>, id: u128) -> Self {
         Value {
-            tp: self.tp,
-            data: self.data,
-            dependencies: Arc::from(deps),
+            tp,
+            data: futures::future::ok(data).boxed().shared(),
             id,
         }
     }
@@ -429,7 +422,6 @@ impl Value {
         Value {
             tp: self.tp,
             data: self.data,
-            dependencies: Arc::from(deps),
             id,
         }
     }
@@ -496,6 +488,11 @@ impl Value {
     pub fn get(self) -> ValueResult {
         futures::executor::block_on(self)
     }
+
+    /// Get the result of the value, if immediately available.
+    pub fn peek(&self) -> Option<&ValueResult> {
+        self.data.peek()
+    }
 }
 
 impl Future for Value {
@@ -512,9 +509,23 @@ impl FusedFuture for Value {
     }
 }
 
+/// Match expression for ValueTypes.
+///
+/// Matching is based on types, not patterns, and each type must implement GetValueType. The else
+/// case is required.
+///
+/// The evaluation contex is similar to regular match expressions, in that flow-control statements
+/// will pertain to the calling code.
+#[macro_export]
+macro_rules! match_value_type {
+    ( $value:expr => { $( $t:ty => $e:expr $(,)? )+ => $else:expr } ) => {
+        $( if $value == <$t>::value_type() { $e } else )+ { $else }
+    }
+}
+
 /// Match expression for Values.
 ///
-/// Matching is based on types, not patterns, and each type must implement GetValueType.  The else
+/// Matching is based on types, not patterns, and each type must implement GetValueType. The else
 /// case is required. All cases must be in the form `|name| body` that evaluate to a final type T,
 /// and expressions must all agree on this final type. For each `body`, `name` will be bound to a
 /// TypedValue according to the case type.
