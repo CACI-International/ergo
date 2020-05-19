@@ -22,7 +22,7 @@ mod constants {
 use constants::PROGRAM_NAME;
 use options::*;
 use output::Output;
-use script::{script_deep_eval, Error, Eval, Script, Source, SourceContext, StringSource};
+use script::{force_value_nested, Error, Eval, Script, Source, SourceContext, StringSource};
 
 trait AppErr {
     type Output;
@@ -133,12 +133,6 @@ fn main() {
     )
     .expect("failed to create script context");
 
-    // Set thread ids in the logger, as reported by the task manager.
-    {
-        let mut l = logger.lock().unwrap();
-        l.set_thread_ids(ctx.task.thread_ids().iter().cloned());
-    }
-
     let mut to_eval = String::from(PROGRAM_NAME);
     for arg in opts.args {
         to_eval.push(' ');
@@ -152,8 +146,15 @@ fn main() {
     Errors(ctx.get_errors()).app_err("error(s) while executing script");
     let script_output = script_output.app_err("an evaluation error occurred");
 
-    let to_eval = script_deep_eval(script_output);
-    let result = futures::executor::block_on(to_eval).transpose_err();
+    // Set thread ids in the logger, as reported by the task manager.
+    {
+        let mut l = logger.lock().unwrap();
+        l.set_thread_ids(ctx.task.thread_ids().iter().cloned());
+    }
+
+    let result = script_output
+        .map(|v| futures::executor::block_on(force_value_nested(&ctx.traits, v)))
+        .transpose_err();
 
     let mut l = logger.lock().unwrap();
     l.clear_status();

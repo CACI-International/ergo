@@ -4,16 +4,16 @@ use super::ast::{
     ArrayPattern, CmdPat, Expression, IntoSource, MapPattern, MergeExpression, Pat, Pattern, Source,
 };
 use crate::constants::LOAD_PATH_BINDING;
-use grease::future::{BoxFuture, FutureExt};
-use grease::{depends, make_value, match_value, IntoValue, Plan, Value};
+use grease::{depends, match_value, IntoValue, Plan, Value};
 use log::trace;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fmt;
 use std::iter::FromIterator;
 use std::path::PathBuf;
 use std::str::FromStr;
 
 pub mod cache;
+pub mod debug;
 pub mod exec;
 pub mod fold;
 pub mod has;
@@ -99,7 +99,9 @@ pub mod script_types {
 
 pub mod builtin_function_prelude {
     pub use super::script_types::*;
-    pub use super::{Error, Eval, FunctionArguments, FunctionContext, LoadScript, SourceContext};
+    pub use super::{
+        Error, Eval, FunctionArguments, FunctionContext, LoadScript, Runtime, SourceContext,
+    };
     pub use grease::{Context, Value};
 
     #[macro_export]
@@ -158,90 +160,17 @@ use builtin_function_prelude::eval_error;
 use builtin_function_prelude::script_value_as;
 use script_types::*;
 
-fn get_values<'a>(
-    v: Source<Value>,
-    set: &'a mut BTreeSet<Source<Value>>,
-) -> BoxFuture<'a, Result<(), Source<String>>> {
-    async move {
-        let (source, v) = v.take();
-
-        let res = async {
-            match_value!(v => {
-                ScriptMap => |val| {
-                    let ScriptMap(mut m) = val.await.map_err(Err)?.owned();
-                    if let Some(v) = m.remove("*") {
-                        get_values(v, set).await.map_err(Ok)?;
-                    } else {
-                        for (_,v) in m {
-                            get_values(v, set).await.map_err(Ok)?;
-                        }
-                    }
-                    Ok(None)
-                },
-                ScriptArray => |val| {
-                    let ScriptArray(arr) = val.await.map_err(Err)?.owned();
-                    for v in arr {
-                        get_values(v, set).await.map_err(Ok)?;
-                    }
-                    Ok(None)
-                },
-                => |v| {
-                    Ok(Some(v))
-                }
-            })
-        }
-        .await;
-        source
-            .with(res)
-            .transpose()
-            .map_err(
-                |e: Source<Result<Source<String>, String>>| match e.transpose_err() {
-                    Ok(e) => e,
-                    Err(e) => e,
-                },
-            )
-            .map(|v| {
-                let (source, v) = v.take();
-                if let Some(v) = v {
-                    set.insert(source.with(v));
-                }
-                ()
-            })
-    }
-    .boxed()
-}
-
-/// Create a value which deeply evaluates all script types within the given value.
-///
-/// The returned value will be unit-typed.
-pub fn script_deep_eval(v: Source<Value>) -> Source<Value> {
-    let (source, v) = v.take();
-    let s2 = source.clone();
-    source.with(
-        make_value!([v] {
-            let mut set = Default::default();
-            get_values(s2.with(v), &mut set).await.map_err(|e| e.to_string())?;
-            grease::future::join_all(set).await.into_iter()
-                .map(|e| e.transpose_err())
-                .collect::<Result<Vec<_>,_>>()
-                .map(|_| ())
-                .map_err(|e| e.to_string())
-        })
-        .into(),
-    )
-}
-
-/// The script context.
-pub struct Context {
+/// The script context data.
+pub struct Runtime {
     env: Vec<Env>,
     errors: Vec<SourceContext<Error>>,
     working_dir: PathBuf,
     load_cache: BTreeMap<PathBuf, Eval<Source<Value>>>,
 }
 
-impl Default for Context {
+impl Default for Runtime {
     fn default() -> Self {
-        Context {
+        Runtime {
             // The default context should start with an empty map as the base.
             env: vec![Default::default()],
             errors: vec![],
@@ -251,7 +180,7 @@ impl Default for Context {
     }
 }
 
-impl Context {
+impl Runtime {
     pub fn env_insert<T: Into<Eval<Source<Value>>>>(&mut self, k: String, v: T) {
         self.env.last_mut().unwrap().insert(k, v.into());
     }
@@ -298,7 +227,7 @@ pub trait LoadScript {
     fn load(&mut self, s: &str) -> Result<Eval<Source<Value>>, Error>;
 }
 
-impl LoadScript for grease::Context<Context> {
+impl LoadScript for grease::Context<Runtime> {
     fn load(&mut self, s: &str) -> Result<Eval<Source<Value>>, Error> {
         let loadpath = match self.env_get(LOAD_PATH_BINDING) {
             Some(v) => match v {
@@ -486,7 +415,7 @@ impl From<UncheckedFunctionArguments> for FunctionArguments {
 
 /// Function call context.
 pub struct FunctionContext {
-    ctx: Context,
+    ctx: Runtime,
     args: FunctionArguments,
 }
 
@@ -520,7 +449,7 @@ impl FunctionContext {
 }
 
 impl std::ops::Deref for FunctionContext {
-    type Target = Context;
+    type Target = Runtime;
 
     fn deref(&self) -> &Self::Target {
         &self.ctx
@@ -533,14 +462,14 @@ impl std::ops::DerefMut for FunctionContext {
     }
 }
 
-impl grease::SplitInto<Context> for FunctionContext {
+impl grease::SplitInto<Runtime> for FunctionContext {
     type Extra = FunctionArguments;
 
-    fn split(self) -> (Context, Self::Extra) {
+    fn split(self) -> (Runtime, Self::Extra) {
         (self.ctx, self.args)
     }
 
-    fn join(ctx: Context, args: Self::Extra) -> Self {
+    fn join(ctx: Runtime, args: Self::Extra) -> Self {
         FunctionContext { ctx, args }
     }
 }
@@ -586,6 +515,8 @@ pub enum Error {
     ValueError(String),
 }
 
+impl std::error::Error for Error {}
+
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use Error::*;
@@ -618,6 +549,18 @@ impl fmt::Display for Error {
             LoadFailed(s) => write!(f, "failed to find module matching {}", s),
             ValueError(s) => write!(f, "{}", s),
         }
+    }
+}
+
+impl From<Error> for std::io::Error {
+    fn from(e: Error) -> Self {
+        std::io::Error::new(std::io::ErrorKind::Other, e)
+    }
+}
+
+impl From<std::io::Error> for Error {
+    fn from(e: std::io::Error) -> Self {
+        e.to_string().into()
     }
 }
 
@@ -812,7 +755,7 @@ impl<T> std::ops::BitAndAssign for Eval<T> {
 ///
 /// If `env_lookup` is true and `v` is a `ScriptString`, it will be looked up in the environment.
 pub fn apply_value(
-    ctx: &mut grease::Context<Context>,
+    ctx: &mut grease::Context<Runtime>,
     v: Source<Value>,
     mut args: UncheckedFunctionArguments,
     env_lookup: bool,
@@ -896,7 +839,7 @@ pub fn apply_value(
 }
 
 pub fn apply_pattern(
-    ctx: &mut grease::Context<Context>,
+    ctx: &mut grease::Context<Runtime>,
     pat: Pat,
     val: Eval<Source<Value>>,
 ) -> Result<Env, Vec<SourceContext<Error>>> {
@@ -912,7 +855,7 @@ pub fn apply_pattern(
 }
 
 fn _apply_pattern(
-    ctx: &mut grease::Context<Context>,
+    ctx: &mut grease::Context<Runtime>,
     env: &mut Env,
     errs: &mut Vec<SourceContext<Error>>,
     pat: Pat,
@@ -1112,7 +1055,7 @@ fn is_fixed_point(pat: &Pattern) -> bool {
 }
 
 fn pattern_array(
-    ctx: &mut grease::Context<Context>,
+    ctx: &mut grease::Context<Runtime>,
     pats: &[Source<ArrayPattern>],
     vals: &[Eval<Source<Value>>],
 ) -> Result<Env, Vec<SourceContext<Error>>> {
@@ -1128,7 +1071,7 @@ fn pattern_array(
 }
 
 fn _pattern_array(
-    ctx: &mut grease::Context<Context>,
+    ctx: &mut grease::Context<Runtime>,
     env: &mut Env,
     errs: &mut Vec<SourceContext<Error>>,
     pats: &[Source<ArrayPattern>],
@@ -1182,7 +1125,7 @@ fn _pattern_array(
 }
 
 fn pattern_array_rest(
-    ctx: &mut grease::Context<Context>,
+    ctx: &mut grease::Context<Runtime>,
     env: &mut Env,
     errs: &mut Vec<SourceContext<Error>>,
     pats: &[Source<ArrayPattern>],
@@ -1253,7 +1196,7 @@ fn pattern_array_rest(
 }
 
 pub fn apply_command_pattern(
-    ctx: &mut grease::Context<Context>,
+    ctx: &mut grease::Context<Runtime>,
     pat: CmdPat,
     mut args: FunctionArguments,
 ) -> Result<Env, Vec<SourceContext<Error>>> {
@@ -1362,10 +1305,10 @@ impl Plan<FunctionContext> for &'_ ScriptFunction {
     }
 }
 
-impl Plan<Context> for Expression {
+impl Plan<Runtime> for Expression {
     type Output = Result<Eval<Value>, Error>;
 
-    fn plan(self, ctx: &mut grease::Context<Context>) -> Self::Output {
+    fn plan(self, ctx: &mut grease::Context<Runtime>) -> Self::Output {
         use Expression::*;
         match self {
             Empty => Ok(().into_value().into()),
@@ -1517,10 +1460,10 @@ impl Plan<Context> for Expression {
     }
 }
 
-impl Plan<Context> for Source<Expression> {
+impl Plan<Runtime> for Source<Expression> {
     type Output = Eval<Source<Value>>;
 
-    fn plan(self, ctx: &mut grease::Context<Context>) -> Self::Output {
+    fn plan(self, ctx: &mut grease::Context<Runtime>) -> Self::Output {
         let (source, expr) = self.take();
         if let Expression::Block(es) = expr {
             source.with(es).plan(ctx)
@@ -1536,20 +1479,20 @@ impl Plan<Context> for Source<Expression> {
     }
 }
 
-impl Plan<Context> for Source<MergeExpression> {
+impl Plan<Runtime> for Source<MergeExpression> {
     type Output = Eval<Source<(bool, Source<Value>)>>;
 
-    fn plan(self, ctx: &mut grease::Context<Context>) -> Self::Output {
+    fn plan(self, ctx: &mut grease::Context<Runtime>) -> Self::Output {
         let (source, val) = self.take();
         let merge = val.merge;
         val.expr.plan(ctx).map(move |e| source.with((merge, e)))
     }
 }
 
-impl Plan<Context> for Source<Vec<Source<MergeExpression>>> {
+impl Plan<Runtime> for Source<Vec<Source<MergeExpression>>> {
     type Output = Eval<Source<Value>>;
 
-    fn plan(self, ctx: &mut grease::Context<Context>) -> Self::Output {
+    fn plan(self, ctx: &mut grease::Context<Runtime>) -> Self::Output {
         // Push a new scope
         ctx.inner.env.push(Default::default());
         let (self_source, this) = self.take();

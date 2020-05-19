@@ -6,7 +6,7 @@ use grease::{depends, item_name, make_value, match_value, Dependency, ItemName, 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-pub fn builtin(ctx: &mut Context<super::Context>) -> Value {
+pub fn builtin(ctx: &mut Context<Runtime>) -> Value {
     let mut map = BTreeMap::new();
     map.insert("new".to_owned(), Source::builtin(path_new(ctx)));
     map.insert("join".to_owned(), Source::builtin(path_join()));
@@ -14,7 +14,7 @@ pub fn builtin(ctx: &mut Context<super::Context>) -> Value {
     ScriptMap(map).into()
 }
 
-fn path_new(ctx: &mut Context<super::Context>) -> Value {
+fn path_new(ctx: &mut Context<Runtime>) -> Value {
     let store = ctx
         .store
         .item(item_name!("path"))

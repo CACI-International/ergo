@@ -18,7 +18,7 @@ pub struct Output {
 
 impl Output {
     fn send(&mut self, entry: &LogEntry) {
-        if self.out.is_tty() {
+        if self.thread_status_enabled() {
             self.out.delete_line().unwrap();
         }
         // Output should already be at the stream location
@@ -26,7 +26,7 @@ impl Output {
     }
 
     fn print_thread_status(&mut self) {
-        if !self.out.is_tty() {
+        if !self.thread_status_enabled() {
             return;
         }
 
@@ -85,29 +85,35 @@ impl Output {
     }
 
     pub fn clear_status(&mut self) {
-        if self.out.is_tty() {
-            let final_logs: Vec<_> = self.thread_mapping.values_mut().map(|v| v.take()).collect();
-            let mut lines_to_clear = 0;
-            for l in final_logs {
-                if let Some(v) = l {
-                    self.send(&v);
-                } else {
-                    lines_to_clear += 1;
-                }
-            }
-
-            for _ in 0..lines_to_clear + 1 {
-                self.out.delete_line().unwrap();
-                writeln!(self.out).unwrap();
-            }
-
-            for _ in 0..lines_to_clear + 1 {
-                self.out.cursor_up().unwrap();
-            }
-
-            self.out.carriage_return().unwrap();
-            self.out.flush().unwrap();
+        if !self.thread_status_enabled() {
+            return;
         }
+
+        let final_logs: Vec<_> = self.thread_mapping.values_mut().map(|v| v.take()).collect();
+        let mut lines_to_clear = 0;
+        for l in final_logs {
+            if let Some(v) = l {
+                self.send(&v);
+            } else {
+                lines_to_clear += 1;
+            }
+        }
+
+        for _ in 0..lines_to_clear + 1 {
+            self.out.delete_line().unwrap();
+            writeln!(self.out).unwrap();
+        }
+
+        for _ in 0..lines_to_clear + 1 {
+            self.out.cursor_up().unwrap();
+        }
+
+        self.out.carriage_return().unwrap();
+        self.out.flush().unwrap();
+    }
+
+    pub fn thread_status_enabled(&self) -> bool {
+        self.out.is_tty() && !self.thread_mapping.is_empty()
     }
 }
 
@@ -129,7 +135,7 @@ impl LogTarget for Output {
             return;
         }
 
-        if !self.out.is_tty() {
+        if !self.thread_status_enabled() {
             self.send(&entry);
         } else {
             let id = std::thread::current().id();
@@ -137,6 +143,8 @@ impl LogTarget for Output {
                 if let Some(previous) = v.replace(entry) {
                     self.send(&previous);
                 }
+            } else {
+                self.send(&entry);
             }
 
             self.print_thread_status();
@@ -144,7 +152,7 @@ impl LogTarget for Output {
     }
 
     fn dropped(&mut self, _context: std::sync::Arc<[String]>) {
-        if !self.out.is_tty() {
+        if !self.thread_status_enabled() {
             return;
         }
 

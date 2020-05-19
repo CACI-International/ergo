@@ -32,7 +32,7 @@ def_builtin!(ctx => {
         .into_iter()
         .map(|d| {
             let source = d.source();
-            match ctx.split_map(|ctx: &mut Context<super::Context>| func.plan_join(ctx, FunctionArguments::positional(vec![d]))) {
+            match ctx.split_map(|ctx: &mut Context<Runtime>| func.plan_join(ctx, FunctionArguments::positional(vec![d]))) {
                 Ok(v) => v.map(|v| source.with(v)),
                 Err(e) => {
                     ctx.error(source.with(e));

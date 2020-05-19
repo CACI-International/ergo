@@ -10,7 +10,7 @@ def_builtin!(ctx => {
         .and_then(|v| v.get()))
         .transpose()).take();
 
-    let val = match ctx.split_map(move |ctx: &mut Context<super::Context>| ctx.load(path.as_ref()))? {
+    let val = match ctx.split_map(move |ctx: &mut Context<Runtime>| ctx.load(path.as_ref()))? {
         Eval::Error => return Ok(Eval::Error),
         Eval::Value(v) => v
     };

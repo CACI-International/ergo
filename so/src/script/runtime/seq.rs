@@ -1,12 +1,20 @@
 //! Execute values in order, returning the result of the last one.
 
 use super::builtin_function_prelude::*;
-use super::script_deep_eval;
+use crate::script::traits::nested::force_value_nested;
+use grease::depends;
 
 def_builtin!(ctx => {
     let mut val = ctx.args.next().ok_or("no values provided")?;
     while let Some(next) = ctx.args.next() {
-        val = next.map(|n| script_deep_eval(val).unwrap().then(n));
+        // TODO attribute errors to correct Source
+        val = next.map(|n| val.map(|v| {
+            let deps = depends![v];
+            let traits = ctx.traits.clone();
+            Value::new(v.value_type(), async move {
+                force_value_nested(&traits, v).await
+            }, deps)
+        }).unwrap().then(n));
     }
 
     if ctx.unused_arguments() {

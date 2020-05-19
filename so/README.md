@@ -77,7 +77,7 @@ configuration directory is used.
 * Add 'force' to force a value to be immediately evaluated?
 
 ### Plugin notes
-* Ideally, plugins are loaded just like other scripts: `load [path to plugin]`.
+* Ideally, plugins are loaded just like other scripts: `so [path to plugin]`.
   Duplication is handled as one would expect (only load things once). The loaded
   plugin must return a Value (just like loading another script).
 * When loaded, plugins may also provide extensions to share interfaces/memory

@@ -5,10 +5,12 @@ use grease::{Context, IntoValue, Plan};
 
 mod ast;
 mod runtime;
+mod traits;
 
 pub use ast::{FileSource, Source, StringSource};
 pub use runtime::script_types as types;
-pub use runtime::{script_deep_eval, Error, Eval, SourceContext};
+pub use runtime::{Error, Eval, Runtime, SourceContext};
+pub use traits::nested::force_value_nested;
 
 /// A loaded script.
 pub struct Script {
@@ -18,8 +20,8 @@ pub struct Script {
 /// Create a script context from a context builder.
 pub fn script_context(
     cb: grease::ContextBuilder,
-) -> Result<Context<runtime::Context>, grease::BuilderError> {
-    let mut ctx = runtime::Context::default();
+) -> Result<Context<Runtime>, grease::BuilderError> {
+    let mut ctx = Runtime::default();
 
     let mut insert = |k: &str, v| ctx.env_insert(k.into(), Source::builtin(v));
 
@@ -55,10 +57,11 @@ pub fn script_context(
         }
     }
 
-    let ctx = cb.build_with(ctx).map(|mut ctx| {
+    let ctx = cb.build_with(ctx).map(|ctx| {
         // Add initial traits
         ctx.traits.add(::exec::trait_generator);
         ctx.traits.add(runtime::cache::trait_generator);
+        ctx.traits.add(traits::nested::trait_generator);
         ctx
     });
 
@@ -67,6 +70,7 @@ pub fn script_context(
         let env = vec![
             (PROGRAM_NAME, runtime::load::builtin()),
             ("cache", runtime::cache::builtin()),
+            ("debug", runtime::debug::builtin()),
             ("exec", runtime::exec::builtin()),
             ("fold", runtime::fold::builtin()),
             ("has", runtime::has::builtin()),
@@ -90,10 +94,10 @@ impl Script {
     }
 }
 
-impl Plan<runtime::Context> for Script {
-    type Output = <ast::Script as Plan<runtime::Context>>::Output;
+impl Plan<Runtime> for Script {
+    type Output = <ast::Script as Plan<Runtime>>::Output;
 
-    fn plan(self, ctx: &mut Context<runtime::Context>) -> Self::Output {
+    fn plan(self, ctx: &mut Context<Runtime>) -> Self::Output {
         self.ast.plan(ctx)
     }
 }
