@@ -58,23 +58,35 @@ scripts reside.
 In basic-mode (detected by the lack of a project-mode directory), a `so` user
 configuration directory is used.
 
+Within a script, the following are defined:
+* `project-root`: if project-mode is detected, this is the directory that
+  contains the `soproj` directory. Otherwise it has unit type.
+* `load-path`: an array of paths (that can be altered within scripts) that are
+  used when resolving `so` calls to load external scripts. If project-mode is
+  detected, this will contain the path to the `soproj` direcotry. Otherwise in
+  basic-mode, it will contain the path to the OS-specific configuration
+  directory:
+  * __Linux__: `$XDG_CONFIG_HOME/so` or `$HOME/.config/so`
+  * __macOS__: `$HOME/Library/Preferences/so`
+  * __Windows__: `{FOLDERID_RoamingAppData}\so\config`
+
 ## Development Notes
 
 ### TODO
 * Data-manipulation functions (maybe as a plugin).
-* Remove the unit type; use an empty map instead?
 * Improve errors to contain trace-backs of values.
   * Find specific examples where this is useful.
-* Add file/directory name hint to exec `file`/`dir` directives to specify final
-  path component (often relevant for other programs ingesting the files).
 * Self-documentation. Accessed and printed directly while evaluating scripts
   and/or accessed with a `--doc` command-line argument. Add a way to attach
-  documentation to arbitrary values in scripts.
+  documentation (or other metadata?) to arbitrary types in scripts.
 * Allow access to logging from scripts. Allow access to stdin/stdout/stderr.
   Allow mutually exclusive use of stdin/stdout/stderr for interactive programs.
 * Allow explicit error signalling from scripts. Maybe allow catching errors?
 * Add options to suppress status output.
 * Add 'force' to force a value to be immediately evaluated?
+* Improve thread status output to be a consistent log level. Add error list at
+  bottom of tty status output, and a message/signal handler to exit gracefully.
+  Display error details at exit?
 
 ### Plugin notes
 * Ideally, plugins are loaded just like other scripts: `so [path to plugin]`.
