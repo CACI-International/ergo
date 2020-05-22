@@ -10,12 +10,12 @@ use log::debug;
 #[derive(Debug, Clone)]
 pub struct TaskManager {
     pool: ThreadPool,
-    thread_ids: Vec<std::thread::ThreadId>
+    thread_ids: Vec<std::thread::ThreadId>,
 }
 
 impl TaskManager {
-    pub fn new() -> Result<Self, futures::io::Error> {
-        let threads = std::cmp::max(1, num_cpus::get());
+    pub fn new(num_threads: Option<usize>) -> Result<Self, futures::io::Error> {
+        let threads = num_threads.unwrap_or_else(|| std::cmp::max(1, num_cpus::get()));
         let barrier = std::sync::Arc::new(std::sync::Barrier::new(threads + 1));
         let thread_ids = std::sync::Arc::new(std::sync::Mutex::new(Vec::with_capacity(threads)));
 
@@ -34,7 +34,10 @@ impl TaskManager {
         barrier.wait();
         let ids = thread_ids.lock().unwrap().drain(..).collect();
 
-        Ok(TaskManager { pool, thread_ids: ids })
+        Ok(TaskManager {
+            pool,
+            thread_ids: ids,
+        })
     }
 
     /// Get the thread ids of pool threads.

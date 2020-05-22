@@ -122,14 +122,15 @@ fn main() {
     let opts = Opts::from_args();
 
     let mut output = Output::default();
-    output.set_log_level(opts.log_level.unwrap_or(LogLevel::Warn));
+    output.set_log_level(opts.log_level);
     let logger = logger_ref(output);
 
     // Create build context
     let mut ctx = script::script_context(
         Context::builder()
             .logger_ref(logger.clone())
-            .storage_directory(format!(".{}_work", PROGRAM_NAME).into()),
+            .storage_directory(format!(".{}_work", PROGRAM_NAME).into())
+            .threads(opts.jobs),
     )
     .expect("failed to create script context");
 

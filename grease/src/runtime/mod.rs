@@ -180,6 +180,7 @@ pub struct Context<Inner = ()> {
 pub struct ContextBuilder {
     logger: Option<LoggerRef>,
     store_dir: Option<std::path::PathBuf>,
+    threads: Option<usize>,
 }
 
 /// An error produced by the ContextBuilder.
@@ -215,6 +216,12 @@ impl ContextBuilder {
         self
     }
 
+    /// Set the number of threads to use.
+    pub fn threads(mut self, threads: Option<usize>) -> Self {
+        self.threads = threads;
+        self
+    }
+
     /// Create a Context.
     pub fn build(self) -> Result<Context, BuilderError> {
         self.build_inner()
@@ -231,7 +238,7 @@ impl ContextBuilder {
     /// Create a Context with an inner type.
     pub fn build_with<Inner>(self, inner: Inner) -> Result<Context<Inner>, BuilderError> {
         Ok(Context {
-            task: TaskManager::new().map_err(BuilderError::TaskManagerError)?,
+            task: TaskManager::new(self.threads).map_err(BuilderError::TaskManagerError)?,
             cmd: Commands::new(),
             log: Log::new(self.logger.unwrap_or_else(|| logger_ref(EmptyLogTarget))),
             store: Store::new(self.store_dir.unwrap_or(std::env::temp_dir())),
