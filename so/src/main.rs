@@ -21,7 +21,7 @@ mod constants {
 
 use constants::PROGRAM_NAME;
 use options::*;
-use output::Output;
+use output::{output, Output};
 use script::{force_value_nested, Error, Eval, Script, Source, SourceContext, StringSource};
 
 trait AppErr {
@@ -121,44 +121,44 @@ fn main() {
     // Parse arguments
     let opts = Opts::from_args();
 
-    let mut output = Output::default();
-    output.set_log_level(opts.log_level);
-    let logger = logger_ref(output);
+    // The following block scopes exclusive use (and cleanup) of stdout/stderr.
+    let result = {
+        let mut output = output();
+        output.set_log_level(opts.log_level);
+        let logger = logger_ref(output);
 
-    // Create build context
-    let mut ctx = script::script_context(
-        Context::builder()
-            .logger_ref(logger.clone())
-            .storage_directory(format!(".{}_work", PROGRAM_NAME).into())
-            .threads(opts.jobs),
-    )
-    .expect("failed to create script context");
+        // Create build context
+        let mut ctx = script::script_context(
+            Context::builder()
+                .logger_ref(logger.clone())
+                .storage_directory(format!(".{}_work", PROGRAM_NAME).into())
+                .threads(opts.jobs),
+        )
+        .expect("failed to create script context");
 
-    let mut to_eval = String::from(PROGRAM_NAME);
-    for arg in opts.args {
-        to_eval.push(' ');
-        to_eval.push_str(&arg);
-    }
+        let mut to_eval = String::from(PROGRAM_NAME);
+        for arg in opts.args {
+            to_eval.push(' ');
+            to_eval.push_str(&arg);
+        }
 
-    let source = Source::new(StringSource::new("<command line>", to_eval));
-    let loaded = Script::load(source).app_err("failed to parse script file");
+        let source = Source::new(StringSource::new("<command line>", to_eval));
+        let loaded = Script::load(source).app_err("failed to parse script file");
 
-    let script_output = loaded.plan(&mut ctx);
-    Errors(ctx.get_errors()).app_err("error(s) while executing script");
-    let script_output = script_output.app_err("an evaluation error occurred");
+        let script_output = loaded.plan(&mut ctx);
+        Errors(ctx.get_errors()).app_err("error(s) while executing script");
+        let script_output = script_output.app_err("an evaluation error occurred");
 
-    // Set thread ids in the logger, as reported by the task manager.
-    {
-        let mut l = logger.lock().unwrap();
-        l.set_thread_ids(ctx.task.thread_ids().iter().cloned());
-    }
+        // Set thread ids in the logger, as reported by the task manager.
+        {
+            let mut l = logger.lock().unwrap();
+            l.set_thread_ids(ctx.task.thread_ids().iter().cloned().collect());
+        }
 
-    let result = script_output
-        .map(|v| futures::executor::block_on(force_value_nested(&ctx.traits, v)))
-        .transpose_err();
-
-    let mut l = logger.lock().unwrap();
-    l.clear_status();
+        script_output
+            .map(|v| futures::executor::block_on(force_value_nested(&ctx.traits, v)))
+            .transpose_err()
+    };
 
     if let Err(e) = result {
         err_exit(&e);

@@ -84,12 +84,13 @@ Within a script, the following are defined:
 * Allow explicit error signalling from scripts. Maybe allow catching errors?
 * Add options to suppress status output.
 * Add 'force' to force a value to be immediately evaluated?
-* Improve thread status output to be a consistent log level. Add error list at
-  bottom of tty status output, and a message/signal handler to exit gracefully.
-  Display error details at exit?
+* Add error list at bottom of tty status output, and support continuing when an error occurs.
+  * Display more detailed error information at exit?
+* Add a message/signal handler to exit gracefully.
 * Revisit pattern literal matching.
   * This could use some sort of equality test on the value _data_, rather
     than comparing value identifiers.
+* Persist command timing information for better estimates.
 
 ### Plugin notes
 * Ideally, plugins are loaded just like other scripts: `so [path to plugin]`.
