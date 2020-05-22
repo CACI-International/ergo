@@ -838,6 +838,22 @@ pub fn apply_value(
     Ok(eval_error!(ctx, result))
 }
 
+#[derive(Clone, Debug)]
+struct PatternValues {
+    pub literal: Value,
+    pub binding: Value,
+}
+
+impl PatternValues {
+    pub fn new(literal: Value, binding: Value) -> Self {
+        PatternValues { literal, binding }
+    }
+
+    pub fn singular(v: Value) -> Self {
+        Self::new(v.clone(), v)
+    }
+}
+
 pub fn apply_pattern(
     ctx: &mut grease::Context<Runtime>,
     pat: Pat,
@@ -846,7 +862,13 @@ pub fn apply_pattern(
     let mut ret = Env::new();
     let mut errs = Vec::new();
 
-    _apply_pattern(ctx, &mut ret, &mut errs, pat, val);
+    _apply_pattern(
+        ctx,
+        &mut ret,
+        &mut errs,
+        pat,
+        val.map(|v| v.map(PatternValues::singular)),
+    );
     if errs.is_empty() {
         Ok(ret)
     } else {
@@ -859,7 +881,7 @@ fn _apply_pattern(
     env: &mut Env,
     errs: &mut Vec<SourceContext<Error>>,
     pat: Pat,
-    val: Eval<Source<Value>>,
+    val: Eval<Source<PatternValues>>,
 ) {
     use Pattern::*;
     let (source, pat) = pat.take();
@@ -868,7 +890,7 @@ fn _apply_pattern(
         Any => (),
         Literal(e) => match (e.plan(ctx), val) {
             (Eval::Value(result), Eval::Value(val)) => {
-                if *result != *val {
+                if *result != (*val).literal {
                     let mut err: SourceContext<Error> = source
                         .with(Error::PatternMismatch((*result).clone()))
                         .into();
@@ -879,7 +901,7 @@ fn _apply_pattern(
             _ => (),
         },
         Binding(name) => {
-            env.insert(name, val);
+            env.insert(name, val.map(|v| v.map(|v| v.binding)));
             ()
         }
         Array(inner) => {
@@ -887,7 +909,7 @@ fn _apply_pattern(
             let val = val.then(|v| {
                 orig_val = Some(v.clone());
                 let (vsource, v) = v.take();
-                match v.typed::<ScriptArray>() {
+                match v.binding.typed::<ScriptArray>() {
                     Ok(v) => match v.get() {
                         Ok(v) => Eval::Value(v.owned().0),
                         Err(e) => {
@@ -904,18 +926,21 @@ fn _apply_pattern(
                     }
                 }
             });
-            let vals: Vec<Eval<Source<Value>>> = match val {
+            let vals: Vec<Eval<Source<PatternValues>>> = match val {
                 Eval::Error => std::iter::repeat(Eval::Error).take(inner.len()).collect(),
                 Eval::Value(v) => v
                     .into_iter()
                     .enumerate()
                     .map(|(i, v)| {
                         Eval::Value(v.map(|v| {
-                            v.set_dependencies(depends![
-                                *orig_val.as_ref().unwrap().as_ref().unwrap(),
-                                desc,
-                                i
-                            ])
+                            PatternValues::new(
+                                v.clone(),
+                                v.set_dependencies(depends![
+                                    orig_val.as_ref().unwrap().as_ref().unwrap().binding,
+                                    desc,
+                                    i
+                                ]),
+                            )
                         }))
                     })
                     .collect(),
@@ -937,7 +962,7 @@ fn _apply_pattern(
                                 let mut err = e.nest(
                                     source
                                         .clone()
-                                        .with(Error::PatternMismatch(orig_val.clone().unwrap())),
+                                        .with(Error::PatternMismatch(orig_val.binding.clone())),
                                 );
                                 err.add_context(
                                     orig_val.source().with("value being matched".into()),
@@ -953,7 +978,7 @@ fn _apply_pattern(
             let mut val = val.then(|v| {
                 let orig = v.clone();
                 let (vsource, v) = v.take();
-                match v.typed::<ScriptMap>() {
+                match v.binding.typed::<ScriptMap>() {
                     Ok(v) => match v.get() {
                         Ok(v) => Eval::Value((orig, v.owned().0)),
                         Err(e) => {
@@ -983,16 +1008,21 @@ fn _apply_pattern(
                                     let keydep = depends![key];
                                     matched_keys.insert(key, v.source());
                                     Eval::Value(v.clone().map(|v| {
-                                        v.set_dependencies(depends![join
-                                            depends![*orig_value.as_ref(),desc,itemdesc],
-                                            keydep
-                                        ])
+                                        PatternValues::new(
+                                            v.clone(),
+                                            v.set_dependencies(depends![join
+                                                depends![orig_value.as_ref().binding,desc,itemdesc],
+                                                keydep
+                                            ]),
+                                        )
                                     }))
                                 }
                                 None => {
                                     let (vsource, v) = orig_value.clone().take();
-                                    let mut err: SourceContext<Error> =
-                                        source.clone().with(Error::PatternMismatch(v)).into();
+                                    let mut err: SourceContext<Error> = source
+                                        .clone()
+                                        .with(Error::PatternMismatch(v.binding))
+                                        .into();
                                     err.add_context(isource.with(format!("missing key '{}'", key)));
                                     if let Some(src) = matched_keys.get(&key) {
                                         err.add_context(
@@ -1026,7 +1056,7 @@ fn _apply_pattern(
                     env,
                     errs,
                     rest,
-                    val.map(move |(_, m)| src.with(ScriptMap(m).into())),
+                    val.map(move |(_, m)| src.with(PatternValues::singular(ScriptMap(m).into()))),
                 )
             } else {
                 match val {
@@ -1034,7 +1064,7 @@ fn _apply_pattern(
                         if !m.is_empty() {
                             let (vsource, v) = orig_value.take();
                             let mut err: SourceContext<Error> =
-                                source.with(Error::PatternMapExtraKeys(v)).into();
+                                source.with(Error::PatternMapExtraKeys(v.binding)).into();
                             err.add_context(vsource.with("value definition".into()));
                             errs.push(err);
                         }
@@ -1057,7 +1087,7 @@ fn is_fixed_point(pat: &Pattern) -> bool {
 fn pattern_array(
     ctx: &mut grease::Context<Runtime>,
     pats: &[Source<ArrayPattern>],
-    vals: &[Eval<Source<Value>>],
+    vals: &[Eval<Source<PatternValues>>],
 ) -> Result<Env, Vec<SourceContext<Error>>> {
     let mut ret = Env::new();
     let mut errs = Vec::new();
@@ -1075,7 +1105,7 @@ fn _pattern_array(
     env: &mut Env,
     errs: &mut Vec<SourceContext<Error>>,
     pats: &[Source<ArrayPattern>],
-    vals: &[Eval<Source<Value>>],
+    vals: &[Eval<Source<PatternValues>>],
 ) {
     let mut vali = 0;
     let mut pati = 0;
@@ -1116,7 +1146,20 @@ fn _pattern_array(
                     env,
                     errs,
                     p.clone(),
-                    rest_end.map(|vs| vs.into_source().map(|vs| ScriptArray(vs).into_value())),
+                    rest_end.map(|vs| {
+                        vs.into_source().map(|vs| {
+                            let mut bindings = Vec::new();
+                            let mut literals = Vec::new();
+                            for (source, p) in vs.into_iter().map(|v| v.take()) {
+                                bindings.push(source.clone().with(p.binding));
+                                literals.push(source.with(p.literal));
+                            }
+                            PatternValues::new(
+                                ScriptArray(literals).into_value(),
+                                ScriptArray(bindings).into_value(),
+                            )
+                        })
+                    }),
                 );
                 break;
             }
@@ -1129,8 +1172,8 @@ fn pattern_array_rest(
     env: &mut Env,
     errs: &mut Vec<SourceContext<Error>>,
     pats: &[Source<ArrayPattern>],
-    vals: &[Eval<Source<Value>>],
-) -> Eval<Vec<Source<Value>>> {
+    vals: &[Eval<Source<PatternValues>>],
+) -> Eval<Vec<Source<PatternValues>>> {
     let pat = if let Some(i) = pats.first() {
         i
     } else {
@@ -1202,7 +1245,9 @@ pub fn apply_command_pattern(
 ) -> Result<Env, Vec<SourceContext<Error>>> {
     let pat = pat.unwrap();
     let kw = std::mem::take(&mut args.non_positional);
-    let vals: Vec<_> = args.map(Eval::Value).collect();
+    let vals: Vec<_> = args
+        .map(|v| Eval::Value(v.map(PatternValues::singular)))
+        .collect();
 
     // Partition non-positional/positional argument patterns
     let mut pos_args = Vec::new();

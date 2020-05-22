@@ -87,6 +87,9 @@ Within a script, the following are defined:
 * Improve thread status output to be a consistent log level. Add error list at
   bottom of tty status output, and a message/signal handler to exit gracefully.
   Display error details at exit?
+* Revisit pattern literal matching.
+  * This could use some sort of equality test on the value _data_, rather
+    than comparing value identifiers.
 
 ### Plugin notes
 * Ideally, plugins are loaded just like other scripts: `so [path to plugin]`.
