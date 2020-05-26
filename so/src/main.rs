@@ -123,7 +123,8 @@ fn main() {
 
     // The following block scopes exclusive use (and cleanup) of stdout/stderr.
     let result = {
-        let mut output = output();
+        let mut output =
+            output(opts.format).app_err("could not create output from requested format");
         output.set_log_level(opts.log_level);
         let logger = logger_ref(output);
 

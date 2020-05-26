@@ -7,10 +7,17 @@ pub mod render {
     pub use term::Terminal;
 }
 
-pub fn stdout() -> OutputType {
-    match (term::stdout(), atty::is(atty::Stream::Stdout)) {
-        (Some(v), true) => OutputType::term(v),
-        _ => OutputType::Dumb(Box::new(std::io::stdout())),
+pub fn stdout(format: crate::options::OutputFormat) -> Option<OutputType> {
+    use crate::options::OutputFormat::*;
+    let t = term::stdout();
+    let is_tty = atty::is(atty::Stream::Stdout);
+
+    if t.is_some() && (format == Pretty || (format == Auto && is_tty)) {
+        Some(OutputType::term(t.unwrap()))
+    } else if format == Basic || format == Auto {
+        Some(OutputType::Dumb(Box::new(std::io::stdout())))
+    } else {
+        None
     }
 }
 

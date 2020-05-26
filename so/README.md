@@ -81,8 +81,7 @@ Within a script, the following are defined:
   documentation (or other metadata?) to arbitrary types in scripts.
 * Allow access to logging from scripts. Allow access to stdin/stdout/stderr.
   Allow mutually exclusive use of stdin/stdout/stderr for interactive programs.
-* Allow explicit error signalling from scripts. Maybe allow catching errors?
-* Add options to suppress status output.
+* Allow explicit error signaling from scripts. Maybe allow catching errors?
 * Add 'force' to force a value to be immediately evaluated?
 * Add error list at bottom of tty status output, and support continuing when an error occurs.
   * Display more detailed error information at exit?

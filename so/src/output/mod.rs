@@ -9,12 +9,12 @@ pub trait Output: LogTarget {
     fn set_log_level(&mut self, log_level: LogLevel);
 }
 
-pub fn output() -> OutputInstance {
+pub fn output(format: crate::options::OutputFormat) -> Option<OutputInstance> {
     use interface::OutputType::*;
-    match interface::stdout() {
+    interface::stdout(format).map(|v| match v {
         Term(term_output) => terminal::Output::new(term_output).into(),
         Dumb(w) => plain::Output::new(w).into(),
-    }
+    })
 }
 
 pub struct OutputInstance {
