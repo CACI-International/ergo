@@ -275,18 +275,24 @@ impl Drop for ValueData {
     }
 }
 
-type ExternalError = Box<dyn std::error::Error + Send + Sync>;
+type ExternalError = dyn std::error::Error + Send + Sync;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Error {
     inner: InnerError,
 }
 
-#[derive(Debug)]
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}", self.inner)
+    }
+}
+
+#[derive(Clone, Debug)]
 enum InnerError {
     Aborted,
-    New(ExternalError),
-    Nested(Vec<ExternalError>),
+    New(Arc<ExternalError>),
+    Nested(Vec<Arc<ExternalError>>),
 }
 
 impl std::fmt::Display for InnerError {
@@ -324,7 +330,7 @@ impl From<Error> for ExternalError {
 
 impl Error {
     /// Change the error into an external error.
-    pub fn error(self) -> ExternalError {
+    pub fn error(self) -> Box<ExternalError> {
         self.inner.into()
     }
 
@@ -337,17 +343,17 @@ impl Error {
 
 impl<T> From<T> for Error
 where
-    T: Into<ExternalError>, //std::error::Error + Send + Sync + 'static,
+    T: Into<Box<ExternalError>>, //std::error::Error + Send + Sync + 'static,
 {
     fn from(v: T) -> Self {
-        let ext: ExternalError = v.into();
+        let ext: Box<ExternalError> = v.into();
         Error {
             inner: match ext.downcast::<InnerError>() {
                 Ok(v) => *v,
                 // TODO: traverse source() to find InnerError?
                 Err(e) => {
                     call_on_error();
-                    InnerError::New(e)
+                    InnerError::New(e.into())
                 }
             },
         }
@@ -377,7 +383,7 @@ impl std::iter::FromIterator<Error> for Error {
     }
 }
 
-pub type ValueResult = Result<Arc<ValueData>, Arc<Error>>;
+pub type ValueResult = Result<Arc<ValueData>, Error>;
 
 /// A value shared amongst tasks.
 ///
@@ -533,7 +539,7 @@ impl Value {
     /// Cause an error to occur if this value's future is ever evaluated.
     pub fn unevaluated(self) -> Value {
         Value {
-            data: futures::future::err(Arc::new("unevaluated value".into()))
+            data: futures::future::err("unevaluated value".into())
                 .boxed()
                 .shared(),
             ..self
@@ -717,12 +723,12 @@ impl<T: GetValueType> TypedValue<T> {
         E: Into<Error>,
         D: IntoDependencies<'a>,
     {
-        Self::wrap_new(value.map_err(|e| Arc::new(e.into())), deps)
+        Self::wrap_new(value.map_err(|e| e.into()), deps)
     }
 
     fn wrap_new<'a, F, D>(value: F, deps: D) -> Self
     where
-        F: Future<Output = Result<T, Arc<Error>>> + Send + 'static,
+        F: Future<Output = Result<T, Error>> + Send + 'static,
         D: IntoDependencies<'a>,
     {
         TypedValue {
@@ -772,7 +778,7 @@ impl<T: GetValueType> TypedValue<T> {
     ///
     /// In general, this should only be called on a top-level value. This will block the caller
     /// until the result is available.
-    pub fn get(self) -> Result<Alias<T>, Arc<Error>> {
+    pub fn get(self) -> Result<Alias<T>, Error> {
         futures::executor::block_on(self)
     }
 
@@ -801,7 +807,7 @@ impl<T: GetValueType> TypedValue<T> {
         let deps = depends![self];
         TypedValue::wrap_new(
             FutureExt::map(self, move |result| {
-                result.and_then(move |at| f(at).map_err(|e| Arc::new(e.into())))
+                result.and_then(move |at| f(at).map_err(|e| e.into()))
             }),
             deps,
         )
@@ -841,7 +847,7 @@ impl<'a, T: Sync> TypedValueRef<'a, T> {
     ///
     /// In general, this should only be called on a top-level value. This will block the caller
     /// until the result is available.
-    pub fn get(self) -> Result<&'a T, Arc<Error>> {
+    pub fn get(self) -> Result<&'a T, Error> {
         futures::executor::block_on(self)
     }
 }
@@ -873,7 +879,7 @@ where
 unsafe impl<T> Send for TypedValue<T> {}
 
 impl<T> Future for TypedValue<T> {
-    type Output = Result<Alias<T>, Arc<Error>>;
+    type Output = Result<Alias<T>, Error>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         Future::poll(unsafe { self.map_unchecked_mut(|s| &mut s.inner) }, cx)
@@ -882,7 +888,7 @@ impl<T> Future for TypedValue<T> {
 }
 
 impl<'a, T: 'a + Sync> Future for TypedValueRef<'a, T> {
-    type Output = Result<&'a T, Arc<Error>>;
+    type Output = Result<&'a T, Error>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         Future::poll(unsafe { self.map_unchecked_mut(|s| s.inner) }, cx)

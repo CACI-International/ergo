@@ -2,9 +2,7 @@
 
 use crate::value::Error;
 use futures::executor::ThreadPool;
-use futures::future::{
-    abortable, try_join, try_join_all, AbortHandle, Aborted, Future, FutureExt, LocalBoxFuture,
-};
+use futures::future::{abortable, try_join, try_join_all, AbortHandle, Aborted, Future, FutureExt};
 use log::debug;
 use std::cell::RefCell;
 use std::sync::{Arc, Mutex};
@@ -87,7 +85,7 @@ impl TaskManager {
 
     /// Create a concurrent task to execute the given future to completion,
     /// returning the result of the future.
-    pub fn spawn<F, T>(&self, f: F) -> impl Future<Output = Result<T, Aborted>>
+    pub fn spawn_basic<F, T>(&self, f: F) -> impl Future<Output = Result<T, Aborted>>
     where
         F: Future<Output = T> + Send + 'static,
         T: Send + 'static,
@@ -102,70 +100,42 @@ impl TaskManager {
 
     /// Create a concurrent task to execute the given future to completion, returning a future
     /// suitable for use with `Value`s.
-    pub fn spawn_result<F, T, E>(&self, f: F) -> impl Future<Output = Result<T, Error>>
+    pub fn spawn<F, T>(&self, f: F) -> impl Future<Output = Result<T, Error>>
     where
-        F: Future<Output = Result<T, E>> + Send + 'static,
+        F: Future<Output = Result<T, Error>> + Send + 'static,
         T: Send + 'static,
-        E: Into<Error> + Send + 'static,
     {
-        self.spawn(f).map(|res| match res {
+        self.spawn_basic(f).map(|res| match res {
             Ok(Ok(v)) => Ok(v),
-            Ok(Err(e)) => Err(e.into()),
+            Ok(Err(e)) => Err(e),
             Err(_) => Err(Error::aborted()),
         })
     }
 
     /// Join on the results of two futures according to the configured task aggregation strategy.
-    pub fn join<'a, Fut1, Fut2, T1, T2>(
-        &self,
-        future1: Fut1,
-        future2: Fut2,
-    ) -> LocalBoxFuture<'a, Result<(T1, T2), Error>>
+    pub fn join<Fut1, Fut2, T1, T2>(&self, future1: Fut1, future2: Fut2) -> Join<Fut1, Fut2>
     where
-        Fut1: Future<Output = Result<T1, Error>> + 'a,
-        Fut2: Future<Output = Result<T2, Error>> + 'a,
+        Fut1: Future<Output = Result<T1, Error>>,
+        Fut2: Future<Output = Result<T2, Error>>,
     {
         if self.aggregate_errors {
-            futures::future::join(future1, future2)
-                .map(|(f1, f2)| match (f1, f2) {
-                    (Ok(a), Ok(b)) => Ok((a, b)),
-                    (Ok(_), Err(b)) => Err(b),
-                    (Err(a), Ok(_)) => Err(a),
-                    (Err(a), Err(b)) => Err(vec![a, b].into_iter().collect()),
-                })
-                .boxed_local()
+            Join::Aggregate(futures::future::join(future1, future2).map(join::aggregate))
         } else {
-            try_join(future1, future2).boxed_local()
+            Join::Normal(try_join(future1, future2))
         }
     }
 
     /// Join on the results of multiple futures according to the configured task aggregation
     /// strategy.
-    pub fn join_all<'a, I, Fut, T>(&self, i: I) -> LocalBoxFuture<'a, Result<Vec<T>, Error>>
+    pub fn join_all<I, Fut, T>(&self, i: I) -> JoinAll<Fut>
     where
         I: IntoIterator<Item = Fut>,
-        Fut: Future<Output = Result<T, Error>> + 'a,
+        Fut: Future<Output = Result<T, Error>>,
     {
         if self.aggregate_errors {
-            futures::future::join_all(i)
-                .map(|vs| {
-                    let mut oks = Vec::new();
-                    let mut errs = Vec::new();
-                    for v in vs {
-                        match v {
-                            Ok(v) => oks.push(v),
-                            Err(v) => errs.push(v),
-                        }
-                    }
-                    if errs.is_empty() {
-                        Ok(oks)
-                    } else {
-                        Err(errs.into_iter().collect())
-                    }
-                })
-                .boxed_local()
+            JoinAll::Aggregate(futures::future::join_all(i).map(join_all::aggregate))
         } else {
-            try_join_all(i).boxed_local()
+            JoinAll::Normal(try_join_all(i))
         }
     }
 
@@ -175,4 +145,184 @@ impl TaskManager {
             handle.abort();
         }
     }
+}
+
+pub use join::Join;
+
+mod join {
+    use crate::value::Error;
+    use futures::future::{Future, Map, TryFuture, TryJoin};
+    use std::fmt::Debug;
+
+    pub enum Join<Fut1, Fut2>
+    where
+        Fut1: Future + TryFuture,
+        Fut2: Future + TryFuture,
+    {
+        Normal(TryJoin<Fut1, Fut2>),
+        Aggregate(JoinAggregate<Fut1, Fut2>),
+    }
+
+    pub fn aggregate<A, B>((a, b): (Result<A, Error>, Result<B, Error>)) -> Result<(A, B), Error> {
+        match (a, b) {
+            (Ok(a), Ok(b)) => Ok((a, b)),
+            (Ok(_), Err(b)) => Err(b),
+            (Err(a), Ok(_)) => Err(a),
+            (Err(a), Err(b)) => Err(vec![a, b].into_iter().collect()),
+        }
+    }
+
+    type JoinAggregate<Fut1, Fut2> = Map<
+        futures::future::Join<Fut1, Fut2>,
+        fn(
+            (<Fut1 as Future>::Output, <Fut2 as Future>::Output),
+        ) -> Result<(<Fut1 as TryFuture>::Ok, <Fut2 as TryFuture>::Ok), Error>,
+    >;
+
+    impl<Fut1, Fut2> Debug for Join<Fut1, Fut2>
+    where
+        Fut1: Future + TryFuture + Debug,
+        Fut2: Future + TryFuture + Debug,
+        <Fut1 as Future>::Output: Debug,
+        <Fut1 as TryFuture>::Ok: Debug,
+        <Fut1 as TryFuture>::Error: Debug,
+        <Fut2 as Future>::Output: Debug,
+        <Fut2 as TryFuture>::Ok: Debug,
+        <Fut2 as TryFuture>::Error: Debug,
+    {
+        fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            match self {
+                Join::Normal(inner) => Debug::fmt(inner, f),
+                Join::Aggregate(inner) => Debug::fmt(inner, f),
+            }
+        }
+    }
+
+    impl<Fut1, Fut2> Future for Join<Fut1, Fut2>
+    where
+        Fut1: Future + TryFuture<Error = Error> + Unpin,
+        Fut2: Future + TryFuture<Error = Error> + Unpin,
+    {
+        type Output = Result<(<Fut1 as TryFuture>::Ok, <Fut2 as TryFuture>::Ok), Error>;
+
+        fn poll(
+            self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context,
+        ) -> std::task::Poll<Self::Output> {
+            match &*self {
+                Join::Normal(_) => Future::poll(
+                    unsafe {
+                        self.map_unchecked_mut(|s| match s {
+                            Join::Normal(inner) => inner,
+                            _ => panic!("invalid"),
+                        })
+                    },
+                    cx,
+                ),
+                Join::Aggregate(_) => Future::poll(
+                    unsafe {
+                        self.map_unchecked_mut(|s| match s {
+                            Join::Aggregate(inner) => inner,
+                            _ => panic!("invalid"),
+                        })
+                    },
+                    cx,
+                ),
+            }
+        }
+    }
+
+    impl<Fut1, Fut2> Unpin for Join<Fut1, Fut2>
+    where
+        Fut1: Future + TryFuture + Unpin,
+        Fut2: Future + TryFuture + Unpin,
+    {
+    }
+}
+
+pub use join_all::JoinAll;
+
+mod join_all {
+    use crate::value::Error;
+    use futures::future::{Future, Map, TryFuture, TryJoinAll};
+    use std::fmt::Debug;
+
+    pub enum JoinAll<F>
+    where
+        F: Future + TryFuture,
+    {
+        Normal(TryJoinAll<F>),
+        Aggregate(JoinAggregate<F>),
+    }
+
+    pub fn aggregate<T>(vs: Vec<Result<T, Error>>) -> Result<Vec<T>, Error> {
+        let mut oks = Vec::new();
+        let mut errs = Vec::new();
+        for v in vs {
+            match v {
+                Ok(v) => oks.push(v),
+                Err(v) => errs.push(v),
+            }
+        }
+        if errs.is_empty() {
+            Ok(oks)
+        } else {
+            Err(errs.into_iter().collect())
+        }
+    }
+
+    type JoinAggregate<F> = Map<
+        futures::future::JoinAll<F>,
+        fn(Vec<<F as Future>::Output>) -> Result<Vec<<F as TryFuture>::Ok>, Error>,
+    >;
+
+    impl<F> Debug for JoinAll<F>
+    where
+        F: Future + TryFuture + Debug,
+        <F as Future>::Output: Debug,
+        <F as TryFuture>::Ok: Debug,
+        <F as TryFuture>::Error: Debug,
+    {
+        fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            match self {
+                JoinAll::Normal(inner) => Debug::fmt(inner, f),
+                JoinAll::Aggregate(inner) => Debug::fmt(inner, f),
+            }
+        }
+    }
+
+    impl<F> Future for JoinAll<F>
+    where
+        F: Future + TryFuture<Error = Error> + Unpin,
+    {
+        type Output = Result<Vec<<F as TryFuture>::Ok>, Error>;
+
+        fn poll(
+            self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context,
+        ) -> std::task::Poll<Self::Output> {
+            match &*self {
+                JoinAll::Normal(_) => Future::poll(
+                    unsafe {
+                        self.map_unchecked_mut(|s| match s {
+                            JoinAll::Normal(inner) => inner,
+                            _ => panic!("invalid"),
+                        })
+                    },
+                    cx,
+                ),
+                JoinAll::Aggregate(_) => Future::poll(
+                    unsafe {
+                        self.map_unchecked_mut(|s| match s {
+                            JoinAll::Aggregate(inner) => inner,
+                            _ => panic!("invalid"),
+                        })
+                    },
+                    cx,
+                ),
+            }
+        }
+    }
+
+    impl<F> Unpin for JoinAll<F> where F: Future + TryFuture + Unpin {}
 }
