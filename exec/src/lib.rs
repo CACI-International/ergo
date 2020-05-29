@@ -51,11 +51,7 @@ fn vec_to_os_string_impl<T: From<OsString> + GetValueType>() -> TraitImpl {
     TraitImpl::for_trait::<grease::IntoTyped<T>>(|v| {
         v.typed::<Vec<u8>>()
             .unwrap()
-            .map(|vec| {
-                OsString::from_bytes(&*vec)
-                    .map(T::from)
-                    .map_err(|e| e.to_string())
-            })
+            .and_then(|vec| Ok(OsString::from_bytes(&*vec).map(T::from)?))
             .into()
     })
 }
@@ -73,15 +69,10 @@ pub fn trait_generator(v: std::sync::Arc<ValueType>) -> Vec<TraitImpl> {
             TraitImpl::for_trait::<grease::IntoTyped<StdinString>>(|v| {
                 v.typed::<PathBuf>()
                     .unwrap()
-                    .map(|path| {
+                    .and_then(|path| {
                         let mut v = Vec::new();
-                        std::fs::File::open(&*path)
-                            .map_err(|e| e.to_string())?
-                            .read_to_end(&mut v)
-                            .map_err(|e| e.to_string())?;
-                        OsString::from_vec(v)
-                            .map(StdinString::from)
-                            .map_err(|e| e.to_string())
+                        std::fs::File::open(&*path)?.read_to_end(&mut v)?;
+                        Ok(OsString::from_vec(v).map(StdinString::from)?)
                     })
                     .into()
             }),
@@ -452,7 +443,7 @@ impl Plan for Config {
                         } else {
                             "".into()
                         };
-                        return Err(format!("command returned failure exit status{}", rest));
+                        return Err(format!("command returned failure exit status{}", rest).into());
                     }
                 } else {
                     drop(send_status.send(output.status));
@@ -478,9 +469,9 @@ impl Plan for Config {
                 }
             })
             .collect();
-        let stdout = make_value!((run_command) { run_command.await?; rcv_stdout.await.map_err(|e| format!("{}", e)) });
-        let stderr = make_value!((run_command) { run_command.await?; rcv_stderr.await.map_err(|e| format!("{}", e)) });
-        let exit_status = make_value!((run_command) { run_command.await?; rcv_status.await.map_err(|e| format!("{}", e)) });
+        let stdout = make_value!((run_command) { run_command.await?; Ok(rcv_stdout.await?) });
+        let stderr = make_value!((run_command) { run_command.await?; Ok(rcv_stderr.await?) });
+        let exit_status = make_value!((run_command) { run_command.await?; Ok(rcv_status.await?) });
         let complete_once = if did_complete.exists() {
             make_value!([run_command] { Ok(()) })
         } else {
@@ -511,52 +502,53 @@ impl Plan for Config {
 mod test {
     use super::*;
 
+    type Error = Box<dyn std::error::Error + Send + Sync>;
+
     #[test]
-    fn run_command() -> Result<(), String> {
+    fn run_command() -> Result<(), Error> {
         let mut cfg = Config::new("echo");
         cfg.push_arg("hello");
 
-        let mut ctx = Context::builder().build().map_err(|e| format!("{}", e))?;
-        let status = ctx.plan(cfg)?.exit_status.get()?;
+        let mut ctx = Context::builder().build()?;
+        let status = ctx.plan(cfg)?.exit_status.get().map_err(|e| e.error())?;
         assert!(status.success());
         Ok(())
     }
 
     #[test]
-    fn fail_command() -> Result<(), String> {
+    fn fail_command() -> Result<(), Error> {
         let cfg = Config::new("false");
 
-        let mut ctx = Context::builder().build().map_err(|e| format!("{}", e))?;
-        let status = ctx.plan(cfg)?.exit_status.get()?;
+        let mut ctx = Context::builder().build()?;
+        let status = ctx.plan(cfg)?.exit_status.get().map_err(|e| e.error())?;
         assert!(!status.success());
         Ok(())
     }
 
     #[test]
-    fn output_as_argument() -> Result<(), String> {
-        let mut ctx = Context::builder().build().map_err(|e| format!("{}", e))?;
+    fn output_as_argument() -> Result<(), Error> {
+        let mut ctx = Context::builder().build()?;
 
         let mut cfg = Config::new("echo");
         cfg.push_arg("hello");
         let result = cfg.plan(&mut ctx)?;
 
         let mut cfg2 = Config::new("echo");
-        cfg2.push_arg(result.stdout.map(|v| {
-            String::from_utf8(v.clone())
-                .map_err(|e| format!("{}", e))
+        cfg2.push_arg(result.stdout.and_then(|v| {
+            Ok(String::from_utf8(v.clone())
                 .map(OsString::from)
-                .map(CommandString::from)
+                .map(CommandString::from)?)
         }));
         let result = cfg2.plan(&mut ctx)?;
 
-        assert!(result.exit_status.get()?.success());
-        assert!(&*(result.stdout.get()?) == b"hello\n\n");
+        assert!(result.exit_status.get().map_err(|e| e.error())?.success());
+        assert!(&*(result.stdout.get().map_err(|e| e.error())?) == b"hello\n\n");
         Ok(())
     }
 
     #[test]
-    fn output_as_input() -> Result<(), String> {
-        let mut ctx = Context::builder().build().map_err(|e| format!("{}", e))?;
+    fn output_as_input() -> Result<(), Error> {
+        let mut ctx = Context::builder().build()?;
 
         let mut cfg = Config::new("echo");
         cfg.push_arg("hello");
@@ -566,44 +558,43 @@ mod test {
         cfg2.stdin = Some(
             result
                 .stdout
-                .map(|v| {
-                    String::from_utf8(v.clone())
-                        .map_err(|e| format!("{}", e))
+                .and_then(|v| {
+                    Ok(String::from_utf8(v.clone())
                         .map(OsString::from)
-                        .map(StdinString::from)
-                        .into()
+                        .map(StdinString::from)?
+                        .into())
                 })
                 .into(),
         );
         let result = cfg2.plan(&mut ctx)?;
 
-        assert!(result.exit_status.get()?.success());
-        assert!(&*(result.stdout.get()?) == b"hello\n");
+        assert!(result.exit_status.get().map_err(|e| e.error())?.success());
+        assert!(&*(result.stdout.get().map_err(|e| e.error())?) == b"hello\n");
         Ok(())
     }
 
     #[test]
-    fn env() -> Result<(), String> {
-        let mut ctx = Context::builder().build().map_err(|e| e.to_string())?;
+    fn env() -> Result<(), Error> {
+        let mut ctx = Context::builder().build()?;
 
         let mut cfg = Config::new("env");
         cfg.env
             .insert("VALUE".into(), Some(SomeValue::from(OsString::from("42"))));
         let result = ctx.plan(cfg)?;
 
-        assert!(&*(result.stdout.get()?) == b"VALUE=42\n");
+        assert!(&*(result.stdout.get().map_err(|e| e.error())?) == b"VALUE=42\n");
         Ok(())
     }
 
     #[test]
-    fn env_inherit() -> Result<(), String> {
-        let mut ctx = Context::builder().build().map_err(|e| e.to_string())?;
+    fn env_inherit() -> Result<(), Error> {
+        let mut ctx = Context::builder().build()?;
 
         let mut cfg = Config::new("env");
         cfg.env.insert("CARGO_PKG_NAME".into(), None);
         let result = ctx.plan(cfg)?;
 
-        assert!(&*(result.stdout.get()?) == b"CARGO_PKG_NAME=exec\n");
+        assert!(&*(result.stdout.get().map_err(|e| e.error())?) == b"CARGO_PKG_NAME=exec\n");
         Ok(())
     }
 }

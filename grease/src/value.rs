@@ -320,14 +320,6 @@ impl std::error::Error for InnerError {
     }
 }
 
-/*
-impl From<Error> for ExternalError {
-    fn from(e: Error) -> Self {
-        e.error()
-    }
-}
-*/
-
 impl Error {
     /// Change the error into an external error.
     pub fn error(self) -> Box<ExternalError> {
@@ -343,7 +335,7 @@ impl Error {
 
 impl<T> From<T> for Error
 where
-    T: Into<Box<ExternalError>>, //std::error::Error + Send + Sync + 'static,
+    T: Into<Box<ExternalError>>,
 {
     fn from(v: T) -> Self {
         let ext: Box<ExternalError> = v.into();
@@ -717,16 +709,7 @@ pub struct TypedValue<T> {
 
 impl<T: GetValueType> TypedValue<T> {
     /// Create a typed value from the given future and dependencies.
-    pub fn new<'a, F, D, E>(value: F, deps: D) -> Self
-    where
-        F: Future<Output = Result<T, E>> + Send + 'static,
-        E: Into<Error>,
-        D: IntoDependencies<'a>,
-    {
-        Self::wrap_new(value.map_err(|e| e.into()), deps)
-    }
-
-    fn wrap_new<'a, F, D>(value: F, deps: D) -> Self
+    pub fn new<'a, F, D>(value: F, deps: D) -> Self
     where
         F: Future<Output = Result<T, Error>> + Send + 'static,
         D: IntoDependencies<'a>,
@@ -747,13 +730,7 @@ impl<T: GetValueType> TypedValue<T> {
         F: Future<Output = T> + Send + 'static,
         D: IntoDependencies<'a>,
     {
-        Self::new(
-            value.map(|v| {
-                let ret: Result<T, std::convert::Infallible> = Ok(v);
-                ret
-            }),
-            deps,
-        )
+        Self::new(value.map(|v| Ok(v)), deps)
     }
 
     /// Create a constant value.
@@ -789,26 +766,20 @@ impl<T: GetValueType> TypedValue<T> {
         F: FnOnce(Alias<T>) -> U + Send + 'static,
         T: Sync + 'static,
     {
-        self.and_then(move |v| {
-            let ret: Result<U, std::convert::Infallible> = Ok(f(v));
-            ret
-        })
+        self.and_then(move |v| Ok(f(v)))
     }
 
     /// Create a new TypedValue by consuming and applying the given function (which can fail) over
     /// the result of this TypedValue.
-    pub fn and_then<U, F, E>(self, f: F) -> TypedValue<U>
+    pub fn and_then<U, F>(self, f: F) -> TypedValue<U>
     where
         U: GetValueType,
-        F: FnOnce(Alias<T>) -> Result<U, E> + Send + 'static,
-        E: Into<Error>,
+        F: FnOnce(Alias<T>) -> Result<U, Error> + Send + 'static,
         T: Sync + 'static,
     {
         let deps = depends![self];
-        TypedValue::wrap_new(
-            FutureExt::map(self, move |result| {
-                result.and_then(move |at| f(at).map_err(|e| e.into()))
-            }),
+        TypedValue::new(
+            FutureExt::map(self, move |result| result.and_then(move |at| f(at))),
             deps,
         )
     }
