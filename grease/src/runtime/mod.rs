@@ -12,8 +12,10 @@ use self::log::EmptyLogTarget;
 pub use self::log::{logger_ref, Log, LogEntry, LogLevel, LogTarget, LoggerRef};
 pub use command::Commands;
 pub use store::{Item, ItemContent, ItemName, Store};
-pub use task_manager::TaskManager;
+pub use task_manager::{OnError, TaskManager};
 pub use traits::{TraitGenerator, Traits};
+
+pub(crate) use task_manager::call_on_error;
 
 trait CallMut {
     fn call_mut<O, F>(&mut self, f: F) -> O
@@ -181,6 +183,8 @@ pub struct ContextBuilder {
     logger: Option<LoggerRef>,
     store_dir: Option<std::path::PathBuf>,
     threads: Option<usize>,
+    aggregate_errors: Option<bool>,
+    on_error: Option<Box<OnError>>,
 }
 
 /// An error produced by the ContextBuilder.
@@ -193,6 +197,14 @@ impl fmt::Display for BuilderError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Self::TaskManagerError(e) => write!(f, "task manager error: {}", e),
+        }
+    }
+}
+
+impl std::error::Error for BuilderError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            BuilderError::TaskManagerError(e) => Some(e),
         }
     }
 }
@@ -222,6 +234,19 @@ impl ContextBuilder {
         self
     }
 
+    /// Set whether a single error causes immediate completion or not.
+    /// Default is false.
+    pub fn keep_going(mut self, value: bool) -> Self {
+        self.aggregate_errors = Some(value);
+        self
+    }
+
+    /// Set a callback to be called when an error is created while tasks are executing.
+    pub fn on_error(mut self, value: Box<OnError>) -> Self {
+        self.on_error = Some(value);
+        self
+    }
+
     /// Create a Context.
     pub fn build(self) -> Result<Context, BuilderError> {
         self.build_inner()
@@ -238,7 +263,12 @@ impl ContextBuilder {
     /// Create a Context with an inner type.
     pub fn build_with<Inner>(self, inner: Inner) -> Result<Context<Inner>, BuilderError> {
         Ok(Context {
-            task: TaskManager::new(self.threads).map_err(BuilderError::TaskManagerError)?,
+            task: TaskManager::new(
+                self.threads,
+                self.aggregate_errors.unwrap_or(false),
+                self.on_error,
+            )
+            .map_err(BuilderError::TaskManagerError)?,
             cmd: Commands::new(),
             log: Log::new(self.logger.unwrap_or_else(|| logger_ref(EmptyLogTarget))),
             store: Store::new(self.store_dir.unwrap_or(std::env::temp_dir())),

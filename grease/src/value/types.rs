@@ -114,7 +114,7 @@ where
     TraitImpl::for_trait::<IntoTyped<U>>(|v| {
         v.typed::<T>()
             .unwrap()
-            .map(|v| Ok(U::from(v.clone())))
+            .map(|v| U::from(v.clone()))
             .into()
     })
 }

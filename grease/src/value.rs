@@ -14,6 +14,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 use uuid::Uuid;
 
+use crate::runtime::call_on_error;
+
 mod types;
 
 pub use types::*;
@@ -273,7 +275,109 @@ impl Drop for ValueData {
     }
 }
 
-pub type ValueResult = Result<Arc<ValueData>, String>;
+type ExternalError = Box<dyn std::error::Error + Send + Sync>;
+
+#[derive(Debug)]
+pub struct Error {
+    inner: InnerError,
+}
+
+#[derive(Debug)]
+enum InnerError {
+    Aborted,
+    New(ExternalError),
+    Nested(Vec<ExternalError>),
+}
+
+impl std::fmt::Display for InnerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        use InnerError::*;
+        match self {
+            Aborted => write!(f, "aborted"),
+            New(e) => write!(f, "{}", e),
+            Nested(es) => {
+                for e in es {
+                    writeln!(f, "{}", e)?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+impl std::error::Error for InnerError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            InnerError::New(e) => Some(e.as_ref()),
+            _ => None,
+        }
+    }
+}
+
+/*
+impl From<Error> for ExternalError {
+    fn from(e: Error) -> Self {
+        e.error()
+    }
+}
+*/
+
+impl Error {
+    /// Change the error into an external error.
+    pub fn error(self) -> ExternalError {
+        self.inner.into()
+    }
+
+    pub(crate) fn aborted() -> Self {
+        Error {
+            inner: InnerError::Aborted,
+        }
+    }
+}
+
+impl<T> From<T> for Error
+where
+    T: Into<ExternalError>, //std::error::Error + Send + Sync + 'static,
+{
+    fn from(v: T) -> Self {
+        let ext: ExternalError = v.into();
+        Error {
+            inner: match ext.downcast::<InnerError>() {
+                Ok(v) => *v,
+                // TODO: traverse source() to find InnerError?
+                Err(e) => {
+                    call_on_error();
+                    InnerError::New(e)
+                }
+            },
+        }
+    }
+}
+
+impl std::iter::FromIterator<Error> for Error {
+    fn from_iter<I: IntoIterator<Item = Error>>(iter: I) -> Self {
+        let errs: Vec<Error> = iter.into_iter().collect();
+
+        if errs.len() == 1 {
+            errs.into_iter().next().unwrap()
+        } else {
+            Error {
+                inner: InnerError::Nested(
+                    errs.into_iter()
+                        .map(|e| match e.inner {
+                            InnerError::Aborted => vec![],
+                            InnerError::New(e) => vec![e],
+                            InnerError::Nested(es) => es,
+                        })
+                        .flatten()
+                        .collect(),
+                ),
+            }
+        }
+    }
+}
+
+pub type ValueResult = Result<Arc<ValueData>, Arc<Error>>;
 
 /// A value shared amongst tasks.
 ///
@@ -389,7 +493,7 @@ impl Value {
     /// Create a value with the given type, future, and dependencies.
     pub fn new<'a, F, D>(tp: Arc<ValueType>, value: F, deps: D) -> Value
     where
-        F: Future<Output = Result<Arc<ValueData>, String>> + Send + 'static,
+        F: Future<Output = ValueResult> + Send + 'static,
         D: IntoDependencies<'a>,
     {
         let deps = Dependencies::ordered(deps);
@@ -429,7 +533,7 @@ impl Value {
     /// Cause an error to occur if this value's future is ever evaluated.
     pub fn unevaluated(self) -> Value {
         Value {
-            data: futures::future::err("unevaluated value".into())
+            data: futures::future::err(Arc::new("unevaluated value".into()))
                 .boxed()
                 .shared(),
             ..self
@@ -607,9 +711,18 @@ pub struct TypedValue<T> {
 
 impl<T: GetValueType> TypedValue<T> {
     /// Create a typed value from the given future and dependencies.
-    pub fn new<'a, F, D>(value: F, deps: D) -> Self
+    pub fn new<'a, F, D, E>(value: F, deps: D) -> Self
     where
-        F: Future<Output = Result<T, String>> + Send + 'static,
+        F: Future<Output = Result<T, E>> + Send + 'static,
+        E: Into<Error>,
+        D: IntoDependencies<'a>,
+    {
+        Self::wrap_new(value.map_err(|e| Arc::new(e.into())), deps)
+    }
+
+    fn wrap_new<'a, F, D>(value: F, deps: D) -> Self
+    where
+        F: Future<Output = Result<T, Arc<Error>>> + Send + 'static,
         D: IntoDependencies<'a>,
     {
         TypedValue {
@@ -620,6 +733,21 @@ impl<T: GetValueType> TypedValue<T> {
             ),
             phantom: Default::default(),
         }
+    }
+
+    /// Create a typed value from the given future (which cannot fail) and dependencies.
+    pub fn ok<'a, F, D>(value: F, deps: D) -> Self
+    where
+        F: Future<Output = T> + Send + 'static,
+        D: IntoDependencies<'a>,
+    {
+        Self::new(
+            value.map(|v| {
+                let ret: Result<T, std::convert::Infallible> = Ok(v);
+                ret
+            }),
+            deps,
+        )
     }
 
     /// Create a constant value.
@@ -637,14 +765,14 @@ impl<T: GetValueType> TypedValue<T> {
         T: Send + 'static,
         D: IntoDependencies<'a>,
     {
-        Self::new(futures::future::ok(data), deps)
+        Self::ok(futures::future::ready(data), deps)
     }
 
     /// Get the result of the value.
     ///
     /// In general, this should only be called on a top-level value. This will block the caller
     /// until the result is available.
-    pub fn get(self) -> Result<Alias<T>, String> {
+    pub fn get(self) -> Result<Alias<T>, Arc<Error>> {
         futures::executor::block_on(self)
     }
 
@@ -652,16 +780,34 @@ impl<T: GetValueType> TypedValue<T> {
     pub fn map<U, F>(self, f: F) -> TypedValue<U>
     where
         U: GetValueType,
-        F: FnOnce(Alias<T>) -> Result<U, String> + Send + 'static,
+        F: FnOnce(Alias<T>) -> U + Send + 'static,
+        T: Sync + 'static,
+    {
+        self.and_then(move |v| {
+            let ret: Result<U, std::convert::Infallible> = Ok(f(v));
+            ret
+        })
+    }
+
+    /// Create a new TypedValue by consuming and applying the given function (which can fail) over
+    /// the result of this TypedValue.
+    pub fn and_then<U, F, E>(self, f: F) -> TypedValue<U>
+    where
+        U: GetValueType,
+        F: FnOnce(Alias<T>) -> Result<U, E> + Send + 'static,
+        E: Into<Error>,
         T: Sync + 'static,
     {
         let deps = depends![self];
-        TypedValue::new(
-            FutureExt::map(self, move |result| result.and_then(move |at| f(at))),
+        TypedValue::wrap_new(
+            FutureExt::map(self, move |result| {
+                result.and_then(move |at| f(at).map_err(|e| Arc::new(e.into())))
+            }),
             deps,
         )
     }
 
+    /// Get a by-reference typed value.
     pub fn as_ref<'a>(&'a mut self) -> TypedValueRef<'a, T> {
         TypedValueRef::new(&mut self.inner)
     }
@@ -695,7 +841,7 @@ impl<'a, T: Sync> TypedValueRef<'a, T> {
     ///
     /// In general, this should only be called on a top-level value. This will block the caller
     /// until the result is available.
-    pub fn get(self) -> Result<&'a T, String> {
+    pub fn get(self) -> Result<&'a T, Arc<Error>> {
         futures::executor::block_on(self)
     }
 }
@@ -727,7 +873,7 @@ where
 unsafe impl<T> Send for TypedValue<T> {}
 
 impl<T> Future for TypedValue<T> {
-    type Output = Result<Alias<T>, String>;
+    type Output = Result<Alias<T>, Arc<Error>>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         Future::poll(unsafe { self.map_unchecked_mut(|s| &mut s.inner) }, cx)
@@ -736,7 +882,7 @@ impl<T> Future for TypedValue<T> {
 }
 
 impl<'a, T: 'a + Sync> Future for TypedValueRef<'a, T> {
-    type Output = Result<&'a T, String>;
+    type Output = Result<&'a T, Arc<Error>>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         Future::poll(unsafe { self.map_unchecked_mut(|s| s.inner) }, cx)
