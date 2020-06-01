@@ -66,6 +66,8 @@ impl fmt::Display for Error {
     }
 }
 
+impl std::error::Error for Error {}
+
 /// Iterator producing tokens or errors.
 pub struct Tokens<I: Iterator> {
     iter: std::iter::Peekable<I>,

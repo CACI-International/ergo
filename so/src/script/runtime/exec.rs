@@ -145,7 +145,7 @@ def_builtin!(ctx => {
     }
 
     for (binding, value) in creates {
-        paths.insert(binding, 
+        paths.insert(binding,
             value.map(|v| {
                 make_value!((complete) [v] {
                     let path = v.await?;
@@ -189,7 +189,7 @@ fn make_dir_function(v: grease::TypedValue<std::path::PathBuf>) -> Value {
                 }
             );
             if s != "." {
-                v = v.map(move |path| {
+                v = v.and_then(move |path| {
                     let mut p = path.clone();
                     p.push(s);
                     Ok(p)

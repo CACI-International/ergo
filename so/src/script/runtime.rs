@@ -275,10 +275,7 @@ impl LoadScript for grease::Context<Runtime> {
                 let mut old_work_dir = p.parent().unwrap().into(); // unwrap because is_file() necessitates a parent exists
                 std::mem::swap(&mut old_work_dir, &mut self.working_dir);
                 let result =
-                    match super::Script::load(Source::new(super::ast::FileSource(p.clone()))) {
-                        Err(e) => return Err(Error::ValueError(e.to_string())),
-                        Ok(script) => script.plan(self),
-                    };
+                    super::Script::load(Source::new(super::ast::FileSource(p.clone())))?.plan(self);
                 self.load_cache.insert(p.clone(), result);
                 std::mem::swap(&mut old_work_dir, &mut self.working_dir);
             }
@@ -512,10 +509,12 @@ pub enum Error {
     /// A load failed to find a module.
     LoadFailed(String),
     /// An error occured while evaluating a value.
-    ValueError(String),
+    ValueError(grease::Error),
+    /// An error occured while loading a script.
+    ScriptLoadError(super::ast::Error),
+    /// A generic error message.
+    GenericError(String),
 }
-
-impl std::error::Error for Error {}
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -547,7 +546,19 @@ impl fmt::Display for Error {
             UnexpectedPositionalArguments => write!(f, "extraneous positional arguments"),
             ArgumentMismatch => write!(f, "argument mismatch in command"),
             LoadFailed(s) => write!(f, "failed to find module matching {}", s),
-            ValueError(s) => write!(f, "{}", s),
+            ValueError(e) => write!(f, "{}", e),
+            ScriptLoadError(e) => write!(f, "{}", e),
+            GenericError(s) => write!(f, "{}", s),
+        }
+    }
+}
+
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Error::ValueError(e) => Some(e.as_ref()),
+            Error::ScriptLoadError(e) => Some(e),
+            _ => None,
         }
     }
 }
@@ -564,6 +575,18 @@ impl From<std::io::Error> for Error {
     }
 }
 
+impl From<grease::Error> for Error {
+    fn from(e: grease::Error) -> Self {
+        Error::ValueError(e)
+    }
+}
+
+impl From<super::ast::Error> for Error {
+    fn from(e: super::ast::Error) -> Self {
+        Error::ScriptLoadError(e)
+    }
+}
+
 impl From<&'_ str> for Error {
     fn from(s: &str) -> Self {
         Self::from(s.to_owned())
@@ -572,7 +595,7 @@ impl From<&'_ str> for Error {
 
 impl From<String> for Error {
     fn from(s: String) -> Self {
-        Error::ValueError(s)
+        Error::GenericError(s)
     }
 }
 
@@ -584,7 +607,7 @@ impl From<Source<&'_ str>> for Source<Error> {
 
 impl From<Source<String>> for Source<Error> {
     fn from(s: Source<String>) -> Self {
-        s.map(Error::ValueError)
+        s.map(Error::GenericError)
     }
 }
 

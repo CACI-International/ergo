@@ -326,10 +326,21 @@ impl Error {
         self.inner.into()
     }
 
+    /// Get a reference to the error as an external error.
+    pub fn error_ref(&self) -> &ExternalError {
+        self.as_ref()
+    }
+
     pub(crate) fn aborted() -> Self {
         Error {
             inner: InnerError::Aborted,
         }
+    }
+}
+
+impl AsRef<ExternalError> for Error {
+    fn as_ref(&self) -> &ExternalError {
+        &self.inner
     }
 }
 

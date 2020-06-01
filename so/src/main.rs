@@ -162,6 +162,6 @@ fn main() {
     };
 
     if let Err(e) = result {
-        err_exit(&e);
+        err_exit(&e.to_string());
     }
 }

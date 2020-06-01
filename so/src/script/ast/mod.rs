@@ -85,6 +85,7 @@ pub type Exprs = Vec<MergeExpr>;
 pub type Script = Source<Exprs>;
 
 /// A script loading error.
+#[derive(Debug)]
 pub enum Error {
     Io(std::io::Error),
     /// A tokenization error.
@@ -93,11 +94,48 @@ pub enum Error {
     Parse(Source<pom::Error>),
 }
 
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Error::Io(e) => write!(f, "io error: {}", e),
+            Error::Tokenize(e) => write!(f, "syntax error: {}", e),
+            Error::Parse(e) => write!(f, "syntax error: {}", e),
+        }
+    }
+}
+
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(match self {
+            Error::Io(e) => e,
+            Error::Tokenize(e) => e,
+            Error::Parse(e) => e,
+        })
+    }
+}
+
+impl From<std::io::Error> for Error {
+    fn from(e: std::io::Error) -> Self {
+        Error::Io(e)
+    }
+}
+
+impl From<Source<tokenize::Error>> for Error {
+    fn from(e: Source<tokenize::Error>) -> Self {
+        Error::Tokenize(e)
+    }
+}
+
+impl From<Source<pom::Error>> for Error {
+    fn from(e: Source<pom::Error>) -> Self {
+        Error::Parse(e)
+    }
+}
+
 /// Load an AST from the given character stream.
 pub fn load(src: Source<()>) -> Result<Script, Error> {
-    let toks = tokenize::Tokens::from(src.clone().open().map_err(Error::Io)?)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(Error::Tokenize)?;
+    let toks = tokenize::Tokens::from(src.clone().open()?)
+        .collect::<Result<Vec<_>, _>>()?;
     let parser = parse::script();
     let parse_error = |e: pom::Error, pos: Option<usize>| {
         pos.and_then(|pos| toks.get(pos))
@@ -481,6 +519,8 @@ impl<T> AsMut<T> for Source<T> {
     }
 }
 
+impl<T> std::error::Error for Source<T> where T: std::error::Error {}
+
 impl<T: Into<Dependency>> From<Source<T>> for Dependency {
     fn from(v: Source<T>) -> Dependency {
         v.unwrap().into()
@@ -753,15 +793,5 @@ impl<T: PartialEq> PartialEq<T> for Source<T> {
 impl PartialEq<Source<Self>> for tokenize::Token {
     fn eq(&self, other: &Source<Self>) -> bool {
         self == &other.value
-    }
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Self::Io(e) => write!(f, "{}", e),
-            Self::Tokenize(e) => write!(f, "{}", e),
-            Self::Parse(e) => write!(f, "{}", e),
-        }
     }
 }

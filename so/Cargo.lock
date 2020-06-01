@@ -190,7 +190,7 @@ dependencies = [
 name = "exec"
 version = "0.1.0"
 dependencies = [
- "grease 0.1.0",
+ "grease 0.2.0",
  "os_str_bytes 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
@@ -339,7 +339,7 @@ dependencies = [
 
 [[package]]
 name = "grease"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "fasthash 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures 0.3.1 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -720,7 +720,7 @@ dependencies = [
  "directories 2.0.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "exec 0.1.0",
  "futures 0.3.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "grease 0.1.0",
+ "grease 0.2.0",
  "log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "pom 3.0.3 (git+https://github.com/afranchuk/pom?rev=d56552b2b9b54a833e7afc1543d9dd26c338b2f5)",
  "rand 0.7.2 (registry+https://github.com/rust-lang/crates.io-index)",
