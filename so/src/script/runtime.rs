@@ -1537,7 +1537,11 @@ impl Plan<Runtime> for Source<Expression> {
             source.with(es).plan(ctx)
         } else {
             match expr.plan(ctx) {
-                Ok(val) => val.map(|v| source.with(v)),
+                Ok(val) => val.map(|v| {
+                    source
+                        .clone()
+                        .with(v.map_err(move |e| source.with(e.error())))
+                }),
                 Err(e) => {
                     ctx.error(source.with(e));
                     Eval::Error

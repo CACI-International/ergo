@@ -134,8 +134,7 @@ impl From<Source<pom::Error>> for Error {
 
 /// Load an AST from the given character stream.
 pub fn load(src: Source<()>) -> Result<Script, Error> {
-    let toks = tokenize::Tokens::from(src.clone().open()?)
-        .collect::<Result<Vec<_>, _>>()?;
+    let toks = tokenize::Tokens::from(src.clone().open()?).collect::<Result<Vec<_>, _>>()?;
     let parser = parse::script();
     let parse_error = |e: pom::Error, pos: Option<usize>| {
         pos.and_then(|pos| toks.get(pos))
@@ -519,7 +518,14 @@ impl<T> AsMut<T> for Source<T> {
     }
 }
 
-impl<T> std::error::Error for Source<T> where T: std::error::Error {}
+impl<T> std::error::Error for Source<T>
+where
+    T: std::error::Error + Send + Sync + 'static,
+{
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.value)
+    }
+}
 
 impl<T: Into<Dependency>> From<Source<T>> for Dependency {
     fn from(v: Source<T>) -> Dependency {

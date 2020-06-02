@@ -415,17 +415,17 @@ impl Plan for Config {
 
                 let output = {
                     let _record = work.start();
-                    let mut child = cmd.spawn().map_err(|e| format!("io error: {}", e))?;
+                    let mut child = cmd.spawn()?;
                     // Write stdin
                     if let (Some(cin),Some(s)) = (&mut child.stdin,&input_str) {
-                        write!(cin, "{}", s.0.to_string_lossy()).map_err(|e| format!("io error: {}", e))?;
+                        write!(cin, "{}", s.0.to_string_lossy())?;
                     }
                     //TODO make stdout/stderr streamed out instead of collected at the end
-                    child.wait_with_output().map_err(|e| format!("io error: {}", e))?
+                    child.wait_with_output()?
                 };
 
                 if output.status.success() {
-                    write!(complete_item.write().map_err(|e| e.to_string())?, "").map_err(|e| e.to_string())?;
+                    write!(complete_item.write()?, "")?;
                 }
 
                 if send_status.is_canceled() {

@@ -282,7 +282,18 @@ pub struct Error {
     inner: InnerError,
 }
 
+#[derive(Clone, Debug)]
+pub struct WrappedError {
+    inner: InnerError,
+}
+
 impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}", self.inner)
+    }
+}
+
+impl std::fmt::Display for WrappedError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "{}", self.inner)
     }
@@ -320,10 +331,16 @@ impl std::error::Error for InnerError {
     }
 }
 
+impl std::error::Error for WrappedError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.inner.source()
+    }
+}
+
 impl Error {
-    /// Change the error into an external error.
-    pub fn error(self) -> Box<ExternalError> {
-        self.inner.into()
+    /// Change the error into a type supporting std::error::Error.
+    pub fn error(self) -> WrappedError {
+        WrappedError { inner: self.inner }
     }
 
     /// Get a reference to the error as an external error.
@@ -554,6 +571,18 @@ impl Value {
     pub fn then(self, v: Value) -> Value {
         let deps = Dependencies::ordered(depends![self, v]);
         Self::new(v.value_type(), self.and_then(move |_| v), deps)
+    }
+
+    /// Map the error value, returning an identical value with an altered error.
+    pub fn map_err<F, E>(self, f: F) -> Value
+    where
+        F: FnOnce(Error) -> E + Send + 'static,
+        E: Into<Error>,
+    {
+        Value {
+            data: self.data.map_err(|e| f(e).into()).boxed().shared(),
+            ..self
+        }
     }
 
     /// Try to convert this Value to a TypedValue.
