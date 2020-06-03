@@ -8,6 +8,7 @@ edition = "2018"
 atty = "^0.2"
 bincode = "^1.2"
 chrono = "^0.4"
+ctrlc = "^3.1"
 directories = "^2.0"
 exec = { path = "../exec" }
 futures = "^0.3"

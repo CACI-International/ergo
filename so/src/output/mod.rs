@@ -7,12 +7,13 @@ mod terminal;
 pub trait Output: LogTarget {
     fn set_thread_ids(&mut self, ids: Vec<std::thread::ThreadId>);
     fn set_log_level(&mut self, log_level: LogLevel);
+    fn new_error(&mut self);
 }
 
-pub fn output(format: crate::options::OutputFormat) -> Option<OutputInstance> {
+pub fn output(format: crate::options::OutputFormat, keep_going: bool) -> Option<OutputInstance> {
     use interface::OutputType::*;
     interface::stdout(format).map(|v| match v {
-        Term(term_output) => terminal::Output::new(term_output).into(),
+        Term(term_output) => terminal::Output::new(term_output, keep_going).into(),
         Dumb(w) => plain::Output::new(w).into(),
     })
 }
@@ -41,6 +42,10 @@ impl Output for OutputInstance {
 
     fn set_log_level(&mut self, log_level: LogLevel) {
         self.inner.set_log_level(log_level)
+    }
+
+    fn new_error(&mut self) {
+        self.inner.new_error()
     }
 }
 

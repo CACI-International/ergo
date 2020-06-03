@@ -23,6 +23,8 @@ impl super::Output for Output {
     fn set_log_level(&mut self, log_level: LogLevel) {
         self.log_level = log_level;
     }
+
+    fn new_error(&mut self) {}
 }
 
 impl LogTarget for Output {

@@ -7,7 +7,7 @@ pub use structopt::StructOpt;
 pub enum OutputFormat {
     Basic,
     Pretty,
-    Auto
+    Auto,
 }
 
 impl std::str::FromStr for OutputFormat {
@@ -18,10 +18,9 @@ impl std::str::FromStr for OutputFormat {
             "auto" => Ok(OutputFormat::Auto),
             "basic" => Ok(OutputFormat::Basic),
             "pretty" => Ok(OutputFormat::Pretty),
-            _ => Err(format!("invalid output format '{}'", s))
+            _ => Err(format!("invalid output format '{}'", s)),
         }
     }
-    
 }
 
 #[derive(Debug, StructOpt)]
@@ -38,6 +37,10 @@ pub struct Opts {
     #[structopt(short, long)]
     /// The maximum number of jobs to run concurrently. If unspecified, the number of cpus is used.
     pub jobs: Option<usize>,
+
+    #[structopt(short = "S", long)]
+    /// Whether to stop immediately when an error occurs.
+    pub stop: bool,
 
     /// Arguments for loading the value(s) to run.
     /// All additional arguments are run as if "so <args>..." were executed in a script.

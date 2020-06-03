@@ -123,19 +123,34 @@ fn main() {
 
     // The following block scopes exclusive use (and cleanup) of stdout/stderr.
     let result = {
-        let mut output =
-            output(opts.format).app_err("could not create output from requested format");
+        let mut output = output(opts.format, !opts.stop)
+            .app_err("could not create output from requested format");
         output.set_log_level(opts.log_level);
         let logger = logger_ref(output);
 
         // Create build context
-        let mut ctx = script::script_context(
-            Context::builder()
-                .logger_ref(logger.clone())
-                .storage_directory(format!(".{}_work", PROGRAM_NAME).into())
-                .threads(opts.jobs),
-        )
-        .expect("failed to create script context");
+        let mut ctx = {
+            let logger = logger.clone();
+            script::script_context(
+                Context::builder()
+                    .logger_ref(logger.clone())
+                    .storage_directory(format!(".{}_work", PROGRAM_NAME).into())
+                    .threads(opts.jobs)
+                    .keep_going(!opts.stop)
+                    .on_error(move || {
+                        if let Ok(mut l) = logger.lock() {
+                            l.new_error();
+                        }
+                    }),
+            )
+            .expect("failed to create script context")
+        };
+
+        // Set interrupt signal handler to abort tasks.
+        {
+            let task = ctx.task.clone();
+            ctrlc::set_handler(move || task.abort()).app_err("failed to set signal handler");
+        }
 
         let mut to_eval = String::from(PROGRAM_NAME);
         for arg in opts.args {

@@ -242,8 +242,11 @@ impl ContextBuilder {
     }
 
     /// Set a callback to be called when an error is created while tasks are executing.
-    pub fn on_error(mut self, value: Box<OnError>) -> Self {
-        self.on_error = Some(value);
+    pub fn on_error<F>(mut self, value: F) -> Self
+    where
+        F: Fn() + Send + Sync + 'static,
+    {
+        self.on_error = Some(Box::new(value));
         self
     }
 

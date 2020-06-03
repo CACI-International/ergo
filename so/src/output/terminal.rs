@@ -13,6 +13,7 @@ pub struct Output {
     out: TerminalOutput,
     threads: Option<ThreadStatus>,
     progress: Progress,
+    errors: Errors,
 }
 
 struct ThreadStatus {
@@ -25,13 +26,19 @@ struct Progress {
     pending: HashMap<Vec<String>, usize>,
 }
 
+struct Errors {
+    count: usize,
+    prompt_abort: bool,
+}
+
 impl Output {
-    pub fn new(out: TerminalOutput) -> Self {
+    pub fn new(out: TerminalOutput, keep_going: bool) -> Self {
         Output {
             log_level: LogLevel::Info,
             out,
             threads: None,
             progress: Default::default(),
+            errors: Errors::new(keep_going),
         }
     }
 
@@ -41,6 +48,7 @@ impl Output {
             renderer += t;
         }
         renderer += &self.progress;
+        renderer += &self.errors;
     }
 }
 
@@ -51,6 +59,11 @@ impl super::Output for Output {
 
     fn set_log_level(&mut self, log_level: LogLevel) {
         self.log_level = log_level;
+    }
+
+    fn new_error(&mut self) {
+        self.errors.inc();
+        self.update();
     }
 }
 
@@ -172,5 +185,39 @@ impl Render for Progress {
             write!(to, " ({})", t)?;
         }
         writeln!(to)
+    }
+}
+
+impl Errors {
+    pub fn new(prompt_abort: bool) -> Self {
+        Errors {
+            count: 0,
+            prompt_abort,
+        }
+    }
+
+    pub fn inc(&mut self) {
+        self.count += 1;
+    }
+}
+
+impl Render for Errors {
+    fn render<Target: Write + Terminal>(&self, to: &mut Target) -> std::io::Result<()> {
+        if self.count == 0 {
+            Ok(())
+        } else {
+            to.fg(term::color::RED)?;
+            writeln!(
+                to,
+                "{} error{} occurred. {}",
+                self.count,
+                if self.count == 1 { "" } else { "s" },
+                if self.prompt_abort {
+                    "Press Ctrl-C to stop."
+                } else {
+                    ""
+                }
+            )
+        }
     }
 }
