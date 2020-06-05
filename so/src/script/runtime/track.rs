@@ -1,7 +1,7 @@
 //! Tracking file changes.
 
 use super::builtin_function_prelude::*;
-use grease::{item_name, make_value, Plan, TypedValue};
+use grease::{item_name, make_value, match_value, Plan, TypedValue};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -15,14 +15,19 @@ def_builtin!(ctx => {
 
     let path = eval_error!(ctx, path
         .map(|p| {
-            p.typed::<ScriptString>()
-                .map_err(|_| "track argument must be a string".into())
-                .and_then(TypedValue::get)
-                .map(|v| v.owned())
+            match_value!(p => {
+                ScriptString => |v| {
+                    v.get().map(|v| v.owned().into())
+                },
+                PathBuf => |v| {
+                    v.get().map(|v| v.owned())
+                },
+                => |_| Err("track argument must be a string or path".into())
+            })
         })
         .transpose_err());
 
-    Config { path: path.into() }
+    Config { path: path }
         .plan_split(ctx)
         .map(|v| Eval::Value(v.into()))
         .map_err(|e| e.into())

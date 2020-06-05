@@ -22,6 +22,7 @@ pub mod cache;
 pub mod debug;
 pub mod exec;
 pub mod fold;
+pub mod fs;
 pub mod has;
 pub mod load;
 pub mod map;

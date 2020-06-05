@@ -723,6 +723,12 @@ impl<T> std::fmt::Debug for Alias<T> {
     }
 }
 
+impl<T: std::fmt::Display + Sync> std::fmt::Display for Alias<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        std::fmt::Display::fmt(self.as_ref(), f)
+    }
+}
+
 impl<T: Clone + Sync> Alias<T> {
     /// Get an owned version of the value.
     ///

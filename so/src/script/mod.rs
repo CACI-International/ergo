@@ -69,6 +69,7 @@ pub fn script_context(
             ("cache", runtime::cache::builtin()),
             ("debug", runtime::debug::builtin()),
             ("exec", runtime::exec::builtin()),
+            ("fs", runtime::fs::builtin()),
             ("fold", runtime::fold::builtin()),
             ("has", runtime::has::builtin()),
             ("map", runtime::map::builtin()),
