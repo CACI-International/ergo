@@ -1,37 +1,42 @@
 //! Path operations module.
 
 use super::builtin_function_prelude::*;
-use crate::script::ast::Source;
 use grease::{depends, item_name, make_value, match_value, Dependency, ItemName, TypedValue};
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-pub fn builtin(ctx: &mut Context<Runtime>) -> Value {
-    let mut map = BTreeMap::new();
-    map.insert("new".to_owned(), Source::builtin(path_new(ctx)));
-    map.insert("join".to_owned(), Source::builtin(path_join()));
-    map.insert("split".to_owned(), Source::builtin(path_split()));
-    ScriptMap(map).into()
-}
+def_builtin!(ctx => {
+    let which = ctx.args.next().ok_or("no path subcommand specified")?;
 
-fn path_new(ctx: &mut Context<Runtime>) -> Value {
+    let which = script_value_as!(ctx, which, ScriptString, "path subcommand must be a string");
+
+    match which.as_ref().as_ref() {
+        "new" => path_new(ctx),
+        "join" => path_join(ctx),
+        "split" => path_split(ctx),
+        cmd => Err(format!("unrecognized subcommand: {}", cmd).into())
+    }
+});
+
+fn path_new(ctx: &mut Context<FunctionContext>) -> Result<Eval<Value>, Error> {
+    if ctx.unused_arguments() {
+        return Ok(Eval::Error);
+    }
+
     let store = ctx
         .store
         .item(item_name!("path"))
         .item(item_name!("random"));
 
-    make_value!(["path new"] {
-        use rand::random;
-        use std::convert::TryInto;
-        let s = format!("{:x}", random::<u64>());
-        let name: &ItemName = s.as_str().try_into().unwrap();
-        Ok(store.item(name).path())
-    })
-    .into()
-}
-
-fn path_join() -> Value {
-    ScriptFunction::BuiltinFunction(Box::new(path_join_impl)).into()
+    Ok(Eval::Value(
+        make_value!(["path new"] {
+            use rand::random;
+            use std::convert::TryInto;
+            let s = format!("{:x}", random::<u64>());
+            let name: &ItemName = s.as_str().try_into().unwrap();
+            Ok(store.item(name).path())
+        })
+        .into(),
+    ))
 }
 
 enum JoinComponent {
@@ -48,7 +53,7 @@ impl From<&JoinComponent> for Dependency {
     }
 }
 
-fn path_join_impl(ctx: &mut Context<FunctionContext>) -> Result<Eval<Value>, Error> {
+fn path_join(ctx: &mut Context<FunctionContext>) -> Result<Eval<Value>, Error> {
     let mut args = Vec::new();
 
     while let Some(sv) = ctx.args.next() {
@@ -71,6 +76,10 @@ fn path_join_impl(ctx: &mut Context<FunctionContext>) -> Result<Eval<Value>, Err
     }
 
     let args: Eval<Vec<_>> = args.into_iter().collect();
+
+    if ctx.unused_arguments() {
+        return Ok(Eval::Error);
+    }
 
     let args = match args {
         Eval::Error => return Ok(Eval::Error),
@@ -96,18 +105,13 @@ fn path_join_impl(ctx: &mut Context<FunctionContext>) -> Result<Eval<Value>, Err
     ))
 }
 
-fn path_split() -> Value {
-    ScriptFunction::BuiltinFunction(Box::new(path_split_impl)).into()
-}
-
-fn path_split_impl(ctx: &mut Context<FunctionContext>) -> Result<Eval<Value>, Error> {
+fn path_split(ctx: &mut Context<FunctionContext>) -> Result<Eval<Value>, Error> {
     let to_split = ctx.args.next().ok_or("no path to split")?;
 
     if ctx.unused_arguments() {
         return Ok(Eval::Error);
     }
 
-    let source = to_split.source();
     let to_split = eval_error!(
         ctx,
         to_split
@@ -118,12 +122,12 @@ fn path_split_impl(ctx: &mut Context<FunctionContext>) -> Result<Eval<Value>, Er
     );
 
     Ok(Eval::Value(make_value!(["path split", to_split] {
-        let mut vals: Vec<Source<Value>> = Vec::new();
+        let mut vals: Vec<Value> = Vec::new();
         for c in to_split.clone().await?.iter() {
             match c.to_str() {
-                Some(s) => vals.push(source.clone().with(
+                Some(s) => vals.push(
                         TypedValue::constant_deps(s.to_owned(), depends!["path split", to_split, vals.len()]).into()
-                    )),
+                    ),
                 None => return Err("could not convert to path components (due to invalid component unicode)".into()),
             }
         }

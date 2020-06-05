@@ -361,6 +361,16 @@ impl AsRef<ExternalError> for Error {
     }
 }
 
+fn has_inner_error(v: &(dyn std::error::Error + 'static)) -> bool {
+    if v.is::<InnerError>() {
+        true
+    } else if let Some(s) = v.source() {
+        has_inner_error(s)
+    } else {
+        false
+    }
+}
+
 impl<T> From<T> for Error
 where
     T: Into<Box<ExternalError>>,
@@ -368,11 +378,13 @@ where
     fn from(v: T) -> Self {
         let ext: Box<ExternalError> = v.into();
         Error {
-            inner: match ext.downcast::<InnerError>() {
-                Ok(v) => *v,
-                // TODO: traverse source() to find InnerError?
+            inner: match ext.downcast::<WrappedError>() {
+                Ok(v) => v.inner,
+                // TODO: traverse source() to find WrappedError?
                 Err(e) => {
-                    call_on_error();
+                    if !has_inner_error(e.as_ref()) {
+                        call_on_error();
+                    }
                     InnerError::New(e.into())
                 }
             },

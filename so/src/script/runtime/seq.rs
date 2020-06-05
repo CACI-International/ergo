@@ -12,7 +12,8 @@ def_builtin!(ctx => {
             let deps = depends![v];
             let traits = ctx.traits.clone();
             Value::new(v.value_type(), async move {
-                force_value_nested(&traits, v).await
+                force_value_nested(&traits, v.clone()).await?;
+                Ok(v.await.expect("error should have been caught previously"))
             }, deps)
         }).unwrap().then(n));
     }

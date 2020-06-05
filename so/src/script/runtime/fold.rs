@@ -16,7 +16,10 @@ def_builtin!(ctx => {
             f.typed::<ScriptFunction>()
                 .map_err(|_| "expected a function".into())
                 .and_then(|v| v.get())
-        ).transpose_err());
+        ).transpose());
+    let func = func.as_ref().map(|v| v.as_ref());
+
+    let source = vals.source();
 
     let ScriptArray(vals) = eval_error!(ctx, vals
             .map(|a| {
@@ -33,14 +36,8 @@ def_builtin!(ctx => {
                 Eval::Error => return Eval::Error,
                 Eval::Value(v) => v
             };
-            let source = v.source();
-            match ctx.split_map(|ctx: &mut Context<Runtime>| func.plan_join(ctx, FunctionArguments::positional(vec![acc,v]))) {
-                Ok(v) => v.map(|v| source.with(v)),
-                Err(e) => {
-                    ctx.error(source.with(e));
-                    Eval::Error
-                }
-            }
+            ctx.split_map(|ctx: &mut Context<Runtime>|
+                func.clone().plan_join(ctx, (FunctionArguments::positional(vec![acc,source.clone().with(v)]), func.source())))
         });
     Ok(result.map(|v| v.unwrap()))
 });

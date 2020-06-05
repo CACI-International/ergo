@@ -66,6 +66,11 @@ impl TaskManager {
                 }
                 closure_barrier.wait();
             })
+            .before_stop(|_| {
+                ON_ERROR.with(|v| {
+                    *v.borrow_mut() = None;
+                });
+            })
             .create()?;
         barrier.wait();
         let ids = thread_ids.lock().unwrap().drain(..).collect();

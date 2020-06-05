@@ -110,9 +110,9 @@ mod expression {
         let self_nested =
             call(|| nested()).map(|e| e.clone().with(Expression::Command(e.into(), vec![])));
 
-        let paren_expr = sym(Token::OpenParen) * spacenl() * expression(false)
-            - spacenl()
-            - sym(Token::CloseParen);
+        let paren_expr = (sym(Token::OpenParen) - spacenl() + expression(false) - spacenl()
+            + sym(Token::CloseParen))
+        .map(|res| res.into_source().map(|(e, _)| e.unwrap().1.unwrap()));
         let empty_parens = (sym(Token::OpenParen) + sym(Token::CloseParen))
             .map(|res| res.into_source().with(Expression::Empty));
         let dollar = sym(Token::Dollar) * (word_nested | array() | block() | self_nested);

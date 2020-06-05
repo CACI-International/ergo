@@ -5,7 +5,7 @@
 use crate::script::runtime::script_types::{ScriptArray, ScriptMap};
 use futures::prelude::*;
 use futures::stream::futures_unordered::FuturesUnordered;
-use grease::{trait_generator, Trait, TraitImpl, TraitRef, Value, ValueData, ValueResult};
+use grease::{trait_generator, Trait, TraitImpl, TraitRef, Value, ValueData};
 use std::collections::BTreeSet;
 
 /// The nested grease trait storage struct.
@@ -41,24 +41,23 @@ pub fn impl_nested<T: NestedValues + Sync>() -> TraitImpl {
 
 impl NestedValues for ScriptArray {
     fn nested(&self) -> BTreeSet<Value> {
-        self.0.iter().cloned().map(|v| v.unwrap()).collect()
+        self.0.iter().cloned().collect()
     }
 }
 
 impl NestedValues for ScriptMap {
     fn nested(&self) -> BTreeSet<Value> {
-        self.0.values().cloned().map(|v| v.unwrap()).collect()
+        self.0.values().cloned().collect()
     }
 }
 
 trait_generator!(impl_nested(ScriptArray, ScriptMap));
 
 macro_rules! add_value {
-    ( $vals:expr, $traits:expr, $v:expr ) => {{
-        let v = $v;
-        let nested = $traits.get::<Nested>(&v);
+    ( $vals:expr, $traits:expr, $v:ident) => {{
+        let nested = $traits.get::<Nested>(&$v);
         $vals.push(
-            v.map_ok(move |data| match nested {
+            $v.map_ok(move |data| match nested {
                 Some(n) => n.nested(&data),
                 None => Default::default(),
             })
@@ -68,13 +67,13 @@ macro_rules! add_value {
 }
 
 /// Force all Values, and all recursive Values from the Nested grease trait.
-pub async fn force_value_nested(traits: &grease::Traits, v: Value) -> ValueResult {
+pub async fn force_value_nested(traits: &grease::Traits, v: Value) -> Result<(), grease::Error> {
     let mut values = FuturesUnordered::new();
-    add_value!(values, traits, v.clone());
+    add_value!(values, traits, v);
     while let Some(vals) = values.try_next().await? {
         for v in vals {
             add_value!(values, traits, v);
         }
     }
-    Ok(v.await.expect("error should have already been caught"))
+    Ok(())
 }

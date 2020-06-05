@@ -17,7 +17,10 @@ def_builtin!(ctx => {
                 .map_err(|_| "first argument must be a function".into())
                 .and_then(|v| v.get())
         })
-        .transpose_err());
+        .transpose());
+    let func = func.as_ref().map(|v| v.as_ref());
+
+    let source = arr.source();
 
     let ScriptArray(arr) = eval_error!(ctx, arr
         .map(|a| {
@@ -31,15 +34,9 @@ def_builtin!(ctx => {
     let arr = arr
         .into_iter()
         .map(|d| {
-            let source = d.source();
-            match ctx.split_map(|ctx: &mut Context<Runtime>| func.plan_join(ctx, FunctionArguments::positional(vec![d]))) {
-                Ok(v) => v.map(|v| source.with(v)),
-                Err(e) => {
-                    ctx.error(source.with(e));
-                    Eval::Error
-                }
-            }
+            ctx.split_map(|ctx: &mut Context<Runtime>|
+                func.clone().plan_join(ctx, (FunctionArguments::positional(vec![source.clone().with(d)]), func.source())))
         })
         .collect::<Eval<Vec<_>>>();
-    Ok(arr.map(|arr| ScriptArray(arr).into()))
+    Ok(arr.map(|arr| ScriptArray(arr.into_iter().map(|v| v.unwrap()).collect()).into()))
 });

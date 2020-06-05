@@ -58,8 +58,8 @@ impl OutputType {
 
 impl<T: Render> std::ops::AddAssign<&T> for Renderer<'_> {
     fn add_assign(&mut self, rhs: &T) {
-        self.0.reset().expect("failed to reset terminal");
         rhs.render(&mut self.0).expect("failed to render");
+        self.0.reset().expect("failed to reset terminal");
     }
 }
 
@@ -71,6 +71,7 @@ impl<'a> Renderer<'a> {
 
 impl TerminalOutput {
     pub fn renderer(&mut self) -> Renderer {
+        self.term.reset().expect("failed to reset terminal");
         Renderer::new(self)
     }
 
@@ -185,5 +186,8 @@ impl Drop for RendererInner<'_> {
         }
         self.carriage_return().expect("failed to write to terminal");
         self.term.last_rendered_lines = lines;
+        // Flush to ensure any interleaving stderr will end up in the correct place and with the
+        // correct settings.
+        self.flush().expect("flush failed");
     }
 }

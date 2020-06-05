@@ -1,4 +1,10 @@
 //! Script runtime definitions.
+//!
+//! The runtime is responsible for evaluating AST expressions, producing values or errors.
+//! Importantly, it tracks source locations for values and errors so that when an error occurs,
+//! useful error information can be provided.
+//!
+//! This module defines grease::Plan for expressions, where the output is as described above.
 
 use super::ast::{
     ArrayPattern, CmdPat, Expression, IntoSource, MapPattern, MergeExpression, Pat, Pattern, Source,
@@ -30,6 +36,10 @@ pub mod script_types {
     use std::collections::BTreeMap;
     use std::fmt;
 
+    /// Script type indicating that the env should be returned as a map.
+    #[derive(Clone, Copy, Debug, GetValueType, Hash)]
+    pub struct ScriptEnvIntoMap;
+
     /// Script unit type.
     pub type ScriptUnit = ();
 
@@ -38,24 +48,24 @@ pub mod script_types {
 
     /// Script array type.
     #[derive(Clone, Debug, GetValueType, PartialEq)]
-    pub struct ScriptArray(pub Vec<Source<Value>>);
+    pub struct ScriptArray(pub Vec<Value>);
 
     impl From<ScriptArray> for TypedValue<ScriptArray> {
         fn from(v: ScriptArray) -> Self {
-            let deps = depends![join v.0.iter().map(|s| &**s)];
+            let deps = depends![join v.0.iter()];
             Self::constant_deps(v, deps)
         }
     }
 
     /// Script map type.
     #[derive(Clone, Debug, GetValueType, PartialEq)]
-    pub struct ScriptMap(pub BTreeMap<String, Source<Value>>);
+    pub struct ScriptMap(pub BTreeMap<String, Value>);
 
     impl From<ScriptMap> for TypedValue<ScriptMap> {
         fn from(v: ScriptMap) -> Self {
             let deps =
                 v.0.iter()
-                    .map(|(a, v)| depends![*a, **v])
+                    .map(|(a, v)| depends![*a, *v])
                     .flatten()
                     .collect::<Vec<_>>();
             Self::constant_deps(v, deps)
@@ -98,6 +108,7 @@ pub mod script_types {
 }
 
 pub mod builtin_function_prelude {
+    pub use super::imbue_error_context;
     pub use super::script_types::*;
     pub use super::{
         Error, Eval, FunctionArguments, FunctionContext, LoadScript, Runtime, SourceContext,
@@ -233,6 +244,7 @@ impl LoadScript for grease::Context<Runtime> {
             Some(v) => match v {
                 Eval::Error => return Ok(Eval::Error),
                 Eval::Value(v) => {
+                    let source = v.source();
                     script_value_as!(
                         self,
                         v.clone(),
@@ -241,6 +253,9 @@ impl LoadScript for grease::Context<Runtime> {
                     )
                     .owned()
                     .0
+                    .into_iter()
+                    .map(|v| source.clone().with(v))
+                    .collect()
                 }
             },
             None => vec![],
@@ -254,7 +269,7 @@ impl LoadScript for grease::Context<Runtime> {
                     self,
                     path,
                     PathBuf,
-                    format!("{} item must be a path", LOAD_PATH_BINDING)
+                    format!("{} element must be a path", LOAD_PATH_BINDING)
                 )
                 .to_path_buf(),
             );
@@ -414,9 +429,12 @@ impl From<UncheckedFunctionArguments> for FunctionArguments {
 pub struct FunctionContext {
     ctx: Runtime,
     args: FunctionArguments,
+    call_site: Source<()>,
 }
 
 impl FunctionContext {
+    /// Return whether there were unused non-positional arguments, and add errors for each unused
+    /// argument to the context errors.
     #[must_use]
     pub fn unused_non_positional(&mut self) -> bool {
         let kw = std::mem::take(&mut self.args.non_positional);
@@ -430,6 +448,8 @@ impl FunctionContext {
         ret
     }
 
+    /// Return whether there were unused positional arguments, and add errors for each unused
+    /// argument to the context errors.
     #[must_use]
     pub fn unused_positional(&mut self) -> bool {
         let ret = !self.args.is_empty();
@@ -439,9 +459,16 @@ impl FunctionContext {
         ret
     }
 
+    /// Return whether there were unused arguments (of any kind), and add errors for each unused
+    /// argument to the context errors.
     #[must_use]
     pub fn unused_arguments(&mut self) -> bool {
         self.unused_positional() | self.unused_non_positional()
+    }
+
+    /// Add the error context into the given value, using the function call site.
+    pub fn imbue_error_context<S: Into<String>>(&self, v: Value, err: S) -> Value {
+        imbue_error_context(v, self.call_site.clone().with(err.into()))
     }
 }
 
@@ -460,14 +487,19 @@ impl std::ops::DerefMut for FunctionContext {
 }
 
 impl grease::SplitInto<Runtime> for FunctionContext {
-    type Extra = FunctionArguments;
+    type Extra = (FunctionArguments, Source<()>);
 
     fn split(self) -> (Runtime, Self::Extra) {
-        (self.ctx, self.args)
+        (self.ctx, (self.args, self.call_site))
     }
 
-    fn join(ctx: Runtime, args: Self::Extra) -> Self {
-        FunctionContext { ctx, args }
+    fn join(ctx: Runtime, extra: Self::Extra) -> Self {
+        let (args, call_site) = extra;
+        FunctionContext {
+            ctx,
+            args,
+            call_site,
+        }
     }
 }
 
@@ -612,6 +644,32 @@ impl From<Source<String>> for Source<Error> {
 }
 
 #[derive(Debug)]
+struct ErrorWithSource {
+    err: grease::Error,
+    context: Source<String>,
+}
+
+impl ErrorWithSource {
+    pub fn new(err: grease::Error, context: Source<String>) -> Self {
+        ErrorWithSource { err, context }
+    }
+}
+
+impl fmt::Display for ErrorWithSource {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(f, "{}", self.err)?;
+        write!(f, "{}", self.context)?;
+        Ok(())
+    }
+}
+
+impl std::error::Error for ErrorWithSource {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.err.error_ref())
+    }
+}
+
+#[derive(Debug)]
 pub struct SourceContext<T> {
     value: Source<T>,
     context: Vec<Source<String>>,
@@ -682,10 +740,10 @@ impl<T: fmt::Display> fmt::Display for SourceContext<T> {
     }
 }
 
-macro_rules! value_now {
-    ( $e:expr ) => {
-        $e.get().map_err(move |e| Error::ValueError(e))?
-    };
+impl<T: std::error::Error + 'static> std::error::Error for SourceContext<T> {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.value)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -789,7 +847,7 @@ pub fn apply_value(
         let v = if env_lookup {
             match v.typed::<ScriptString>() {
                 Ok(val) => {
-                    let s = value_now!(val).owned();
+                    let s = val.get()?.owned();
                     trace!("looking up '{}' in environment", s);
                     // Lookup string in environment, and apply result to remaining arguments
                     match ctx.inner.env_get(&s) {
@@ -823,7 +881,7 @@ pub fn apply_value(
                     .transpose());
                 let val = eval_error!(ctx, index.map(|index| match usize::from_str(index.as_ref()) {
                     Err(_) => Err(Error::NonIntegerIndex),
-                    Ok(ind) => value_now!(val).0.get(ind).cloned().map(Source::unwrap)
+                    Ok(ind) => val.get()?.0.get(ind).cloned()
                         .ok_or(Error::MissingIndex(index.to_owned()))
                 }).transpose());
 
@@ -840,7 +898,7 @@ pub fn apply_value(
                     .transpose());
 
                 let val = eval_error!(ctx, index.map(|index|
-                        value_now!(val).0.get(index.as_ref()).cloned().map(Source::unwrap)
+                        val.get()?.0.get(index.as_ref()).cloned()
                             .ok_or(Error::MissingIndex(index.as_ref().into()))
                     )
                     .transpose());
@@ -850,7 +908,7 @@ pub fn apply_value(
                 apply_value(ctx, Source::from((v_source,source)).with(val), args, false)
             },
             ScriptFunction => |val| {
-                value_now!(val).plan_join(ctx, args.into())
+                val.get()?.plan_join(ctx, (args.into(), v_source))
             },
             => |v| {
                 Err(Error::NonCallableExpression(v).into())
@@ -934,7 +992,15 @@ fn _apply_pattern(
                 let (vsource, v) = v.take();
                 match v.binding.typed::<ScriptArray>() {
                     Ok(v) => match v.get() {
-                        Ok(v) => Eval::Value(v.owned().0),
+                        Ok(v) => {
+                            let vsource = vsource.clone();
+                            Eval::Value(
+                                v.owned()
+                                    .0
+                                    .into_iter()
+                                    .map(move |v| vsource.clone().with(v)),
+                            )
+                        }
                         Err(e) => {
                             errs.push(vsource.with(Error::ValueError(e)).into());
                             Eval::Error
@@ -952,7 +1018,6 @@ fn _apply_pattern(
             let vals: Vec<Eval<Source<PatternValues>>> = match val {
                 Eval::Error => std::iter::repeat(Eval::Error).take(inner.len()).collect(),
                 Eval::Value(v) => v
-                    .into_iter()
                     .enumerate()
                     .map(|(i, v)| {
                         Eval::Value(v.map(|v| {
@@ -1029,16 +1094,14 @@ fn _apply_pattern(
                             Eval::Value((orig_value, m)) => match m.remove(&key) {
                                 Some(v) => {
                                     let keydep = depends![key];
-                                    matched_keys.insert(key, v.source());
-                                    Eval::Value(v.clone().map(|v| {
-                                        PatternValues::new(
-                                            v.clone(),
-                                            v.set_dependencies(depends![join
-                                                depends![orig_value.as_ref().binding,desc,itemdesc],
-                                                keydep
-                                            ]),
-                                        )
-                                    }))
+                                    matched_keys.insert(key, isource.clone());
+                                    Eval::Value(isource.with(PatternValues::new(
+                                        v.clone(),
+                                        v.set_dependencies(depends![join
+                                            depends![orig_value.as_ref().binding,desc,itemdesc],
+                                            keydep
+                                        ]),
+                                    )))
                                 }
                                 None => {
                                     let (vsource, v) = orig_value.clone().take();
@@ -1173,9 +1236,9 @@ fn _pattern_array(
                         vs.into_source().map(|vs| {
                             let mut bindings = Vec::new();
                             let mut literals = Vec::new();
-                            for (source, p) in vs.into_iter().map(|v| v.take()) {
-                                bindings.push(source.clone().with(p.binding));
-                                literals.push(source.with(p.literal));
+                            for p in vs.into_iter().map(Source::unwrap) {
+                                bindings.push(p.binding);
+                                literals.push(p.literal);
                             }
                             PatternValues::new(
                                 ScriptArray(literals).into_value(),
@@ -1306,7 +1369,9 @@ pub fn apply_command_pattern(
             apply_pattern(
                 ctx,
                 non_pos_arg,
-                Eval::Value(kw.into_source().map(|kw| ScriptMap(kw).into_value())),
+                Eval::Value(kw.into_source().map(|kw| {
+                    ScriptMap(kw.into_iter().map(|(k, v)| (k, v.unwrap())).collect()).into_value()
+                })),
             )
         } else if !kw.is_empty() {
             Err(kw
@@ -1397,7 +1462,7 @@ impl Plan<Runtime> for Expression {
                     if merge {
                         let (val_source, val) = val.take();
                         match val.typed::<ScriptArray>() {
-                            Ok(val) => vals.extend(value_now!(val).owned().0),
+                            Ok(val) => vals.extend(val.get()?.owned().0),
                             Err(_) => {
                                 ctx.error(
                                     val_source.with(Error::CannotMerge("non-array value".into())),
@@ -1406,7 +1471,7 @@ impl Plan<Runtime> for Expression {
                             }
                         }
                     } else {
-                        vals.push(val);
+                        vals.push(val.unwrap());
                     }
                 }
 
@@ -1420,7 +1485,7 @@ impl Plan<Runtime> for Expression {
                 let data = e.plan(ctx);
                 let ok_ret = match data {
                     Eval::Error => Eval::Error,
-                    _ => ().into_value().into(),
+                    _ => ScriptEnvIntoMap.into_value().into(),
                 };
                 Ok(match apply_pattern(ctx, *pat, data) {
                     Ok(env) => {
@@ -1437,7 +1502,7 @@ impl Plan<Runtime> for Expression {
             }
             Unset(var) => {
                 ctx.inner.env_remove(&var);
-                Ok(().into_value().into())
+                Ok(ScriptEnvIntoMap.into_value().into())
             }
             Command(cmd, args) => {
                 let f = cmd.plan(ctx);
@@ -1459,10 +1524,10 @@ impl Plan<Runtime> for Expression {
                         let (val_source, val) = val.take();
                         match_value!(val => {
                             ScriptArray => |val| {
-                                vals.extend(value_now!(val).owned().0);
+                                vals.extend(val.get()?.owned().0.into_iter().map(|v| val_source.clone().with(v)));
                             },
                             ScriptMap => |val| {
-                                kw_vals.extend(value_now!(val).owned().0);
+                                kw_vals.extend(val.get()?.owned().0.into_iter().map(|(k,v)| (k, val_source.clone().with(v))));
                             },
                             => |_| {
                                 ctx.error(
@@ -1500,7 +1565,7 @@ impl Plan<Runtime> for Expression {
                 let to_bool: Option<grease::IntoTyped<bool>> = ctx.traits.get(&cond);
                 let cond = match to_bool {
                     Some(t) => {
-                        let v = value_now!(t.into_typed(cond));
+                        let v = t.into_typed(cond).get()?;
                         *v
                     }
                     None => true,
@@ -1528,6 +1593,30 @@ impl Plan<Runtime> for Expression {
     }
 }
 
+pub fn imbue_error_context(v: Value, err: Source<String>) -> Value {
+    v.map_err(move |e| ErrorWithSource::new(e, err))
+}
+
+impl Plan<FunctionContext> for Source<&'_ ScriptFunction> {
+    type Output = Eval<Source<Value>>;
+
+    fn plan(self, ctx: &mut grease::Context<FunctionContext>) -> Self::Output {
+        let (source, f) = self.take();
+        match f.plan(ctx) {
+            Ok(val) => val.map(|v| {
+                source.clone().with(imbue_error_context(
+                    v,
+                    source.with("while evaluating value returned by this function".into()),
+                ))
+            }),
+            Err(e) => {
+                ctx.error(source.with(e));
+                Eval::Error
+            }
+        }
+    }
+}
+
 impl Plan<Runtime> for Source<Expression> {
     type Output = Eval<Source<Value>>;
 
@@ -1538,9 +1627,10 @@ impl Plan<Runtime> for Source<Expression> {
         } else {
             match expr.plan(ctx) {
                 Ok(val) => val.map(|v| {
-                    source
-                        .clone()
-                        .with(v.map_err(move |e| source.with(e.error())))
+                    source.clone().with(imbue_error_context(
+                        v,
+                        source.with("while evaluating value returned by this expression".into()),
+                    ))
                 }),
                 Err(e) => {
                     ctx.error(source.with(e));
@@ -1568,7 +1658,7 @@ impl Plan<Runtime> for Source<Vec<Source<MergeExpression>>> {
         // Push a new scope
         ctx.inner.env.push(Default::default());
         let (self_source, this) = self.take();
-        let mut val = Eval::Value(self_source.clone().with(().into_value()));
+        let mut val = Eval::Value(self_source.clone().with(ScriptEnvIntoMap.into_value()));
         for e in this {
             val &= match e.plan(ctx) {
                 Eval::Value(merge) => {
@@ -1579,9 +1669,9 @@ impl Plan<Runtime> for Source<Vec<Source<MergeExpression>>> {
                             Ok(val) => match val.get() {
                                 Ok(val) => {
                                     for (k, v) in val.owned().0 {
-                                        ctx.env_insert(k, Eval::Value(v));
+                                        ctx.env_insert(k, Eval::Value(val_source.clone().with(v)));
                                     }
-                                    Eval::Value(merge_source.with(().into_value()))
+                                    Eval::Value(merge_source.with(ScriptEnvIntoMap.into_value()))
                                 }
                                 Err(e) => {
                                     ctx.error(val_source.with(e));
@@ -1605,9 +1695,9 @@ impl Plan<Runtime> for Source<Vec<Source<MergeExpression>>> {
 
         // Pop the pushed scope
         let ret = ctx.inner.env.pop().unwrap();
-        let ret = ret
+        let env_map = ret
             .into_iter()
-            .map(|(k, v)| v.map(move |v| (k, v)))
+            .map(|(k, v)| v.map(move |v| (k, v.unwrap())))
             .collect::<Eval<BTreeMap<_, _>>>();
 
         // Return result based on final value.
@@ -1615,8 +1705,8 @@ impl Plan<Runtime> for Source<Vec<Source<MergeExpression>>> {
             Eval::Error => Eval::Error,
             Eval::Value(val) => {
                 let (source, val) = val.take();
-                match val.typed::<ScriptUnit>() {
-                    Ok(_) => ret.map(|ret| self_source.with(ScriptMap(ret).into_value())),
+                match val.typed::<ScriptEnvIntoMap>() {
+                    Ok(_) => env_map.map(|ret| self_source.with(ScriptMap(ret).into_value())),
                     Err(v) => Eval::Value(source.with(v)),
                 }
             }

@@ -1,6 +1,6 @@
 //! Cache arbitrary values.
 
-use super::{apply_value, builtin_function_prelude::*, Source};
+use super::{apply_value, builtin_function_prelude::*};
 use crate::script::traits::nested::force_value_nested;
 use bincode;
 use grease::{
@@ -110,7 +110,7 @@ StoredValueSerde!(std::path::PathBuf);
 impl StoredValue for ScriptArray {
     fn put(&self, ctx: &StoredContext, into: &mut ItemContent) -> std::io::Result<()> {
         let mut ids: Vec<u128> = Vec::new();
-        for v in self.0.iter().cloned().map(Source::unwrap) {
+        for v in self.0.iter().cloned() {
             ids.push(v.id());
             write_to_cache(ctx, v)?;
         }
@@ -121,7 +121,7 @@ impl StoredValue for ScriptArray {
         let ids: Vec<u128> = bincode_to_io_result(bincode::deserialize_from(from))?;
         let mut vals = Vec::new();
         for id in ids {
-            vals.push(Source::builtin(read_from_cache(ctx, id)?));
+            vals.push(read_from_cache(ctx, id)?);
         }
         Ok(ScriptArray(vals))
     }
@@ -131,7 +131,7 @@ impl StoredValue for ScriptMap {
     fn put(&self, ctx: &StoredContext, into: &mut ItemContent) -> std::io::Result<()> {
         let mut ids: BTreeMap<String, u128> = BTreeMap::new();
         for (k, v) in self.0.iter() {
-            let v = v.clone().unwrap();
+            let v = v.clone();
             ids.insert(k.clone(), v.id());
             write_to_cache(ctx, v)?;
         }
@@ -142,7 +142,7 @@ impl StoredValue for ScriptMap {
         let ids: BTreeMap<String, u128> = bincode_to_io_result(bincode::deserialize_from(from))?;
         let mut vals = BTreeMap::new();
         for (k, id) in ids {
-            vals.insert(k, Source::builtin(read_from_cache(ctx, id)?));
+            vals.insert(k, read_from_cache(ctx, id)?);
         }
         Ok(ScriptMap(vals))
     }
@@ -167,7 +167,7 @@ pub fn read_from_cache(ctx: &StoredContext, id: u128) -> Result<Value, Error> {
         let data = s.get(ctx, &mut content)?;
         Ok(Value::from_raw(tp, std::sync::Arc::new(data), id))
     } else {
-        Err("no stored trait".into())
+        Err(format!("no stored trait for {}", tp_id).into())
     }
 }
 
@@ -191,7 +191,7 @@ pub fn write_to_cache(ctx: &StoredContext, v: Value) -> Result<(), Error> {
             .map_err(|e| e.to_string())?;
         Ok(())
     } else {
-        Err("no stored trait".into())
+        Err(format!("no stored trait for {}", v.value_type().id).into())
     }
 }
 
@@ -225,15 +225,15 @@ def_builtin!(ctx => {
                 Err(e) => e
             };
             log.debug(format!("failed to read cache entry, (re)caching: {}", err));
-            let data = force_value_nested(&stored_ctx.traits, to_cache.clone()).await?;
-            if let Err(e) = write_to_cache(&stored_ctx, to_cache).map_err(|e| e.to_string()) {
+            force_value_nested(&stored_ctx.traits, to_cache.clone()).await?;
+            if let Err(e) = write_to_cache(&stored_ctx, to_cache.clone()).map_err(|e| e.to_string()) {
                 log.warn(format!("failed to cache value: {}", e));
             }
-            Ok(data)
+            Ok(to_cache.await.expect("error should have been caught previously"))
         }, deps)
         ))
     }
     else {
-        Err(Error::ValueError("no stored trait implemenetd for value".into()))
+        Err(Error::ValueError("no stored trait implemented for value".into()))
     }
 });

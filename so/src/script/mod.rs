@@ -42,17 +42,14 @@ pub fn script_context(
         dir.push(proj_dir_name);
         insert(
             LOAD_PATH_BINDING,
-            types::ScriptArray(vec![Source::builtin(dir.into_value())]).into_value(),
+            types::ScriptArray(vec![dir.into_value()]).into_value(),
         );
     } else {
         insert(PROJECT_ROOT_BINDING, ().into_value());
         if let Some(dirs) = app_dirs() {
             insert(
                 LOAD_PATH_BINDING,
-                types::ScriptArray(vec![Source::builtin(
-                    dirs.config_dir().to_owned().into_value(),
-                )])
-                .into_value(),
+                types::ScriptArray(vec![dirs.config_dir().to_owned().into_value()]).into_value(),
             );
         }
     }
@@ -75,7 +72,7 @@ pub fn script_context(
             ("fold", runtime::fold::builtin()),
             ("has", runtime::has::builtin()),
             ("map", runtime::map::builtin()),
-            ("path", runtime::path::builtin(&mut ctx)),
+            ("path", runtime::path::builtin()),
             ("seq", runtime::seq::builtin()),
             ("track", runtime::track::builtin()),
             ("variable", runtime::variable::builtin()),
@@ -460,7 +457,7 @@ mod test {
             SRString(s) => v
                 .typed::<ScriptString>()
                 .expect_ok("expected string")
-                .and_then(|v| v.get())
+                .and_then(|v| v.get().map_err(|e| e.to_string()))
                 .and_then(|st| {
                     if st.as_ref() == s {
                         Ok(())
@@ -475,7 +472,7 @@ mod test {
             SRArray(arr) => v
                 .typed::<ScriptArray>()
                 .expect_ok("expected array")
-                .and_then(|v| v.get())
+                .and_then(|v| v.get().map_err(|e| e.to_string()))
                 .map(|v| v.owned())
                 .and_then(|ScriptArray(varr)| {
                     if varr.len() != arr.len() {
@@ -483,14 +480,14 @@ mod test {
                     } else {
                         varr.into_iter()
                             .zip(arr)
-                            .map(|(v, e)| val_match(v.unwrap(), e.clone()))
+                            .map(|(v, e)| val_match(v, e.clone()))
                             .collect()
                     }
                 }),
             SRMap(entries) => v
                 .typed::<ScriptMap>()
                 .expect_ok("expected map")
-                .and_then(|v| v.get())
+                .and_then(|v| v.get().map_err(|e| e.to_string()))
                 .map(|v| v.owned())
                 .and_then(|ScriptMap(mut m)| {
                     if m.len() != entries.len() {
@@ -500,7 +497,7 @@ mod test {
                             .iter()
                             .map(|(k, e)| {
                                 m.remove(*k)
-                                    .map(|v| val_match(v.unwrap(), e.clone()))
+                                    .map(|v| val_match(v, e.clone()))
                                     .unwrap_or(Err("missing expected key".into()))
                             })
                             .collect()
