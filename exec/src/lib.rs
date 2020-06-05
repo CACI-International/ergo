@@ -359,22 +359,29 @@ impl Plan for Config {
 
                 log.debug(format!("command status: {}", output.status));
 
-                if send_status.is_canceled() {
-                    if !output.status.success() {
-                        let rest = if send_stderr.is_canceled() {
-                            if let Ok(s) = String::from_utf8(output.stderr) {
+                macro_rules! fetch_named {
+                    ( $channel:ident, $output:expr, $name:expr ) => {
+                        if $channel.is_canceled() {
+                            if let Ok(s) = String::from_utf8($output) {
                                 if s.is_empty() {
                                     "".into()
                                 } else {
-                                    format!(":\n{}", s)
+                                    format!("\n{}:\n{}", $name, s)
                                 }
                             } else {
                                 "".into()
                             }
                         } else {
                             "".into()
-                        };
-                        return Err(format!("command returned failure exit status{}", rest).into());
+                        }
+                    }
+                }
+
+                if send_status.is_canceled() {
+                    if !output.status.success() {
+                        let stdout = fetch_named!(send_stdout, output.stdout, "stdout");
+                        let stderr = fetch_named!(send_stderr, output.stderr, "stderr");
+                        return Err(format!("command returned failure exit status{}{}", stdout, stderr).into());
                     }
                 } else {
                     drop(send_status.send(output.status));
