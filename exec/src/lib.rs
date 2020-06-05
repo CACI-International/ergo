@@ -4,12 +4,11 @@
 //! Otherwise, commands with side-effects may be pruned. For instance, running sleep 5 multiple
 //! times will be pruned. Maybe offer a configuration to indicate that side effects are expected?
 use grease::{
-    channel, depends, future, item_name, make_value, Context, Dependencies, GetValueType, ItemName,
-    Plan, TraitImpl, TypedValue, ValueType,
+    channel, depends, future, make_value, Context, Dependencies, GetValueType, Plan, TraitImpl,
+    TypedValue, ValueType,
 };
 use os_str_bytes::OsStringBytes;
 use std::collections::BTreeMap;
-use std::convert::TryInto;
 use std::ffi::{OsStr, OsString};
 use std::hash::Hash;
 use std::io::{Read, Write};
@@ -127,23 +126,7 @@ impl<T> SomeValue<T> {
     }
 }
 
-#[derive(Clone, Debug)]
-pub enum Argument {
-    Arg(SomeValue<CommandString>),
-    ProducedPath { id: usize },
-}
-
-impl From<TypedValue<CommandString>> for Argument {
-    fn from(v: TypedValue<CommandString>) -> Self {
-        Argument::Arg(SomeValue::Delayed(v))
-    }
-}
-
-impl From<CommandString> for Argument {
-    fn from(v: CommandString) -> Self {
-        Argument::Arg(SomeValue::Immediate(v))
-    }
-}
+pub type Argument = SomeValue<CommandString>;
 
 impl From<String> for Argument {
     fn from(v: String) -> Self {
@@ -165,17 +148,7 @@ impl From<&OsStr> for Argument {
 
 impl From<&Argument> for grease::Dependency {
     fn from(a: &Argument) -> Self {
-        use Argument::*;
-        match a {
-            Arg(v) => v.dependency(),
-            ProducedPath { .. } => (&1238479745234347u128).into(),
-        }
-    }
-}
-
-impl From<&'_ str> for SomeValue<CommandString> {
-    fn from(v: &str) -> Self {
-        Self::from(CommandString::from(v))
+        a.dependency()
     }
 }
 
@@ -186,16 +159,13 @@ pub struct Config {
     pub env: BTreeMap<String, Option<SomeValue<CommandString>>>,
     pub stdin: Option<SomeValue<StdinString>>,
     pub dir: Option<SomeValue<PathBuf>>,
-    produced_paths: usize,
 }
 
 pub struct ExecResult {
-    pub output_paths: Vec<TypedValue<PathBuf>>,
     pub stdout: TypedValue<Vec<u8>>,
     pub stderr: TypedValue<Vec<u8>>,
     pub exit_status: TypedValue<std::process::ExitStatus>,
     pub complete: TypedValue<()>,
-    pub complete_once: TypedValue<()>,
 }
 
 impl Config {
@@ -206,25 +176,11 @@ impl Config {
             stdin: None,
             dir: None,
             command: command.into(),
-            produced_paths: 0,
         }
     }
 
     pub fn push_arg<T: Into<Argument>>(&mut self, v: T) {
         self.arguments.push(v.into())
-    }
-
-    pub fn path(&mut self) -> Argument {
-        let ret = Argument::ProducedPath {
-            id: self.produced_paths,
-        };
-        self.produced_paths += 1;
-        ret
-    }
-
-    pub fn push_path(&mut self) {
-        let p = self.path();
-        self.arguments.push(p);
     }
 }
 
@@ -245,14 +201,13 @@ impl Plan for Config {
         };
         let log = ctx.log.sublog("exec");
         let tsk = ctx.task.clone();
-        let store = ctx.store.item(item_name!("exec"));
         let mut cmd_untracked = ctx.cmd.untracked();
 
         // Get Values out of arguments to access later
         let mut arg_values = Vec::new();
         for a in &args {
             match a {
-                Argument::Arg(SomeValue::Delayed(v)) => arg_values.push(v.clone()),
+                SomeValue::Delayed(v) => arg_values.push(v.clone()),
                 _ => (),
             }
         }
@@ -299,25 +254,6 @@ impl Plan for Config {
 
         // Get value id from dependencies and use it as part of the item output path
         let value_id = deps.value_id::<()>();
-        let store = store.value_id(value_id);
-
-        // Create map of produced file id to item
-        let mut files: BTreeMap<usize, grease::Item> = Default::default();
-        for a in &args {
-            match a {
-                Argument::Arg(_) => (),
-                Argument::ProducedPath { id } => {
-                    let s = format!("{}", id);
-                    let item_name: &ItemName =
-                        s.as_str().try_into().map_err(|e: &str| e.to_owned())?;
-                    files.entry(*id).or_insert_with(|| store.item(item_name));
-                }
-            }
-        }
-        let filesmap = files.clone();
-
-        let complete_item = store.item(item_name!["complete"]);
-        let did_complete = complete_item.clone();
 
         // Create channels for outputs
         let (send_stdout, rcv_stdout) = channel::oneshot::channel();
@@ -347,15 +283,12 @@ impl Plan for Config {
                 let mut arg_iter = arg_vs.into_iter();
                 for a in args {
                     match a {
-                        Argument::Arg(SomeValue::Immediate(s)) => {
+                        SomeValue::Immediate(s) => {
                             cmd.arg(s);
                         },
-                        Argument::Arg(SomeValue::Delayed(_)) => {
+                        SomeValue::Delayed(_) => {
                             let v = arg_iter.next().unwrap();
                             cmd.arg(v.as_ref());
-                        },
-                        Argument::ProducedPath { id } => {
-                            cmd.arg(filesmap.get(&id).unwrap().path());
                         },
                     }
                 }
@@ -424,9 +357,7 @@ impl Plan for Config {
                     child.wait_with_output()?
                 };
 
-                if output.status.success() {
-                    write!(complete_item.write()?, "")?;
-                }
+                log.debug(format!("command status: {}", output.status));
 
                 if send_status.is_canceled() {
                     if !output.status.success() {
@@ -454,46 +385,15 @@ impl Plan for Config {
             }).await
         });
 
-        let output_paths: Vec<_> = files
-            .into_iter()
-            .map(|(_, item)| {
-                if item.exists() {
-                    make_value!([run_command] { Ok(item.path()) })
-                } else {
-                    make_value!((run_command) {
-                        if !item.exists() {
-                            run_command.await?;
-                        }
-                        Ok(item.path())
-                    })
-                }
-            })
-            .collect();
         let stdout = make_value!((run_command) { run_command.await?; Ok(rcv_stdout.await?) });
         let stderr = make_value!((run_command) { run_command.await?; Ok(rcv_stderr.await?) });
         let exit_status = make_value!((run_command) { run_command.await?; Ok(rcv_status.await?) });
-        let complete_once = if did_complete.exists() {
-            make_value!([run_command] { Ok(()) })
-        } else {
-            make_value!((run_command) {
-                if !did_complete.exists() {
-                    run_command.await?;
-                }
-                if !did_complete.exists() {
-                    Err("command failed".into())
-                } else {
-                    Ok(())
-                }
-            })
-        };
 
         Ok(ExecResult {
-            output_paths,
             stdout,
             stderr,
             exit_status,
             complete: run_command,
-            complete_once,
         })
     }
 }
