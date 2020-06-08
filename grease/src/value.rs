@@ -15,10 +15,21 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::runtime::call_on_error;
+use crate::TraitImpl;
 
+mod display;
+mod into;
 mod types;
 
+pub use display::*;
+pub use into::*;
 pub use types::*;
+
+pub(crate) fn trait_generator(tp: std::sync::Arc<ValueType>) -> Vec<TraitImpl> {
+    let mut traits = into::trait_generator(tp.clone());
+    traits.extend(display::trait_generator(tp));
+    traits
+}
 
 /// A value type.
 ///
