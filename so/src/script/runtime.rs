@@ -174,31 +174,50 @@ use script_types::*;
 
 /// The script context data.
 pub struct Runtime {
+    /// The global env exists as an optimization to exclude values that will
+    /// always be accessible from being wrapped in capture environments. It also makes
+    /// clearing the environment when loading separate scripts easier.
+    global_env: Env,
     env: Vec<Env>,
     errors: Vec<SourceContext<Error>>,
     working_dir: PathBuf,
     load_cache: BTreeMap<PathBuf, Eval<Source<Value>>>,
+    load_prelude: bool,
 }
 
 impl Default for Runtime {
     fn default() -> Self {
         Runtime {
-            // The default context should start with an empty map as the base.
-            env: vec![Default::default()],
+            global_env: Default::default(),
+            env: vec![],
             errors: vec![],
             working_dir: std::env::current_dir().unwrap(),
             load_cache: Default::default(),
+            load_prelude: true,
         }
     }
 }
 
 impl Runtime {
+    pub fn new(global_env: Env) -> Self {
+        Runtime {
+            global_env,
+            ..Default::default()
+        }
+    }
+
+    fn env_current(&mut self) -> &mut Env {
+        self.env
+            .last_mut()
+            .expect("invalid env access; no environment stack")
+    }
+
     pub fn env_insert<T: Into<Eval<Source<Value>>>>(&mut self, k: String, v: T) {
-        self.env.last_mut().unwrap().insert(k, v.into());
+        self.env_current().insert(k, v.into());
     }
 
     pub fn env_extend<T: IntoIterator<Item = (String, Eval<Source<Value>>)>>(&mut self, v: T) {
-        self.env.last_mut().unwrap().extend(v);
+        self.env_current().extend(v);
     }
 
     pub fn env_remove<Q: ?Sized>(&mut self, k: &Q) -> Option<Eval<Source<Value>>>
@@ -206,7 +225,7 @@ impl Runtime {
         String: std::borrow::Borrow<Q>,
         Q: Ord,
     {
-        self.env.last_mut().unwrap().remove(k)
+        self.env_current().remove(k)
     }
 
     pub fn env_get<Q: ?Sized>(&self, k: &Q) -> Option<&Eval<Source<Value>>>
@@ -214,7 +233,11 @@ impl Runtime {
         String: std::borrow::Borrow<Q>,
         Q: Ord,
     {
-        self.env.iter().rev().find_map(|m| m.get(k))
+        self.env
+            .iter()
+            .rev()
+            .find_map(|m| m.get(k))
+            .or_else(|| self.global_env.get(k))
     }
 
     pub fn env_flatten(&self) -> BTreeMap<String, Eval<Source<Value>>> {
@@ -234,6 +257,46 @@ impl Runtime {
         v
     }
 }
+
+pub trait GetEnv {
+    fn get_env(&mut self) -> &mut Vec<Env>;
+}
+
+impl GetEnv for grease::Context<Runtime> {
+    fn get_env(&mut self) -> &mut Vec<Env> {
+        &mut self.env
+    }
+}
+
+impl GetEnv for grease::Context<FunctionContext> {
+    fn get_env(&mut self) -> &mut Vec<Env> {
+        &mut self.env
+    }
+}
+
+pub trait ContextEnv: GetEnv {
+    fn substituting_env<F, R>(&mut self, mut env: Vec<Env>, f: F) -> R
+    where
+        F: FnOnce(&mut Self) -> R,
+    {
+        std::mem::swap(self.get_env(), &mut env);
+        let ret = f(self);
+        std::mem::swap(self.get_env(), &mut env);
+        ret
+    }
+
+    fn env_scoped<F, R>(&mut self, env: Env, f: F) -> (R, Env)
+    where
+        F: FnOnce(&mut Self) -> R,
+    {
+        self.get_env().push(env);
+        let ret = f(self);
+        let env = self.get_env().pop().expect("env push/pop is not balanced");
+        (ret, env)
+    }
+}
+
+impl<T: GetEnv> ContextEnv for T {}
 
 pub trait LoadScript {
     fn load(&mut self, s: &str) -> Result<Eval<Source<Value>>, Error>;
@@ -285,13 +348,60 @@ impl LoadScript for grease::Context<Runtime> {
                 None
             }
         });
+
         if let Some(p) = full_path {
             let p = p.canonicalize().unwrap(); // unwrap because is_file() should guarantee that canonicalize will succeed
             if !self.load_cache.contains_key(&p) {
+                // Change working directory before loading the prelude.
+                // The prelude behaves as if one put `^(so prelude)` at the start of the script.
                 let mut old_work_dir = p.parent().unwrap().into(); // unwrap because is_file() necessitates a parent exists
                 std::mem::swap(&mut old_work_dir, &mut self.working_dir);
-                let result =
-                    super::Script::load(Source::new(super::ast::FileSource(p.clone())))?.plan(self);
+
+                // Load the prelude (setting load_prelude to false to prevent recursion) The
+                // prelude may not exist (without error), however if it does exist it must evaluate
+                // to a map.
+                let prelude = if self.load_prelude {
+                    self.load_prelude = false;
+                    let v = match self.load("prelude") {
+                        Err(Error::LoadFailed(_)) => None,
+                        Err(e) => {
+                            self.load_prelude = true;
+                            return Err(e);
+                        }
+                        Ok(Eval::Error) => {
+                            self.load_prelude = true;
+                            return Ok(Eval::Error);
+                        }
+                        Ok(Eval::Value(v)) => Some(eval_error!(
+                            self,
+                            v.map(|v| match v.typed::<ScriptMap>() {
+                                Ok(v) => Ok(v.get()?.owned().0),
+                                Err(_) => {
+                                    Err(Error::CannotMerge(
+                                        "prelude did not evaluate to a map".into(),
+                                    ))
+                                }
+                            })
+                            .transpose()
+                        )),
+                    };
+                    self.load_prelude = true;
+                    v
+                } else {
+                    None
+                };
+
+                let mut script =
+                    super::Script::load(Source::new(super::ast::FileSource(p.clone())))?;
+                if let Some(v) = prelude {
+                    let (source, v) = v.take();
+                    script.top_level_env(
+                        v.into_iter()
+                            .map(|(k, v)| (k, Eval::Value(source.clone().with(v))))
+                            .collect(),
+                    );
+                }
+                let result = script.plan(self);
                 self.load_cache.insert(p.clone(), result);
                 std::mem::swap(&mut old_work_dir, &mut self.working_dir);
             }
@@ -1406,27 +1516,27 @@ impl Plan<FunctionContext> for &'_ ScriptFunction {
             ScriptFunction::UserFunction(pat, e, env) => {
                 let src = e.source();
 
-                let mut env = vec![env.clone()];
-                std::mem::swap(&mut env, &mut ctx.inner.env);
-                let args = std::mem::take(&mut ctx.args);
-                use grease::SplitInto;
-                let ret =
-                    match ctx.split_map(move |ctx| apply_command_pattern(ctx, pat.clone(), args)) {
-                        Ok(bindings) => {
-                            ctx.inner.env.push(bindings);
-                            e.clone().plan_split(ctx).map(Source::unwrap)
-                        }
-                        Err(errs) => {
-                            let mut err = SourceContext::from(src.with(Error::ArgumentMismatch));
-                            err.extend(errs);
-                            ctx.error(err);
-                            Eval::Error
-                        }
-                    };
-
-                std::mem::swap(&mut env, &mut ctx.inner.env);
-
-                Ok(ret)
+                ctx.substituting_env(vec![env.clone()], |ctx| {
+                    let args = std::mem::take(&mut ctx.args);
+                    use grease::SplitInto;
+                    Ok(
+                        match ctx
+                            .split_map(move |ctx| apply_command_pattern(ctx, pat.clone(), args))
+                        {
+                            Ok(bindings) => {
+                                ctx.inner.env.push(bindings);
+                                e.clone().plan_split(ctx).map(Source::unwrap)
+                            }
+                            Err(errs) => {
+                                let mut err =
+                                    SourceContext::from(src.with(Error::ArgumentMismatch));
+                                err.extend(errs);
+                                ctx.error(err);
+                                Eval::Error
+                            }
+                        },
+                    )
+                })
             }
             ScriptFunction::BuiltinFunction(f) => match f(ctx) {
                 Err(e) => {
@@ -1581,10 +1691,7 @@ impl Plan<Runtime> for Expression {
 
                 for (p, e) in pats {
                     if let Ok(env) = apply_pattern(ctx, p, Eval::Value(val.clone())) {
-                        ctx.inner.env.push(env);
-                        let ret = e.plan(ctx);
-                        ctx.inner.env.pop();
-                        return Ok(ret.map(Source::unwrap));
+                        return Ok(ctx.env_scoped(env, |ctx| e.plan(ctx)).0.map(Source::unwrap));
                     }
                 }
 
@@ -1656,47 +1763,54 @@ impl Plan<Runtime> for Source<Vec<Source<MergeExpression>>> {
     type Output = Eval<Source<Value>>;
 
     fn plan(self, ctx: &mut grease::Context<Runtime>) -> Self::Output {
-        // Push a new scope
-        ctx.inner.env.push(Default::default());
         let (self_source, this) = self.take();
-        let mut val = Eval::Value(self_source.clone().with(ScriptEnvIntoMap.into_value()));
-        for e in this {
-            val &= match e.plan(ctx) {
-                Eval::Value(merge) => {
-                    let (merge_source, (merge, val)) = merge.take();
-                    if merge {
-                        let (val_source, val) = val.take();
-                        match val.typed::<ScriptMap>() {
-                            Ok(val) => match val.get() {
-                                Ok(val) => {
-                                    for (k, v) in val.owned().0 {
-                                        ctx.env_insert(k, Eval::Value(val_source.clone().with(v)));
+
+        // Evaluate in a new scope
+        let (val, scope) = ctx.env_scoped(Default::default(), |ctx| {
+            let mut val = Eval::Value(self_source.clone().with(ScriptEnvIntoMap.into_value()));
+            for e in this {
+                val &= match e.plan(ctx) {
+                    Eval::Value(merge) => {
+                        let (merge_source, (merge, val)) = merge.take();
+                        if merge {
+                            let (val_source, val) = val.take();
+                            match val.typed::<ScriptMap>() {
+                                Ok(val) => match val.get() {
+                                    Ok(val) => {
+                                        for (k, v) in val.owned().0 {
+                                            ctx.env_insert(
+                                                k,
+                                                Eval::Value(val_source.clone().with(v)),
+                                            );
+                                        }
+                                        Eval::Value(
+                                            merge_source.with(ScriptEnvIntoMap.into_value()),
+                                        )
                                     }
-                                    Eval::Value(merge_source.with(ScriptEnvIntoMap.into_value()))
-                                }
-                                Err(e) => {
-                                    ctx.error(val_source.with(e));
+                                    Err(e) => {
+                                        ctx.error(val_source.with(e));
+                                        Eval::Error
+                                    }
+                                },
+                                Err(_) => {
+                                    ctx.error(
+                                        val_source.with(Error::CannotMerge("non-map value".into())),
+                                    );
                                     Eval::Error
                                 }
-                            },
-                            Err(_) => {
-                                ctx.error(
-                                    val_source.with(Error::CannotMerge("non-map value".into())),
-                                );
-                                Eval::Error
                             }
+                        } else {
+                            Eval::Value(val)
                         }
-                    } else {
-                        Eval::Value(val)
                     }
-                }
-                Eval::Error => Eval::Error,
-            };
-        }
+                    Eval::Error => Eval::Error,
+                };
+            }
+            val
+        });
 
         // Pop the pushed scope
-        let ret = ctx.inner.env.pop().unwrap();
-        let env_map = ret
+        let env_map = scope
             .into_iter()
             .map(|(k, v)| v.map(move |v| (k, v.unwrap())))
             .collect::<Eval<BTreeMap<_, _>>>();

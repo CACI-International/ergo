@@ -9,61 +9,54 @@ mod traits;
 
 pub use ast::{FileSource, Source, StringSource};
 pub use runtime::script_types as types;
-pub use runtime::{Error, Eval, Runtime, SourceContext};
+pub use runtime::{ContextEnv, Error, Eval, Runtime, SourceContext};
 pub use traits::nested::force_value_nested;
 
 /// A loaded script.
 pub struct Script {
     ast: ast::Script,
+    top_level_env: types::Env,
 }
 
 /// Create a script context from a context builder.
 pub fn script_context(
     cb: grease::ContextBuilder,
 ) -> Result<Context<Runtime>, grease::BuilderError> {
-    let mut ctx = Runtime::default();
+    let mut global_env = types::Env::default();
+    {
+        let mut insert = |k: &str, v| global_env.insert(k.into(), Eval::Value(Source::builtin(v)));
 
-    let mut insert = |k: &str, v| ctx.env_insert(k.into(), Source::builtin(v));
+        // Check whether we're in a project hierarchy
+        let proj_dir_name = format!("{}proj", PROGRAM_NAME);
+        let proj_dir = std::env::current_dir()
+            .unwrap()
+            .ancestors()
+            .find(|p| {
+                let mut d = p.to_path_buf();
+                d.push(&proj_dir_name);
+                d.is_dir()
+            })
+            .map(ToOwned::to_owned);
 
-    // Check whether we're in a project hierarchy
-    let proj_dir_name = format!("{}proj", PROGRAM_NAME);
-    let proj_dir = std::env::current_dir()
-        .unwrap()
-        .ancestors()
-        .find(|p| {
-            let mut d = p.to_path_buf();
-            d.push(&proj_dir_name);
-            d.is_dir()
-        })
-        .map(ToOwned::to_owned);
-
-    if let Some(mut dir) = proj_dir {
-        insert(PROJECT_ROOT_BINDING, dir.clone().into_value());
-        dir.push(proj_dir_name);
-        insert(
-            LOAD_PATH_BINDING,
-            types::ScriptArray(vec![dir.into_value()]).into_value(),
-        );
-    } else {
-        insert(PROJECT_ROOT_BINDING, ().into_value());
-        if let Some(dirs) = app_dirs() {
+        if let Some(mut dir) = proj_dir {
+            insert(PROJECT_ROOT_BINDING, dir.clone().into_value());
+            dir.push(proj_dir_name);
             insert(
                 LOAD_PATH_BINDING,
-                types::ScriptArray(vec![dirs.config_dir().to_owned().into_value()]).into_value(),
+                types::ScriptArray(vec![dir.into_value()]).into_value(),
             );
+        } else {
+            insert(PROJECT_ROOT_BINDING, ().into_value());
+            if let Some(dirs) = app_dirs() {
+                insert(
+                    LOAD_PATH_BINDING,
+                    types::ScriptArray(vec![dirs.config_dir().to_owned().into_value()])
+                        .into_value(),
+                );
+            }
         }
-    }
 
-    let ctx = cb.build_with(ctx).map(|ctx| {
-        // Add initial traits
-        ctx.traits.add(::exec::trait_generator);
-        ctx.traits.add(runtime::cache::trait_generator);
-        ctx.traits.add(traits::nested::trait_generator);
-        ctx
-    });
-
-    // Add initial environment functions
-    ctx.map(|mut ctx| {
+        // Add initial environment functions
         let env = vec![
             (PROGRAM_NAME, runtime::load::builtin()),
             ("cache", runtime::cache::builtin()),
@@ -79,8 +72,15 @@ pub fn script_context(
             ("variable", runtime::variable::builtin()),
         ];
         for (k, v) in env.into_iter() {
-            ctx.env_insert(k.into(), Source::builtin(v));
+            insert(k, v);
         }
+    }
+
+    cb.build_with(Runtime::new(global_env)).map(|ctx| {
+        // Add initial traits
+        ctx.traits.add(::exec::trait_generator);
+        ctx.traits.add(runtime::cache::trait_generator);
+        ctx.traits.add(traits::nested::trait_generator);
         ctx
     })
 }
@@ -88,7 +88,15 @@ pub fn script_context(
 impl Script {
     /// Load a script from a character stream.
     pub fn load(src: Source<()>) -> Result<Self, ast::Error> {
-        ast::load(src).map(|ast| Script { ast })
+        ast::load(src).map(|ast| Script {
+            ast,
+            top_level_env: Default::default(),
+        })
+    }
+
+    /// Configure the top-level environment.
+    pub fn top_level_env(&mut self, env: types::Env) {
+        self.top_level_env = env;
     }
 }
 
@@ -96,7 +104,10 @@ impl Plan<Runtime> for Script {
     type Output = <ast::Script as Plan<Runtime>>::Output;
 
     fn plan(self, ctx: &mut Context<Runtime>) -> Self::Output {
-        self.ast.plan(ctx)
+        // Swap existing env; loading a script should have a clean environment besides the
+        // configured top-level env.
+        let ast = self.ast;
+        ctx.substituting_env(vec![self.top_level_env], move |ctx| ast.plan(ctx))
     }
 }
 
