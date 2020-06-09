@@ -4,7 +4,7 @@ use parking_lot::RwLock;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::{Trait, TraitImpl, TraitImplRef, Value, ValueType};
+use crate::{CreateTrait, TraitImpl, TraitImplRef, Value, ValueType};
 
 /// A trait generator.
 pub type TraitGenerator = fn(Arc<ValueType>) -> Vec<TraitImpl>;
@@ -73,12 +73,12 @@ impl Traits {
     }
 
     /// Get a trait for a particular Value's type, if it is implemented.
-    pub fn get<T: Trait + Sync>(&self, v: &Value) -> Option<T> {
+    pub fn get<T: CreateTrait>(&self, v: &Value) -> Option<T> {
         self.get_type(v.value_type())
     }
 
     /// Get a trait for a ValueType, if it is implemented.
-    pub fn get_type<T: Trait + Sync>(&self, tp: Arc<ValueType>) -> Option<T> {
+    pub fn get_type<T: CreateTrait>(&self, tp: Arc<ValueType>) -> Option<T> {
         let lock = self.inner.upgradable_read();
 
         let lock = if !lock.traits.contains_key(tp.clone().as_ref()) {
@@ -97,6 +97,10 @@ impl Traits {
             .get(tp.as_ref())
             .unwrap()
             .get(&T::trait_type())
-            .map(|imp| T::create(unsafe { TraitImplRef::new(imp.clone()) }))
+            .map(|imp| {
+                T::create(self.clone(), tp.clone(), unsafe {
+                    TraitImplRef::new(imp.clone())
+                })
+            })
     }
 }

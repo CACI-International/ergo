@@ -1,8 +1,8 @@
 //! The IntoTyped grease trait.
 
 use super::{GetValueType, IntoValue, TypedValue, Value, ValueType};
-use crate::{Trait, TraitImpl, TraitImplRef, TraitType};
 use crate::uuid::*;
+use crate::{CreateTrait, Trait, TraitImpl, TraitImplRef, TraitType, Traits};
 
 pub struct IntoTrait {
     tp: std::sync::Arc<ValueType>,
@@ -34,13 +34,19 @@ impl<T: GetValueType> IntoTyped<T> {
 }
 
 impl<T: GetValueType> Trait for IntoTyped<T> {
-    type Impl = fn(Value) -> Value;
-
     fn trait_type() -> TraitType {
         into_trait_type(T::value_type())
     }
+}
 
-    fn create(imp: TraitImplRef<Self::Impl>) -> Self {
+impl<T: GetValueType> CreateTrait for IntoTyped<T> {
+    type Storage = fn(Value) -> Value;
+
+    fn create(
+        _traits: Traits,
+        _value_type: std::sync::Arc<ValueType>,
+        imp: TraitImplRef<Self::Storage>,
+    ) -> Self {
         Self {
             into: *imp,
             _phantom: Default::default(),

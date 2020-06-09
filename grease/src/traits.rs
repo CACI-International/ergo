@@ -1,6 +1,6 @@
 //! Runtime trait implementation.
 
-use crate::ValueData;
+use crate::{ValueData, ValueType};
 use std::fmt;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -23,35 +23,65 @@ pub struct TraitImplRef<T> {
     _phantom: std::marker::PhantomData<T>,
 }
 
-/// A runtime trait.
+/// A runtime trait storage class.
 pub trait Trait {
-    type Impl: Sync;
-
     fn trait_type() -> TraitType;
-
-    fn create(imp: TraitImplRef<Self::Impl>) -> Self;
 }
 
-pub struct TraitRef<T>(TraitImplRef<T>);
+/// A runtime trait interface, created from a storage class.
+pub trait CreateTrait: Trait {
+    type Storage: Sync;
 
-impl<T: Trait + Sync> Trait for TraitRef<T> {
-    type Impl = T;
-
-    fn trait_type() -> TraitType {
-        T::trait_type()
-    }
-
-    fn create(imp: TraitImplRef<Self::Impl>) -> Self {
-        TraitRef(imp)
-    }
+    fn create(
+        traits: super::runtime::Traits,
+        value_type: Arc<ValueType>,
+        storage: TraitImplRef<Self::Storage>,
+    ) -> Self;
 }
 
-impl<T: Sync> std::ops::Deref for TraitRef<T> {
-    type Target = T;
+/// A trait reference.
+///
+/// This creates a simple struct which implements CreateTrait. It requires the storage type to
+/// implement `Trait`.
+///
+/// The struct has the following (private) members:
+/// `traits`: `Traits`,
+/// `value_type`: `Arc<ValueType>`,
+/// `storage`: `TraitImplRef<T>`.
+///
+/// The macro is preferred to make it convenient for implementors to add their own `impl` for the
+/// struct. The alternative would be a `struct TraitRef<T>`, but this requires implementors to make
+/// a trait and implement it for the `TraitRef<T>`, so the macro is a bit more straitforward.
+#[macro_export]
+macro_rules! TraitRef {
+    ( $(#[$attr:meta])* $vis:vis struct $name:ident $(<$( $ts:ty ),+>)? ( $t:ty ); ) => {
+        $(#[$attr])*
+        $vis struct $name $(<$($ts),+>)? {
+            #[allow(dead_code)]
+            traits: $crate::Traits,
+            #[allow(dead_code)]
+            value_type: std::sync::Arc<$crate::ValueType>,
+            storage: $crate::TraitImplRef<$t>
+        }
 
-    fn deref(&self) -> &Self::Target {
-        &*self.0
-    }
+        impl $(<$($ts),+>)? $crate::Trait for $name $(<$($ts),+>)? {
+            fn trait_type() -> $crate::TraitType {
+                <$t as $crate::Trait>::trait_type()
+            }
+        }
+
+        impl $(<$($ts),+>)? $crate::CreateTrait for $name $(<$($ts),+>)? {
+            type Storage = $t;
+
+            fn create(
+                traits: $crate::Traits,
+                value_type: std::sync::Arc<$crate::ValueType>,
+                storage: $crate::TraitImplRef<Self::Storage>,
+            ) -> Self {
+                $name { traits, value_type, storage }
+            }
+        }
+    };
 }
 
 impl TraitType {
@@ -74,7 +104,7 @@ impl TraitImpl {
         }
     }
 
-    pub fn for_trait<T: Trait>(v: T::Impl) -> Self {
+    pub fn for_trait<T: CreateTrait>(v: T::Storage) -> Self {
         Self {
             tt: T::trait_type(),
             data: ValueData::new(v),

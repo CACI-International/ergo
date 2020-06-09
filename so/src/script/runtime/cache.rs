@@ -4,14 +4,15 @@ use super::{apply_value, builtin_function_prelude::*};
 use crate::script::traits::nested::force_value_nested;
 use bincode;
 use grease::{
-    depends, item_name, trait_generator, Item, ItemContent, SplitInto, Trait, TraitImpl, Traits,
-    ValueData, ValueType,
+    depends, item_name, trait_generator, type_name, Item, ItemContent, SplitInto, Trait, TraitImpl,
+    TraitRef, Traits, ValueData, ValueType,
 };
 use std::collections::BTreeMap;
 
 /// Context passed to Stored traits.
 pub struct StoredContext {
     pub traits: Traits,
+    pub value_type: std::sync::Arc<ValueType>,
     store_item: Item,
 }
 
@@ -22,27 +23,47 @@ pub struct StoredTrait {
     get: fn(&StoredContext, &mut ItemContent) -> std::io::Result<ValueData>,
 }
 
-impl StoredTrait {
+TraitRef! {
+    /// Stored trait reference.
+    pub struct Stored(StoredTrait);
+}
+
+impl Stored {
     pub fn put(
         &self,
-        ctx: &StoredContext,
+        store_item: &Item,
         val: &ValueData,
         into: &mut ItemContent,
     ) -> std::io::Result<()> {
-        (self.put)(ctx, val, into)
+        (self.storage.put)(&self.context(store_item), val, into)
     }
 
-    pub fn get(&self, ctx: &StoredContext, from: &mut ItemContent) -> std::io::Result<ValueData> {
-        (self.get)(ctx, from)
+    pub fn get(&self, store_item: &Item, from: &mut ItemContent) -> std::io::Result<ValueData> {
+        (self.storage.get)(&self.context(store_item), from)
+    }
+
+    fn context(&self, store_item: &Item) -> StoredContext {
+        StoredContext {
+            traits: self.traits.clone(),
+            value_type: self.value_type.clone(),
+            store_item: store_item.clone(),
+        }
     }
 }
-
-/// Stored trait reference.
-pub type Stored = grease::TraitRef<StoredTrait>;
 
 impl From<StoredTrait> for TraitImpl {
     fn from(v: StoredTrait) -> Self {
         TraitImpl::new(StoredTrait::trait_type(), v)
+    }
+}
+
+impl StoredContext {
+    pub fn read_from_cache(&self, id: u128) -> Result<Value, Error> {
+        read_from_cache(&self.traits, &self.store_item, id)
+    }
+
+    pub fn write_to_cache(&self, v: Value) -> Result<(), Error> {
+        write_to_cache(&self.traits, &self.store_item, v)
     }
 }
 
@@ -112,7 +133,7 @@ impl StoredValue for ScriptArray {
         let mut ids: Vec<u128> = Vec::new();
         for v in self.0.iter().cloned() {
             ids.push(v.id());
-            write_to_cache(ctx, v)?;
+            ctx.write_to_cache(v)?;
         }
         bincode_to_io_result(bincode::serialize_into(into, &ids))
     }
@@ -121,7 +142,7 @@ impl StoredValue for ScriptArray {
         let ids: Vec<u128> = bincode_to_io_result(bincode::deserialize_from(from))?;
         let mut vals = Vec::new();
         for id in ids {
-            vals.push(read_from_cache(ctx, id)?);
+            vals.push(ctx.read_from_cache(id)?);
         }
         Ok(ScriptArray(vals))
     }
@@ -133,7 +154,7 @@ impl StoredValue for ScriptMap {
         for (k, v) in self.0.iter() {
             let v = v.clone();
             ids.insert(k.clone(), v.id());
-            write_to_cache(ctx, v)?;
+            ctx.write_to_cache(v)?;
         }
         bincode_to_io_result(bincode::serialize_into(into, &ids))
     }
@@ -142,7 +163,7 @@ impl StoredValue for ScriptMap {
         let ids: BTreeMap<String, u128> = bincode_to_io_result(bincode::deserialize_from(from))?;
         let mut vals = BTreeMap::new();
         for (k, id) in ids {
-            vals.insert(k, read_from_cache(ctx, id)?);
+            vals.insert(k, ctx.read_from_cache(id)?);
         }
         Ok(ScriptMap(vals))
     }
@@ -157,26 +178,26 @@ trait_generator!(impl_stored(
 ));
 
 /// Read a Value from the cache by id.
-pub fn read_from_cache(ctx: &StoredContext, id: u128) -> Result<Value, Error> {
-    let item = ctx.store_item.value_id(id);
+pub fn read_from_cache(traits: &Traits, store_item: &Item, id: u128) -> Result<Value, Error> {
+    let item = store_item.value_id(id);
     let mut content = item.read_existing().map_err(|e| e.to_string())?;
     let tp_id = bincode_to_io_result(bincode::deserialize_from(&mut content))?;
     let tp_data = bincode_to_io_result(bincode::deserialize_from(&mut content))?;
     let tp = std::sync::Arc::new(ValueType::with_data(tp_id, tp_data));
-    if let Some(s) = ctx.traits.get_type::<Stored>(tp.clone()) {
-        let data = s.get(ctx, &mut content)?;
+    if let Some(s) = traits.get_type::<Stored>(tp.clone()) {
+        let data = s.get(store_item, &mut content)?;
         Ok(Value::from_raw(tp, std::sync::Arc::new(data), id))
     } else {
-        Err(format!("no stored trait for {}", tp_id).into())
+        Err(format!("no stored trait for {}", type_name(traits, &tp)).into())
     }
 }
 
 /// Write a value to the cache.
 ///
 /// The value must already be forced (using traits::nested::force_value_nested).
-pub fn write_to_cache(ctx: &StoredContext, v: Value) -> Result<(), Error> {
-    if let Some(s) = ctx.traits.get::<Stored>(&v) {
-        let item = ctx.store_item.value(&v);
+pub fn write_to_cache(traits: &Traits, store_item: &Item, v: Value) -> Result<(), Error> {
+    if let Some(s) = traits.get::<Stored>(&v) {
+        let item = store_item.value(&v);
         let data = v
             .peek()
             .expect("value not forced prior to writing")
@@ -186,12 +207,12 @@ pub fn write_to_cache(ctx: &StoredContext, v: Value) -> Result<(), Error> {
                 let tp = v.value_type();
                 bincode_to_io_result(bincode::serialize_into(&mut content, &tp.id))?;
                 bincode_to_io_result(bincode::serialize_into(&mut content, &tp.data))?;
-                s.put(ctx, data.as_ref(), &mut content)
+                s.put(store_item, data.as_ref(), &mut content)
             })
             .map_err(|e| e.to_string())?;
         Ok(())
     } else {
-        Err(format!("no stored trait for {}", v.value_type().id).into())
+        Err(format!("no stored trait for {}", type_name(traits, &v.value_type())).into())
     }
 }
 
@@ -207,12 +228,11 @@ def_builtin!(ctx => {
         Eval::Value(v) => v
     };
 
-    let traits = ctx.traits.clone();
     if let Some(_) = ctx.traits.get::<Stored>(&to_cache) {
         let deps = depends![to_cache];
+        let traits = ctx.traits.clone();
         Ok(Eval::Value(Value::new(to_cache.value_type(), async move {
-            let stored_ctx = StoredContext{traits,store_item: store};
-            let err = match read_from_cache(&stored_ctx, to_cache.id()) {
+            let err = match read_from_cache(&traits, &store, to_cache.id()) {
                 Ok(val) => {
                     log.debug(format!("successfully read cached value for {}", to_cache.id()));
                     if val.value_type() != to_cache.value_type() {
@@ -225,8 +245,8 @@ def_builtin!(ctx => {
                 Err(e) => e
             };
             log.debug(format!("failed to read cache entry, (re)caching: {}", err));
-            force_value_nested(&stored_ctx.traits, to_cache.clone()).await?;
-            if let Err(e) = write_to_cache(&stored_ctx, to_cache.clone()).map_err(|e| e.to_string()) {
+            force_value_nested(&traits, to_cache.clone()).await?;
+            if let Err(e) = write_to_cache(&traits, &store, to_cache.clone()).map_err(|e| e.to_string()) {
                 log.warn(format!("failed to cache value: {}", e));
             }
             Ok(to_cache.await.expect("error should have been caught previously"))

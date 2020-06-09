@@ -1,8 +1,8 @@
 //! The Display and DisplayType grease traits.
 
-use super::{ValueData, ValueType};
+use super::{Value, ValueData, ValueType};
 use crate::runtime::Traits;
-use crate::traits::{Trait, TraitImpl, TraitImplRef, TraitRef, TraitType};
+use crate::traits::{Trait, TraitImpl, TraitType};
 use crate::uuid::*;
 use std::fmt;
 
@@ -12,8 +12,10 @@ pub struct TypeNameTrait {
     name: String,
 }
 
-/// The TypeName grease trait reference.
-pub type TypeName = TraitRef<TypeNameTrait>;
+crate::TraitRef! {
+    /// The TypeName grease trait reference.
+    pub struct TypeName(TypeNameTrait);
+}
 
 /// The rust trait for the TypeName grease trait.
 pub trait GreaseTypeName {
@@ -26,22 +28,24 @@ pub fn impl_type_name<T: GreaseTypeName>() -> TraitImpl {
     })
 }
 
-pub fn type_name(traits: &Traits, v: &crate::Value) -> String {
-    if let Some(t) = traits.get::<TypeName>(v) {
-        t.name.clone()
+pub fn type_name(traits: &Traits, tp: &std::sync::Arc<ValueType>) -> String {
+    if let Some(t) = traits.get_type::<TypeName>(tp.clone()) {
+        t.storage.name.clone()
     } else {
-        format!("<{}>", v.value_type().id)
+        format!("<{}>", tp.id)
     }
 }
 
 /// The Display grease trait storage struct.
 #[derive(Clone)]
 pub struct DisplayTrait {
-    pub fmt: fn(&Traits, &ValueData, &mut fmt::Formatter) -> fmt::Result,
+    fmt: fn(&Traits, &ValueData, &mut fmt::Formatter) -> fmt::Result,
 }
 
-/// The Display grease trait reference.
-pub type Display = TraitRef<DisplayTrait>;
+crate::TraitRef! {
+    /// The Display grease trait reference.
+    pub struct Display(DisplayTrait);
+}
 
 /// The rust trait for the Display grease trait.
 pub trait GreaseDisplay {
@@ -57,17 +61,17 @@ where
     })
 }
 
-pub struct Displayed<'t, 'v>(&'t Traits, &'v crate::Value);
+pub struct Displayed<'t, 'v>(&'t Traits, &'v Value);
 
 impl<'t, 'v> std::fmt::Display for Displayed<'t, 'v> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if let Some(t) = self.0.get::<Display>(self.1) {
-            t.fmt(self.0, self.1.forced_value(), f)
+            t.fmt(self.1.forced_value(), f)
         } else {
             write!(
                 f,
                 "<cannot display values of type {}>",
-                type_name(self.0, self.1)
+                type_name(self.0, &self.1.value_type())
             )
         }
     }
@@ -185,14 +189,8 @@ impl TypeNameTrait {
 }
 
 impl Trait for TypeNameTrait {
-    type Impl = Self;
-
     fn trait_type() -> TraitType {
         TraitType::new(type_uuid(b"grease::TypeName"))
-    }
-
-    fn create(imp: TraitImplRef<Self::Impl>) -> Self {
-        imp.clone()
     }
 }
 
@@ -202,14 +200,14 @@ impl DisplayTrait {
     }
 }
 
-impl Trait for DisplayTrait {
-    type Impl = DisplayTrait;
+impl Display {
+    pub fn fmt(&self, data: &ValueData, f: &mut fmt::Formatter) -> fmt::Result {
+        self.storage.fmt(&self.traits, data, f)
+    }
+}
 
+impl Trait for DisplayTrait {
     fn trait_type() -> TraitType {
         TraitType::new(type_uuid(b"grease::Display"))
-    }
-
-    fn create(imp: TraitImplRef<Self::Impl>) -> Self {
-        imp.clone()
     }
 }

@@ -240,16 +240,10 @@ pub fn derive_grease_trait(input: TokenStream) -> TokenStream {
 
     let expanded = quote! {
         impl<#(#param_reqs),*> ::grease::Trait for #name<#(#param_args),*> {
-            type Impl = Self;
-
             fn trait_type() -> ::grease::TraitType {
                 let mut data = Vec::new();
                 #(#set_data)*
                 ::grease::TraitType::with_data(::grease::type_uuid(concat![module_path!(), "::", #namestr].as_bytes()), data)
-            }
-
-            fn create(imp: ::grease::TraitImplRef<Self::Impl>) -> Self {
-                imp.clone()
             }
         }
     };

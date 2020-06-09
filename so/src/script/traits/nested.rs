@@ -20,8 +20,10 @@ impl NestedTrait {
     }
 }
 
-/// The nested grease trait reference.
-pub type Nested = TraitRef<NestedTrait>;
+TraitRef! {
+    /// The nested grease trait reference.
+    pub struct Nested(NestedTrait);
+}
 
 /// Describe nested Values within a type.
 pub trait NestedValues {
@@ -58,7 +60,7 @@ macro_rules! add_value {
         let nested = $traits.get::<Nested>(&$v);
         $vals.push(
             $v.map_ok(move |data| match nested {
-                Some(n) => n.nested(&data),
+                Some(n) => n.storage.nested(&data),
                 None => Default::default(),
             })
             .boxed(),
