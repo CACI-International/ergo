@@ -658,6 +658,16 @@ impl Value {
     pub fn peek(&self) -> Option<&ValueResult> {
         self.data.peek()
     }
+
+    /// Get the result of the value, assuming it was forced previously.
+    ///
+    /// This is a convenience method to unwrap the value.
+    pub fn forced_value(&self) -> &Arc<ValueData> {
+        self.peek()
+            .expect("value should have been forced")
+            .as_ref()
+            .expect("error should have been handled when value was previously forced")
+    }
 }
 
 impl Future for Value {

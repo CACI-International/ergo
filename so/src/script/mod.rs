@@ -81,6 +81,7 @@ pub fn script_context(
         ctx.traits.add(::exec::trait_generator);
         ctx.traits.add(runtime::cache::trait_generator);
         ctx.traits.add(traits::nested::trait_generator);
+        ctx.traits.add(traits::display::trait_generator);
         ctx
     })
 }

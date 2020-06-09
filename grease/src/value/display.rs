@@ -1,6 +1,7 @@
 //! The Display and DisplayType grease traits.
 
-use super::{GetValueType, ValueData, ValueType};
+use super::{ValueData, ValueType};
+use crate::runtime::Traits;
 use crate::traits::{Trait, TraitImpl, TraitImplRef, TraitRef, TraitType};
 use crate::uuid::*;
 use std::fmt;
@@ -25,47 +26,60 @@ pub fn impl_type_name<T: GreaseTypeName>() -> TraitImpl {
     })
 }
 
+pub fn type_name(traits: &Traits, v: &crate::Value) -> String {
+    if let Some(t) = traits.get::<TypeName>(v) {
+        t.name.clone()
+    } else {
+        format!("<{}>", v.value_type().id)
+    }
+}
+
 /// The Display grease trait storage struct.
 #[derive(Clone)]
 pub struct DisplayTrait {
-    pub fmt: fn(&ValueData, &mut fmt::Formatter) -> fmt::Result,
+    pub fmt: fn(&Traits, &ValueData, &mut fmt::Formatter) -> fmt::Result,
 }
 
 /// The Display grease trait reference.
 pub type Display = TraitRef<DisplayTrait>;
 
+/// The rust trait for the Display grease trait.
+pub trait GreaseDisplay {
+    fn fmt(&self, traits: &Traits, f: &mut fmt::Formatter) -> fmt::Result;
+}
+
 pub fn impl_display<T>() -> TraitImpl
 where
-    T: std::fmt::Display + Sync,
+    T: GreaseDisplay + Sync,
 {
     TraitImpl::for_trait::<Display>(DisplayTrait {
-        fmt: |data: &ValueData, f: &mut fmt::Formatter| {
-            write!(f, "{}", unsafe { data.as_ref::<T>() })
-        },
+        fmt: |t, data, f| unsafe { data.as_ref::<T>() }.fmt(t, f),
     })
+}
+
+pub struct Displayed<'t, 'v>(&'t Traits, &'v crate::Value);
+
+impl<'t, 'v> std::fmt::Display for Displayed<'t, 'v> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if let Some(t) = self.0.get::<Display>(self.1) {
+            t.fmt(self.0, self.1.forced_value(), f)
+        } else {
+            write!(
+                f,
+                "<cannot display values of type {}>",
+                type_name(self.0, self.1)
+            )
+        }
+    }
+}
+
+pub fn display<'t, 'v>(traits: &'t Traits, v: &'v crate::Value) -> Displayed<'t, 'v> {
+    Displayed(traits, v)
 }
 
 pub(crate) fn trait_generator(v: std::sync::Arc<ValueType>) -> Vec<TraitImpl> {
     let mut impls = display_trait_generator(v.clone());
     impls.extend(typename_trait_generator(v.clone()));
-    impls.extend(crate::match_value_type!(*v => {
-        () => vec![TraitImpl::for_trait::<Display>(DisplayTrait {
-            fmt: |_, _| Ok(())
-        })],
-        std::path::PathBuf => vec![TraitImpl::for_trait::<Display>(DisplayTrait {
-            fmt: |d, f| write!(f, "{}", unsafe{ d.as_ref::<std::path::PathBuf>() }.display())
-        })],
-        Vec<u8> => vec![TraitImpl::for_trait::<Display>(DisplayTrait {
-            fmt: |d, f| {
-                let v = unsafe { d.as_ref::<Vec<u8>>() };
-                match std::str::from_utf8(v) {
-                    Ok(s) => f.write_str(s),
-                    Err(_) => write!(f, "[bytes]")
-                }
-            }
-        })]
-        => vec![]
-    }));
     impls
 }
 
@@ -103,6 +117,55 @@ grease_type_name!(String, "string");
 grease_type_name!(std::path::PathBuf, "path");
 grease_type_name!(std::process::ExitStatus, "exit_status");
 
+#[macro_export]
+macro_rules! grease_display_basic {
+    ( $t:ty ) => {
+        impl $crate::GreaseDisplay for $t {
+            fn fmt(&self, _: &$crate::Traits, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                std::fmt::Display::fmt(self, f)
+            }
+        }
+    };
+}
+
+grease_display_basic!(u8);
+grease_display_basic!(i8);
+grease_display_basic!(u16);
+grease_display_basic!(i16);
+grease_display_basic!(u32);
+grease_display_basic!(i32);
+grease_display_basic!(u64);
+grease_display_basic!(i64);
+grease_display_basic!(u128);
+grease_display_basic!(i128);
+grease_display_basic!(usize);
+grease_display_basic!(isize);
+grease_display_basic!(char);
+grease_display_basic!(bool);
+grease_display_basic!(String);
+grease_display_basic!(std::process::ExitStatus);
+
+impl GreaseDisplay for () {
+    fn fmt(&self, _: &Traits, _f: &mut fmt::Formatter) -> fmt::Result {
+        Ok(())
+    }
+}
+
+impl GreaseDisplay for Vec<u8> {
+    fn fmt(&self, _: &Traits, f: &mut fmt::Formatter) -> fmt::Result {
+        match std::str::from_utf8(self) {
+            Ok(s) => f.write_str(s),
+            Err(_) => write!(f, "[bytes]"),
+        }
+    }
+}
+
+impl GreaseDisplay for std::path::PathBuf {
+    fn fmt(&self, _: &Traits, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.display())
+    }
+}
+
 crate::trait_generator!(
     typename_trait_generator
     impl_type_name((), u8, i8, u16, i16, u32, i32, u64, i64, u128, i128, usize, isize, char, bool,
@@ -111,7 +174,8 @@ crate::trait_generator!(
 
 crate::trait_generator!(
     display_trait_generator
-    impl_display(u8, i8, u16, i16, u32, i32, u64, i64, u128, i128, usize, isize, char, bool, String, std::process::ExitStatus)
+    impl_display((), u8, i8, u16, i16, u32, i32, u64, i64, u128, i128, usize, isize, char, bool,
+        Vec<u8>, String, std::path::PathBuf, std::process::ExitStatus)
 );
 
 impl TypeNameTrait {
@@ -133,8 +197,8 @@ impl Trait for TypeNameTrait {
 }
 
 impl DisplayTrait {
-    pub fn fmt(&self, data: &ValueData, f: &mut fmt::Formatter) -> fmt::Result {
-        (self.fmt)(data, f)
+    pub fn fmt(&self, traits: &Traits, data: &ValueData, f: &mut fmt::Formatter) -> fmt::Result {
+        (self.fmt)(traits, data, f)
     }
 }
 

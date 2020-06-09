@@ -109,7 +109,7 @@ impl AppErr for bool {
     }
 }
 
-fn run(opts: Opts) -> Result<(), grease::Error> {
+fn run(opts: Opts) -> Result<String, grease::Error> {
     let mut output =
         output(opts.format, !opts.stop).app_err("could not create output from requested format");
     output.set_log_level(opts.log_level);
@@ -211,7 +211,10 @@ fn run(opts: Opts) -> Result<(), grease::Error> {
     drop(ctx);
 
     script_output
-        .map(|v| futures::executor::block_on(force_value_nested(&traits, v)))
+        .map(|v| {
+            futures::executor::block_on(force_value_nested(&traits, v.clone()))?;
+            Ok(grease::display(&traits, &v).to_string())
+        })
         .unwrap()
 }
 
@@ -237,7 +240,8 @@ fn main() {
     let opts = Opts::from_args();
 
     // Run and check for error
-    if let Err(e) = run(opts) {
-        err_exit(&e.to_string());
+    match run(opts) {
+        Ok(s) => write!(std::io::stdout(), "{}", s).expect("writing output failed"),
+        Err(e) => err_exit(&e.to_string()),
     }
 }
