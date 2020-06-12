@@ -5,7 +5,6 @@ authors = ["Alex Franchuk <afranchuk@caci.com>"]
 edition = "2018"
 
 [dependencies]
-fasthash = "0.4"
 futures = { version = "0.3", features = ["thread-pool"] }
 grease_macro = { path = "../grease_macro" }
 lazy_static = "^1"

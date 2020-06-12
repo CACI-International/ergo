@@ -3,7 +3,7 @@
 //! A plan is a graph of values, where each value may depend on others. Plans use asynchronous
 //! values to build the graph and dependency tree.
 
-use fasthash::{HasherExt, SpookyHasherExt as HasherFn};
+use crate::fnv::Fnv1a as HasherFn;
 use futures::future::{BoxFuture, FusedFuture, Future, FutureExt, Shared, TryFutureExt};
 use futures::task::{Context, Poll};
 use std::collections::BTreeSet;
