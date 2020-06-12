@@ -20,7 +20,6 @@ rand = "^0.7"
 serde = { version = "^1", features = ["derive"] }
 simplelog = "^0.7"
 structopt = "^0.3"
-tack = { path = "../tack" }
 term = "^0.6"
 uuid = "^0.7"
 
