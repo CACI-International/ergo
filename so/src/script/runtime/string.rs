@@ -1,6 +1,7 @@
 //! String manipulation functions.
 
 use super::builtin_function_prelude::*;
+use grease::make_value;
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
@@ -8,6 +9,48 @@ pub fn builtin() -> Value {
     let mut map = BTreeMap::new();
     map.insert("format".to_owned(), format_fn());
     ScriptMap(map).into()
+}
+
+#[derive(Debug)]
+enum StringFragment {
+    Literal(String),
+    Value(Value),
+}
+
+#[derive(Debug, Default)]
+struct Fragments {
+    fragments: Vec<StringFragment>,
+}
+
+impl Fragments {
+    pub fn push(&mut self, c: char) {
+        match self.fragments.last_mut() {
+            Some(StringFragment::Literal(ref mut s)) => s.push(c),
+            _ => self.fragments.push(StringFragment::Literal(c.to_string())),
+        }
+    }
+
+    pub fn push_value(&mut self, v: Value) {
+        self.fragments.push(StringFragment::Value(v))
+    }
+}
+
+impl From<&'_ StringFragment> for grease::Dependency {
+    fn from(sf: &StringFragment) -> Self {
+        match sf {
+            StringFragment::Literal(s) => s.into(),
+            StringFragment::Value(s) => s.into(),
+        }
+    }
+}
+
+impl<'a> IntoIterator for &'a Fragments {
+    type Item = &'a StringFragment;
+    type IntoIter = std::slice::Iter<'a, StringFragment>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        (&self.fragments).into_iter()
+    }
 }
 
 script_fn!(format_fn, ctx => {
@@ -18,7 +61,7 @@ script_fn!(format_fn, ctx => {
     let pos_args: Vec<_> = ctx.args.by_ref().collect();
     let kw_args = std::mem::take(&mut ctx.args.non_positional);
 
-    let mut result = ScriptString::new();
+    let mut fragments = Fragments::default();
 
     let mut arg: Option<String> = None;
 
@@ -33,7 +76,7 @@ script_fn!(format_fn, ctx => {
             }
             else if let Some('{') = iter.peek() {
                 iter.next().unwrap();
-                result.push('{');
+                fragments.push('{');
             } else {
                 arg = Some(Default::default());
             }
@@ -42,7 +85,7 @@ script_fn!(format_fn, ctx => {
                 None => {
                     if let Some('}') = iter.peek() {
                         iter.next().unwrap();
-                        result.push('}');
+                        fragments.push('}');
                     } else {
                         ctx.error(source.with("invalid format string: '}' found without preceding '{'"));
                         return Ok(Eval::Error);
@@ -64,11 +107,8 @@ script_fn!(format_fn, ctx => {
                         },
                         Some(v) => {
                             match grease::try_display(&ctx.traits, &v) {
-                                Ok(d) => {
-                                    eval_error!(ctx, v.clone().map(|v| futures::executor::block_on(
-                                            crate::script::traits::nested::force_value_nested(&ctx.traits, v))
-                                        ).transpose_err());
-                                    write!(result, "{}", d).map_err(|_| "failed to write format string")?;
+                                Ok(_) => {
+                                    fragments.push_value(v.as_ref().unwrap().clone());
                                     arg = None;
                                 },
                                 Err(e) => {
@@ -82,7 +122,7 @@ script_fn!(format_fn, ctx => {
             }
         } else {
             match &mut arg {
-                None => result.push(c),
+                None => fragments.push(c),
                 Some(ref mut s) => s.push(c),
             }
         }
@@ -91,6 +131,24 @@ script_fn!(format_fn, ctx => {
     if arg.is_some() {
         Err("'{' without matching '}'".into())
     } else {
-        Ok(Eval::Value(result.into()))
+        let traits = ctx.traits.clone();
+        let task = ctx.task.clone();
+        Ok(Eval::Value(make_value!([^fragments] {
+            let values: Vec<_> = fragments.into_iter().filter_map(|v| match v { StringFragment::Value(v) => Some(v), _ => None })
+                .map(|v| crate::script::traits::nested::force_value_nested(&traits, v.clone()))
+                .collect();
+            task.join_all(values).await?;
+
+            let mut result = ScriptString::new();
+            for f in fragments.into_iter() {
+                match f {
+                    StringFragment::Literal(s) => result.push_str(&s),
+                    StringFragment::Value(v) => {
+                        write!(result, "{}", grease::display(&traits, &v))?;
+                    }
+                }
+            }
+            Ok(result)
+        }).into()))
     }
 });

@@ -298,7 +298,7 @@ mod join_all {
 
     impl<F> Future for JoinAll<F>
     where
-        F: Future + TryFuture<Error = Error> + Unpin,
+        F: Future + TryFuture<Error = Error>,
     {
         type Output = Result<Vec<<F as TryFuture>::Ok>, Error>;
 
