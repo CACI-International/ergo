@@ -6,8 +6,13 @@ use std::fmt;
 
 impl GreaseDisplay for ScriptArray {
     fn fmt(&self, traits: &Traits, f: &mut fmt::Formatter) -> fmt::Result {
-        for v in &self.0 {
-            writeln!(f, "{}", display(traits, v))?;
+        for (i, v) in self.0.iter().enumerate() {
+            write!(
+                f,
+                "{}{}",
+                display(traits, v),
+                if i < self.0.len() - 1 { "\n" } else { "" }
+            )?;
         }
         Ok(())
     }
@@ -15,8 +20,14 @@ impl GreaseDisplay for ScriptArray {
 
 impl GreaseDisplay for ScriptMap {
     fn fmt(&self, traits: &Traits, f: &mut fmt::Formatter) -> fmt::Result {
-        for (k, v) in &self.0 {
-            writeln!(f, "{}:\n{}", k, display(traits, v))?;
+        for (i, (k, v)) in self.0.iter().enumerate() {
+            write!(
+                f,
+                "{}:\n{}{}",
+                k,
+                display(traits, v),
+                if i < self.0.len() - 1 { "\n" } else { "" }
+            )?;
         }
         Ok(())
     }
