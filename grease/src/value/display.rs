@@ -77,8 +77,28 @@ impl<'t, 'v> std::fmt::Display for Displayed<'t, 'v> {
     }
 }
 
+/// Return a type that implements the rust trait Display, that will display the given value using
+/// the grease trait Display.
+///
+/// The value (and any internal values) must already be evaluated.
 pub fn display<'t, 'v>(traits: &'t Traits, v: &'v crate::Value) -> Displayed<'t, 'v> {
     Displayed(traits, v)
+}
+
+/// Like `display`, but check for the grease Display trait immediately and return a suitable error
+/// string if it is not found.
+pub fn try_display<'t, 'v>(
+    traits: &'t Traits,
+    v: &'v crate::Value,
+) -> Result<Displayed<'t, 'v>, String> {
+    if traits.get::<Display>(v).is_some() {
+        Ok(Displayed(traits, v))
+    } else {
+        Err(format!(
+            "<cannot display values of type {}>",
+            type_name(traits, &v.value_type())
+        ))
+    }
 }
 
 pub(crate) fn trait_generator(v: std::sync::Arc<ValueType>) -> Vec<TraitImpl> {

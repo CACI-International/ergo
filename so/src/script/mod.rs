@@ -68,6 +68,7 @@ pub fn script_context(
             ("map", runtime::map::builtin()),
             ("path", runtime::path::builtin()),
             ("seq", runtime::seq::builtin()),
+            ("string", runtime::string::builtin()),
             ("track", runtime::track::builtin()),
             ("variable", runtime::variable::builtin()),
         ];
@@ -170,6 +171,23 @@ mod test {
             "var = {inner=[blah,{v=\"test()\"}]}; var inner 1 v",
             SRString("test()"),
         )?;
+        Ok(())
+    }
+
+    #[test]
+    fn string_format() -> Result<(), String> {
+        script_eval_to("string format \"hello {}\" world", SRString("hello world"))?;
+        script_eval_to("string format \"{1}{}{2}{0}\" a b c d", SRString("baca"))?;
+        script_eval_to(
+            "string format \"{my_named_arg} {}\" ^{my_named_arg = howdy} hi",
+            SRString("howdy hi"),
+        )?;
+        script_eval_to("string format \"{{{{}}\"", SRString("{{}"))?;
+        script_fail("string format \"{\"")?;
+        script_fail("string format \"}\"")?;
+        script_fail("string format \"{}\"")?;
+        script_fail("string format \"{named}\" ^{not-named=1}")?;
+        script_fail("string format \"{{{}}\" a")?;
         Ok(())
     }
 

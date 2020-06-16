@@ -28,6 +28,7 @@ pub mod load;
 pub mod map;
 pub mod path;
 pub mod seq;
+pub mod string;
 pub mod track;
 pub mod variable;
 
@@ -163,8 +164,21 @@ pub mod builtin_function_prelude {
         };
     }
 
+    #[macro_export]
+    macro_rules! script_fn {
+        ( $name:ident, $ctx:ident => $body:expr ) => {
+            fn $name() -> Value {
+                ScriptFunction::BuiltinFunction(Box::new(
+                    |$ctx: &mut Context<FunctionContext>| -> Result<Eval<Value>, Error> { $body },
+                ))
+                .into()
+            }
+        };
+    }
+
     pub use crate::def_builtin;
     pub use crate::eval_error;
+    pub use crate::script_fn;
     pub use crate::script_value_as;
 }
 
@@ -1542,6 +1556,10 @@ impl Plan<FunctionContext> for &'_ ScriptFunction {
                 Err(e) => {
                     ctx.args.clear();
                     Err(e)
+                }
+                Ok(Eval::Error) => {
+                    ctx.args.clear();
+                    Ok(Eval::Error)
                 }
                 v => v,
             },

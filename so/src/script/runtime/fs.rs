@@ -14,17 +14,6 @@ pub fn builtin() -> Value {
     ScriptMap(map).into()
 }
 
-macro_rules! script_fn {
-    ( $name:ident, $ctx:ident => $body:expr ) => {
-        fn $name() -> Value {
-            ScriptFunction::BuiltinFunction(Box::new(
-                |$ctx: &mut Context<FunctionContext>| -> Result<Eval<Value>, Error> { $body },
-            ))
-            .into()
-        }
-    };
-}
-
 script_fn!(glob_fn, ctx => {
     let pattern = ctx.args.next().ok_or("no glob pattern provided")?;
 

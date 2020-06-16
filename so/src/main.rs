@@ -241,7 +241,7 @@ fn main() {
 
     // Run and check for error
     match run(opts) {
-        Ok(s) => write!(std::io::stdout(), "{}", s).expect("writing output failed"),
+        Ok(s) => writeln!(std::io::stdout(), "{}", s).expect("writing output failed"),
         Err(e) => err_exit(&e.to_string()),
     }
 }
