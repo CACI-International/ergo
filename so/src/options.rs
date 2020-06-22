@@ -38,6 +38,10 @@ pub struct Opts {
     /// The maximum number of jobs to run concurrently. If unspecified, the number of cpus is used.
     pub jobs: Option<usize>,
 
+    #[structopt(long, default_value = concat!(".", env!("CARGO_PKG_NAME"), "_work"))]
+    /// The storage directory for the runtime.
+    pub storage: std::path::PathBuf,
+
     #[structopt(short = "S", long)]
     /// Whether to stop immediately when an error occurs.
     pub stop: bool,
