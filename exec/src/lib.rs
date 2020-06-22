@@ -155,6 +155,7 @@ impl From<&Argument> for grease::Dependency {
 #[derive(Debug)]
 pub struct Config {
     command: SomeValue<CommandString>,
+    pub description: Option<String>,
     pub arguments: Vec<Argument>,
     pub env: BTreeMap<String, Option<SomeValue<CommandString>>>,
     pub stdin: Option<SomeValue<StdinString>>,
@@ -171,6 +172,7 @@ pub struct ExecResult {
 impl Config {
     pub fn new<T: Into<SomeValue<CommandString>>>(command: T) -> Self {
         Config {
+            description: Default::default(),
             arguments: Default::default(),
             env: Default::default(),
             stdin: None,
@@ -191,6 +193,7 @@ impl Plan for Config {
         // Move and rebind for convenience
         let args = self.arguments;
         let command = self.command;
+        let description = self.description;
         let env: Vec<_> = self.env.into_iter().collect();
 
         // Create values from the context for use later
@@ -343,7 +346,10 @@ impl Plan for Config {
                     }
                 }
 
-                log.info(format!("Running: {}", name.to_string_lossy()));
+                log.info(match description {
+                    None => format!("exec: {}", name.to_string_lossy()),
+                    Some(d) => d
+                });
                 log.debug(format!("Arguments: {:?}", cmd));
 
                 let output = {
@@ -392,9 +398,9 @@ impl Plan for Config {
             }).await
         });
 
-        let stdout = make_value!((run_command) { run_command.await?; Ok(rcv_stdout.await?) });
-        let stderr = make_value!((run_command) { run_command.await?; Ok(rcv_stderr.await?) });
-        let exit_status = make_value!((run_command) { run_command.await?; Ok(rcv_status.await?) });
+        let stdout = make_value!((run_command) ["stdout"] { run_command.await?; Ok(rcv_stdout.await?) });
+        let stderr = make_value!((run_command) ["stderr"] { run_command.await?; Ok(rcv_stderr.await?) });
+        let exit_status = make_value!((run_command) ["exit_status"] { run_command.await?; Ok(rcv_status.await?) });
 
         Ok(ExecResult {
             stdout,

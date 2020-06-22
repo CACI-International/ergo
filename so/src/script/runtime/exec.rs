@@ -80,6 +80,10 @@ def_builtin!(ctx => {
             Ok(v) => cfg.stdin = Some(v)
         }
     }
+    if let Some(v) = ctx.args.kw("description") {
+        let desc = script_value_as!(ctx, v, ScriptString, "description must be a string");
+        cfg.description = Some(desc.owned());
+    }
 
     all_success &= !ctx.unused_arguments();
 

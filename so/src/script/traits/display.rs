@@ -4,13 +4,26 @@ use crate::script::runtime::script_types::{ScriptArray, ScriptMap};
 use grease::{display, impl_display, trait_generator, GreaseDisplay, Traits};
 use std::fmt;
 
+struct Empty<'a, 'b>(grease::Displayed<'a, 'b>);
+
+impl<'a, 'b> fmt::Display for Empty<'a, 'b> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let s = self.0.to_string();
+        if s.is_empty() {
+            write!(f, "(empty)")
+        } else {
+            write!(f, "{}", s)
+        }
+    }
+}
+
 impl GreaseDisplay for ScriptArray {
     fn fmt(&self, traits: &Traits, f: &mut fmt::Formatter) -> fmt::Result {
         for (i, v) in self.0.iter().enumerate() {
             write!(
                 f,
                 "{}{}",
-                display(traits, v),
+                Empty(display(traits, v)),
                 if i < self.0.len() - 1 { "\n" } else { "" }
             )?;
         }
@@ -25,8 +38,8 @@ impl GreaseDisplay for ScriptMap {
                 f,
                 "{}:\n{}{}",
                 k,
-                display(traits, v),
-                if i < self.0.len() - 1 { "\n" } else { "" }
+                Empty(display(traits, v)),
+                if i < self.0.len() - 1 { "\n\n" } else { "" }
             )?;
         }
         Ok(())
