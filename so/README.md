@@ -90,6 +90,12 @@ Within a script, the following are defined:
   * This could use some sort of equality test on the value _data_, rather
     than comparing value identifiers.
 * Persist command timing information for better estimates.
+* Block set shorthand (if there's a line in a block that is just a string,
+  insert the environment value equal to that string into the block environment).
+* `string words`, `string lines`, `fetch`, maybe `fs mount` to open tarballs,
+  zips, directories, urls to such?
+* `value` to force a value to be computed and return a new value that is
+  content-identified.
 
 ### Plugin notes
 * Ideally, plugins are loaded just like other scripts: `so [path to plugin]`.
