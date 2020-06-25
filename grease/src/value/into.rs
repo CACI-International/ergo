@@ -81,5 +81,14 @@ pub(crate) fn trait_generator(tp: std::sync::Arc<ValueType>) -> Vec<TraitImpl> {
             .into(),
         );
     }
+    // ExitStatus should convert to bool, true if the status was successful
+    if *tp == <std::process::ExitStatus>::value_type() {
+        b.push(
+            IntoTrait {
+                into: |v| v.typed::<std::process::ExitStatus>().unwrap().map(|v| v.success()).into(),
+                tp: bool::value_type().into(),
+            }.into()
+        );
+    }
     b
 }
