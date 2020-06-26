@@ -30,6 +30,7 @@ pub mod path;
 pub mod seq;
 pub mod string;
 pub mod track;
+pub mod value;
 pub mod variable;
 
 pub mod script_types {

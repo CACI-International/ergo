@@ -694,7 +694,10 @@ impl FusedFuture for Value {
 #[macro_export]
 macro_rules! match_value_type {
     ( $value:expr => { $( $t:ty => $e:expr $(,)? )+ => $else:expr } ) => {
-        $( if $value == <$t>::value_type() { $e } else )+ { $else }
+        {
+            use $crate::GetValueType;
+            $( if $value == <$t>::value_type() { $e } else )+ { $else }
+        }
     }
 }
 

@@ -70,6 +70,7 @@ pub fn script_context(
             ("seq", runtime::seq::builtin()),
             ("string", runtime::string::builtin()),
             ("track", runtime::track::builtin()),
+            ("value", runtime::value::builtin()),
             ("variable", runtime::variable::builtin()),
         ];
         for (k, v) in env.into_iter() {
@@ -81,8 +82,9 @@ pub fn script_context(
         // Add initial traits
         ctx.traits.add(::exec::trait_generator);
         ctx.traits.add(runtime::cache::trait_generator);
-        ctx.traits.add(traits::nested::trait_generator);
+        ctx.traits.add(traits::content_value::trait_generator);
         ctx.traits.add(traits::display::trait_generator);
+        ctx.traits.add(traits::nested::trait_generator);
         ctx
     })
 }

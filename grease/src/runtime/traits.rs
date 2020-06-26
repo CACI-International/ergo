@@ -17,7 +17,6 @@ pub type TraitGenerator = fn(Arc<ValueType>) -> Vec<TraitImpl>;
 macro_rules! trait_generator {
     ( $name:ident $f:ident ( $( $t:ty ),+ ) ) => {
         pub fn $name(v: std::sync::Arc<$crate::ValueType>) -> Vec<$crate::TraitImpl> {
-            use $crate::GetValueType;
             $crate::match_value_type!(*v => {
                 $( $t => vec![$f::<$t>()] ),+
                 => vec![]
