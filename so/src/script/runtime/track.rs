@@ -46,21 +46,21 @@ struct FileData {
 type TrackInfo = HashMap<PathBuf, FileData>;
 
 impl Plan for Config {
-    type Output = Result<TypedValue<PathBuf>, String>;
+    type Output = Result<TypedValue<PathBuf>, Error>;
 
     fn plan(self, ctx: &mut Context) -> Self::Output {
         let store = ctx.store.item(item_name!("track"));
 
         // TODO inefficient to load and store every time
         let mut info = if store.exists() {
-            let content = store.read().map_err(|e| e.to_string())?;
+            let content = store.read()?;
             bincode::deserialize_from(content).map_err(|e| e.to_string())?
         } else {
             TrackInfo::new()
         };
 
-        let meta = std::fs::metadata(&self.path).map_err(|e| e.to_string())?;
-        let mod_time = meta.modified().map_err(|e| e.to_string())?;
+        let meta = std::fs::metadata(&self.path)?;
+        let mod_time = meta.modified()?;
 
         let calc_hash = match info.get(&self.path) {
             Some(data) => data.modification_time < mod_time,
@@ -68,8 +68,8 @@ impl Plan for Config {
         };
 
         if calc_hash {
-            let f = std::fs::File::open(&self.path).map_err(|e| e.to_string())?;
-            let hash = grease::hash_read(f).map_err(|e| e.to_string())?;
+            let f = std::fs::File::open(&self.path)?;
+            let hash = grease::hash_read(f)?;
             info.insert(
                 self.path.clone(),
                 FileData {
@@ -82,7 +82,7 @@ impl Plan for Config {
         let hash = info.get(&self.path).unwrap().content_hash;
 
         {
-            let content = store.write().map_err(|e| e.to_string())?;
+            let content = store.write()?;
             bincode::serialize_into(content, &info).map_err(|e| e.to_string())?;
         }
 
