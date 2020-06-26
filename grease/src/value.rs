@@ -780,7 +780,7 @@ impl<T: Sync> AsRef<T> for Alias<T> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TypedValue<T> {
     inner: Value,
     phantom: std::marker::PhantomData<Arc<T>>,
@@ -875,6 +875,15 @@ where
 {
     fn from(v: T) -> Self {
         TypedValue::constant(v)
+    }
+}
+
+impl<T> Clone for TypedValue<T> {
+    fn clone(&self) -> Self {
+        TypedValue {
+            inner: self.inner.clone(),
+            phantom: Default::default(),
+        }
     }
 }
 

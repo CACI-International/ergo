@@ -155,7 +155,7 @@ impl From<&Argument> for grease::Dependency {
 #[derive(Debug)]
 pub struct Config {
     command: SomeValue<CommandString>,
-    pub description: Option<String>,
+    pub description: Option<SomeValue<String>>,
     pub arguments: Vec<Argument>,
     pub env: BTreeMap<String, Option<SomeValue<CommandString>>>,
     pub stdin: Option<SomeValue<StdinString>>,
@@ -172,7 +172,7 @@ pub struct ExecResult {
 impl Config {
     pub fn new<T: Into<SomeValue<CommandString>>>(command: T) -> Self {
         Config {
-            description: Default::default(),
+            description: None,
             arguments: Default::default(),
             env: Default::default(),
             stdin: None,
@@ -348,7 +348,8 @@ impl Plan for Config {
 
                 log.info(match description {
                     None => format!("exec: {}", name.to_string_lossy()),
-                    Some(d) => d
+                    Some(SomeValue::Immediate(v)) => v,
+                    Some(SomeValue::Delayed(v)) => v.await?.owned()
                 });
                 log.debug(format!("Arguments: {:?}", cmd));
 

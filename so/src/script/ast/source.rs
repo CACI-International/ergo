@@ -5,8 +5,7 @@ use std::fmt;
 use std::io::{BufRead, BufReader, Read};
 
 /// A type which adds source location to a value.
-// TODO Hash should probably agree with PartialEq
-#[derive(Clone, Debug, Hash)]
+#[derive(Clone, Debug)]
 pub struct Source<T> {
     value: T,
     pub location: Location,
@@ -338,6 +337,12 @@ impl<T: Eq> Eq for Source<T> {}
 impl<T: PartialEq> PartialEq for Source<T> {
     fn eq(&self, other: &Self) -> bool {
         self.value == other.value
+    }
+}
+
+impl<T: std::hash::Hash> std::hash::Hash for Source<T> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.value.hash(state)
     }
 }
 

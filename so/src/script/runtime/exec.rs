@@ -81,8 +81,8 @@ def_builtin!(ctx => {
         }
     }
     if let Some(v) = ctx.args.kw("description") {
-        let desc = script_value_as!(ctx, v, ScriptString, "description must be a string");
-        cfg.description = Some(desc.owned());
+        let desc = v.unwrap().typed::<ScriptString>().map_err(|_| "description must be a string")?;
+        cfg.description = Some(desc.into());
     }
 
     all_success &= !ctx.unused_arguments();
