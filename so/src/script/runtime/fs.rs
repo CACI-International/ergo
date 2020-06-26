@@ -22,21 +22,28 @@ script_fn!(glob_fn, ctx => {
     }
 
     let pattern_source = pattern.source();
-    let pattern =
-        script_value_as!(ctx, pattern, ScriptString, "glob pattern must be a string");
+    let pattern = eval_error!(ctx, pattern.map(|v| -> Result<_,&str> {
+        let t: grease::IntoTyped<String> = ctx.traits.get(&v).ok_or("cannot convert glob pattern value into string")?;
+        Ok(t.into_typed(v))
+    }).transpose_err());
 
-    match glob(pattern.as_ref()) {
-        Err(e) => Err(Error::ValueError(pattern_source.with(e).into())),
-        Ok(paths) => {
-            let paths: Result<Vec<PathBuf>, glob::GlobError> = paths.collect();
-            let paths: Vec<Value> = paths
-                .map_err(|e| Error::ValueError(pattern_source.with(e).into()))?
-                .into_iter()
-                .map(|v| v.into())
-                .collect();
-            Ok(Eval::Value(ScriptArray(paths).into()))
+    Ok(Eval::Value(make_value!((pattern) ["fs glob"] {
+        let pattern = pattern.await?;
+
+        match glob(pattern.as_ref()) {
+            Err(e) => Err(pattern_source.with(e).into()),
+            Ok(paths) => {
+                let paths: Result<Vec<PathBuf>, glob::GlobError> = paths.collect();
+                let paths: Vec<Value> = paths
+                    .map_err(|e| Error::ValueError(pattern_source.with(e).into()))?
+                    .into_iter()
+                    .map(|v| v.into())
+                    .collect();
+                Ok(ScriptArray(paths))
+            }
         }
-    }
+    }).into()))
+
 });
 
 fn recursive_link<F: AsRef<Path>, T: AsRef<Path>>(from: F, to: T) -> Result<(), std::io::Error> {
