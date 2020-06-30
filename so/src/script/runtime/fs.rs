@@ -27,10 +27,18 @@ script_fn!(glob_fn, ctx => {
         Ok(t.into_typed(v))
     }).transpose_err());
 
-    Ok(Eval::Value(make_value!((pattern) ["fs glob"] {
+    let path = std::env::current_dir().unwrap();
+
+    Ok(Eval::Value(make_value!((pattern) ["fs glob",path] {
         let pattern = pattern.await?;
 
-        match glob(pattern.as_ref()) {
+        let pattern = {
+            let mut p = path;
+            p.push(pattern.as_ref());
+            p
+        };
+
+        match glob(pattern.to_str().unwrap()) {
             Err(e) => Err(pattern_source.with(e).into()),
             Ok(paths) => {
                 let paths: Result<Vec<PathBuf>, glob::GlobError> = paths.collect();
@@ -51,6 +59,10 @@ fn recursive_link<F: AsRef<Path>, T: AsRef<Path>>(from: F, to: T) -> Result<(), 
         let mut to = to.as_ref().to_owned();
         to.push(from.as_ref().file_name().expect("path ends in .."));
         return recursive_link(from, &to);
+    }
+
+    if to.as_ref().is_file() {
+        std::fs::remove_file(to.as_ref())?;
     }
 
     let meta = std::fs::metadata(from.as_ref())?;

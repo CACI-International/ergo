@@ -2,7 +2,7 @@
 
 use super::{GetValueType, IntoValue, TypedValue, Value, ValueType};
 use crate::uuid::*;
-use crate::{CreateTrait, Trait, TraitImpl, TraitImplRef, TraitType, Traits};
+use crate::{match_value_type, CreateTrait, Trait, TraitImpl, TraitImplRef, TraitType, Traits};
 
 pub struct IntoTrait {
     tp: std::sync::Arc<ValueType>,
@@ -71,24 +71,36 @@ pub(crate) fn trait_generator(tp: std::sync::Arc<ValueType>) -> Vec<TraitImpl> {
     }
     .into()];
 
-    // () should convert to a bool (always false)
-    if *tp == <()>::value_type() {
-        b.push(
-            IntoTrait {
-                into: |_| false.into_value(),
-                tp: bool::value_type().into(),
-            }
-            .into(),
-        );
-    }
-    // ExitStatus should convert to bool, true if the status was successful
-    if *tp == <std::process::ExitStatus>::value_type() {
-        b.push(
-            IntoTrait {
-                into: |v| v.typed::<std::process::ExitStatus>().unwrap().map(|v| v.success()).into(),
-                tp: bool::value_type().into(),
-            }.into()
-        );
-    }
+    match_value_type!(*tp => {
+        () => {
+            // () should convert to a bool (always false)
+            b.push(
+                IntoTrait {
+                    into: |_| false.into_value(),
+                    tp: bool::value_type().into(),
+                }
+                .into(),
+            );
+        },
+        std::process::ExitStatus => {
+            // ExitStatus should convert to bool, true if the status was successful
+            b.push(
+                IntoTrait {
+                    into: |v| v.typed::<std::process::ExitStatus>().unwrap().map(|v| v.success()).into(),
+                    tp: bool::value_type().into(),
+                }.into()
+            );
+        },
+        std::path::PathBuf => {
+            // PathBuf should convert to String
+            b.push(
+                IntoTrait {
+                    into: |v| v.typed::<std::path::PathBuf>().unwrap().map(|v| v.to_string_lossy().into_owned()).into(),
+                    tp: String::value_type().into(),
+                }.into()
+            );
+        },
+        => ()
+    });
     b
 }

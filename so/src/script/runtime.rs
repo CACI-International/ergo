@@ -195,7 +195,6 @@ pub struct Runtime {
     global_env: Env,
     env: Vec<Env>,
     errors: Vec<SourceContext<Error>>,
-    working_dir: PathBuf,
     load_cache: BTreeMap<PathBuf, Eval<Source<Value>>>,
     load_prelude: bool,
 }
@@ -206,7 +205,6 @@ impl Default for Runtime {
             global_env: Default::default(),
             env: vec![],
             errors: vec![],
-            working_dir: std::env::current_dir().unwrap(),
             load_cache: Default::default(),
             load_prelude: true,
         }
@@ -313,6 +311,24 @@ pub trait ContextEnv: GetEnv {
 
 impl<T: GetEnv> ContextEnv for T {}
 
+struct WithCurrentDirectory {
+    old: std::path::PathBuf,
+}
+
+impl Drop for WithCurrentDirectory {
+    fn drop(&mut self) {
+        std::env::set_current_dir(&self.old).unwrap()
+    }
+}
+
+fn with_current_directory<P: AsRef<std::path::Path>>(
+    path: P,
+) -> std::io::Result<WithCurrentDirectory> {
+    let old = std::env::current_dir()?;
+    std::env::set_current_dir(path)?;
+    Ok(WithCurrentDirectory { old })
+}
+
 pub trait LoadScript {
     fn load(&mut self, s: &str) -> Result<Eval<Source<Value>>, Error>;
 }
@@ -341,7 +357,7 @@ impl LoadScript for grease::Context<Runtime> {
         };
 
         let mut paths: Vec<PathBuf> = Vec::new();
-        paths.push(self.working_dir.clone());
+        paths.push(std::env::current_dir().unwrap());
         for path in loadpath {
             paths.push(
                 script_value_as!(
@@ -367,10 +383,9 @@ impl LoadScript for grease::Context<Runtime> {
         if let Some(p) = full_path {
             let p = p.canonicalize().unwrap(); // unwrap because is_file() should guarantee that canonicalize will succeed
             if !self.load_cache.contains_key(&p) {
-                // Change working directory before loading the prelude.
+                // Change working directory _before_ loading the prelude.
                 // The prelude behaves as if one put `^(so prelude)` at the start of the script.
-                let mut old_work_dir = p.parent().unwrap().into(); // unwrap because is_file() necessitates a parent exists
-                std::mem::swap(&mut old_work_dir, &mut self.working_dir);
+                let _work_dir = with_current_directory(p.parent().unwrap()).unwrap();
 
                 // Load the prelude (setting load_prelude to false to prevent recursion) The
                 // prelude may not exist (without error), however if it does exist it must evaluate
@@ -418,7 +433,6 @@ impl LoadScript for grease::Context<Runtime> {
                 }
                 let result = script.plan(self);
                 self.load_cache.insert(p.clone(), result);
-                std::mem::swap(&mut old_work_dir, &mut self.working_dir);
             }
             Ok(self.load_cache.get(&p).unwrap().clone()) // unwrap because prior statement ensures the key exists
         } else {

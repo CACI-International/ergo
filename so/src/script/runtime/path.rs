@@ -12,6 +12,7 @@ def_builtin!(ctx => {
     match which.as_ref().as_ref() {
         "new" => path_new(ctx),
         "join" => path_join(ctx),
+        "relative" => path_relative(ctx),
         "split" => path_split(ctx),
         cmd => Err(format!("unrecognized subcommand: {}", cmd).into())
     }
@@ -132,5 +133,31 @@ fn path_split(ctx: &mut Context<FunctionContext>) -> Result<Eval<Value>, Error> 
             }
         }
         Ok(ScriptArray(vals))
+    }).into()))
+}
+
+fn path_relative(ctx: &mut Context<FunctionContext>) -> Result<Eval<Value>, Error> {
+    let base = ctx.args.next().ok_or("no base path")?;
+    let path = ctx.args.next().ok_or("no path")?;
+
+    if ctx.unused_arguments() {
+        return Ok(Eval::Error);
+    }
+
+    let base = eval_error!(
+        ctx,
+        base.map(|v| v.typed::<PathBuf>().map_err(|_| "base must be a path"))
+            .transpose_err()
+    );
+    let path = eval_error!(
+        ctx,
+        path.map(|v| v.typed::<PathBuf>().map_err(|_| "not a path"))
+            .transpose_err()
+    );
+
+    let task = ctx.task.clone();
+    Ok(Eval::Value(make_value!(["path relative", base, path] {
+        let (base,path) = task.join(base,path).await?;
+        path.strip_prefix(base.as_ref()).map(|p| p.to_owned()).map_err(|e| e.into())
     }).into()))
 }
