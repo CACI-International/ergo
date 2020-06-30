@@ -158,7 +158,11 @@ fn run(opts: Opts) -> Result<String, grease::Error> {
         script::script_context(
             Context::builder()
                 .logger_ref(logger_weak.clone())
-                .storage_directory(opts.storage)
+                .storage_directory(
+                    opts.storage
+                        .canonicalize()
+                        .app_err_result("failed to canonicalize storage path")?,
+                )
                 .threads(opts.jobs)
                 .keep_going(!opts.stop)
                 .on_error(move || {
