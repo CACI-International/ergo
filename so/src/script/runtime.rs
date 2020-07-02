@@ -339,7 +339,6 @@ impl LoadScript for grease::Context<Runtime> {
         };
 
         let mut paths: Vec<PathBuf> = Vec::new();
-        paths.push(std::env::current_dir().unwrap());
         for path in loadpath {
             paths.push(
                 script_value_as!(
@@ -403,14 +402,23 @@ impl LoadScript for grease::Context<Runtime> {
 
                 let mut script =
                     super::Script::load(Source::new(super::ast::FileSource(p.clone())))?;
-                let mut top_level_env: Env = if let Some(v) = prelude {
+
+                // Add initial load path binding first; the prelude may override it.
+                let mut top_level_env: Env = Default::default();
+                top_level_env.insert(
+                    LOAD_PATH_BINDING.into(),
+                    Eval::Value(Source::builtin(
+                        ScriptArray(vec![mod_path.to_owned().into()]).into(),
+                    )),
+                );
+                if let Some(v) = prelude {
                     let (source, v) = v.take();
-                    v.into_iter()
-                        .map(|(k, v)| (k, Eval::Value(source.clone().with(v))))
-                        .collect()
-                } else {
-                    Default::default()
-                };
+                    top_level_env.extend(
+                        v.into_iter()
+                            .map(|(k, v)| (k, Eval::Value(source.clone().with(v)))),
+                    );
+                }
+                // Add mod path binding last; it cannot be overriden.
                 top_level_env.insert(
                     MOD_PATH_BINDING.into(),
                     Eval::Value(Source::builtin(mod_path.to_owned().into())),

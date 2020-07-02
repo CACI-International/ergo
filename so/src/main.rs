@@ -147,6 +147,8 @@ fn run(opts: Opts) -> Result<String, grease::Error> {
         }
     }
 
+    let working_dir = std::env::current_dir().expect("could not get current directory");
+
     // Create build context
     let mut ctx = {
         // Use a weak pointer to the logger in the context, so that when the logger goes out of
@@ -159,11 +161,7 @@ fn run(opts: Opts) -> Result<String, grease::Error> {
         script::script_context(
             Context::builder()
                 .logger_ref(logger_weak.clone())
-                .storage_directory(
-                    opts.storage
-                        .canonicalize()
-                        .app_err_result("failed to canonicalize storage path")?,
-                )
+                .storage_directory(working_dir.join(opts.storage))
                 .threads(opts.jobs)
                 .keep_going(!opts.stop)
                 .on_error(move || {
@@ -195,8 +193,17 @@ fn run(opts: Opts) -> Result<String, grease::Error> {
     }
 
     let source = Source::new(StringSource::new("<command line>", to_eval));
-    let loaded = Script::load(source).app_err_result("failed to parse script file")?;
+    let mut loaded = Script::load(source).app_err_result("failed to parse script file")?;
 
+    // Add initial load path.
+    let mut env: script::types::Env = Default::default();
+    env.insert(
+        constants::LOAD_PATH_BINDING.into(),
+        Eval::Value(Source::builtin(
+            script::types::ScriptArray(vec![working_dir.into()]).into(),
+        )),
+    );
+    loaded.top_level_env(env);
     let script_output = loaded.plan(&mut ctx);
     Errors(ctx.get_errors()).app_err_result("error(s) while executing script")?;
     let script_output = script_output.app_err_result("an evaluation error occurred")?;
