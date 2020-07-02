@@ -13,6 +13,7 @@ mod constants {
     pub const PROGRAM_NAME: &'static str = env!("CARGO_PKG_NAME");
     pub const PROJECT_ROOT_BINDING: &'static str = "project-root";
     pub const LOAD_PATH_BINDING: &'static str = "load-path";
+    pub const MOD_PATH_BINDING: &'static str = "mod-path";
 
     use directories;
     pub fn app_dirs() -> Option<directories::ProjectDirs> {

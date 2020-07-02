@@ -9,7 +9,7 @@
 use super::ast::{
     ArrayPattern, CmdPat, Expression, IntoSource, MapPattern, MergeExpression, Pat, Pattern, Source,
 };
-use crate::constants::LOAD_PATH_BINDING;
+use crate::constants::{LOAD_PATH_BINDING, MOD_PATH_BINDING};
 use grease::{depends, match_value, IntoValue, Plan, Value};
 use log::trace;
 use std::collections::BTreeMap;
@@ -311,24 +311,6 @@ pub trait ContextEnv: GetEnv {
 
 impl<T: GetEnv> ContextEnv for T {}
 
-struct WithCurrentDirectory {
-    old: std::path::PathBuf,
-}
-
-impl Drop for WithCurrentDirectory {
-    fn drop(&mut self) {
-        std::env::set_current_dir(&self.old).unwrap()
-    }
-}
-
-fn with_current_directory<P: AsRef<std::path::Path>>(
-    path: P,
-) -> std::io::Result<WithCurrentDirectory> {
-    let old = std::env::current_dir()?;
-    std::env::set_current_dir(path)?;
-    Ok(WithCurrentDirectory { old })
-}
-
 pub trait LoadScript {
     fn load(&mut self, s: &str) -> Result<Eval<Source<Value>>, Error>;
 }
@@ -383,10 +365,6 @@ impl LoadScript for grease::Context<Runtime> {
         if let Some(p) = full_path {
             let p = p.canonicalize().unwrap(); // unwrap because is_file() should guarantee that canonicalize will succeed
             if !self.load_cache.contains_key(&p) {
-                // Change working directory _before_ loading the prelude.
-                // The prelude behaves as if one put `^(so prelude)` at the start of the script.
-                let _work_dir = with_current_directory(p.parent().unwrap()).unwrap();
-
                 // Load the prelude (setting load_prelude to false to prevent recursion) The
                 // prelude may not exist (without error), however if it does exist it must evaluate
                 // to a map.
@@ -421,16 +399,23 @@ impl LoadScript for grease::Context<Runtime> {
                     None
                 };
 
+                let mod_path = p.parent().unwrap(); // unwrap because file must exist in some directory
+
                 let mut script =
                     super::Script::load(Source::new(super::ast::FileSource(p.clone())))?;
-                if let Some(v) = prelude {
+                let mut top_level_env: Env = if let Some(v) = prelude {
                     let (source, v) = v.take();
-                    script.top_level_env(
-                        v.into_iter()
-                            .map(|(k, v)| (k, Eval::Value(source.clone().with(v))))
-                            .collect(),
-                    );
-                }
+                    v.into_iter()
+                        .map(|(k, v)| (k, Eval::Value(source.clone().with(v))))
+                        .collect()
+                } else {
+                    Default::default()
+                };
+                top_level_env.insert(
+                    MOD_PATH_BINDING.into(),
+                    Eval::Value(Source::builtin(mod_path.to_owned().into())),
+                );
+                script.top_level_env(top_level_env);
                 let result = script.plan(self);
                 self.load_cache.insert(p.clone(), result);
             }
