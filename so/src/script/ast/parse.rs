@@ -209,7 +209,25 @@ mod expression {
 
     /// A block expression.
     fn block<'a>() -> Parser<'a, Expr> {
-        block_syntax(merge_with(expression(true))).map(|e| e.into_source().map(Expression::Block))
+        // Change literal strings in blocks to set the string from the currently-bound value
+        // i.e., { a } -> { a = $a }
+        let item = expression(true).map(|e| {
+            let (source, e) = e.take();
+            source.clone().with(match e {
+                Expression::String(s) => Expression::Set(
+                    source.clone().with(Pattern::Binding(s.clone())).into(),
+                    source
+                        .clone()
+                        .with(Expression::Command(
+                            source.with(Expression::String(s)).into(),
+                            vec![],
+                        ))
+                        .into(),
+                ),
+                other => other,
+            })
+        });
+        block_syntax(merge_with(item)).map(|e| e.into_source().map(Expression::Block))
     }
 
     /// A merge expression generator.
@@ -644,7 +662,7 @@ mod test {
                     String("a".to_owned()),
                     Newline,
                     Whitespace,
-                    String("b".to_owned()),
+                    Dollar,
                     Whitespace,
                     Newline,
                     String("c".to_owned()),
@@ -658,8 +676,15 @@ mod test {
                     CloseCurly,
                 ],
                 Expression::Block(vec![
-                    nomerge(Expression::String("a".to_owned())),
-                    nomerge(Expression::String("b".to_owned())),
+                    nomerge(Expression::Set(
+                        pat("a"),
+                        src(Expression::Command(
+                            src(Expression::String("a".into())).into(),
+                            vec![],
+                        ))
+                        .into(),
+                    )),
+                    nomerge(Expression::Empty),
                     nomerge(Expression::Set(
                         pat("c"),
                         Box::new(src(Expression::Command(

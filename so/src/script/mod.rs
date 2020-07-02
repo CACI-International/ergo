@@ -151,6 +151,18 @@ mod test {
     }
 
     #[test]
+    fn block_set_shorthand() -> Result<(), String> {
+        script_eval_to(
+            "a = 1\nb = 2\n{c=3,a,b}",
+            SRMap(&[
+                ("a", SRString("1")),
+                ("b", SRString("2")),
+                ("c", SRString("3")),
+            ]),
+        )
+    }
+
+    #[test]
     fn comment() -> Result<(), String> {
         script_eval_to(
             "# comment comment comment\na = something\n$a",
