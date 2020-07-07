@@ -9,13 +9,16 @@
 use super::ast::{
     ArrayPattern, CmdPat, Expression, IntoSource, MapPattern, MergeExpression, Pat, Pattern, Source,
 };
-use crate::constants::{LOAD_PATH_BINDING, MOD_PATH_BINDING};
-use grease::{depends, match_value, IntoValue, Plan, Value};
+use crate::constants::{
+    LOAD_PATH_BINDING, SCRIPT_EXTENSION, SCRIPT_PRELUDE_NAME, SCRIPT_WORKSPACE_NAME,
+    WORKING_DIRECTORY_BINDING,
+};
+use grease::{depends, match_value, GetValueType, IntoValue, Plan, SplitInto, Value};
 use log::trace;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::iter::FromIterator;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 pub mod cache;
@@ -113,9 +116,7 @@ pub mod script_types {
 pub mod builtin_function_prelude {
     pub use super::imbue_error_context;
     pub use super::script_types::*;
-    pub use super::{
-        Error, Eval, FunctionArguments, FunctionContext, LoadScript, Runtime, SourceContext,
-    };
+    pub use super::{Error, Eval, FunctionArguments, FunctionContext, Runtime, SourceContext};
     pub use grease::{Context, Value};
 
     #[macro_export]
@@ -196,7 +197,7 @@ pub struct Runtime {
     env: Vec<Env>,
     errors: Vec<SourceContext<Error>>,
     load_cache: BTreeMap<PathBuf, Eval<Source<Value>>>,
-    load_prelude: bool,
+    loading: Vec<PathBuf>,
 }
 
 impl Default for Runtime {
@@ -206,7 +207,7 @@ impl Default for Runtime {
             env: vec![],
             errors: vec![],
             load_cache: Default::default(),
-            load_prelude: true,
+            loading: Default::default(),
         }
     }
 }
@@ -311,19 +312,73 @@ pub trait ContextEnv: GetEnv {
 
 impl<T: GetEnv> ContextEnv for T {}
 
-pub trait LoadScript {
-    fn load(&mut self, s: &str) -> Result<Eval<Source<Value>>, Error>;
-}
+pub fn load_script(
+    ctx: &mut grease::Context<FunctionContext>,
+) -> Result<Eval<Source<Value>>, Error> {
+    let target = ctx.args.peek().ok_or("no load target provided")?;
+    let mut source = target.source();
 
-impl LoadScript for grease::Context<Runtime> {
-    fn load(&mut self, s: &str) -> Result<Eval<Source<Value>>, Error> {
-        let loadpath = match self.env_get(LOAD_PATH_BINDING) {
+    fn script_path_exists<'a, P: 'a + AsRef<Path>>(
+        name: P,
+        try_add_extension: bool,
+    ) -> impl FnMut(&Path) -> Option<PathBuf> + 'a {
+        move |path| {
+            if try_add_extension {
+                let mut p = name.as_ref().file_name().unwrap().to_owned();
+                p.push(".");
+                p.push(SCRIPT_EXTENSION);
+                let path_with_extension = path.join(name.as_ref()).with_file_name(p);
+                if path_with_extension.exists() {
+                    Some(path_with_extension)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+            .or_else(|| {
+                let path_exact = path.join(name.as_ref());
+                if path_exact.exists() {
+                    Some(path_exact)
+                } else {
+                    None
+                }
+            })
+            .and_then(|mut p| {
+                while p.is_dir() {
+                    p = p.join(SCRIPT_WORKSPACE_NAME);
+                }
+                if p.is_file() {
+                    Some(p)
+                } else {
+                    None
+                }
+            })
+        }
+    }
+
+    let mut load_path = None;
+    let mut was_workspace = false;
+
+    // If target is a string or path, try to find it in the load path
+    let tp = target.value_type();
+    let to_load = if *tp == String::value_type() || *tp == PathBuf::value_type() {
+        let target_path: PathBuf = match_value!(target.clone().unwrap() => {
+            String => |v| v.get()?.as_ref().into(),
+            PathBuf => |v| v.get()?.owned(),
+            => |_| panic!("unexpected value type")
+        });
+
+        load_path = Some(target_path.to_owned());
+
+        // Get current load path
+        let loadpath = match ctx.env_get(LOAD_PATH_BINDING) {
             Some(v) => match v {
                 Eval::Error => return Ok(Eval::Error),
                 Eval::Value(v) => {
                     let source = v.source();
                     script_value_as!(
-                        self,
+                        ctx,
                         v.clone(),
                         ScriptArray,
                         format!("{} must be an array", LOAD_PATH_BINDING)
@@ -338,11 +393,12 @@ impl LoadScript for grease::Context<Runtime> {
             None => vec![],
         };
 
+        // Get paths from load path
         let mut paths: Vec<PathBuf> = Vec::new();
         for path in loadpath {
             paths.push(
                 script_value_as!(
-                    self,
+                    ctx,
                     path,
                     PathBuf,
                     format!("{} element must be a path", LOAD_PATH_BINDING)
@@ -351,86 +407,187 @@ impl LoadScript for grease::Context<Runtime> {
             );
         }
 
-        let full_path = paths.iter().find_map(|path| {
-            let mut p = path.to_path_buf();
-            p.push(s);
-            if p.is_file() {
-                Some(p)
-            } else {
-                None
-            }
-        });
+        // Try to find path match in load paths
+        paths
+            .iter()
+            .map(|v| v.as_path())
+            .find_map(script_path_exists(target_path, true))
+    } else {
+        None
+    };
 
-        if let Some(p) = full_path {
-            let p = p.canonicalize().unwrap(); // unwrap because is_file() should guarantee that canonicalize will succeed
-            if !self.load_cache.contains_key(&p) {
-                // Load the prelude (setting load_prelude to false to prevent recursion) The
-                // prelude may not exist (without error), however if it does exist it must evaluate
-                // to a map.
-                let prelude = if self.load_prelude {
-                    self.load_prelude = false;
-                    let v = match self.load("prelude") {
-                        Err(Error::LoadFailed(_)) => None,
-                        Err(e) => {
-                            self.load_prelude = true;
-                            return Err(e);
-                        }
-                        Ok(Eval::Error) => {
-                            self.load_prelude = true;
-                            return Ok(Eval::Error);
-                        }
-                        Ok(Eval::Value(v)) => Some(eval_error!(
-                            self,
-                            v.map(|v| match v.typed::<ScriptMap>() {
-                                Ok(v) => Ok(v.get()?.owned().0),
-                                Err(_) => {
-                                    Err(Error::CannotMerge(
-                                        "prelude did not evaluate to a map".into(),
-                                    ))
-                                }
-                            })
-                            .transpose()
-                        )),
-                    };
-                    self.load_prelude = true;
-                    v
-                } else {
-                    None
-                };
+    // Look for workspace if path-based lookup failed
+    let to_load = match to_load {
+        Some(v) => {
+            // Consume the target, as it has been used to resolve the module.
+            ctx.args.next();
+            Some(v)
+        }
+        None => {
+            was_workspace = true;
+            source = Source::builtin(());
 
-                let mod_path = p.parent().unwrap(); // unwrap because file must exist in some directory
+            // If the current file is a workspace, allow it to load parent workspaces.
+            let loading_workspace = ctx
+                .loading
+                .last()
+                .map(|p| p.file_name().unwrap() == SCRIPT_WORKSPACE_NAME)
+                .unwrap_or(false);
 
-                let mut script =
-                    super::Script::load(Source::new(super::ast::FileSource(p.clone())))?;
+            let mod_path = match ctx
+                .env_get(WORKING_DIRECTORY_BINDING)
+                .expect("working directory unset")
+            {
+                Eval::Error => return Ok(Eval::Error),
+                Eval::Value(v) => script_value_as!(
+                    ctx,
+                    v.clone(),
+                    PathBuf,
+                    format!("{} must be a path", LOAD_PATH_BINDING)
+                ),
+            };
 
-                // Add initial load path binding first; the prelude may override it.
-                let mut top_level_env: Env = Default::default();
-                top_level_env.insert(
-                    LOAD_PATH_BINDING.into(),
-                    Eval::Value(Source::builtin(
-                        ScriptArray(vec![mod_path.to_owned().into()]).into(),
-                    )),
-                );
-                if let Some(v) = prelude {
-                    let (source, v) = v.take();
-                    top_level_env.extend(
-                        v.into_iter()
-                            .map(|(k, v)| (k, Eval::Value(source.clone().with(v)))),
-                    );
+            let mut ancestors = mod_path.ancestors().peekable();
+            if loading_workspace {
+                while let Some(v) = ancestors.peek().and_then(|a| a.file_name()) {
+                    if v == SCRIPT_WORKSPACE_NAME {
+                        ancestors.next();
+                    } else {
+                        break;
+                    }
                 }
-                // Add mod path binding last; it cannot be overriden.
-                top_level_env.insert(
-                    MOD_PATH_BINDING.into(),
+                // Skip one more to drop parent directory of top-most workspace, which would find
+                // the same workspace as the original.
+                ancestors.next();
+            }
+
+            ancestors.find_map(script_path_exists(SCRIPT_WORKSPACE_NAME, false))
+        }
+    };
+
+    let mut was_loading = false;
+    let to_load = to_load.and_then(|p| {
+        if ctx.loading.contains(&p) {
+            was_loading = true;
+            None
+        } else {
+            Some(p)
+        }
+    });
+
+    // Load if some module was found.
+    if let Some(p) = to_load {
+        let p = p.canonicalize().unwrap(); // unwrap because is_file() should guarantee that canonicalize will succeed
+        if !ctx.load_cache.contains_key(&p) {
+            // Only load prelude if this is not a workspace.
+            let load_prelude = p.file_name().unwrap() != SCRIPT_WORKSPACE_NAME; // unwrap because p must have a final component
+
+            // Exclude path from loading in nested calls.
+            // This should be done prior to prelude loading in the case where we are loading the
+            // prelude.
+            ctx.loading.push(p.clone());
+
+            let mod_path = p.parent().unwrap(); // unwrap because file must exist in some directory
+
+            // Load the prelude. The prelude may not exist (without error), however if it does
+            // exist it must evaluate to a map.
+            let prelude = if load_prelude {
+                ctx.env_insert(
+                    WORKING_DIRECTORY_BINDING.into(),
                     Eval::Value(Source::builtin(mod_path.to_owned().into())),
                 );
-                script.top_level_env(top_level_env);
-                let result = script.plan(self);
-                self.load_cache.insert(p.clone(), result);
+                let prelude_load = <grease::Context<FunctionContext> as SplitInto<
+                    grease::Context<Runtime>,
+                >>::swap_map(
+                    ctx,
+                    (
+                        FunctionArguments::positional(vec![Source::builtin(
+                            SCRIPT_PRELUDE_NAME.to_owned().into(),
+                        )]),
+                        ctx.call_site.clone(),
+                    ),
+                    |ctx| match load_script(ctx) {
+                        Ok(v) => Ok(v),
+                        Err(e) => {
+                            ctx.args.clear();
+                            Err(e)
+                        }
+                    },
+                );
+                let v = match prelude_load {
+                    Err(Error::LoadFailed { .. }) => None,
+                    Err(e) => {
+                        ctx.loading.pop();
+                        return Err(e);
+                    }
+                    Ok(Eval::Error) => {
+                        ctx.loading.pop();
+                        return Ok(Eval::Error);
+                    }
+                    Ok(Eval::Value(v)) => Some(eval_error!(
+                        ctx,
+                        v.map(|v| match v.typed::<ScriptMap>() {
+                            Ok(v) => Ok(v.get()?.owned().0),
+                            Err(_) => {
+                                Err(Error::CannotMerge(
+                                    "prelude did not evaluate to a map".into(),
+                                ))
+                            }
+                        })
+                        .transpose()
+                    )),
+                };
+                v
+            } else {
+                None
+            };
+
+            let mut script = super::Script::load(Source::new(super::ast::FileSource(p.clone())))?;
+
+            // Add initial load path binding first; the prelude may override it.
+            let mut top_level_env: Env = Default::default();
+            top_level_env.insert(
+                LOAD_PATH_BINDING.into(),
+                Eval::Value(Source::builtin(
+                    ScriptArray(vec![mod_path.to_owned().into()]).into(),
+                )),
+            );
+            if let Some(v) = prelude {
+                let (source, v) = v.take();
+                top_level_env.extend(
+                    v.into_iter()
+                        .map(|(k, v)| (k, Eval::Value(source.clone().with(v)))),
+                );
             }
-            Ok(self.load_cache.get(&p).unwrap().clone()) // unwrap because prior statement ensures the key exists
-        } else {
-            Err(Error::LoadFailed(s.to_owned()))
+            // Add mod path binding last; it should not be overriden.
+            top_level_env.insert(
+                WORKING_DIRECTORY_BINDING.into(),
+                Eval::Value(Source::builtin(mod_path.to_owned().into())),
+            );
+            script.top_level_env(top_level_env);
+            let result = ctx.split_map(|ctx: &mut grease::Context<Runtime>| script.plan(ctx));
+            ctx.load_cache.insert(p.clone(), result);
+            ctx.loading.pop();
         }
+
+        let loaded = ctx.load_cache.get(&p).unwrap().clone(); // unwrap because prior statement ensures the key exists
+
+        let loaded = match loaded {
+            Eval::Error => return Ok(Eval::Error),
+            Eval::Value(v) => v,
+        };
+
+        let args = std::mem::take(&mut ctx.args);
+        ctx.split_map(move |ctx| {
+            apply_value(ctx, source.with(loaded.unwrap()), args.unchecked(), false)
+        })
+        .map(|v| v.map(|v| ctx.call_site.clone().with(v)))
+    } else {
+        Err(Error::LoadFailed {
+            was_loading,
+            was_workspace,
+            load_path,
+        })
     }
 }
 
@@ -672,7 +829,11 @@ pub enum Error {
     /// Arguments to a function did not match the function definition.
     ArgumentMismatch,
     /// A load failed to find a module.
-    LoadFailed(String),
+    LoadFailed {
+        was_loading: bool,
+        was_workspace: bool,
+        load_path: Option<PathBuf>,
+    },
     /// An error occured while evaluating a value.
     ValueError(grease::Error),
     /// An error occured while loading a script.
@@ -710,7 +871,23 @@ impl fmt::Display for Error {
             ),
             UnexpectedPositionalArguments => write!(f, "extraneous positional arguments"),
             ArgumentMismatch => write!(f, "argument mismatch in command"),
-            LoadFailed(s) => write!(f, "failed to find module matching {}", s),
+            LoadFailed {
+                was_loading,
+                was_workspace,
+                load_path,
+            } => match (was_loading,was_workspace,load_path) {
+                (true,true,Some(v)) => write!(
+                    f,
+                    "'{}' resolved to a workspace that was in the process of loading (circular dependency avoided)", v.display()
+                ),
+                (true,false,Some(v)) => write!(
+                    f,
+                    "'{}' resolved to a path that was in the process of loading (circular dependency avoided)", v.display()),
+                (true,true,None) => write!(f, "load resolved to a workspace that was in the process of loading (circular dependency avoided)"),
+                (true,false,None) => write!(f, "load resolved to a path that was in the process of loading (circular dependency avoided)"),
+                (false,_,Some(v)) => write!(f, "'{}' failed to load", v.display()),
+                (false,_,None) => write!(f, "failed to load")
+            },
             ValueError(e) => write!(f, "{}", e),
             ScriptLoadError(e) => write!(f, "{}", e),
             GenericError(s) => write!(f, "{}", s),
@@ -1540,7 +1717,6 @@ impl Plan<FunctionContext> for &'_ ScriptFunction {
 
                 ctx.substituting_env(vec![env.clone()], |ctx| {
                     let args = std::mem::take(&mut ctx.args);
-                    use grease::SplitInto;
                     Ok(
                         match ctx
                             .split_map(move |ctx| apply_command_pattern(ctx, pat.clone(), args))

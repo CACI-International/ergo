@@ -1,0 +1,2 @@
+prelude = {}
+return = fn ret -> $ret

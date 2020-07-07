@@ -13,7 +13,11 @@ mod constants {
     pub const PROGRAM_NAME: &'static str = env!("CARGO_PKG_NAME");
     pub const PROJECT_ROOT_BINDING: &'static str = "project-root";
     pub const LOAD_PATH_BINDING: &'static str = "load-path";
-    pub const MOD_PATH_BINDING: &'static str = "mod-path";
+    pub const WORKING_DIRECTORY_BINDING: &'static str = "work-dir";
+    pub const SCRIPT_EXTENSION: &'static str = concat!(env!("CARGO_PKG_NAME"), "s");
+    pub const SCRIPT_WORKSPACE_NAME: &'static str =
+        concat!("workspace.", env!("CARGO_PKG_NAME"), "s");
+    pub const SCRIPT_PRELUDE_NAME: &'static str = "prelude";
 
     use directories;
     pub fn app_dirs() -> Option<directories::ProjectDirs> {
@@ -195,13 +199,17 @@ fn run(opts: Opts) -> Result<String, grease::Error> {
     let source = Source::new(StringSource::new("<command line>", to_eval));
     let mut loaded = Script::load(source).app_err_result("failed to parse script file")?;
 
-    // Add initial load path.
+    // Add initial load path and working directory.
     let mut env: script::types::Env = Default::default();
     env.insert(
         constants::LOAD_PATH_BINDING.into(),
         Eval::Value(Source::builtin(
-            script::types::ScriptArray(vec![working_dir.into()]).into(),
+            script::types::ScriptArray(vec![working_dir.clone().into()]).into(),
         )),
+    );
+    env.insert(
+        constants::WORKING_DIRECTORY_BINDING.into(),
+        Eval::Value(Source::builtin(working_dir.into())),
     );
     loaded.top_level_env(env);
     let script_output = loaded.plan(&mut ctx);

@@ -51,7 +51,7 @@ pub trait SplitInto<To> {
     /// Create a value from the target value and extra data.
     fn join(a: To, b: Self::Extra) -> Self;
 
-    /// Split this context and run the given function on it.
+    /// Split this value and run the given function on it.
     fn split_map<F, Ret>(&mut self, f: F) -> Ret
     where
         F: FnOnce(&mut To) -> Ret,
@@ -60,6 +60,22 @@ pub trait SplitInto<To> {
         self.call_mut(move |this| {
             let (mut to, extra) = this.split();
             let ret = f(&mut to);
+            (Self::join(to, extra), ret)
+        })
+    }
+
+    /// Swap the extra data for this value, run the function yielding the result, and replace the
+    /// original extra data.
+    fn swap_map<F, Ret>(&mut self, other: Self::Extra, f: F) -> Ret
+    where
+        F: FnOnce(&mut Self) -> Ret,
+        Self: Sized,
+    {
+        self.call_mut(move |this| {
+            let (to, extra) = this.split();
+            let mut n = Self::join(to, other);
+            let ret = f(&mut n);
+            let (to, _) = n.split();
             (Self::join(to, extra), ret)
         })
     }
