@@ -97,6 +97,12 @@ Within a script, the following are defined:
   content-identified.
 * Allow setting map keys from values rather than string constants?
 * Extend map, fold to operate on maps as well?
+* Reduce function captures to the bare minimum, and allow functions to be called
+  in a delayed context.
+* Allow functions to get call-site variables? Convenient for things like
+  `work-dir`.
+* Add union types to the type system, allowing `if` and `match` to be delayed.
+* Allow fetching of urls and use of zip/tarballs with load command.
 
 ### Plugin notes
 * Ideally, plugins are loaded just like other scripts: `so [path to plugin]`.
