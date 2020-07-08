@@ -51,21 +51,20 @@ exec ^$use_path c++ -o { file = test } $main (influx lib)
 ```
 
 ## Modes of operation
-Project-mode is detected by the presence of a `soproj` directory somewhere in
-the parent hierarchy. That directory is where project top-level
+Project-mode is detected by the presence of a `workspace.sos` directory
+somewhere in the parent hierarchy. That directory is where project top-level
 scripts reside.
 
 In basic-mode (detected by the lack of a project-mode directory), a `so` user
 configuration directory is used.
 
 Within a script, the following are defined:
-* `project-root`: if project-mode is detected, this is the directory that
-  contains the `soproj` directory. Otherwise it has unit type.
+* `work-dir`: this is the directory that contains the currently-executing
+  script.
 * `load-path`: an array of paths (that can be altered within scripts) that are
-  used when resolving `so` calls to load external scripts. If project-mode is
-  detected, this will contain the path to the `soproj` direcotry. Otherwise in
-  basic-mode, it will contain the path to the OS-specific configuration
-  directory:
+  used when resolving `so` calls to load external scripts. In any given script,
+  it will by default contain the `work-dir` directory. In basic-mode, it will
+  also contain the path to the OS-specific configuration directory:
   * __Linux__: `$XDG_CONFIG_HOME/so` or `$HOME/.config/so`
   * __macOS__: `$HOME/Library/Preferences/so`
   * __Windows__: `{FOLDERID_RoamingAppData}\so\config`
