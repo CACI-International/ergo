@@ -93,8 +93,6 @@ Within a script, the following are defined:
   insert the environment value equal to that string into the block environment).
 * `string words`, `string lines`, `fetch`, maybe `fs mount` to open tarballs,
   zips, directories, urls to such?
-* `value` to force a value to be computed and return a new value that is
-  content-identified.
 * Allow setting map keys from values rather than string constants?
 * Extend map, fold to operate on maps as well?
 * Reduce function captures to the bare minimum, and allow functions to be called
