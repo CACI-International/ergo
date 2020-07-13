@@ -6,7 +6,7 @@
 use crate::fnv::Fnv1a as HasherFn;
 use futures::future::{BoxFuture, FusedFuture, Future, FutureExt, Shared, TryFutureExt};
 use futures::task::{Context, Poll};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, Read};
 use std::iter::FromIterator;
@@ -438,11 +438,23 @@ pub type ValueResult = Result<Arc<ValueData>, Error>;
 /// A value shared amongst tasks.
 ///
 /// Values have a type and a future value.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Value {
     tp: Arc<ValueType>,
     data: Shared<BoxFuture<'static, ValueResult>>,
+    metadata: BTreeMap<u128, Arc<ValueData>>,
     id: u128,
+}
+
+impl std::fmt::Debug for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.debug_struct("Value")
+            .field("tp", &self.tp)
+            .field("data", &self.data)
+            .field("metadata", &self.metadata.keys().collect::<BTreeSet<_>>())
+            .field("id", &self.id)
+            .finish()
+    }
 }
 
 impl PartialEq for Value {
@@ -557,15 +569,22 @@ impl Value {
         Value {
             tp,
             data: value.boxed().shared(),
+            metadata: Default::default(),
             id,
         }
     }
 
     /// Create a Value from raw components.
-    pub fn from_raw(tp: Arc<ValueType>, data: Arc<ValueData>, id: u128) -> Self {
+    pub fn from_raw(
+        tp: Arc<ValueType>,
+        data: Arc<ValueData>,
+        metadata: BTreeMap<u128, Arc<ValueData>>,
+        id: u128,
+    ) -> Self {
         Value {
             tp,
             data: futures::future::ok(data).boxed().shared(),
+            metadata,
             id,
         }
     }
@@ -580,9 +599,8 @@ impl Value {
         let deps = Dependencies::ordered(deps);
         let id = deps.value_id_with(&self.tp);
         Value {
-            tp: self.tp,
-            data: self.data,
             id,
+            ..self
         }
     }
 

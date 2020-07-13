@@ -186,7 +186,8 @@ pub fn read_from_cache(traits: &Traits, store_item: &Item, id: u128) -> Result<V
     let tp = std::sync::Arc::new(ValueType::with_data(tp_id, tp_data));
     if let Some(s) = traits.get_type::<Stored>(tp.clone()) {
         let data = s.get(store_item, &mut content)?;
-        Ok(Value::from_raw(tp, std::sync::Arc::new(data), id))
+        // TODO revisit metadata
+        Ok(Value::from_raw(tp, std::sync::Arc::new(data), Default::default(), id))
     } else {
         Err(format!("no stored trait for {}", type_name(traits, &tp)).into())
     }

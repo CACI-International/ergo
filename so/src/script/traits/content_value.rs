@@ -37,7 +37,8 @@ pub fn impl_content_dependency<T: std::hash::Hash + Sync>() -> TraitImpl {
     TraitImpl::for_trait::<ContentValue>(ContentValueTrait {
         content_value: |_,tp,data| {
             let deps = depends![unsafe { data.as_ref().as_ref::<T>() }];
-            Ok(Value::from_raw(tp.clone(), data.clone(), 0).set_dependencies(deps))
+            // TODO default metadata?
+            Ok(Value::from_raw(tp.clone(), data.clone(), Default::default(), 0).set_dependencies(deps))
         }
     })
 }
