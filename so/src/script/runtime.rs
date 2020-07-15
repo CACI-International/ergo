@@ -27,6 +27,7 @@ pub mod exec;
 pub mod fold;
 pub mod fs;
 pub mod has;
+pub mod if_;
 pub mod load;
 pub mod map;
 pub mod path;
@@ -77,6 +78,9 @@ pub mod script_types {
             Self::constant_deps(v, deps)
         }
     }
+
+    #[derive(Clone, Debug, GetValueType)]
+    pub struct ScriptEither(pub usize);
 
     pub type Env = BTreeMap<String, Eval<Source<Value>>>;
 

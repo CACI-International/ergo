@@ -7,41 +7,41 @@ much to be gained here, but for more complex code &mdash; especially C++ code
 compilation and linking separately:
 
 ```sh
-{{#include example/build_concurrent}}
+{{#include example/build_concurrent.sos}}
 ```
 
 From what we've covered so far, it should be clear how these changes work to
-achieve concurrent compilation.
+achieve concurrent compilation. Remember, the `exec` commands (and other
+commands) aren't doing their actions immediately, but rather returning future
+values which are only forced as a chain of dependencies by the final value of
+the script.
 
-However, now we're getting into duplication territory. It'd be nice if we could
-make the compile step a repeatable block. It'd also be nice to use a list of
-files as our input data.
+However, now we've got a lot of duplication. It'd be nice if we could make the
+compile step a repeatable block. It'd also be nice to use a list of files as our
+input data.
 
-## Enter the function
-So scripts support creating functions. The functions actually behave more like
-macros in other languages; they are late-bound and any environment lookups occur
-at the call site.
+## Functions
+`so` scripts support creating functions. User functions, like builtin functions,
+are evaluated immediately at the call site, but only have access to the
+environment scope that was present at their definition.
 
 Functions are introduced with the `fn` keyword. Following the keyword should be
-exactly one argument, which serves as the body of the function. Often this
-argument will be a map/block (`{...}`). Arguments to the function will be bound
-as an array to `@` in the environment when the function body is evaluated.
-There's nothing particularly special about `@`; it can be used as a binding name
-like any other, but it happens to be the one used in function evaluation as
-well.
+a **pattern**, indicating the expected positional and non-positional arguments.
+Then, an arrow `->` followed by the body of the function is expected. Often this
+body will be a map/block (`{...}`), but it can be any expression. When called,
+the function argument pattern will be checked against the arguments and, if it
+matches, any bindings in the pattern will be present in the execution of the
+body.
 
 Let's make compiling and linking into functions:
 
 ```sh
-{{#include example/build_concurrent_fn}}
+{{#include example/build_concurrent_fn.sos}}
 ```
 
-This is looking much more manageable. Note that both functions have a block as
-their expression, and the final expression of the block is what is returned when
-the function is invoked. Also note that those final values are evaluating to
-bindings, since nesting expressions with `$...` or `(...)` is only necessary for
-any arguments to a command. If we were to change `exe` to `$exe` in the
-`link_exe` function, that would instead run the executable!
+This is looking much more manageable. Note that both functions have a `cache
+seq` expression, and the final expression of the block is what is returned when
+the function is invoked.
 
 ## Mapping over arrays
 Ideally we'd like to map the `compile` function over an array of the files;
@@ -51,18 +51,17 @@ the result.
 
 Let's take advantage of this:
 ```sh
-{{#include example/build_concurrent_map}}
+{{#include example/build_concurrent_map.sos}}
 ```
 
-> As previously mentioned, to make a data array rather than one which evaluates
-> each value as a command, we precede the `files` array with `$`.
+We've also condensed our final command by nesting commands in it. Note the `^`
+array merge to pass the resulting array values of the `map` function each as
+arguments to `link_exe`.
 
-We've also condensed our final command by nesting commands in it.
-
-## Command correctness and reproducibility
+## Command consistency and reproducibility
 
 If you were running the script file as these changes were made, you may have
-noticed that only `ln` was run each time (as it always is when outputs are
+noticed that only `fs copy` was run each time (as it always is when outputs are
 readily available). The three versions of the script on this page are
 functionally identical, so even though they look fairly different, they share
-the same outputs.
+the same outputs. The value identities are the same throughout.

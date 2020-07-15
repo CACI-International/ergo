@@ -35,10 +35,10 @@ Now that we have a directory with C++ source files, we probably want to compile
 them! At the moment, we just want to create a final executable, although later
 we'll also make a shared library.
 
-Let's create a new so script file, called `build` (though you can call it
+Let's create a new so script file, called `build.sos` (though you can call it
 whatever you want, with or without an extension):
 ```sh
-{{#include example/build_basic}}
+{{#include example/build_basic.sos}}
 ```
 
 Simple enough, right? Let's break down exactly what's happening here:
@@ -56,8 +56,7 @@ named `forty_two`.
 If you run this script, you will see output indicating that `c++` is invoked.
 And sure enough, `forty_two` is now in the current directory. Right now, this
 script is barely different than a shell script (both in function and most of the
-syntax, so you could invoke `sh build` if you wanted after commenting out the
-`{...}` at the end of the line).
+syntax).
 
 ### Closer examination
 While our script is currently functionally identical to a shell script, under
@@ -66,11 +65,9 @@ executed in the so runtime, it *is not* immediately executing `c++`.
 
 Instead,
 
-1. The so runtime tries to find `c++` in the environment bindings.
-2. When it does not find `c++`, it treats the line as if it were written as
-   `exec c++ ...`. That is, it instead uses `exec` from the environment bindings
-   (this is built in) as the command to run.
-3. The `exec` command looks up `c++` using the `PATH` environment variable, just
+1. The runtime loads the built-in `exec` command from the environment bindings
+   as the command to run.
+2. The `exec` command looks up `c++` using the `PATH` environment variable, just
    like a shell would do. It then creates a future representing the execution of
    the `c++` program. This is omitting some detail: the returned data actually
    contains multiple futures representing things like stdout, exit code, etc.
@@ -78,10 +75,13 @@ Instead,
 Since the last line of our script evaluates to a future, that future is then run
 to completion, which is what invokes the `c++` program with the given arguments.
 
+Thus, `c++` is run only because the future in the last line of the script
+will run it.
+
 The `{ env = ... }` is indicating to the `exec` command that the environment
 should contain the same `PATH` variable as the parent script. By default, _all_
-commands have an empty environment to foster reproducibility. Most `c++`
-binaries (`gcc`- or `clang`-based, for example) use the `PATH` to find the
+commands have an empty environment to make environment usage explicit. Most
+`c++` binaries (`gcc`- or `clang`-based, for example) use the `PATH` to find the
 system linker (`ld`), so the easiest way to make this work is to forward the
 script `PATH` (though you could also manually specify `PATH=/usr/bin`).
 
@@ -115,40 +115,50 @@ separated by commas, newlines, or semicolons indescriminately.
 { key = value, otherkey = othervalue }
 ```
 
-Maps are actually the same as nested code blocks; they open a new environment
-scope (which can have bindings that shadow outer environments), and the block
-itself evaluates to the map of environment bindings *if* the final expression in
-the map evaluates to the unit type (all bindings do):
+Maps are actually the **same** as nested code blocks; they open a new
+environment scope (which can have bindings that shadow outer environments), and
+the block itself evaluates to the map of environment bindings if the final
+expression in the map is a binding:
 
 ```sh
 {
   file = main.cpp
-  output = c++ $file
+  output = exec c++ $file
 }
 ```
 
-This is valid since these are not merely disparate key-value pairs, but instead
-top-to-bottom evaluated bindings in an environment.
+Evaluates to a map with `file` and `output` as keys, whereas
+
+```sh
+{
+  file = main.cpp
+  exec c++ $file
+}
+```
+
+evaluates to the resulting value(s) from the `exec` command.
+
+Note that the bindings are done in top-to-bottom order, so later bindings can
+use earlier ones (unlike basic maps in other languages where the key-value
+bindings are disparate).
 
 ### Commands
-Commands are presented with a list of values and can interpret them in arbitrary
-ways. For instance, the `exec` command interprets arrays merely as if each item
-were a separate argument, maps as directives to more complex functionality (as
-we saw with `env`), and strings as literal arguments to the command.
+Commands process positional arguments and non-positional arguments (as seen in
+`^{env=...}`) and can interpret them in arbitrary ways. For instance, the `exec`
+accepts a number of special non-positional arguments (as we saw with `env`) and
+tries to convert positional arguments into strings suitable for commands.
 
-The first value of a command (determining which command to invoke, if any) is
-determined as follows:
+You may nest commands with parentheses:
+```sh
+command1 arg1 (command2-giving-arg2 a b c) arg3
+```
 
-* If the value is a string, the current environment is queried to determine
-   whether a binding for that string exists.
-  * If a binding exists:
-    * if it is a function and arguments were provided, the function is applied to
-      the remaining values,
-    * otherwise, the value is returned (effectively evaluating the binding).
-  * Otherwise, the `exec` command is passed all of the arguments.
-* If the value is a file path future, the `exec` command is passed all of the
-  arguments.
-* If the value is a unit-value, the next argument is evaluated and the result is
-  returned (useful for returning a plain string from a command, among other things).
-* Otherwise (a fairly uncommon case), the value is returned as-is without doing anything with the
-  arguments.
+The first value of a command, if it is a string (for instance, `exec`), is
+queried in the current environment to resolve to a bound value. Otherwise (if
+not a string), the value is used as-is.
+
+This means that querying any value from the environment is done by invoking a
+command. For instance, `(something)` will retrieve the value bound to
+`something` in the environment.  As a convenient shorthand for this case, one
+may prefix a string with `$` to have the same effect: `$something` is shorthand
+for `(something)`.

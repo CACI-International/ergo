@@ -46,6 +46,13 @@ impl ValueType {
         Self::with_data(id, vec![])
     }
 
+    /// Create a new ValueType with the given name.
+    ///
+    /// Uses `type_uuid` to generate a type id from the given name.
+    pub fn named(name: &[u8]) -> Self {
+        Self::new(crate::type_uuid(name))
+    }
+
     pub fn with_data(id: Uuid, data: Vec<u8>) -> Self {
         ValueType { id, data }
     }
