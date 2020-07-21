@@ -1,20 +1,24 @@
 //! Persistent storage.
 
-use crate::Value;
+use crate::path::PathBuf as AbiPathBuf;
+use crate::value::Value;
+use abi_stable::StableAbi;
 use std::convert::TryFrom;
+use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, StableAbi)]
+#[repr(C)]
 pub struct Store {
-    root_directory: PathBuf,
+    root_directory: AbiPathBuf,
 }
 
 #[derive(Debug, Clone)]
 pub struct Item {
     path: PathBuf,
-    item: PathBuf,
+    item: OsString,
 }
 
 #[derive(Debug)]
@@ -73,13 +77,15 @@ impl AsRef<Path> for ItemName {
 
 impl Store {
     pub(crate) fn new(root_directory: PathBuf) -> Self {
-        Store { root_directory }
+        Store {
+            root_directory: root_directory.into(),
+        }
     }
 
     /// Get the item with the given identifier.
     pub fn item<P: AsRef<ItemName>>(&self, id: P) -> Item {
-        let path = self.root_directory.clone();
-        let item = PathBuf::from(id.as_ref());
+        let path = self.root_directory.clone().into_pathbuf();
+        let item = OsString::from(id.as_ref());
         Item { path, item }
     }
 }
@@ -87,12 +93,15 @@ impl Store {
 impl Item {
     /// Get the sub-item with the given name.
     pub fn item<P: AsRef<ItemName>>(&self, name: P) -> Item {
-        let mut path = self.path.clone();
-        let mut sub = self.item.clone().into_os_string();
+        let mut path: PathBuf = self.path.clone();
+        let mut sub = self.item.clone();
         sub.push("-");
         path.push(sub);
-        let item = PathBuf::from(name.as_ref());
-        Item { path, item }
+        let item = OsString::from(name.as_ref());
+        Item {
+            path: path.into(),
+            item,
+        }
     }
 
     /// Get the sub-item for the given value.
@@ -102,15 +111,18 @@ impl Item {
 
     /// Get the sub-item for the given value id.
     pub fn value_id(&self, id: u128) -> Item {
-        let mut path = self.path.clone();
-        let mut sub = self.item.clone().into_os_string();
+        let mut path: PathBuf = self.path.clone();
+        let mut sub = self.item.clone();
         sub.push("-v");
         path.push(sub);
         let id = format!("{:x}", id);
         path.push(&id[..2]);
         path.push(&id[2..4]);
-        let item = PathBuf::from(&id[4..]);
-        Item { path, item }
+        let item = OsString::from(&id[4..]);
+        Item {
+            path: path.into(),
+            item,
+        }
     }
 
     /// Check whether an item exists.
@@ -144,10 +156,12 @@ impl Item {
     }
 
     /// Get the path this item uses.
+    ///
+    /// # TODO
+    /// Change this to a grease type representing an existing file.
     pub fn path(&self) -> PathBuf {
-        std::fs::create_dir_all(&self.path).unwrap();
-        let mut path = std::env::current_dir().unwrap();
-        path.push(&self.path);
+        let mut path: PathBuf = self.path.clone();
+        std::fs::create_dir_all(&path).unwrap();
         path.push(&self.item);
         path
     }

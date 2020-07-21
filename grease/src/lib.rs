@@ -9,18 +9,24 @@
 
 use proc_macro_hack::proc_macro_hack;
 
-mod fnv;
-mod runtime;
-mod traits;
-mod uuid;
-mod value;
+mod bst;
+pub mod ffi;
+pub mod future;
+mod hash;
+pub mod path;
+pub mod runtime;
+pub mod traits;
+pub mod type_erase;
+pub mod types;
+mod u128;
+pub mod uuid;
+pub mod value;
 
-pub use futures::channel;
-pub use futures::future;
+pub use self::type_erase::{Eraseable, Erased, ErasedTrivial, Trivial};
+pub use self::uuid::Uuid;
 pub use futures::future::{FutureExt, TryFutureExt};
-pub use ::uuid::Uuid;
 
-pub use self::{runtime::*, uuid::*, value::*, traits::*};
+//pub use self::{runtime::*, uuid::*, value::*, traits::*};
 
 /// Create a literal item name.
 ///
@@ -32,7 +38,7 @@ pub use grease_macro::item_name;
 ///
 /// The expected syntax is:
 ///
-/// `make_value!(` _type_ `,` ( `(` _clones_ `)` ) ( `[` _dependencies_ `]` ) _body_ `)`
+/// `make_value!(( `(` _clones_ `)` ) ( `[` _dependencies_ `]` ) _body_ `)`
 ///
 /// Where _clones_ are either comma-separated single identifiers of bindings in scope, or
 /// _ident_ `=` _expr_ bindings.

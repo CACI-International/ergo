@@ -1,5 +1,6 @@
 //! Execution logic for plans.
 
+use abi_stable::StableAbi;
 use std::fmt;
 
 mod command;
@@ -9,11 +10,14 @@ mod task_manager;
 mod traits;
 
 use self::log::EmptyLogTarget;
-pub use self::log::{logger_ref, Log, LogEntry, LogLevel, LogTarget, LoggerRef};
+pub use self::log::{logger_ref, Log, LogEntry, LogLevel, LogTarget, LoggerRef, OriginalLogger};
 pub use command::Commands;
 pub use store::{Item, ItemContent, ItemName, Store};
 pub use task_manager::{OnError, TaskManager};
-pub use traits::{TraitGenerator, Traits};
+pub use traits::{
+    TraitGenerator, TraitGeneratorByTrait, TraitGeneratorByType, Traits, TraitsBuilder,
+    TraitsInterface,
+};
 
 pub(crate) use task_manager::call_on_error;
 
@@ -177,7 +181,8 @@ where
 }
 
 /// Runtime context.
-#[derive(Debug)]
+#[derive(Debug, StableAbi)]
+#[repr(C)]
 pub struct Context<Inner = ()> {
     /// The task manager.
     pub task: TaskManager,
@@ -201,6 +206,7 @@ pub struct ContextBuilder {
     threads: Option<usize>,
     aggregate_errors: Option<bool>,
     on_error: Option<Box<OnError>>,
+    traits: TraitsBuilder,
 }
 
 /// An error produced by the ContextBuilder.
@@ -227,9 +233,10 @@ impl std::error::Error for BuilderError {
 
 impl ContextBuilder {
     /// Set the logger to use.
-    pub fn logger<T: LogTarget + Send + 'static>(mut self, logger: T) -> Self {
-        self.logger = Some(logger_ref(logger));
-        self
+    pub fn logger<T: LogTarget + Send + 'static>(mut self, logger: T) -> (Self, OriginalLogger<T>) {
+        let (logger, orig) = logger_ref(logger);
+        self.logger = Some(logger);
+        (self, orig)
     }
 
     /// Set the logger to use by a LoggerRef.
@@ -289,9 +296,9 @@ impl ContextBuilder {
             )
             .map_err(BuilderError::TaskManagerError)?,
             cmd: Commands::new(),
-            log: Log::new(self.logger.unwrap_or_else(|| logger_ref(EmptyLogTarget))),
+            log: Log::new(self.logger.unwrap_or_else(|| logger_ref(EmptyLogTarget).0)),
             store: Store::new(self.store_dir.unwrap_or(std::env::temp_dir())),
-            traits: Traits::new(),
+            traits: self.traits.build(),
             inner,
         })
     }

@@ -6,3 +6,6 @@ set of futures of outputs. When creating plans, a procedure resolver is required
 to make output futures from inputs. The resolver is provided with interfaces to
 log, run external commands, schedule concurrent tasks, and persist data.
 
+All types in this crate that are meant to be (possibly) passed around in the
+runtime are ABI-stable (using the `abi_stable` crate as a helper to verify
+this).

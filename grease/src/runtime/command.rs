@@ -1,18 +1,41 @@
 //! Command/process management.
 
+use crate::bst::BstMap;
+use crate::ffi::OsString as AbiOsString;
+use crate::path::PathBuf as AbiPathBuf;
+use abi_stable::{
+    external_types::RMutex,
+    std_types::{RArc, ROption},
+    StableAbi,
+};
 use log::{debug, trace};
-use std::collections::BTreeMap;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{Arc, Mutex};
 
 /// Tracks external command usage.
-#[derive(Debug, Default)]
+#[derive(StableAbi)]
+#[repr(C)]
 pub struct Commands {
-    cmds: Arc<Mutex<BTreeMap<OsString, Option<PathBuf>>>>,
+    cmds: RArc<RMutex<BstMap<AbiOsString, ROption<AbiPathBuf>>>>,
+}
+
+impl std::fmt::Debug for Commands {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.debug_struct("Commands")
+            .field("cmds", &self.cmds.lock())
+            .finish()
+    }
+}
+
+impl Default for Commands {
+    fn default() -> Self {
+        Commands {
+            cmds: RArc::new(RMutex::new(Default::default())),
+        }
+    }
 }
 
 /// A set of missing commands.
@@ -25,11 +48,16 @@ pub struct UntrackedCommands;
 
 impl fmt::Display for Commands {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        for (ref k, ref v) in self.cmds.lock().unwrap().iter() {
-            let ks = k.to_string_lossy();
+        for (k, v) in self.cmds.lock().iter() {
+            let ks = k.clone().into_os_string();
             match v {
-                None => writeln!(f, "{} -> missing", ks)?,
-                Some(ref v) => writeln!(f, "{} -> {}", ks, v.to_string_lossy())?,
+                ROption::RNone => writeln!(f, "{} -> missing", ks.to_string_lossy())?,
+                ROption::RSome(v) => writeln!(
+                    f,
+                    "{} -> {}",
+                    ks.to_string_lossy(),
+                    v.clone().into_pathbuf().to_string_lossy()
+                )?,
             }
         }
 
@@ -71,13 +99,21 @@ impl Commands {
     ///
     /// The dependency on the command is recorded.
     pub fn create<S: AsRef<OsStr>>(&mut self, program: S) -> Command {
-        let s = program.as_ref().to_owned();
-        let mut guard = self.cmds.lock().unwrap();
-        let resolved = guard.entry(s).or_insert_with(|| resolve(program.as_ref()));
+        let s = program.as_ref().to_owned().into();
+        let mut guard = self.cmds.lock();
+        let resolved = {
+            if !guard.contains_key(&s) {
+                guard.insert(
+                    s.clone(),
+                    resolve(program.as_ref()).map(|v| v.into()).into(),
+                );
+            }
+            guard.get(&s).unwrap()
+        };
         let progpath = resolved
             .as_ref()
-            .map(|s| s.as_os_str())
-            .unwrap_or(program.as_ref());
+            .map(|s| s.clone().into_pathbuf())
+            .unwrap_or(program.as_ref().into());
         debug!(
             "program '{}' resolved to '{}'",
             (program.as_ref().as_ref() as &Path).display(),
@@ -101,11 +137,10 @@ impl Commands {
         Missing(
             self.cmds
                 .lock()
-                .unwrap()
                 .iter()
                 .filter_map(|(k, v)| match v {
-                    None => Some(k.clone()),
-                    Some(_) => None,
+                    ROption::RNone => Some(k.clone().into()),
+                    ROption::RSome(_) => None,
                 })
                 .collect(),
         )

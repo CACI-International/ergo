@@ -1,37 +1,109 @@
 //! Task manager.
 
+use crate::future::BoxFuture;
+use crate::type_erase::Erased;
 use crate::value::Error;
+use abi_stable::{
+    external_types::{RMutex, RRwLock},
+    sabi_trait,
+    sabi_trait::prelude::*,
+    std_types::{RArc, RBox, ROption, RVec},
+    StableAbi,
+};
 use futures::executor::ThreadPool;
 use futures::future::{abortable, try_join, try_join_all, AbortHandle, Aborted, Future, FutureExt};
 use log::debug;
-use std::cell::RefCell;
-use std::sync::{Arc, Mutex};
 
 thread_local! {
-    static ON_ERROR: RefCell<Option<Arc<OnError>>> = RefCell::new(None);
+    static ERROR_CALLBACK: RMutex<ROption<RArc<RMutex<ErrorCallback>>>> = RMutex::new(ROption::RNone);
+    static THREAD_ID: RRwLock<ROption<u64>> = RRwLock::new(ROption::RNone);
+}
+
+static NEXT_THREAD_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+#[derive(StableAbi)]
+#[repr(C)]
+struct ErrorCallback(*const (), Erased);
+
+unsafe impl Send for ErrorCallback {}
+
+impl ErrorCallback {
+    pub fn call(&self) {
+        unsafe { (std::mem::transmute::<*const (), fn(&Erased)>(self.0))(&self.1) }
+    }
 }
 
 /// Call the on_error handler for the active task manager.
 pub fn call_on_error() {
-    ON_ERROR.with(|v| {
-        if let Some(ref f) = *v.borrow() {
-            f();
+    ERROR_CALLBACK.with(|m| {
+        let guard = m.lock();
+        if let ROption::RSome(m2) = &*guard {
+            m2.lock().call()
         }
-    });
+    })
+}
+
+/// Get the current thread id, if it is a grease pool thread.
+pub fn thread_id() -> Option<u64> {
+    THREAD_ID.with(|m| m.read().as_ref().copied().into_option())
+}
+
+fn call_on_error_internal(cb: &Erased) {
+    (unsafe { cb.as_ref::<Box<OnError>>() })()
 }
 
 /// Callback when an error is created in a task.
 pub type OnError = dyn Fn() + Send + Sync;
 
+/// Trait to be able to make a trait object from `ThreadPool`.
+///
+/// The only method we currently use on `ThreadPool` is `spawn_ok`.
+#[sabi_trait]
+trait ThreadPoolInterface: Clone + Debug {
+    #[sabi(last_prefix_field)]
+    fn spawn_ok(&self, future: BoxFuture<()>);
+}
+
+impl ThreadPoolInterface for ThreadPool {
+    fn spawn_ok(&self, future: BoxFuture<()>) {
+        self.spawn_ok(future)
+    }
+}
+
+/// Trait to be able to make a trait object from `AbortHandle`.
+#[sabi_trait]
+trait AbortHandleInterface: Clone + Debug {
+    #[sabi(last_prefix_field)]
+    fn abort(&self);
+}
+
+impl AbortHandleInterface for AbortHandle {
+    fn abort(&self) {
+        self.abort()
+    }
+}
+
 /// The task manager.
 ///
 /// Allows tasks to spawn concurrent tasks to be run.
-#[derive(Debug, Clone)]
+#[derive(Clone, StableAbi)]
+#[repr(C)]
 pub struct TaskManager {
-    pool: ThreadPool,
-    thread_ids: Vec<std::thread::ThreadId>,
-    abort_handles: Arc<Mutex<Vec<AbortHandle>>>,
+    pool: ThreadPoolInterface_TO<'static, RBox<()>>,
+    thread_ids: RVec<u64>,
+    abort_handles: RArc<RMutex<RVec<AbortHandleInterface_TO<'static, RBox<()>>>>>,
     aggregate_errors: bool,
+}
+
+impl std::fmt::Debug for TaskManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.debug_struct("TaskManager")
+            .field("pool", &self.pool)
+            .field("thread_ids", &self.thread_ids)
+            .field("abort_handles", &self.abort_handles.lock())
+            .field("aggregate_errors", &self.aggregate_errors)
+            .finish()
+    }
 }
 
 impl TaskManager {
@@ -51,24 +123,40 @@ impl TaskManager {
         let barrier = std::sync::Arc::new(std::sync::Barrier::new(threads + 1));
         let thread_ids = std::sync::Arc::new(std::sync::Mutex::new(Vec::with_capacity(threads)));
 
+        let error_cb = ROption::from(on_error.map(|v| {
+            RArc::new(RMutex::new(ErrorCallback(
+                call_on_error_internal as *const (),
+                Erased::new(v),
+            )))
+        }));
+        ERROR_CALLBACK.with(|m| {
+            *m.lock() = error_cb.clone();
+        });
+
         let closure_thread_ids = thread_ids.clone();
         let closure_barrier = barrier.clone();
-        let on_error = on_error.map(|v| Arc::from(v));
         let pool = ThreadPool::builder()
             .pool_size(threads)
             .after_start(move |_| {
-                ON_ERROR.with(|v| {
-                    *v.borrow_mut() = on_error.clone();
+                ERROR_CALLBACK.with(|m| {
+                    *m.lock() = error_cb.clone();
+                });
+                let thread_id = NEXT_THREAD_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                THREAD_ID.with(|m| {
+                    *m.write() = ROption::RSome(thread_id);
                 });
                 {
                     let mut v = closure_thread_ids.lock().unwrap();
-                    v.push(std::thread::current().id().clone());
+                    v.push(thread_id);
                 }
                 closure_barrier.wait();
             })
             .before_stop(|_| {
-                ON_ERROR.with(|v| {
-                    *v.borrow_mut() = None;
+                ERROR_CALLBACK.with(|m| {
+                    *m.lock() = ROption::RNone;
+                });
+                THREAD_ID.with(|m| {
+                    *m.write() = ROption::RNone;
                 });
             })
             .create()?;
@@ -76,15 +164,15 @@ impl TaskManager {
         let ids = thread_ids.lock().unwrap().drain(..).collect();
 
         Ok(TaskManager {
-            pool,
+            pool: ThreadPoolInterface_TO::from_value(pool, TU_Opaque),
             thread_ids: ids,
-            abort_handles: Default::default(),
+            abort_handles: RArc::new(RMutex::new(Default::default())),
             aggregate_errors,
         })
     }
 
     /// Get the thread ids of pool threads.
-    pub fn thread_ids(&self) -> &[std::thread::ThreadId] {
+    pub fn thread_ids(&self) -> &[u64] {
         self.thread_ids.as_ref()
     }
 
@@ -97,9 +185,11 @@ impl TaskManager {
     {
         debug!("spawning new task");
         let (future, abort_handle) = abortable(f);
-        self.abort_handles.lock().unwrap().push(abort_handle);
+        self.abort_handles
+            .lock()
+            .push(AbortHandleInterface_TO::from_value(abort_handle, TU_Opaque));
         let (future, handle) = future.remote_handle();
-        self.pool.spawn_ok(future);
+        self.pool.spawn_ok(BoxFuture::new(future));
         handle
     }
 
@@ -146,7 +236,7 @@ impl TaskManager {
 
     /// Abort all pending tasks.
     pub fn abort(&self) {
-        for handle in self.abort_handles.lock().unwrap().iter() {
+        for handle in self.abort_handles.lock().iter() {
             handle.abort();
         }
     }

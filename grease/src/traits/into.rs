@@ -1,7 +1,7 @@
 //! The IntoTyped grease trait.
 
-use super::{GetValueType, IntoValue, TypedValue, Value, ValueType};
 use crate::uuid::*;
+use crate::value::{GetValueType, IntoValue, TypedValue, Value, ValueType};
 use crate::{match_value_type, CreateTrait, Trait, TraitImpl, TraitImplRef, TraitType, Traits};
 
 pub struct IntoTrait {

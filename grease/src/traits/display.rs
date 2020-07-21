@@ -1,9 +1,9 @@
 //! The Display and DisplayType grease traits.
 
-use super::{Value, ValueData, ValueType};
+use super::{Trait, TraitImpl, TraitType};
 use crate::runtime::Traits;
-use crate::traits::{Trait, TraitImpl, TraitType};
 use crate::uuid::*;
+use crate::value::{Value, ValueData, ValueType};
 use std::fmt;
 
 /// The TypeName grease trait storage struct.

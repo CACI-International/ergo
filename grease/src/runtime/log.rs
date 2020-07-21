@@ -1,11 +1,18 @@
 //! Runtime logging.
 
+use abi_stable::{
+    external_types::RMutex,
+    sabi_trait,
+    sabi_trait::prelude::*,
+    std_types::{RArc, RBox, RDuration, ROption, RSlice, RString, RVec},
+    StableAbi,
+};
 use std::fmt;
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// Log output levels.
-#[derive(Debug, std::cmp::PartialEq, std::cmp::PartialOrd)]
+#[derive(Debug, PartialEq, PartialOrd, StableAbi)]
+#[repr(u8)]
 pub enum LogLevel {
     Debug,
     Info,
@@ -56,13 +63,15 @@ impl fmt::Display for LogLevel {
 }
 
 /// A single log entry.
+#[derive(StableAbi)]
+#[repr(C)]
 pub struct LogEntry {
     /// The log level.
     pub level: LogLevel,
     /// Additional log context.
-    pub context: Arc<[String]>,
+    pub context: RVec<RString>,
     /// The log string.
-    pub args: String,
+    pub args: RString,
 }
 
 impl fmt::Display for LogEntry {
@@ -86,27 +95,61 @@ impl fmt::Display for LogEntry {
 ///
 /// This target is set as part of runtime instantiation. It is used for task runtime logging, not
 /// executable runtime logging.
-pub trait LogTarget {
+#[sabi_trait]
+pub trait LogTarget: Send {
     /// Send a log entry.
     fn log(&mut self, entry: LogEntry);
 
     /// A log was dropped.
     ///
     /// This is mainly useful for streaming outputs to know that a log completed.
-    fn dropped(&mut self, _context: Arc<[String]>) {}
+    fn dropped(&mut self, _context: RVec<RString>) {}
 
     /// Indicates a unique timer for the given id has been created.
-    fn timer_pending(&mut self, _id: &[String]) {}
+    fn timer_pending(&mut self, _id: RSlice<RString>) {}
 
     /// Indicates that a unique timer for the given id has completed with the given total duration.
     /// If the timer is cancelled, the duration will be None.
-    fn timer_complete(&mut self, _id: &[String], _duration: Option<std::time::Duration>) {}
+    #[sabi(last_prefix_field)]
+    fn timer_complete(&mut self, _id: RSlice<RString>, _duration: ROption<RDuration>) {}
 }
 
-/// A heap-allocated reference to a LogTarget.
-pub type LoggerRef = Arc<Mutex<dyn LogTarget + Send>>;
+/// A reference to a LogTarget.
+pub type LoggerRef = RArc<RMutex<LogTarget_TO<'static, RBox<()>>>>;
+
+pub struct OriginalLogger<T>(LoggerRef, std::marker::PhantomData<RArc<RMutex<RBox<T>>>>);
+
+pub struct OriginalLoggerGuard<'a, T>(
+    abi_stable::external_types::parking_lot::mutex::RMutexGuard<
+        'a,
+        LogTarget_TO<'static, RBox<()>>,
+    >,
+    std::marker::PhantomData<RBox<T>>,
+);
+
+impl<T> OriginalLogger<T> {
+    pub fn lock(&self) -> OriginalLoggerGuard<T> {
+        OriginalLoggerGuard(self.0.lock(), Default::default())
+    }
+}
+
+impl<'a, T: std::any::Any> std::ops::Deref for OriginalLoggerGuard<'a, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        self.0.obj.as_unerased().unwrap()
+    }
+}
+
+impl<'a, T: std::any::Any> std::ops::DerefMut for OriginalLoggerGuard<'a, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.0.obj.as_unerased_mut().unwrap()
+    }
+}
 
 /// A LogTarget that does nothing.
+#[derive(StableAbi)]
+#[repr(C)]
 pub struct EmptyLogTarget;
 
 impl LogTarget for EmptyLogTarget {
@@ -114,21 +157,23 @@ impl LogTarget for EmptyLogTarget {
 }
 
 /// Create a logger reference.
-pub fn logger_ref<T: LogTarget + Send + 'static>(target: T) -> Arc<Mutex<T>> {
-    Arc::new(Mutex::new(target))
+pub fn logger_ref<T: LogTarget + 'static>(target: T) -> (LoggerRef, OriginalLogger<T>) {
+    let r = RArc::new(RMutex::new(LogTarget_TO::from_value(target, TU_Unerasable)));
+    (r.clone(), OriginalLogger(r, Default::default()))
 }
 
 /// The logging interface.
-#[derive(Clone)]
+#[derive(Clone, StableAbi)]
+#[repr(C)]
 pub struct Log {
     logger: LoggerRef,
-    context: Arc<[String]>,
+    context: RVec<RString>,
 }
 
 /// Tracks a particular unit of work.
 pub struct Work {
     logger: LoggerRef,
-    id: Box<[String]>,
+    id: Box<[RString]>,
     duration: Duration,
     recorded: bool,
     errored: bool,
@@ -147,30 +192,28 @@ macro_rules! log_level {
     ( $name:ident, $level:ident ) => {
         /// Write a log message.
         pub fn $name<T: std::string::ToString>(&self, message: T) {
-            let mut l = self.logger.lock().unwrap();
+            let mut l = self.logger.lock();
             l.log(LogEntry {
                 level: LogLevel::$level,
                 context: self.context.clone(),
-                args: message.to_string()
+                args: message.to_string().into(),
             });
         }
-    }
+    };
 }
 
 impl Log {
     pub(crate) fn new(logger: LoggerRef) -> Self {
         Log {
             logger,
-            context: Arc::new([]),
+            context: RVec::default(),
         }
     }
 
     /// Create a sublog interface with the given context identifier.
     pub fn sublog<T: Into<String>>(&self, name: T) -> Self {
         let mut ret = self.clone();
-        let mut v = Vec::from(ret.context.as_ref());
-        v.push(name.into());
-        ret.context = Arc::from(v);
+        ret.context.push(name.into().into());
         ret
     }
 
@@ -178,8 +221,8 @@ impl Log {
     ///
     /// The returned object should be used to record work runtime.
     pub fn work<T: Into<String>>(&self, name: T) -> Work {
-        let mut v = Vec::from(self.context.as_ref());
-        v.push(name.into());
+        let mut v: Vec<_> = self.context.iter().map(|v| v.clone()).collect();
+        v.push(name.into().into());
         let w = Work {
             logger: self.logger.clone(),
             id: Box::from(v),
@@ -188,8 +231,8 @@ impl Log {
             errored: false,
         };
         {
-            let mut l = w.logger.lock().unwrap();
-            l.timer_pending(w.id.as_ref());
+            let mut l = w.logger.lock();
+            l.timer_pending(RSlice::from_slice(w.id.as_ref()));
         }
         w
     }
@@ -210,7 +253,7 @@ impl fmt::Debug for Log {
 
 impl std::ops::Drop for Log {
     fn drop(&mut self) {
-        let mut l = self.logger.lock().unwrap();
+        let mut l = self.logger.lock();
         l.dropped(self.context.clone());
     }
 }
@@ -242,13 +285,13 @@ impl fmt::Debug for Work {
 
 impl std::ops::Drop for Work {
     fn drop(&mut self) {
-        let mut l = self.logger.lock().unwrap();
+        let mut l = self.logger.lock();
         l.timer_complete(
-            &self.id,
+            RSlice::from_slice(&self.id),
             if self.recorded {
-                Some(self.duration)
+                ROption::RSome(self.duration.into())
             } else {
-                None
+                ROption::RNone
             },
         )
     }

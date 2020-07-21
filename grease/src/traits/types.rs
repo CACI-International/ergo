@@ -1,7 +1,7 @@
 //! GetValueType implementations for std types.
 
-use super::{GetValueType, ValueType};
 use crate::uuid::*;
+use crate::value::{GetValueType, ValueType};
 
 // Primitive types
 

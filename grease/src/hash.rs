@@ -1,6 +1,28 @@
-//! FNV-1a 128-bit Hasher.
+//! Hashing used within grease.
+//!
+//! The implementation uses a FNV-1a 128-bit Hasher.
 
 use std::hash::Hasher;
+use std::io::{BufRead, BufReader, Read};
+
+/// The hash function, supporting `Default` and `Hasher`.
+pub type HashFn = Fnv1a;
+
+/// Hash the contents of a type implementing Read.
+pub fn hash_read<R: Read>(read: R) -> std::io::Result<u128> {
+    let mut hfn = HashFn::default();
+    let mut br = BufReader::new(read);
+    loop {
+        let slice = br.fill_buf()?;
+        if slice.len() == 0 {
+            break;
+        }
+        hfn.write(slice);
+        let len = slice.len();
+        br.consume(len);
+    }
+    Ok(hfn.finish_ext())
+}
 
 const FNV_OFFSET_BASIS: u128 = 0x6c62272e07bb014262b821756295c58du128;
 const FNV_PRIME: u128 = 0x0000000001000000000000000000013Bu128;
@@ -18,6 +40,7 @@ impl Default for Fnv1a {
 }
 
 impl Fnv1a {
+    /// Get a 128-bit hash digest.
     pub fn finish_ext(&self) -> u128 {
         self.state
     }
