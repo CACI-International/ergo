@@ -1,18 +1,23 @@
-use grease::future::TryFutureExt;
-use grease::*;
+use abi_stable::{rvec, std_types::RVec};
+use futures::future::TryFutureExt;
+use grease::{
+    make_value,
+    runtime::{Context, Plan},
+    value::{TypedValue, Value},
+};
 
 struct TestRuntimePlan;
 
 impl Plan for TestRuntimePlan {
-    type Output = TypedValue<Vec<u8>>;
+    type Output = TypedValue<RVec<u8>>;
 
     fn plan(self, ctx: &mut Context) -> Self::Output {
-        let a = TypedValue::<Vec<u8>>::constant(vec![0]);
+        let a = TypedValue::constant(rvec![0]);
         let tsk = ctx.task.clone();
         let b = make_value!([vec![1]] {
             tsk.spawn(async move {
                 std::thread::sleep(std::time::Duration::from_millis(200));
-                Ok(vec![1u8])
+                Ok(rvec![1u8])
             }).await
         });
 
@@ -35,7 +40,7 @@ fn runtime_tasks() -> Result<(), String> {
         .plan(&mut ctx)
         .get()
         .map_err(|e| e.to_string())?;
-    assert!(*result == vec![0, 1]);
+    assert!(*result == rvec![0, 1]);
     Ok(())
 }
 
@@ -53,7 +58,7 @@ fn commands() -> Result<(), String> {
                 Err(e) => Err(format!("failed to run echo: {}", e).into()),
                 Ok(output) => {
                     if output.status.success() {
-                        Ok(output.stdout)
+                        Ok(RVec::from(output.stdout))
                     } else {
                         Err(format!("echo exited with status {}", output.status).into())
                     }
@@ -63,21 +68,8 @@ fn commands() -> Result<(), String> {
         .await
     );
 
-    let s = String::from_utf8((*output.get().map_err(|e| e.to_string())?).clone())
+    let s = String::from_utf8((*output.get().map_err(|e| e.to_string())?).clone().into_vec())
         .map_err(|_| "failed to get utf8 output".to_owned())?;
     assert!("hello, world" == s);
-    Ok(())
-}
-
-#[test]
-fn traits() -> Result<(), String> {
-    let ctx = Context::builder().build().map_err(|e| e.to_string())?;
-
-    let v: Value = TypedValue::constant("hello".to_owned()).into();
-    let t: Option<grease::IntoTyped<String>> = ctx.traits.get(&v);
-    let t = t.unwrap();
-    let v = t.into_typed(v);
-    let out = v.get().map_err(|e| e.to_string())?;
-    assert!(*out == "hello");
     Ok(())
 }

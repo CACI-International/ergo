@@ -1,20 +1,22 @@
 //! The Display and DisplayType grease traits.
 
-use super::{Trait, TraitImpl, TraitType};
-use crate::runtime::Traits;
-use crate::uuid::*;
-use crate::value::{Value, ValueData, ValueType};
+use crate::traits::*;
+use crate::types::{GreaseType, Type};
+use crate::value::Value;
+use abi_stable::{std_types::{RString,RVec}, StableAbi};
+use crate::path::PathBuf as AbiPathBuf;
 use std::fmt;
 
-/// The TypeName grease trait storage struct.
-#[derive(Clone)]
-pub struct TypeNameTrait {
-    name: String,
+/// The TypeName grease trait.
+#[derive(Clone, Debug, StableAbi)]
+pub struct TypeName {
+    name: RString,
 }
 
-crate::TraitRef! {
-    /// The TypeName grease trait reference.
-    pub struct TypeName(TypeNameTrait);
+impl GreaseTrait for TypeName {
+    fn grease_trait() -> Trait {
+        Trait::named(b"std::TypeName")
+    }
 }
 
 /// The rust trait for the TypeName grease trait.
@@ -22,19 +24,56 @@ pub trait GreaseTypeName {
     fn type_name() -> String;
 }
 
-pub fn impl_type_name<T: GreaseTypeName>() -> TraitImpl {
-    TraitImpl::for_trait::<TypeName>(TypeNameTrait {
-        name: T::type_name(),
-    })
+/// Add the TypeName grease trait implementation for T.
+pub fn impl_type_name<T: GreaseTypeName + GreaseType>(builder: &mut crate::runtime::TraitsBuilder) {
+    builder.add_impl_for_type::<T, TypeName>(TypeName {
+        name: T::type_name().into(),
+    });
 }
 
-pub fn type_name(traits: &Traits, tp: &std::sync::Arc<ValueType>) -> String {
-    if let Some(t) = traits.get_type::<TypeName>(tp.clone()) {
-        t.storage.name.clone()
+/// Get a type name for the given type.
+pub fn type_name(traits: &Traits, tp: &Type) -> String {
+    if let Some(t) = traits.get_type::<TypeName>(tp) {
+        t.name.clone().into()
     } else {
         format!("<{}>", tp.id)
     }
 }
+
+#[macro_export]
+macro_rules! grease_type_name {
+    ( $t:ty, $n:expr ) => {
+        impl $crate::GreaseTypeName for $t {
+            fn type_name() -> String {
+                $n.into()
+            }
+        }
+    };
+    ( $t:ty ) => {
+        $crate::grease_type_name!($t, stringify!($t));
+    };
+}
+
+grease_type_name!((), "unit");
+grease_type_name!(u8);
+grease_type_name!(i8);
+grease_type_name!(u16);
+grease_type_name!(i16);
+grease_type_name!(u32);
+grease_type_name!(i32);
+grease_type_name!(u64);
+grease_type_name!(i64);
+grease_type_name!(u128);
+grease_type_name!(i128);
+grease_type_name!(usize);
+grease_type_name!(isize);
+grease_type_name!(char);
+grease_type_name!(bool);
+grease_type_name!(RVec<u8>, "bytes");
+grease_type_name!(RString, "string");
+grease_type_name!(AbiPathBuf, "path");
+//TODO grease_type_name!(std::process::ExitStatus, "exit_status");
+
 
 /// The Display grease trait storage struct.
 #[derive(Clone)]
@@ -107,39 +146,6 @@ pub(crate) fn trait_generator(v: std::sync::Arc<ValueType>) -> Vec<TraitImpl> {
     impls
 }
 
-#[macro_export]
-macro_rules! grease_type_name {
-    ( $t:ty, $n:expr ) => {
-        impl $crate::GreaseTypeName for $t {
-            fn type_name() -> String {
-                $n.into()
-            }
-        }
-    };
-    ( $t:ty ) => {
-        $crate::grease_type_name!($t, stringify!($t));
-    };
-}
-
-grease_type_name!((), "unit");
-grease_type_name!(u8);
-grease_type_name!(i8);
-grease_type_name!(u16);
-grease_type_name!(i16);
-grease_type_name!(u32);
-grease_type_name!(i32);
-grease_type_name!(u64);
-grease_type_name!(i64);
-grease_type_name!(u128);
-grease_type_name!(i128);
-grease_type_name!(usize);
-grease_type_name!(isize);
-grease_type_name!(char);
-grease_type_name!(bool);
-grease_type_name!(Vec<u8>, "bytes");
-grease_type_name!(String, "string");
-grease_type_name!(std::path::PathBuf, "path");
-grease_type_name!(std::process::ExitStatus, "exit_status");
 
 #[macro_export]
 macro_rules! grease_display_basic {

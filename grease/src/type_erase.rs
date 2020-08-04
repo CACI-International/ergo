@@ -260,6 +260,45 @@ impl ErasedTrivial {
         }
     }
 
+    /// Convert this ErasedTrivial into raw components.
+    pub fn into_raw_bytes(mut self) -> Box<[u8]> {
+        if self.is_box() {
+            let ptr = unsafe { self.data.as_value::<*mut u8>() };
+            let ret = unsafe {
+                Box::from_raw(std::slice::from_raw_parts_mut(ptr, self.size()) as *mut [u8])
+            };
+            self.is_box_and_size = 0;
+            ret
+        } else {
+            let mut bytes = self.data.0.to_vec();
+            bytes.resize(self.size(), 0);
+            self.is_box_and_size = 0;
+            bytes.into_boxed_slice()
+        }
+    }
+
+    /// Create an ErasedTrivial from raw components.
+    ///
+    /// # Safety
+    /// This is unsafe because the pointer's alignment and the size must match that of the type it
+    /// represents. This should generally only be called with arguments returned by a call to
+    /// `into_raw_parts`.
+    pub unsafe fn from_raw_bytes(bytes: Box<[u8]>) -> Self {
+        let align = 1 << (bytes.as_ptr() as usize).trailing_zeros();
+        if bytes.len() <= std::mem::size_of::<Buffer>() && align <= std::mem::align_of::<Buffer>() {
+            let v: Vec<u8> = bytes.into();
+            let len = v.len();
+            let mut b = Buffer::default();
+            b.0.copy_from_slice(&v);
+            ErasedTrivial {
+                data: b,
+                is_box_and_size: len,
+            }
+        } else {
+            Self::from_slice(bytes)
+        }
+    }
+
     /// Get a T reference.
     ///
     /// Unsafe because callers must ensure the data is a T.
@@ -417,6 +456,9 @@ impl std::hash::Hash for ErasedTrivial {
 
 /// A reference to an Erased that can be dereferenced to T.
 pub struct Ref<T, Ptr>(Ptr, std::marker::PhantomData<*const T>);
+
+unsafe impl<T, Ptr: Send> Send for Ref<T, Ptr> {}
+unsafe impl<T, Ptr: Sync> Sync for Ref<T, Ptr> {}
 
 impl<T, Ptr: std::ops::Deref<Target = Erased>> Ref<T, Ptr> {
     /// Create a new ref from an erased value.

@@ -11,6 +11,4 @@ grease_macro = { path = "../grease_macro" }
 lazy_static = "^1"
 log = "^0.4"
 num_cpus = "^1"
-parking_lot = "^0.10"
-proc-macro-hack = "0.5"
 uuid = { version = "0.8", features = ["serde", "v5"] }

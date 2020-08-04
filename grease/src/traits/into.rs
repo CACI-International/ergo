@@ -1,106 +1,104 @@
 //! The IntoTyped grease trait.
 
-use crate::uuid::*;
-use crate::value::{GetValueType, IntoValue, TypedValue, Value, ValueType};
-use crate::{match_value_type, CreateTrait, Trait, TraitImpl, TraitImplRef, TraitType, Traits};
+use crate::path::PathBuf as AbiPathBuf;
+use crate::traits::*;
+use crate::types::{GreaseType, Type};
+use crate::value::{IntoValue, TypedValue, Value};
+use abi_stable::{
+    std_types::{ROption, RString},
+    StableAbi,
+};
 
-pub struct IntoTrait {
-    tp: std::sync::Arc<ValueType>,
-    into: fn(Value) -> Value,
+#[derive(StableAbi)]
+#[repr(C)]
+pub struct IntoTyped<T> {
+    into: extern "C" fn(Value) -> Value,
+    _phantom: std::marker::PhantomData<extern "C" fn() -> T>,
 }
 
-impl From<IntoTrait> for TraitImpl {
-    fn from(v: IntoTrait) -> Self {
-        TraitImpl::new(into_trait_type(v.tp.as_ref().clone()), v.into)
+impl<T: GreaseType + StableAbi + 'static> GreaseTrait for IntoTyped<T> {
+    fn grease_trait() -> Trait {
+        Trait::with_data(
+            grease_trait_uuid(b"std::IntoTyped"),
+            T::grease_type().into(),
+        )
     }
 }
 
-fn into_trait_type(to: ValueType) -> TraitType {
-    let mut data = Vec::new();
-    data.extend(to.id.as_bytes());
-    data.extend(to.data);
-    TraitType::with_data(type_uuid(b"grease::IntoTyped"), data)
+pub fn impl_into<T, U>(builder: &mut crate::runtime::TraitsBuilder)
+where
+    T: GreaseType + Send + Sync + Clone + 'static,
+    U: From<T> + GreaseType + Send + Sync + StableAbi + 'static,
+{
+    extern "C" fn do_conversion<T, U>(v: Value) -> Value
+    where
+        T: GreaseType + Send + Sync + Clone + 'static,
+        U: From<T> + GreaseType + Send + Sync + 'static,
+    {
+        v.typed::<T>().unwrap().map(|v| U::from(v.clone())).into()
+    }
+
+    builder.add_impl_for_type::<T, IntoTyped<U>>(IntoTyped {
+        into: do_conversion::<T, U>,
+        _phantom: Default::default(),
+    })
 }
 
-pub struct IntoTyped<T> {
-    into: fn(Value) -> Value,
-    _phantom: std::marker::PhantomData<T>,
-}
-
-impl<T: GetValueType> IntoTyped<T> {
+impl<T: GreaseType> IntoTyped<T> {
     pub fn into_typed(&self, v: Value) -> TypedValue<T> {
         (self.into)(v).typed::<T>().unwrap()
     }
 }
 
-impl<T: GetValueType> Trait for IntoTyped<T> {
-    fn trait_type() -> TraitType {
-        into_trait_type(T::value_type())
-    }
-}
-
-impl<T: GetValueType> CreateTrait for IntoTyped<T> {
-    type Storage = fn(Value) -> Value;
-
-    fn create(
-        _traits: Traits,
-        _value_type: std::sync::Arc<ValueType>,
-        imp: TraitImplRef<Self::Storage>,
-    ) -> Self {
-        Self {
-            into: *imp,
-            _phantom: Default::default(),
-        }
-    }
-}
-
-pub fn impl_into<T, U>() -> TraitImpl
-where
-    T: GetValueType + Send + Sync + Clone + 'static,
-    U: From<T> + GetValueType,
-{
-    TraitImpl::for_trait::<IntoTyped<U>>(|v| {
-        v.typed::<T>().unwrap().map(|v| U::from(v.clone())).into()
-    })
-}
-
-pub(crate) fn trait_generator(tp: std::sync::Arc<ValueType>) -> Vec<TraitImpl> {
-    let mut b = vec![IntoTrait {
-        into: std::convert::identity,
-        tp: tp.clone(),
-    }
-    .into()];
-
-    match_value_type!(*tp => {
-        () => {
-            // () should convert to a bool (always false)
-            b.push(
-                IntoTrait {
-                    into: |_| false.into_value(),
-                    tp: bool::value_type().into(),
+pub fn traits(builder: &mut crate::runtime::TraitsBuilder) {
+    // Identity: T -> T
+    {
+        extern "C" fn id(
+            _iface: &crate::runtime::TraitsInterface,
+            tp: &Type,
+            trt: &Trait,
+        ) -> ROption<Erased> {
+            extern "C" fn id_into(v: Value) -> Value {
+                v
+            }
+            if trt.id == grease_trait_uuid(b"std::IntoTyped") {
+                let trait_type: Type = trt.data.clone().into();
+                if tp == &trait_type {
+                    return ROption::RSome(Erased::new(IntoTyped::<()> {
+                        into: id_into,
+                        _phantom: Default::default(),
+                    }));
                 }
-                .into(),
-            );
-        },
-        std::process::ExitStatus => {
-            // ExitStatus should convert to bool, true if the status was successful
-            b.push(
-                IntoTrait {
-                    into: |v| v.typed::<std::process::ExitStatus>().unwrap().map(|v| v.success()).into(),
-                    tp: bool::value_type().into(),
-                }.into()
-            );
-        },
-        std::path::PathBuf => {
-            // PathBuf should convert to String
-            b.push(
-                IntoTrait {
-                    into: |v| v.typed::<std::path::PathBuf>().unwrap().map(|v| v.to_string_lossy().into_owned()).into(),
-                    tp: String::value_type().into(),
-                }.into()
-            );
-        },
-        => ()
-    });
-    b
+            }
+            ROption::RNone
+        }
+        unsafe { builder.add_generator(id) };
+    }
+
+    // () -> bool (false)
+    {
+        extern "C" fn conv(v: Value) -> Value {
+            v.then(false.into_value())
+        }
+        builder.add_impl_for_type::<(), IntoTyped<bool>>(IntoTyped {
+            into: conv,
+            _phantom: Default::default(),
+        });
+    }
+
+    // TODO ExitStatus -> bool (ExitStatus::success())
+
+    // PathBuf -> String
+    {
+        extern "C" fn conv(v: Value) -> Value {
+            v.typed::<AbiPathBuf>()
+                .unwrap()
+                .map(|v| RString::from(v.owned().into_pathbuf().to_string_lossy().into_owned()))
+                .into()
+        }
+        builder.add_impl_for_type::<AbiPathBuf, IntoTyped<RString>>(IntoTyped {
+            into: conv,
+            _phantom: Default::default(),
+        });
+    }
 }

@@ -1,6 +1,5 @@
 extern crate proc_macro;
 use proc_macro::TokenStream;
-use proc_macro_hack::proc_macro_hack;
 use quote::{quote, quote_spanned};
 use syn::{
     bracketed, parenthesized,
@@ -10,7 +9,7 @@ use syn::{
     DeriveInput, Expr, Ident, LitStr,
 };
 
-#[proc_macro_hack]
+#[proc_macro]
 pub fn item_name(ts: TokenStream) -> TokenStream {
     let input = parse_macro_input!(ts as LitStr);
 
@@ -23,7 +22,7 @@ pub fn item_name(ts: TokenStream) -> TokenStream {
         }
     } else {
         quote! {
-            unsafe { &*(#s as *const str as *const ::grease::ItemName) }
+            unsafe { &*(#s as *const str as *const ::grease::runtime::ItemName) }
         }
     }
     .into()
@@ -94,7 +93,7 @@ impl Parse for MakeValue {
     }
 }
 
-#[proc_macro_hack]
+#[proc_macro]
 pub fn make_value(ts: TokenStream) -> TokenStream {
     let input = parse_macro_input!(ts as MakeValue);
 
@@ -121,8 +120,7 @@ pub fn make_value(ts: TokenStream) -> TokenStream {
         let nested_deps = nested_deps.into_iter().map(|(_, v)| v);
         let value_deps = value_deps.into_iter().map(|(_, v)| v);
         quote! { {
-            let value_deps = ::grease::depends![#(#value_deps),*];
-            ::grease::depends![join value_deps #(, &#nested_deps)*]
+            ::grease::depends![#(#value_deps),* #(, ^#nested_deps)*]
         } }
     };
 
@@ -132,7 +130,7 @@ pub fn make_value(ts: TokenStream) -> TokenStream {
         {
             #( #bindings )*
             let make_value__deps = #deps;
-            ::grease::TypedValue::new(async move { #body }, make_value__deps)
+            ::grease::value::TypedValue::new(async move { #body }, make_value__deps)
         }
     };
 

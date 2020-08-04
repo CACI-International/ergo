@@ -59,7 +59,7 @@ pub type OnError = dyn Fn() + Send + Sync;
 ///
 /// The only method we currently use on `ThreadPool` is `spawn_ok`.
 #[sabi_trait]
-trait ThreadPoolInterface: Clone + Debug {
+trait ThreadPoolInterface: Clone + Debug + Send + Sync {
     #[sabi(last_prefix_field)]
     fn spawn_ok(&self, future: BoxFuture<()>);
 }
@@ -72,7 +72,7 @@ impl ThreadPoolInterface for ThreadPool {
 
 /// Trait to be able to make a trait object from `AbortHandle`.
 #[sabi_trait]
-trait AbortHandleInterface: Clone + Debug {
+trait AbortHandleInterface: Clone + Debug + Send {
     #[sabi(last_prefix_field)]
     fn abort(&self);
 }

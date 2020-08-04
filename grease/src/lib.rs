@@ -7,8 +7,6 @@
 //! plans to utilize. Functionality includes logging, progress reporting/recording, external command
 //! execution, and scheduling of tasks on a thread pool.
 
-use proc_macro_hack::proc_macro_hack;
-
 mod bst;
 pub mod ffi;
 pub mod future;
@@ -31,7 +29,6 @@ pub use futures::future::{FutureExt, TryFutureExt};
 /// Create a literal item name.
 ///
 /// Item names must contain only ascii alphanumeric characters.
-#[proc_macro_hack]
 pub use grease_macro::item_name;
 
 /// Make a new value.
@@ -58,7 +55,6 @@ pub use grease_macro::item_name;
 ///
 /// All captures in _body_ are moved into the block. _body_ is used to produce the result of
 /// the value, and is in an async context (so `.await` is valid).
-#[proc_macro_hack]
 pub use grease_macro::make_value;
 
 /// Derive GetValueType based on the item's full Rust path.
