@@ -1,12 +1,8 @@
 //! Grease types, which have a UUID identifier and optional additional data.
 
-use crate::path::PathBuf as AbiPathBuf;
 use crate::type_erase::ErasedTrivial;
 use crate::uuid::*;
-use abi_stable::{
-    std_types::{RString, RVec},
-    StableAbi,
-};
+use abi_stable::StableAbi;
 use lazy_static::lazy_static;
 use std::convert::TryInto;
 
@@ -74,55 +70,5 @@ impl From<ErasedTrivial> for Type {
         let data =
             unsafe { ErasedTrivial::from_raw_bytes(bytes[16..].to_vec().into_boxed_slice()) };
         Type { id, data }
-    }
-}
-
-// Primitive types
-impl GreaseType for () {
-    fn grease_type() -> Type {
-        Type::named(b"std::unit")
-    }
-}
-
-macro_rules! impl_prim {
-    ( $t:ty ) => {
-        impl GreaseType for $t {
-            fn grease_type() -> Type {
-                Type::named(concat!["std::", stringify!($t)].as_bytes())
-            }
-        }
-    };
-}
-
-impl_prim!(u8);
-impl_prim!(i8);
-impl_prim!(u16);
-impl_prim!(i16);
-impl_prim!(u32);
-impl_prim!(i32);
-impl_prim!(u64);
-impl_prim!(i64);
-impl_prim!(u128);
-impl_prim!(i128);
-impl_prim!(usize);
-impl_prim!(isize);
-impl_prim!(char);
-impl_prim!(bool);
-
-impl<T: GreaseType> GreaseType for RVec<T> {
-    fn grease_type() -> Type {
-        Type::with_data(grease_type_uuid(b"std::vec::Vec"), T::grease_type().into())
-    }
-}
-
-impl GreaseType for RString {
-    fn grease_type() -> Type {
-        Type::named(b"std::String")
-    }
-}
-
-impl GreaseType for AbiPathBuf {
-    fn grease_type() -> Type {
-        Type::named(b"std::path::PathBuf")
     }
 }

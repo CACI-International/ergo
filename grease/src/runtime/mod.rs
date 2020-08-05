@@ -13,7 +13,7 @@ use self::log::EmptyLogTarget;
 pub use self::log::{logger_ref, Log, LogEntry, LogLevel, LogTarget, LoggerRef, OriginalLogger};
 pub use command::Commands;
 pub use store::{Item, ItemContent, ItemName, Store};
-pub use task_manager::{OnError, TaskManager};
+pub use task_manager::{thread_id, OnError, TaskManager};
 pub use traits::{
     TraitGenerator, TraitGeneratorByTrait, TraitGeneratorByType, Traits, TraitsBuilder,
     TraitsInterface,

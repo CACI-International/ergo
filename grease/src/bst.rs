@@ -25,6 +25,7 @@ struct Node<K, V> {
 unsafe impl<K: Send, V: Send> Send for Node<K, V> {}
 unsafe impl<K: Sync, V: Sync> Sync for Node<K, V> {}
 
+#[allow(dead_code)]
 impl<K, V> Node<K, V> {
     pub fn new(parent: *mut Self, key: K, value: V) -> Self {
         Node {
@@ -146,6 +147,7 @@ mod map {
         len: usize,
     }
 
+    #[allow(dead_code)]
     impl<K, V> BstMap<K, V> {
         pub fn new() -> Self {
             Self::default()
@@ -574,6 +576,7 @@ mod set {
         inner: BstMap<T, ()>,
     }
 
+    #[allow(dead_code)]
     impl<T> BstSet<T> {
         pub fn new() -> Self {
             Self::default()

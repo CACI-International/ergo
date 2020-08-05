@@ -10,7 +10,7 @@
 mod bst;
 pub mod ffi;
 pub mod future;
-mod hash;
+pub mod hash;
 pub mod path;
 pub mod runtime;
 pub mod traits;

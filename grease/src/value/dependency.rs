@@ -167,33 +167,59 @@ where
 /// ```
 #[macro_export]
 macro_rules! depends {
+    // Unordered items
+    // Create unordered dependencies from single items
     ( @item { $( $exp:expr ),* } ) => {
         $crate::value::Dependencies::unordered(vec![$( $crate::value::Dependency::from(&$exp) ),*])
     };
+
+    // Merge item
     ( @item ^ $exp:expr ) => {
         $crate::value::Dependencies::from($exp)
     };
+
+    // Basic item
+    // Add as single (ordered) dependency.
     ( @item $exp:expr ) => {
         $crate::value::Dependencies::ordered(vec![$crate::value::Dependency::from(&$exp)])
     };
-    ( @toks { $e:ident $({ $( $tok:tt )* })* } { } ) => {
+
+    // End of items and input tokens
+    // Expand to expressions
+    ( @toks expressions { $e:ident $({ $( $tok:tt )* })* } next_item { } tokens ) => {
         $(
             $e += $( $tok )*;
         )*
     };
-    ( @toks { $e:ident $( $res:tt )* } { $( $tok:tt )+ } ) => {
-        $crate::depends!(@toks { $e $( $res )* { $crate::depends!(@item $( $tok )*) } } { })
+
+    // End of input tokens
+    // Process final item
+    ( @toks expressions { $e:ident $( $res:tt )* } next_item { $( $tok:tt )+ } tokens ) => {
+        $crate::depends!(@toks expressions { $e $( $res )* { $crate::depends!(@item $( $tok )*) } } next_item { } tokens)
     };
-    ( @toks { $e:ident $( $res:tt )* } { $( $tok:tt )+ } , $( $rest:tt )* ) => {
-        $crate::depends!(@toks { $e $( $res )* { $crate::depends!(@item $( $tok )*) } } { } $( $rest )*)
+
+    // Comma separator
+    // Superfluous comma
+    ( @toks expressions { $e:ident $( $res:tt )* } next_item { } tokens , $( $rest:tt )* ) => {
+        $crate::depends!(@toks expressions { $e $( $res )* } next_item { } tokens $( $rest )*)
     };
-    ( @toks { $e:ident $( $res:tt )* } { $( $tok:tt )* } $next:tt $( $rest:tt )* ) => {
-        $crate::depends!(@toks { $e $( $res )* } { $( $tok )* $next } $( $rest )*)
+    // Process stored tokens as an item
+    ( @toks expressions { $e:ident $( $res:tt )* } next_item { $( $tok:tt )+ } tokens , $( $rest:tt )* ) => {
+        $crate::depends!(@toks expressions { $e $( $res )* { $crate::depends!(@item $( $tok )*) } } next_item { } tokens $( $rest )*)
     };
+
+    // Token (non-comma)
+    // Shift token into stored tokens
+    ( @toks expressions { $e:ident $( $res:tt )* } next_item { $( $tok:tt )* } tokens $next:tt $( $rest:tt )* ) => {
+        $crate::depends!(@toks expressions { $e $( $res )* } next_item { $( $tok )* $next } tokens $( $rest )*)
+    };
+
+    // Entry
+    // Pass tokens into stateful expansion with initial state
     ( $( $tok:tt )* ) => {
         {
             let mut deps = $crate::value::Dependencies::new();
-            $crate::depends!(@toks { deps } { } $( $tok )*);
+            $crate::depends!(@toks expressions { deps } next_item { } tokens $( $tok )*);
             deps
         }
     };
