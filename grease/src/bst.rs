@@ -5,6 +5,7 @@ use abi_stable::{
     StableAbi,
 };
 use std::cmp::Ordering;
+use std::collections::BTreeMap;
 
 use ROption::*;
 
@@ -173,6 +174,15 @@ mod map {
             }
         }
 
+        pub fn append(&mut self, other: &mut Self)
+        where
+            K: Ord,
+        {
+            for (k, v) in std::mem::take(other) {
+                self.insert(k, v);
+            }
+        }
+
         pub fn remove<Q>(&mut self, key: &Q) -> Option<V>
         where
             K: std::borrow::Borrow<Q>,
@@ -281,6 +291,18 @@ mod map {
                 },
                 len: self.len,
             }
+        }
+    }
+
+    impl<K: std::cmp::Ord, V> From<BTreeMap<K, V>> for BstMap<K, V> {
+        fn from(m: BTreeMap<K, V>) -> Self {
+            m.into_iter().collect()
+        }
+    }
+
+    impl<K: std::cmp::Ord, V> From<BstMap<K, V>> for BTreeMap<K, V> {
+        fn from(m: BstMap<K, V>) -> Self {
+            m.into_iter().collect()
         }
     }
 
@@ -569,6 +591,7 @@ mod map {
 mod set {
     use super::map::*;
     use abi_stable::StableAbi;
+    use std::collections::BTreeSet;
 
     #[derive(Clone, Debug, Hash, StableAbi)]
     #[repr(C)]
@@ -643,6 +666,18 @@ mod set {
             BstSet {
                 inner: Default::default(),
             }
+        }
+    }
+
+    impl<T: std::cmp::Ord> From<BTreeSet<T>> for BstSet<T> {
+        fn from(s: BTreeSet<T>) -> Self {
+            s.into_iter().collect()
+        }
+    }
+
+    impl<T: std::cmp::Ord> From<BstSet<T>> for BTreeSet<T> {
+        fn from(s: BstSet<T>) -> Self {
+            s.into_iter().collect()
         }
     }
 

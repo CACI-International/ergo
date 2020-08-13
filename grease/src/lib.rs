@@ -7,7 +7,7 @@
 //! plans to utilize. Functionality includes logging, progress reporting/recording, external command
 //! execution, and scheduling of tasks on a thread pool.
 
-mod bst;
+pub mod bst;
 pub mod ffi;
 pub mod future;
 pub mod hash;
@@ -56,11 +56,3 @@ pub use grease_macro::item_name;
 /// All captures in _body_ are moved into the block. _body_ is used to produce the result of
 /// the value, and is in an async context (so `.await` is valid).
 pub use grease_macro::make_value;
-
-/// Derive GetValueType based on the item's full Rust path.
-pub use grease_macro::GetValueType;
-
-/// Derive Trait based on the item's full Rust path.
-///
-/// Traits derived in this way have `Impl` as `Self`, and must support `Clone`.
-pub use grease_macro::Trait;

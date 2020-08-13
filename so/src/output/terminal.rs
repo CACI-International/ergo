@@ -1,7 +1,8 @@
 //! Terminal outputs.
 
 use super::interface::{render::*, TerminalOutput};
-use grease::{LogEntry, LogLevel, LogTarget};
+use abi_stable::std_types::{RDuration, ROption, RSlice, RString, RVec};
+use grease::runtime::{LogEntry, LogLevel, LogTarget};
 use log::warn;
 use std::collections::HashMap;
 use std::convert::TryInto;
@@ -17,13 +18,13 @@ pub struct Output {
 }
 
 struct ThreadStatus {
-    thread_mapping: HashMap<std::thread::ThreadId, Option<LogEntry>>,
+    thread_mapping: HashMap<u64, Option<LogEntry>>,
 }
 
 #[derive(Default)]
 struct Progress {
-    timings: HashMap<Vec<String>, (std::time::Duration, usize)>,
-    pending: HashMap<Vec<String>, usize>,
+    timings: HashMap<RVec<RString>, (std::time::Duration, usize)>,
+    pending: HashMap<RVec<RString>, usize>,
 }
 
 struct Errors {
@@ -53,7 +54,7 @@ impl Output {
 }
 
 impl super::Output for Output {
-    fn set_thread_ids(&mut self, ids: Vec<std::thread::ThreadId>) {
+    fn set_thread_ids(&mut self, ids: Vec<u64>) {
         self.threads = Some(ids.into_iter().collect());
     }
 
@@ -82,7 +83,7 @@ impl LogTarget for Output {
         self.update();
     }
 
-    fn dropped(&mut self, _context: std::sync::Arc<[String]>) {
+    fn dropped(&mut self, context: RVec<RString>) {
         if let Some(ref mut t) = self.threads {
             t.set(None);
         }
@@ -90,36 +91,38 @@ impl LogTarget for Output {
         self.update();
     }
 
-    fn timer_pending(&mut self, id: &[String]) {
+    fn timer_pending(&mut self, id: RSlice<RString>) {
         self.progress.pending(id);
 
         self.update();
     }
 
-    fn timer_complete(&mut self, id: &[String], duration: Option<std::time::Duration>) {
-        self.progress.complete(id, duration);
+    fn timer_complete(&mut self, id: RSlice<RString>, duration: ROption<RDuration>) {
+        self.progress
+            .complete(id, duration.map(|v| v.into()).into());
 
         self.update();
     }
 }
 
 impl ThreadStatus {
-    pub fn new<I: IntoIterator<Item = std::thread::ThreadId>>(i: I) -> Self {
+    pub fn new<I: IntoIterator<Item = u64>>(i: I) -> Self {
         ThreadStatus {
             thread_mapping: i.into_iter().map(|id| (id, None)).collect(),
         }
     }
 
     pub fn set(&mut self, entry: Option<LogEntry>) {
-        let id = std::thread::current().id();
-        if let Some(v) = self.thread_mapping.get_mut(&id) {
-            *v = entry;
+        if let Some(id) = grease::runtime::thread_id() {
+            if let Some(v) = self.thread_mapping.get_mut(&id) {
+                *v = entry;
+            }
         }
     }
 }
 
-impl std::iter::FromIterator<std::thread::ThreadId> for ThreadStatus {
-    fn from_iter<T: IntoIterator<Item = std::thread::ThreadId>>(iter: T) -> Self {
+impl std::iter::FromIterator<u64> for ThreadStatus {
+    fn from_iter<T: IntoIterator<Item = u64>>(iter: T) -> Self {
         ThreadStatus::new(iter)
     }
 }
@@ -144,12 +147,12 @@ impl Render for ThreadStatus {
 }
 
 impl Progress {
-    pub fn pending(&mut self, id: &[String]) {
-        *self.pending.entry(Vec::from(id)).or_default() += 1;
+    pub fn pending(&mut self, id: RSlice<RString>) {
+        *self.pending.entry(id.to_rvec()).or_default() += 1;
     }
 
-    pub fn complete(&mut self, id: &[String], duration: Option<std::time::Duration>) {
-        if let Some(v) = self.pending.get_mut(id) {
+    pub fn complete(&mut self, id: RSlice<RString>, duration: Option<std::time::Duration>) {
+        if let Some(v) = self.pending.get_mut(id.as_slice()) {
             if *v > 0 {
                 *v -= 1;
             } else {
@@ -159,7 +162,7 @@ impl Progress {
             warn!("timer count inconsistent: {:?}", id);
         }
         if let Some(duration) = duration {
-            let mut times = self.timings.entry(Vec::from(id)).or_default();
+            let mut times = self.timings.entry(id.to_rvec()).or_default();
             times.0 += duration;
             times.1 += 1;
         }

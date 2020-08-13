@@ -5,9 +5,11 @@
 #[cfg(unix)]
 mod unix {
     use abi_stable::{std_types::RVec, StableAbi};
+    use std::borrow::Cow;
+    use std::os::unix::ffi::OsStrExt;
     use std::os::unix::ffi::OsStringExt;
 
-    #[derive(Clone, Debug, PartialOrd, Ord, PartialEq, Eq, StableAbi)]
+    #[derive(Clone, Debug, PartialOrd, Ord, PartialEq, Eq, Hash, StableAbi)]
     #[repr(C)]
     pub struct OsString {
         bytes: RVec<u8>,
@@ -16,6 +18,10 @@ mod unix {
     impl OsString {
         pub fn into_os_string(self) -> std::ffi::OsString {
             self.into()
+        }
+
+        pub fn as_ref<'a>(&'a self) -> Cow<'a, std::ffi::OsStr> {
+            Cow::Borrowed(std::ffi::OsStr::from_bytes(&self.bytes))
         }
     }
 
@@ -40,10 +46,11 @@ pub use unix::OsString;
 #[cfg(windows)]
 mod windows {
     use abi_stable::{std_types::RVec, StableAbi};
+    use std::borrow::Cow;
     use std::os::windows::ffi::OsStrExt;
     use std::os::windows::ffi::OsStringExt;
 
-    #[derive(Clone, Debug, PartialOrd, Ord, PartialEq, Eq, StableAbi)]
+    #[derive(Clone, Debug, PartialOrd, Ord, PartialEq, Eq, Hash, StableAbi)]
     #[repr(C)]
     pub struct OsString {
         wide_chars: RVec<u16>,
@@ -52,6 +59,10 @@ mod windows {
     impl OsString {
         pub fn into_os_string(self) -> std::ffi::OsString {
             self.into()
+        }
+
+        pub fn as_ref<'a>(&'a self) -> Cow<'a, std::ffi::OsStr> {
+            Cow::Owned(std::ffi::OsString::from_wide(&self.bytes))
         }
     }
 

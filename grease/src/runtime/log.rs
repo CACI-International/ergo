@@ -8,6 +8,7 @@ use abi_stable::{
     StableAbi,
 };
 use std::fmt;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Log output levels.
@@ -114,9 +115,12 @@ pub trait LogTarget: Send {
     fn timer_complete(&mut self, _id: RSlice<RString>, _duration: ROption<RDuration>) {}
 }
 
-/// A reference to a LogTarget.
-pub type LoggerRef = RArc<RMutex<LogTarget_TO<'static, RBox<()>>>>;
+pub type Logger = RMutex<LogTarget_TO<'static, RBox<()>>>;
 
+/// A reference to a LogTarget.
+pub type LoggerRef = RArc<Logger>;
+
+/// A reference to a types logger.
 pub struct OriginalLogger<T>(LoggerRef, std::marker::PhantomData<RArc<RMutex<RBox<T>>>>);
 
 pub struct OriginalLoggerGuard<'a, T>(
@@ -157,9 +161,9 @@ impl LogTarget for EmptyLogTarget {
 }
 
 /// Create a logger reference.
-pub fn logger_ref<T: LogTarget + 'static>(target: T) -> (LoggerRef, OriginalLogger<T>) {
-    let r = RArc::new(RMutex::new(LogTarget_TO::from_value(target, TU_Unerasable)));
-    (r.clone(), OriginalLogger(r, Default::default()))
+pub fn logger_ref<T: LogTarget + 'static>(target: T) -> (Arc<Logger>, OriginalLogger<T>) {
+    let r = Arc::new(RMutex::new(LogTarget_TO::from_value(target, TU_Unerasable)));
+    (r.clone(), OriginalLogger(r.into(), Default::default()))
 }
 
 /// The logging interface.

@@ -1,6 +1,6 @@
 //! Plain text output.
 
-use grease::{LogEntry, LogLevel, LogTarget};
+use grease::runtime::{LogEntry, LogLevel, LogTarget};
 use std::io::Write;
 
 pub struct Output {
@@ -18,7 +18,7 @@ impl Output {
 }
 
 impl super::Output for Output {
-    fn set_thread_ids(&mut self, _ids: Vec<std::thread::ThreadId>) {}
+    fn set_thread_ids(&mut self, _ids: Vec<u64>) {}
 
     fn set_log_level(&mut self, log_level: LogLevel) {
         self.log_level = log_level;

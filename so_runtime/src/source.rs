@@ -1,11 +1,22 @@
-//! Source information.
+//! Runtime source information.
 
-use grease::{future::Future, Dependency};
+use abi_stable::{
+    erased_types::DynTrait,
+    sabi_trait,
+    sabi_trait::prelude::*,
+    std_types::{RArc, RBox, ROption, RResult, RString},
+    StableAbi,
+};
+use grease::value::Dependency;
 use std::fmt;
+use std::future::Future;
 use std::io::{BufRead, BufReader, Read};
 
+use ROption::*;
+
 /// A type which adds source location to a value.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, StableAbi)]
+#[repr(C)]
 pub struct Source<T> {
     value: T,
     pub location: Location,
@@ -13,13 +24,19 @@ pub struct Source<T> {
 }
 
 /// A location in the original (character) input stream.
-#[derive(Clone, Debug, Default, Hash, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Hash, PartialEq, Eq, StableAbi)]
+#[repr(C)]
 pub struct Location {
     /// The start index of the first character.
     pub start: usize,
     /// The number of characters represented by the Location.
     pub length: usize,
 }
+
+#[derive(StableAbi)]
+#[sabi(impl_InterfaceType(IoRead))]
+#[repr(C)]
+pub struct ReadInterface;
 
 /// A factory that provides source names and data.
 pub trait SourceFactory {
@@ -28,6 +45,27 @@ pub trait SourceFactory {
 
     /// Read from the source.
     fn read<'a>(&'a self) -> Result<Box<dyn Read + 'a>, String>;
+}
+
+#[sabi_trait]
+trait SourceFactoryAbi: Send + Sync {
+    fn name(&self) -> RString;
+
+    #[sabi(last_prefix_field)]
+    fn read<'a>(&'a self) -> RResult<DynTrait<'a, RBox<()>, ReadInterface>, RString>;
+}
+
+impl<T: SourceFactory + Sync + Send> SourceFactoryAbi for T {
+    fn name(&self) -> RString {
+        SourceFactory::name(self).into()
+    }
+
+    fn read<'a>(&'a self) -> RResult<DynTrait<'a, RBox<()>, ReadInterface>, RString> {
+        SourceFactory::read(self)
+            .map(|v| DynTrait::from_borrowing_value(v, ReadInterface))
+            .map_err(|e| e.into())
+            .into()
+    }
 }
 
 /// Types which can be converted into a Source<T>.
@@ -52,8 +90,9 @@ pub struct FileSource(pub std::path::PathBuf);
 pub struct NoSource;
 
 /// A reference to a SourceFactory.
-#[derive(Clone, Default)]
-struct SourceFactoryRef(Option<std::sync::Arc<dyn SourceFactory + Send + Sync>>);
+#[derive(Clone, Default, StableAbi)]
+#[repr(C)]
+struct SourceFactoryRef(ROption<RArc<SourceFactoryAbi_TO<'static, RBox<()>>>>);
 
 impl Location {
     /// Create a Location with the given fields.
@@ -111,8 +150,8 @@ impl std::iter::Sum for Location {
 impl fmt::Debug for SourceFactoryRef {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match &self.0 {
-            None => write!(f, "no SourceFactory"),
-            Some(s) => write!(f, "SourceFactory({})", s.name()),
+            RNone => write!(f, "no SourceFactory"),
+            RSome(s) => write!(f, "SourceFactory({})", s.name()),
         }
     }
 }
@@ -122,16 +161,16 @@ impl std::ops::Add for SourceFactoryRef {
 
     fn add(self, other: Self) -> Self {
         match (&self.0, &other.0) {
-            (Some(ref a), Some(ref b)) => {
-                if std::sync::Arc::ptr_eq(a, b) {
+            (RSome(ref a), RSome(ref b)) => {
+                if a.as_ref() as *const _ == b.as_ref() as *const _ {
                     self
                 } else {
-                    SourceFactoryRef(None)
+                    SourceFactoryRef(RNone)
                 }
             }
-            (Some(_), _) => self,
-            (_, Some(_)) => other,
-            _ => SourceFactoryRef(None),
+            (RSome(_), _) => self,
+            (_, RSome(_)) => other,
+            _ => SourceFactoryRef(RNone),
         }
     }
 }
@@ -147,8 +186,8 @@ impl std::iter::Sum for SourceFactoryRef {
 impl PartialEq for SourceFactoryRef {
     fn eq(&self, other: &Self) -> bool {
         match (&self.0, &other.0) {
-            (Some(ref a), Some(ref b)) => std::sync::Arc::ptr_eq(a, b),
-            (None, None) => true,
+            (RSome(ref a), RSome(ref b)) => a.as_ref() as *const _ == b.as_ref() as *const _,
+            (RNone, RNone) => true,
             _ => false,
         }
     }
@@ -157,8 +196,8 @@ impl PartialEq for SourceFactoryRef {
 impl std::hash::Hash for SourceFactoryRef {
     fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
         match &self.0 {
-            None => (233498237u128).hash(h),
-            Some(v) => std::ptr::hash(v.as_ref(), h),
+            RNone => (233498237u128).hash(h),
+            RSome(v) => std::ptr::hash(v.as_ref(), h),
         }
     }
 }
@@ -211,16 +250,21 @@ impl Source<()> {
         Source {
             value: (),
             location: Location::default(),
-            source: SourceFactoryRef(Some(std::sync::Arc::new(source))),
+            source: SourceFactoryRef(RSome(RArc::new(SourceFactoryAbi_TO::from_value(
+                source, TU_Opaque,
+            )))),
         }
     }
 
     /// Open a source, returning a Source around the iterator over the source's characters.
+    ///
+    /// This should only be called when it is known that the source has a source factory.
     pub fn open(self) -> std::io::Result<Source<impl IntoIterator<Item = char>>> {
-        let src = self.source_factory().unwrap();
+        let src = self.source.0.clone().expect("no source factory");
         let mut r = src
             .read()
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+            .into_result()
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.into_string()))?;
         // TODO: inefficient
         let mut s = String::new();
         r.read_to_string(&mut s)?;
@@ -237,21 +281,12 @@ impl Source<()> {
 impl<T> Source<T> {
     /// Create a value that has internal source.
     pub fn builtin(v: T) -> Self {
-        Source {
-            value: v,
-            location: Location::default(),
-            source: SourceFactoryRef(Some(std::sync::Arc::new(NoSource))),
-        }
+        Source::new(NoSource).map(|_| v)
     }
 
     /// Get the inner value.
     pub fn unwrap(self) -> T {
         self.value
-    }
-
-    /// Get the inner source factory.
-    pub fn source_factory(&self) -> Option<std::sync::Arc<dyn SourceFactory + Send + Sync>> {
-        self.source.0.clone()
     }
 
     /// Get a copy of the source.
@@ -303,6 +338,53 @@ impl<T> Source<T> {
         let src = self.source();
         let r: &mut T = AsMut::<T>::as_mut(self);
         src.map(move |()| r)
+    }
+
+    /// Convert a Source<T> to a Source<U>.
+    pub fn value_into<U: From<T>>(self) -> Source<U> {
+        self.map(|v| v.into())
+    }
+}
+
+#[derive(Debug)]
+struct ErrorWithSource {
+    err: grease::value::Error,
+    context: Source<String>,
+}
+
+impl ErrorWithSource {
+    pub fn new(err: grease::value::Error, context: Source<String>) -> Self {
+        ErrorWithSource { err, context }
+    }
+}
+
+impl fmt::Display for ErrorWithSource {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(f, "{}", self.err)?;
+        write!(f, "note: {}", self.context)?;
+        Ok(())
+    }
+}
+
+impl std::error::Error for ErrorWithSource {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.err.error_ref())
+    }
+}
+
+impl<T: ToString> Source<T> {
+    /// Add extra context to an error.
+    pub fn context_for_error(&self, e: grease::value::Error) -> grease::value::Error {
+        e.with_context(self.source().with(self.value.to_string()))
+    }
+
+    /// Add extra context to the error returned by the given value.
+    ///
+    /// The returned value will have this extra information in the error output (if an error occurs
+    /// at all).
+    pub fn imbue_error_context(&self, v: grease::value::Value) -> grease::value::Value {
+        let src = self.source().with(self.value.to_string());
+        v.map_err(move |e| e.with_context(src))
     }
 }
 
@@ -444,7 +526,7 @@ impl<T: IntoSource> IntoSource for Vec<T> {
             .into_iter()
             .map(|t| {
                 let s = t.into_source();
-                let source = s.source_factory();
+                let source = s.source.0.clone();
                 let loc = s.location.clone();
                 (s, (loc, SourceFactoryRef(source)))
             })
@@ -473,7 +555,7 @@ where
             .into_iter()
             .map(|t| {
                 let s = t.into_source();
-                let source = s.source_factory();
+                let source = s.source.0.clone();
                 let loc = s.location.clone();
                 (s, (loc, SourceFactoryRef(source)))
             })
@@ -503,7 +585,36 @@ where
             .into_iter()
             .map(|(k, v)| {
                 let v = v.into_source();
-                let source = v.source_factory();
+                let source = v.source.0.clone();
+                let loc = v.location.clone();
+                ((k, v), (loc, SourceFactoryRef(source)))
+            })
+            .unzip();
+        let (locs, srcs): (Vec<_>, Vec<_>) = rest.into_iter().unzip();
+        let location = locs.into_iter().sum();
+        let source = srcs.into_iter().sum();
+
+        Source {
+            value: value.into_iter().collect(),
+            location,
+            source,
+        }
+    }
+}
+
+impl<'a, T, U> IntoSource for grease::bst::BstMap<T, U>
+where
+    T: Ord,
+    U: IntoSource,
+{
+    type Output = grease::bst::BstMap<T, Source<U::Output>>;
+
+    fn into_source(self) -> Source<Self::Output> {
+        let (value, rest): (Vec<_>, Vec<_>) = self
+            .into_iter()
+            .map(|(k, v)| {
+                let v = v.into_source();
+                let source = v.source.0.clone();
                 let loc = v.location.clone();
                 ((k, v), (loc, SourceFactoryRef(source)))
             })
@@ -586,10 +697,10 @@ impl<T: fmt::Display> fmt::Display for Source<T> {
         let mut end = None;
         let mut startline = None;
 
-        if let Some(source) = &self.source.0 {
+        if let RSome(source) = &self.source.0 {
             write!(f, "{}", source.name())?;
             match source.read() {
-                Ok(reader) => {
+                RResult::ROk(reader) => {
                     let mut src = BufReader::new(reader);
 
                     let mut remaining = self.location.start;
@@ -677,7 +788,7 @@ impl<T: fmt::Display> fmt::Display for Source<T> {
                         }
                     }
                 }
-                Err(e) => write!(f, ": {}\n[error reading source: {}]", &self.value, e),
+                RResult::RErr(e) => write!(f, ": {}\n[error reading source: {}]", &self.value, e),
             }
         } else {
             write!(f, "[no source]: {}", &self.value)
@@ -688,11 +799,5 @@ impl<T: fmt::Display> fmt::Display for Source<T> {
 impl<T: PartialEq> PartialEq<T> for Source<T> {
     fn eq(&self, other: &T) -> bool {
         &self.value == other
-    }
-}
-
-impl PartialEq<Source<Self>> for super::tokenize::Token {
-    fn eq(&self, other: &Source<Self>) -> bool {
-        self == &other.value
     }
 }

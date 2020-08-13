@@ -246,13 +246,12 @@ impl Plan for Config {
             .collect();
 
         // Create dependencies
-        let mut deps = Dependencies::ordered(&args)
-            + Dependencies::unordered(depends![join vec![command_dep],&env_deps]);
+        let mut deps = depends![^args, { command_dep }, ^Dependencies::unordered(env_deps)];
         if let Some(SomeValue::Delayed(v)) = &input {
-            deps += Dependencies::unordered(vec![v]);
+            deps += depends![{ v }];
         }
         if let Some(SomeValue::Delayed(v)) = &dir {
-            deps += Dependencies::unordered(vec![v]);
+            deps += depends![{ v }];
         }
 
         // Get value id from dependencies and use it as part of the item output path
@@ -399,8 +398,10 @@ impl Plan for Config {
             }).await
         });
 
-        let stdout = make_value!((run_command) ["stdout"] { run_command.await?; Ok(rcv_stdout.await?) });
-        let stderr = make_value!((run_command) ["stderr"] { run_command.await?; Ok(rcv_stderr.await?) });
+        let stdout =
+            make_value!((run_command) ["stdout"] { run_command.await?; Ok(rcv_stdout.await?) });
+        let stderr =
+            make_value!((run_command) ["stderr"] { run_command.await?; Ok(rcv_stderr.await?) });
         let exit_status = make_value!((run_command) ["exit_status"] { run_command.await?; Ok(rcv_status.await?) });
 
         Ok(ExecResult {

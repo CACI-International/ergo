@@ -261,7 +261,7 @@ impl FusedFuture for Value {
 macro_rules! match_value_type {
     ( $value:expr => { $( $t:ty => $e:expr $(,)? )+ => $else:expr } ) => {
         {
-            use $crate::value::GreaseType;
+            use $crate::types::GreaseType;
             $( if $value == <$t>::grease_type() { $e } else )+ { $else }
         }
     }

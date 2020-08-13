@@ -154,6 +154,9 @@ where
 ///
 /// Values are always accessed by reference in the normal form.
 /// Prepending '^' to an item will instead attempt to convert the value to `Dependencies` directly.
+/// Prepending '^@' to an item will convert each item in the value to a `Dependency` (by reference using
+/// `.iter()`) and add those as ordered dependencies.
+/// Curly brackets indicate unordered dependencies.
 ///
 /// Example usage:
 /// ```
@@ -162,8 +165,11 @@ where
 /// let deps = depends!["a","b"];
 /// // Merge dependencies from deps, and add another ordered dependency (after those in deps)
 /// let deps2 = depends![^deps,"c"];
+/// // Convert each item in vals to `Dependency` and merge them.
+/// let vals = vec!["hello", "goodbye"];
+/// let deps3 = depends![^deps2, ^@vals];
 /// // Add unordered dependencies (1, 2, "3", and 4), and more ordered dependencies.
-/// let deps_unordered = depends![{1,2,"3"},^deps2,{4},"d"];
+/// let deps_unordered = depends![{1,2,"3"},^deps3,{4},"d"];
 /// ```
 #[macro_export]
 macro_rules! depends {
@@ -176,6 +182,11 @@ macro_rules! depends {
     // Merge item
     ( @item ^ $exp:expr ) => {
         $crate::value::Dependencies::from($exp)
+    };
+
+    // Merge and convert item
+    ( @item ^ @ $exp:expr ) => {
+        $crate::value::Dependencies::ordered($exp.iter().map($crate::value::Dependency::from))
     };
 
     // Basic item

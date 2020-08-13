@@ -1,6 +1,6 @@
 //! Application runtime options.
 
-use grease::LogLevel;
+use grease::runtime::LogLevel;
 pub use structopt::StructOpt;
 
 #[derive(Debug, PartialEq, Eq)]

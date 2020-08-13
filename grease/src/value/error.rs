@@ -97,6 +97,36 @@ impl Error {
         self.as_ref()
     }
 
+    /// Aggregate multiple errors into a single error.
+    pub fn aggregate<I: IntoIterator<Item = Self>>(i: I) -> Self {
+        let errs: Vec<Error> = i.into_iter().collect();
+
+        if errs.len() == 1 {
+            errs.into_iter().next().unwrap()
+        } else {
+            Error {
+                inner: InnerError::Nested(
+                    errs.into_iter()
+                        .map(|e| match e.inner {
+                            InnerError::Aborted => rvec![],
+                            InnerError::New(e) => rvec![e],
+                            InnerError::Nested(es) => es,
+                        })
+                        .flatten()
+                        .collect(),
+                ),
+            }
+        }
+    }
+
+    /// Add context information to the error.
+    pub fn with_context<T: std::fmt::Display + std::fmt::Debug + Send + Sync + 'static>(
+        self,
+        context: T,
+    ) -> Self {
+        ErrorContext::new(self, context).into()
+    }
+
     /// Create an aborted error.
     pub(crate) fn aborted() -> Self {
         Error {
@@ -142,25 +172,40 @@ where
     }
 }
 
+impl From<&'_ Self> for Error {
+    fn from(v: &Self) -> Self {
+        v.clone()
+    }
+}
+
 impl std::iter::FromIterator<Error> for Error {
     fn from_iter<I: IntoIterator<Item = Error>>(iter: I) -> Self {
-        let errs: Vec<Error> = iter.into_iter().collect();
+        Self::aggregate(iter)
+    }
+}
 
-        if errs.len() == 1 {
-            errs.into_iter().next().unwrap()
-        } else {
-            Error {
-                inner: InnerError::Nested(
-                    errs.into_iter()
-                        .map(|e| match e.inner {
-                            InnerError::Aborted => rvec![],
-                            InnerError::New(e) => rvec![e],
-                            InnerError::Nested(es) => es,
-                        })
-                        .flatten()
-                        .collect(),
-                ),
-            }
-        }
+#[derive(Debug)]
+struct ErrorContext<T> {
+    err: Error,
+    context: T,
+}
+
+impl<T> ErrorContext<T> {
+    pub fn new(err: Error, context: T) -> Self {
+        ErrorContext { err, context }
+    }
+}
+
+impl<T: std::fmt::Display> std::fmt::Display for ErrorContext<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        writeln!(f, "{}", self.err)?;
+        write!(f, "note: {}", self.context)?;
+        Ok(())
+    }
+}
+
+impl<T: std::fmt::Display + std::fmt::Debug> std::error::Error for ErrorContext<T> {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.err.error_ref())
     }
 }

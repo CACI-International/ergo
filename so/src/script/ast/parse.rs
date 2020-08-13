@@ -3,6 +3,7 @@
 use super::tokenize::{Tok, Token};
 use super::*;
 use pom::parser::*;
+use so_runtime::source::{IntoSource, Source};
 use std::iter::FromIterator;
 
 /// A parser alias.

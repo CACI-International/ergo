@@ -1,10 +1,16 @@
 //! Grease types, which have a UUID identifier and optional additional data.
 
+use crate::path::PathBuf;
 use crate::type_erase::ErasedTrivial;
 use crate::uuid::*;
-use abi_stable::StableAbi;
+use abi_stable::{
+    std_types::{RString, RVec},
+    StableAbi,
+};
 use lazy_static::lazy_static;
 use std::convert::TryInto;
+
+pub use grease_macro::GreaseType;
 
 lazy_static! {
     /// The type namespace UUID.
@@ -19,13 +25,30 @@ pub fn grease_type_uuid(name: &[u8]) -> Uuid {
 /// A grease type.
 ///
 /// The type is composed of an identifier and optional type-specific data.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, StableAbi)]
+#[derive(Debug, Clone, Eq, StableAbi)]
 #[repr(C)]
 pub struct Type {
     /// The identifier for the type.
     pub id: Uuid,
     /// Optional type data.
     pub data: ErasedTrivial,
+    /// Optional type data which is _not_ used when checking for equality or hashing.
+    ///
+    /// Thus, in the context of `Value`s, this data does not directly describe the result.
+    pub sideband: ErasedTrivial,
+}
+
+impl PartialEq for Type {
+    fn eq(&self, other: &Type) -> bool {
+        self.id == other.id && self.data == other.data
+    }
+}
+
+impl std::hash::Hash for Type {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        self.id.hash(h);
+        self.data.hash(h);
+    }
 }
 
 impl Type {
@@ -43,7 +66,11 @@ impl Type {
 
     /// Create a new Type with the given id and additional data.
     pub fn with_data(id: Uuid, data: ErasedTrivial) -> Self {
-        Type { id, data }
+        Type {
+            id,
+            data,
+            sideband: Default::default(),
+        }
     }
 }
 
@@ -53,12 +80,38 @@ pub trait GreaseType {
     fn grease_type() -> Type;
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct TypeParameters(pub Vec<Type>);
+
+impl From<TypeParameters> for ErasedTrivial {
+    fn from(params: TypeParameters) -> Self {
+        let mut bytes: Vec<u8> = Vec::new();
+        for tp in params.0 {
+            ErasedTrivial::from(tp).serialize(&mut bytes);
+        }
+        ErasedTrivial::from_slice(bytes.into_boxed_slice())
+    }
+}
+
+impl From<ErasedTrivial> for TypeParameters {
+    fn from(e: ErasedTrivial) -> Self {
+        let mut ret = TypeParameters::default();
+        let bytes = unsafe { e.to_boxed_slice::<u8>() };
+        let mut remaining: &[u8] = &bytes;
+        while !remaining.is_empty() {
+            ret.0
+                .push(ErasedTrivial::deserialize(&mut remaining).into());
+        }
+        ret
+    }
+}
+
 impl From<Type> for ErasedTrivial {
     fn from(tp: Type) -> Self {
         let mut bytes: Vec<u8> = Vec::new();
         bytes.extend(tp.id.as_bytes());
-        // TODO improve this API
-        bytes.extend(tp.data.into_raw_bytes().into_iter());
+        tp.data.serialize(&mut bytes);
+        tp.sideband.serialize(&mut bytes);
         ErasedTrivial::from_slice(bytes.into_boxed_slice())
     }
 }
@@ -67,8 +120,59 @@ impl From<ErasedTrivial> for Type {
     fn from(e: ErasedTrivial) -> Self {
         let bytes = unsafe { e.to_boxed_slice::<u8>() };
         let id = Uuid::from_bytes(bytes[..16].try_into().expect("invalid erased type"));
-        let data =
-            unsafe { ErasedTrivial::from_raw_bytes(bytes[16..].to_vec().into_boxed_slice()) };
-        Type { id, data }
+        let mut slice = &bytes[16..];
+        let data = ErasedTrivial::deserialize(&mut slice);
+        let sideband = ErasedTrivial::deserialize(&mut slice);
+        Type { id, data, sideband }
+    }
+}
+
+// Primitive types
+macro_rules! impl_grease_type {
+    ( $name:ident , $t:ty ) => {
+        impl GreaseType for $t {
+            fn grease_type() -> Type {
+                Type::named(concat!["std::", stringify!($name)].as_bytes())
+            }
+        }
+    };
+
+    ( $t:ident ) => {
+        impl_grease_type!($t, $t);
+    };
+}
+
+impl_grease_type!(unit, ());
+impl_grease_type!(u8);
+impl_grease_type!(i8);
+impl_grease_type!(u16);
+impl_grease_type!(i16);
+impl_grease_type!(u32);
+impl_grease_type!(i32);
+impl_grease_type!(u64);
+impl_grease_type!(i64);
+impl_grease_type!(usize);
+impl_grease_type!(isize);
+impl_grease_type!(char);
+impl_grease_type!(bool);
+
+impl<T: GreaseType> GreaseType for RVec<T> {
+    fn grease_type() -> Type {
+        Type::with_data(
+            grease_type_uuid(b"abi_stable::std_types::RVec"),
+            TypeParameters(vec![T::grease_type()]).into(),
+        )
+    }
+}
+
+impl GreaseType for RString {
+    fn grease_type() -> Type {
+        Type::named(b"abi_stable::std_types::RString")
+    }
+}
+
+impl GreaseType for PathBuf {
+    fn grease_type() -> Type {
+        Type::named(b"grease::path::PathBuf")
     }
 }

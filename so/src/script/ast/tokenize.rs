@@ -1,6 +1,6 @@
 //! AST tokenization.
 
-use super::Source;
+use so_runtime::source::Source;
 use std::fmt;
 
 /// Script tokens.
@@ -45,6 +45,12 @@ impl fmt::Display for Token {
             Token::Newline => write!(f, "\n"),
             Token::Whitespace => write!(f, " "),
         }
+    }
+}
+
+impl PartialEq<Source<Self>> for Token {
+    fn eq(&self, other: &Source<Self>) -> bool {
+        self == &*other
     }
 }
 

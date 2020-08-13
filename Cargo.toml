@@ -1,0 +1,6 @@
+[workspace]
+members = ["grease", "grease_macro", "so", "so-repo", "so_runtime", "so_std"]
+
+[profile.release]
+lto = true
+panic = 'abort'

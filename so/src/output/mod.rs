@@ -1,11 +1,12 @@
-use grease::{LogEntry, LogLevel, LogTarget};
+use abi_stable::std_types::{RDuration, ROption, RSlice, RString, RVec};
+use grease::runtime::{LogEntry, LogLevel, LogTarget};
 
 mod interface;
 mod plain;
 mod terminal;
 
 pub trait Output: LogTarget {
-    fn set_thread_ids(&mut self, ids: Vec<std::thread::ThreadId>);
+    fn set_thread_ids(&mut self, ids: Vec<u64>);
     fn set_log_level(&mut self, log_level: LogLevel);
     fn new_error(&mut self);
 }
@@ -36,7 +37,7 @@ impl_from!(terminal::Output);
 impl_from!(plain::Output);
 
 impl Output for OutputInstance {
-    fn set_thread_ids(&mut self, ids: Vec<std::thread::ThreadId>) {
+    fn set_thread_ids(&mut self, ids: Vec<u64>) {
         self.inner.set_thread_ids(ids)
     }
 
@@ -54,15 +55,15 @@ impl LogTarget for OutputInstance {
         self.inner.log(entry)
     }
 
-    fn dropped(&mut self, context: std::sync::Arc<[String]>) {
+    fn dropped(&mut self, context: RVec<RString>) {
         self.inner.dropped(context)
     }
 
-    fn timer_pending(&mut self, id: &[String]) {
+    fn timer_pending(&mut self, id: RSlice<RString>) {
         self.inner.timer_pending(id)
     }
 
-    fn timer_complete(&mut self, id: &[String], duration: Option<std::time::Duration>) {
+    fn timer_complete(&mut self, id: RSlice<RString>, duration: ROption<RDuration>) {
         self.inner.timer_complete(id, duration)
     }
 }

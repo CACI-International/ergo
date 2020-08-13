@@ -3,7 +3,7 @@ use futures::future::TryFutureExt;
 use grease::{
     make_value,
     runtime::{Context, Plan},
-    value::{TypedValue, Value},
+    value::TypedValue,
 };
 
 struct TestRuntimePlan;
@@ -68,8 +68,12 @@ fn commands() -> Result<(), String> {
         .await
     );
 
-    let s = String::from_utf8((*output.get().map_err(|e| e.to_string())?).clone().into_vec())
-        .map_err(|_| "failed to get utf8 output".to_owned())?;
+    let s = String::from_utf8(
+        (*output.get().map_err(|e| e.to_string())?)
+            .clone()
+            .into_vec(),
+    )
+    .map_err(|_| "failed to get utf8 output".to_owned())?;
     assert!("hello, world" == s);
     Ok(())
 }

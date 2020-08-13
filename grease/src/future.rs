@@ -132,7 +132,7 @@ trait Future: Send {
 }
 
 #[sabi_trait]
-trait SharedFuture: Clone + Debug + Send {
+trait SharedFuture: Clone + Debug + Send + Sync {
     type Output;
 
     fn poll(&mut self, cx: Context) -> Poll<Self::Output>;

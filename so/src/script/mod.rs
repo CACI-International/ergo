@@ -1,52 +1,31 @@
 //! Script loading and execution.
 
 use crate::constants::*;
-use grease::{Context, IntoValue, Plan};
+use grease::runtime::{Context, Plan};
+pub use so_runtime::source::{FileSource, Source, StringSource};
+use so_runtime::{ContextEnv, Runtime, ScriptEnv};
 
 mod ast;
+mod base;
 mod runtime;
-mod traits;
 
-pub use ast::{FileSource, Source, StringSource};
-pub use runtime::script_types as types;
-pub use runtime::{ContextEnv, Error, Eval, Runtime, SourceContext};
-pub use traits::nested::force_value_nested;
+use runtime::*;
 
 /// A loaded script.
 pub struct Script {
     ast: ast::Script,
-    top_level_env: types::Env,
+    top_level_env: ScriptEnv,
 }
 
 /// Create a script context from a context builder.
 pub fn script_context(
-    cb: grease::ContextBuilder,
-) -> Result<Context<Runtime>, grease::BuilderError> {
-    let mut global_env = types::Env::default();
+    cb: grease::runtime::ContextBuilder,
+) -> Result<Context<Runtime>, grease::runtime::BuilderError> {
+    let mut global_env = ScriptEnv::default();
     {
-        let mut insert = |k: &str, v| global_env.insert(k.into(), Eval::Value(Source::builtin(v)));
+        let mut insert = |k: &str, v| global_env.insert(k.into(), Ok(Source::builtin(v)).into());
 
-        // Check whether we're in a project hierarchy
-        let proj_dir_name = format!("{}proj", PROGRAM_NAME);
-        let proj_dir = std::env::current_dir()
-            .unwrap()
-            .ancestors()
-            .find(|p| {
-                let mut d = p.to_path_buf();
-                d.push(&proj_dir_name);
-                d.is_dir()
-            })
-            .map(ToOwned::to_owned);
-
-        if let Some(mut dir) = proj_dir {
-            insert(PROJECT_ROOT_BINDING, dir.clone().into_value());
-            dir.push(proj_dir_name);
-            insert(
-                LOAD_PATH_BINDING,
-                types::ScriptArray(vec![dir.into_value()]).into_value(),
-            );
-        } else {
-            insert(PROJECT_ROOT_BINDING, ().into_value());
+        /* TODO restore something akin to this functionality
             if let Some(dirs) = app_dirs() {
                 insert(
                     LOAD_PATH_BINDING,
@@ -54,26 +33,10 @@ pub fn script_context(
                         .into_value(),
                 );
             }
-        }
+        */
 
         // Add initial environment functions
-        let env = vec![
-            (PROGRAM_NAME, runtime::load::builtin()),
-            ("cache", runtime::cache::builtin()),
-            ("debug", runtime::debug::builtin()),
-            ("exec", runtime::exec::builtin()),
-            ("fs", runtime::fs::builtin()),
-            ("fold", runtime::fold::builtin()),
-            ("has", runtime::has::builtin()),
-            ("if", runtime::if_::builtin()),
-            ("map", runtime::map::builtin()),
-            ("path", runtime::path::builtin()),
-            ("seq", runtime::seq::builtin()),
-            ("string", runtime::string::builtin()),
-            ("track", runtime::track::builtin()),
-            ("value", runtime::value::builtin()),
-            ("variable", runtime::variable::builtin()),
-        ];
+        let env = vec![(PROGRAM_NAME, base::load())];
         for (k, v) in env.into_iter() {
             insert(k, v);
         }
@@ -81,11 +44,9 @@ pub fn script_context(
 
     cb.build_with(Runtime::new(global_env)).map(|ctx| {
         // Add initial traits
-        ctx.traits.add(::exec::trait_generator);
-        ctx.traits.add(runtime::cache::trait_generator);
-        ctx.traits.add(traits::content_value::trait_generator);
-        ctx.traits.add(traits::display::trait_generator);
-        ctx.traits.add(traits::nested::trait_generator);
+        so_runtime::traits::traits(&mut ctx.traits);
+        //ctx.traits.add(::exec::trait_generator);
+        //ctx.traits.add(runtime::cache::trait_generator);
         ctx
     })
 }
@@ -100,27 +61,27 @@ impl Script {
     }
 
     /// Configure the top-level environment.
-    pub fn top_level_env(&mut self, env: types::Env) {
+    pub fn top_level_env(&mut self, env: ScriptEnv) {
         self.top_level_env = env;
     }
 }
 
 impl Plan<Runtime> for Script {
-    type Output = <ast::Script as Plan<Runtime>>::Output;
+    type Output = <Rt<ast::Script> as Plan<Runtime>>::Output;
 
     fn plan(self, ctx: &mut Context<Runtime>) -> Self::Output {
         // Swap existing env; loading a script should have a clean environment besides the
         // configured top-level env.
         let ast = self.ast;
-        ctx.substituting_env(vec![self.top_level_env], move |ctx| ast.plan(ctx))
+        ctx.substituting_env(vec![self.top_level_env], move |ctx| Rt(ast).plan(ctx))
     }
 }
 
 #[cfg(test)]
 mod test {
-    use super::types::*;
     use super::*;
-    use grease::Value;
+    use grease::value::Value;
+    use so_runtime::types;
 
     #[derive(Clone, Debug)]
     enum ScriptResult {
@@ -497,11 +458,11 @@ mod test {
     fn val_match(v: Value, expected: ScriptResult) -> Result<(), String> {
         match expected {
             SRUnit => v
-                .typed::<ScriptUnit>()
+                .typed::<types::Unit>()
                 .map(|_| ())
                 .expect_ok("expected unit"),
             SRString(s) => v
-                .typed::<ScriptString>()
+                .typed::<types::String>()
                 .expect_ok("expected string")
                 .and_then(|v| v.get().map_err(|e| e.to_string()))
                 .and_then(|st| {
@@ -516,11 +477,11 @@ mod test {
                     }
                 }),
             SRArray(arr) => v
-                .typed::<ScriptArray>()
+                .typed::<types::Array>()
                 .expect_ok("expected array")
                 .and_then(|v| v.get().map_err(|e| e.to_string()))
                 .map(|v| v.owned())
-                .and_then(|ScriptArray(varr)| {
+                .and_then(|types::Array(varr)| {
                     if varr.len() != arr.len() {
                         Err("array length mismatch".into())
                     } else {
@@ -531,11 +492,11 @@ mod test {
                     }
                 }),
             SRMap(entries) => v
-                .typed::<ScriptMap>()
+                .typed::<types::Map>()
                 .expect_ok("expected map")
                 .and_then(|v| v.get().map_err(|e| e.to_string()))
                 .map(|v| v.owned())
-                .and_then(|ScriptMap(mut m)| {
+                .and_then(|types::Map(mut m)| {
                     if m.len() != entries.len() {
                         Err("map length mismatch".into())
                     } else {
@@ -555,20 +516,11 @@ mod test {
 
     fn script_eval(s: &str) -> Result<Value, String> {
         let mut ctx = script_context(Context::builder()).map_err(|e| e.to_string())?;
-        let ev = ctx
-            .plan(
-                Script::load(Source::new(StringSource::new("<string>", s.to_owned())))
-                    .map_err(|e| e.to_string())?,
-            )
-            .map(|sv| sv.unwrap());
-        let errs = ctx.get_errors();
-        if errs.is_empty() {
-            match ev {
-                Eval::Value(v) => Ok(v),
-                Eval::Error => Err("unknown value error".into()),
-            }
-        } else {
-            Err(format!("{:?}", errs))
-        }
+        ctx.plan(
+            Script::load(Source::new(StringSource::new("<string>", s.to_owned())))
+                .map_err(|e| e.to_string())?,
+        )
+        .map(|sv| sv.unwrap())
+        .map_err(|e| format!("{:?}", e))
     }
 }

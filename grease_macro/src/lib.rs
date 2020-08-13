@@ -137,8 +137,8 @@ pub fn make_value(ts: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 
-#[proc_macro_derive(GetValueType)]
-pub fn derive_get_value_type(input: TokenStream) -> TokenStream {
+#[proc_macro_derive(GreaseType)]
+pub fn derive_grease_type(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
 
     let name = input.ident;
@@ -146,7 +146,7 @@ pub fn derive_get_value_type(input: TokenStream) -> TokenStream {
     let param_reqs = params.clone().into_iter().map(|mut p| {
         if let syn::GenericParam::Type(ref mut tp) = &mut p {
             tp.bounds.push(parse_quote! {
-                    ::grease::GetValueType
+                    ::grease::types::GreaseType
             });
         }
         p
@@ -170,9 +170,7 @@ pub fn derive_get_value_type(input: TokenStream) -> TokenStream {
             let ident = tp.ident;
             Some(quote! {
                 {
-                    let tp = #ident::value_type();
-                    data.extend(tp.id.as_bytes());
-                    data.extend(tp.data);
+                    type_params.0.push(#ident::grease_type());
                 }
             })
         }
@@ -181,11 +179,11 @@ pub fn derive_get_value_type(input: TokenStream) -> TokenStream {
     let namestr = syn::LitStr::new(&format!("{}", name), name.span());
 
     let expanded = quote! {
-        impl<#(#param_reqs),*> ::grease::GetValueType for #name<#(#param_args),*> {
-            fn value_type() -> ::grease::ValueType {
-                let mut data = Vec::new();
+        impl<#(#param_reqs),*> ::grease::types::GreaseType for #name<#(#param_args),*> {
+            fn grease_type() -> ::grease::types::Type {
+                let mut type_params = ::grease::types::TypeParameters::default();
                 #(#set_data)*
-                ::grease::ValueType::with_data(::grease::type_uuid(concat![module_path!(), "::", #namestr].as_bytes()), data)
+                ::grease::types::Type::with_data(::grease::types::grease_type_uuid(concat![module_path!(), "::", #namestr].as_bytes()), type_params.into())
             }
         }
     };
@@ -193,7 +191,7 @@ pub fn derive_get_value_type(input: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 
-#[proc_macro_derive(Trait)]
+#[proc_macro_derive(GreaseTrait)]
 pub fn derive_grease_trait(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
 
@@ -202,7 +200,7 @@ pub fn derive_grease_trait(input: TokenStream) -> TokenStream {
     let param_reqs = params.clone().into_iter().map(|mut p| {
         if let syn::GenericParam::Type(ref mut tp) = &mut p {
             tp.bounds.push(parse_quote! {
-                    ::grease::GetValueType
+                    ::grease::types::GreaseType
             });
         }
         p
@@ -226,9 +224,7 @@ pub fn derive_grease_trait(input: TokenStream) -> TokenStream {
             let ident = tp.ident;
             Some(quote! {
                 {
-                    let tp = #ident::value_type();
-                    data.extend(tp.id.as_bytes());
-                    data.extend(tp.data);
+                    type_params.0.push(#ident::grease_type());
                 }
             })
         }
@@ -237,11 +233,11 @@ pub fn derive_grease_trait(input: TokenStream) -> TokenStream {
     let namestr = syn::LitStr::new(&format!("{}", name), name.span());
 
     let expanded = quote! {
-        impl<#(#param_reqs),*> ::grease::Trait for #name<#(#param_args),*> {
-            fn trait_type() -> ::grease::TraitType {
-                let mut data = Vec::new();
+        impl<#(#param_reqs),*> ::grease::traits::GreaseTrait for #name<#(#param_args),*> {
+            fn grease_trait() -> ::grease::traits::Trait {
+                let mut type_params = ::grease::types::TypeParameters::default();
                 #(#set_data)*
-                ::grease::TraitType::with_data(::grease::type_uuid(concat![module_path!(), "::", #namestr].as_bytes()), data)
+                ::grease::traits::Trait::with_data(::grease::traits::grease_trait_uuid(concat![module_path!(), "::", #namestr].as_bytes()), type_params.into())
             }
         }
     };

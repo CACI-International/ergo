@@ -54,6 +54,14 @@ impl Buffer {
     }
 }
 
+/// Get the alignment of the given pointer.
+///
+/// This may overestimate the alignment, but we are willing to allow that.
+/// This will always return a power of 2 in [1,16].
+fn align_of_ptr<T>(v: *const T) -> usize {
+    std::cmp::min(1 << (v as usize).trailing_zeros(), 16)
+}
+
 /// A type which stores a value with the type erased.
 #[derive(StableAbi)]
 #[repr(C)]
@@ -282,9 +290,9 @@ impl ErasedTrivial {
     /// # Safety
     /// This is unsafe because the pointer's alignment and the size must match that of the type it
     /// represents. This should generally only be called with arguments returned by a call to
-    /// `into_raw_parts`.
+    /// `into_raw_bytes`.
     pub unsafe fn from_raw_bytes(bytes: Box<[u8]>) -> Self {
-        let align = 1 << (bytes.as_ptr() as usize).trailing_zeros();
+        let align = align_of_ptr(bytes.as_ptr());
         if bytes.len() <= std::mem::size_of::<Buffer>() && align <= std::mem::align_of::<Buffer>() {
             let v: Vec<u8> = bytes.into();
             let len = v.len();
@@ -362,6 +370,44 @@ impl ErasedTrivial {
         String::from_utf8_unchecked(self.to_boxed_slice::<u8>().to_vec()).into_boxed_str()
     }
 
+    /// Serialize into a vector.
+    ///
+    /// The value can be recreated with `deserialize`.
+    ///
+    /// TODO: use serde?
+    pub fn serialize(self, v: &mut Vec<u8>) {
+        let bytes = self.as_bytes();
+        let align = align_of_ptr(bytes.as_ptr());
+        let size = bytes.len();
+
+        debug_assert!(align <= u8::MAX as usize);
+        v.push(align as u8);
+        debug_assert!(size <= u32::MAX as usize);
+        v.extend(&(size as u32).to_be_bytes());
+        v.extend(bytes.as_ref());
+    }
+
+    /// Deserialize an ErasedTrivial value from a slice.
+    ///
+    /// Panics if there are not as many bytes as expected.
+    ///
+    /// The slice is updated to the location where deserialization ended.
+    ///
+    /// This will always work if the value was written with `serialize`.
+    pub fn deserialize(v: &mut &[u8]) -> Self {
+        use std::convert::TryInto;
+        let align = v[0] as usize;
+        let size = u32::from_be_bytes(v[1..5].try_into().expect("incorrect array length")) as usize;
+        let ptr = unsafe {
+            std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(size, align))
+        };
+
+        let mut boxed = unsafe { Vec::from_raw_parts(ptr, size, size) }.into_boxed_slice();
+        boxed.copy_from_slice(&v[5..(5 + size)]);
+        *v = &v[(5 + size)..];
+        unsafe { Self::from_raw_bytes(boxed) }
+    }
+
     /// Return whether the underlying buffer is a Box or not.
     fn is_box(&self) -> bool {
         self.is_box_and_size >= Self::IS_BOX_MASK_AND_MAX_SIZE
@@ -387,7 +433,7 @@ impl Drop for ErasedTrivial {
     fn drop(&mut self) {
         if self.is_box() {
             let ptr = *self.data.as_ref::<*mut u8>();
-            let align = 1 << (ptr as usize).trailing_zeros();
+            let align = align_of_ptr(ptr);
             unsafe {
                 std::alloc::dealloc(ptr, Layout::from_size_align_unchecked(self.size(), align))
             };

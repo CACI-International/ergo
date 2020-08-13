@@ -1,12 +1,10 @@
 //! The AST definition for script files.
 
+use so_runtime::source::*;
 use std::fmt;
 
 mod parse;
-mod source;
 mod tokenize;
-
-pub use source::*;
 
 /// A parsed expression.
 #[derive(Clone, Debug, Hash, PartialEq)]

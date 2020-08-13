@@ -1,0 +1,14 @@
+[package]
+name = "so_std"
+version = "1.0.0-alpha.4"
+authors = ["Alex Franchuk <afranchuk@caci.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+grease = { path = "../grease" }
+so_runtime = { path = "../so_runtime" }
+
+[lib]
+crate-type = ["cdylib"]

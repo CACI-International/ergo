@@ -1,5 +1,7 @@
-use grease::*;
+use abi_stable::std_types::{RDuration, ROption, RSlice, RString, RVec};
+use grease::runtime::*;
 use simplelog::WriteLogger;
+use so_runtime::{source::Source, traits, types, ScriptEnv};
 use std::io::Write;
 use std::str::FromStr;
 
@@ -28,7 +30,7 @@ mod constants {
 use constants::PROGRAM_NAME;
 use options::*;
 use output::{output, Output};
-use script::{force_value_nested, Error, Eval, Script, Source, SourceContext, StringSource};
+use script::{Script, StringSource};
 
 trait AppErr {
     type Output;
@@ -52,45 +54,11 @@ fn err_exit(s: &str) -> ! {
     std::process::exit(1);
 }
 
-struct Errors(Vec<SourceContext<Error>>);
-
-impl std::fmt::Display for Errors {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        for e in &self.0 {
-            writeln!(f, "{}", e)?
-        }
-        Ok(())
-    }
-}
-
-impl AppErr for Errors {
-    type Output = ();
-
-    fn app_err_result(self, s: &str) -> Result<Self::Output, String> {
-        if !self.0.is_empty() {
-            Err(format!("{}:\n{}", s, self))
-        } else {
-            Ok(())
-        }
-    }
-}
-
 impl<T, E: std::fmt::Display> AppErr for Result<T, E> {
     type Output = T;
 
     fn app_err_result(self, s: &str) -> Result<Self::Output, String> {
         self.map_err(move |e| format!("{}:\n{}", s, e))
-    }
-}
-
-impl<T> AppErr for Eval<T> {
-    type Output = T;
-
-    fn app_err_result(self, s: &str) -> Result<Self::Output, String> {
-        match self {
-            Eval::Value(v) => Ok(v),
-            Eval::Error => Err(s.to_owned()),
-        }
     }
 }
 
@@ -114,21 +82,19 @@ impl AppErr for bool {
     }
 }
 
-fn run(opts: Opts) -> Result<String, grease::Error> {
+fn run(opts: Opts) -> Result<String, grease::value::Error> {
     let mut output =
         output(opts.format, !opts.stop).app_err("could not create output from requested format");
     output.set_log_level(opts.log_level);
-    let logger = logger_ref(output);
+    let (logger, orig_logger) = logger_ref(output);
 
     #[derive(Clone)]
-    struct WeakLogTarget(std::sync::Weak<std::sync::Mutex<dyn LogTarget + Send>>);
+    struct WeakLogTarget(std::sync::Weak<grease::runtime::Logger>);
 
     impl WeakLogTarget {
         fn with<F: FnOnce(&mut (dyn LogTarget + Send))>(&self, f: F) {
             if let Some(logger) = self.0.upgrade() {
-                if let Ok(mut guard) = logger.lock() {
-                    f(&mut *guard)
-                }
+                f(&mut *logger.lock())
             }
         }
     }
@@ -138,15 +104,15 @@ fn run(opts: Opts) -> Result<String, grease::Error> {
             self.with(move |l| l.log(entry))
         }
 
-        fn dropped(&mut self, context: std::sync::Arc<[String]>) {
+        fn dropped(&mut self, context: RVec<RString>) {
             self.with(move |l| l.dropped(context))
         }
 
-        fn timer_pending(&mut self, id: &[String]) {
+        fn timer_pending(&mut self, id: RSlice<RString>) {
             self.with(move |l| l.timer_pending(id))
         }
 
-        fn timer_complete(&mut self, id: &[String], duration: Option<std::time::Duration>) {
+        fn timer_complete(&mut self, id: RSlice<RString>, duration: ROption<RDuration>) {
             self.with(move |l| l.timer_complete(id, duration))
         }
     }
@@ -161,18 +127,16 @@ fn run(opts: Opts) -> Result<String, grease::Error> {
         // ThreadPool asynchronously, and likewise for general logging we shouldn't rely on
         // values cleaning up after themselves.
         let weak = std::sync::Arc::downgrade(&logger);
-        let logger_weak = logger_ref(WeakLogTarget(weak.clone()));
+        let logger_weak = logger_ref(WeakLogTarget(weak.clone())).0;
         script::script_context(
             Context::builder()
-                .logger_ref(logger_weak.clone())
+                .logger_ref(logger_weak.clone().into())
                 .storage_directory(working_dir.join(opts.storage))
                 .threads(opts.jobs)
                 .keep_going(!opts.stop)
                 .on_error(move || {
                     if let Some(logger) = weak.upgrade() {
-                        if let Ok(mut l) = logger.lock() {
-                            l.new_error();
-                        }
+                        logger.lock().new_error();
                     }
                 }),
         )
@@ -200,25 +164,30 @@ fn run(opts: Opts) -> Result<String, grease::Error> {
     let mut loaded = Script::load(source).app_err_result("failed to parse script file")?;
 
     // Add initial load path and working directory.
-    let mut env: script::types::Env = Default::default();
+    let mut env: ScriptEnv = Default::default();
     env.insert(
         constants::LOAD_PATH_BINDING.into(),
-        Eval::Value(Source::builtin(
-            script::types::ScriptArray(vec![working_dir.clone().into()]).into(),
-        )),
+        Ok(Source::builtin(
+            types::Array(vec![working_dir.clone().into()]).into(),
+        ))
+        .into(),
     );
     env.insert(
         constants::WORKING_DIRECTORY_BINDING.into(),
-        Eval::Value(Source::builtin(working_dir.into())),
+        Ok(Source::builtin(
+            grease::path::PathBuf::from(working_dir).into(),
+        ))
+        .into(),
     );
     loaded.top_level_env(env);
-    let script_output = loaded.plan(&mut ctx);
-    Errors(ctx.get_errors()).app_err_result("error(s) while executing script")?;
+    let script_output = loaded
+        .plan(&mut ctx)
+        .app_err_result("errors(s) while executing script");
     let script_output = script_output.app_err_result("an evaluation error occurred")?;
 
     // Set thread ids in the logger, as reported by the task manager.
     {
-        let mut l = logger.lock().unwrap();
+        let mut l = orig_logger.lock();
         l.set_thread_ids(ctx.task.thread_ids().iter().cloned().collect());
     }
 
@@ -232,8 +201,8 @@ fn run(opts: Opts) -> Result<String, grease::Error> {
 
     script_output
         .map(|v| {
-            futures::executor::block_on(force_value_nested(&traits, v.clone()))?;
-            Ok(grease::display(&traits, &v).to_string())
+            futures::executor::block_on(traits::force_value_nested(&traits, v.clone()))?;
+            Ok(traits::display(&traits, &v).to_string())
         })
         .unwrap()
 }
