@@ -53,9 +53,16 @@ impl GreaseNested for types::Map {
     }
 }
 
+impl GreaseNested for types::Either {
+    fn nested(&self) -> BTreeSet<Value> {
+        vec![self.value()].into_iter().collect()
+    }
+}
+
 pub fn traits(traits: &mut Traits) {
     Nested::add_impl::<types::Array>(traits);
     Nested::add_impl::<types::Map>(traits);
+    Nested::add_impl::<types::Either>(traits);
 }
 
 macro_rules! add_value {

@@ -114,4 +114,29 @@ pub fn traits(traits: &mut Traits) {
 
         traits.add_impl_for_type::<types::Map, ValueByContent>(ValueByContent { value_by_content });
     }
+
+    // types::Either
+    {
+        extern "C" fn value_by_content(
+            traits: &Traits,
+            _: Value,
+            data: &RArc<Erased>,
+        ) -> RResult<Value, Error> {
+            let e = unsafe { data.as_ref().as_ref::<types::Either>() };
+            let v = e.value();
+            match traits.get::<ValueByContent>(&v) {
+                Some(t) => t.value_by_content(traits, v),
+                None => Err(format!(
+                    "ValueByContent not implemented for {}",
+                    super::type_name(traits, &v.grease_type())
+                )
+                .into()),
+            }
+            .into()
+        }
+
+        traits.add_impl_for_type::<types::Either, ValueByContent>(ValueByContent {
+            value_by_content,
+        });
+    }
 }

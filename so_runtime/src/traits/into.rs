@@ -1,9 +1,10 @@
 //! The IntoTyped grease trait.
 
 use abi_stable::{
-    std_types::{ROption, RString},
+    std_types::{RArc, ROption, RString},
     StableAbi,
 };
+use grease::closure::*;
 use grease::path::PathBuf;
 use grease::runtime::Traits;
 use grease::traits::*;
@@ -14,13 +15,13 @@ use grease::value::{IntoValue, TypedValue, Value};
 #[derive(GreaseTrait, StableAbi)]
 #[repr(C)]
 pub struct IntoTyped<T: StableAbi + 'static> {
-    into: extern "C" fn(Value) -> Value,
+    into: Closure<Args1<Value>, Value>,
     _phantom: std::marker::PhantomData<extern "C" fn() -> *const T>,
 }
 
 impl<T: GreaseType + StableAbi + 'static> IntoTyped<T> {
     pub fn into_typed(&self, v: Value) -> TypedValue<T> {
-        (self.into)(v).typed::<T>().unwrap()
+        self.into.call(v).typed::<T>().unwrap()
     }
 
     /// Add an implementation of the IntoTyped grease trait.
@@ -29,16 +30,10 @@ impl<T: GreaseType + StableAbi + 'static> IntoTyped<T> {
         U: GreaseType + Send + Sync + Clone + 'static,
         T: From<U> + GreaseType + Send + Sync + 'static,
     {
-        extern "C" fn do_conversion<T, U>(v: Value) -> Value
-        where
-            U: GreaseType + Send + Sync + Clone + 'static,
-            T: From<U> + GreaseType + Send + Sync + 'static,
-        {
-            v.typed::<U>().unwrap().map(|v| T::from(v.clone())).into()
-        }
-
         traits.add_impl_for_type::<U, IntoTyped<T>>(IntoTyped {
-            into: do_conversion::<T, U>,
+            into: Closure::from(|v: Value| {
+                v.typed::<U>().unwrap().map(|v| T::from(v.clone())).into()
+            }),
             _phantom: Default::default(),
         })
     }
@@ -48,14 +43,11 @@ pub fn traits(traits: &mut Traits) {
     // Identity: T -> T
     {
         extern "C" fn id(_traits: &Traits, tp: &Type, trt: &Trait) -> ROption<Erased> {
-            extern "C" fn id_into(v: Value) -> Value {
-                v
-            }
             if trt.id == grease_trait_uuid(b"so_types::traits::IntoTyped") {
                 let trait_type: Type = trt.data.clone().into();
                 if tp == &trait_type {
                     return ROption::RSome(Erased::new(IntoTyped::<()> {
-                        into: id_into,
+                        into: (|v: Value| v).into(),
                         _phantom: Default::default(),
                     }));
                 }
@@ -67,11 +59,8 @@ pub fn traits(traits: &mut Traits) {
 
     // () -> bool (false)
     {
-        extern "C" fn conv(v: Value) -> Value {
-            v.then(false.into_value())
-        }
         traits.add_impl_for_type::<(), IntoTyped<bool>>(IntoTyped {
-            into: conv,
+            into: (|v: Value| v.then(false.into_value())).into(),
             _phantom: Default::default(),
         });
     }
@@ -80,15 +69,67 @@ pub fn traits(traits: &mut Traits) {
 
     // Path -> String
     {
-        extern "C" fn conv(v: Value) -> Value {
-            v.typed::<PathBuf>()
-                .unwrap()
-                .map(|v| RString::from(v.as_ref().as_ref().to_string_lossy().into_owned()))
-                .into()
-        }
         traits.add_impl_for_type::<PathBuf, IntoTyped<RString>>(IntoTyped {
-            into: conv,
+            into: (|v: Value| {
+                v.typed::<PathBuf>()
+                    .unwrap()
+                    .map(|v| RString::from(v.as_ref().as_ref().to_string_lossy().into_owned()))
+                    .into()
+            })
+            .into(),
             _phantom: Default::default(),
         });
+    }
+
+    // types::Either
+    {
+        use crate::types::Either;
+        use grease::types::TypeParameters;
+
+        extern "C" fn gen(traits: &Traits, tp: &Type, trt: &Trait) -> ROption<Erased> {
+            if *tp != Either::grease_type() || trt.id != IntoTyped::<()>::grease_trait().id {
+                return ROption::RNone;
+            }
+
+            let params = TypeParameters::from(tp.sideband.clone());
+            let impls: Option<Vec<_>> = params.0.iter().map(|t| traits.get_impl(t, trt)).collect();
+            let to_type = TypeParameters::from(trt.data.clone())
+                .0
+                .get(0)
+                .unwrap()
+                .clone();
+            impls
+                .map(move |impls| {
+                    let impls = std::sync::Arc::new(impls);
+                    Erased::new(IntoTyped::<()> {
+                        into: Closure::from(move |v: Value| {
+                            let v = v.typed::<Either>().unwrap();
+                            let deps = grease::depends![v];
+                            let impls = impls.clone();
+                            Value::new(
+                                RArc::new(to_type.clone()),
+                                async move {
+                                    let e = v.await?;
+                                    let t = unsafe {
+                                        impls
+                                            .get(e.index())
+                                            .unwrap()
+                                            .as_ref()
+                                            .as_ref::<IntoTyped<()>>()
+                                    };
+                                    t.into.call(e.value()).await
+                                },
+                                deps,
+                            )
+                        }),
+                        _phantom: Default::default(),
+                    })
+                })
+                .into()
+        }
+
+        unsafe {
+            traits.add_generator(gen);
+        }
     }
 }

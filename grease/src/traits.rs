@@ -103,14 +103,20 @@ impl Traits {
         self.impls.insert(TraitKey(tp, trt), ROption::RNone);
     }
 
+    /// Get the raw trait implementation.
+    pub fn get_impl(&self, tp: &Type, trt: &Trait) -> Option<Option<RArc<Erased>>> {
+        self.impls
+            .get(&TraitKey(tp.clone(), trt.clone()))
+            .cloned()
+            .map(|i| i.into_option())
+    }
+
     /// Get a trait implementation.
     ///
     /// Unsafe because the implementation type must correspond to the grease trait descriptor.
     pub unsafe fn get_unchecked<Impl>(&self, tp: &Type, trt: &Trait) -> Option<Option<Ref<Impl>>> {
-        self.impls
-            .get(&TraitKey(tp.clone(), trt.clone()))
-            .cloned()
-            .map(|i| i.into_option().map(|erased| Ref::new(erased)))
+        self.get_impl(tp, trt)
+            .map(|i| i.map(|erased| Ref::new(erased)))
     }
 
     /// Get a trait implementation for the given type.

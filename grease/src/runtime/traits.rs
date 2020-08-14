@@ -153,31 +153,36 @@ impl Traits {
 
     /// Get a trait for a ValueType, if it is implemented.
     pub fn get_type<Impl: trt::GreaseTrait>(&self, tp: &Type) -> Option<trt::Ref<Impl>> {
+        self.get_impl(tp, &Impl::grease_trait())
+            .map(|r| unsafe { trt::Ref::new(r) })
+    }
+
+    /// Get a trait, if implemented, as the raw implementation.
+    pub fn get_impl(&self, tp: &Type, trt: &trt::Trait) -> Option<RArc<Erased>> {
         // If we leave this expression in the match expression, it will not drop the read lock until
         // the match expression is closed.
-        let imp = self.inner.traits.read().get::<Impl>(tp);
+        let imp = self.inner.traits.read().get_impl(tp, trt);
         match imp {
             Some(v) => v,
             None => {
                 // Try generators to find implementation.
-                if let Some(imp) = self.try_generators(tp, &Impl::grease_trait()) {
+                if let Some(imp) = self.try_generators(tp, trt) {
                     unsafe {
-                        self.inner.traits.write().insert_unchecked(
-                            tp.clone(),
-                            Impl::grease_trait(),
-                            imp,
-                        );
+                        self.inner
+                            .traits
+                            .write()
+                            .insert_unchecked(tp.clone(), trt.clone(), imp);
                     }
                 } else {
                     self.inner
                         .traits
                         .write()
-                        .insert_empty(tp.clone(), Impl::grease_trait());
+                        .insert_empty(tp.clone(), trt.clone());
                 }
                 self.inner
                     .traits
                     .read()
-                    .get::<Impl>(tp)
+                    .get_impl(tp, trt)
                     .expect("trait implementation must exist")
             }
         }
