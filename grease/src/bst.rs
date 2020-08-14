@@ -64,7 +64,7 @@ impl<K, V> Node<K, V> {
 
     pub fn next_parent(&self) -> Option<&Self> {
         unsafe { self.parent.as_ref() }.and_then(|parent| match &parent.left {
-            RNone => Some(parent),
+            RNone => parent.next_parent(),
             RSome(l) => {
                 if std::ptr::eq(self, &**l) {
                     Some(parent)
@@ -369,6 +369,7 @@ mod map {
 
     impl<K: Eq, V: Eq> Eq for BstMap<K, V> {}
 
+    #[derive(Debug)]
     pub struct Iter<'a, K, V>
     where
         K: 'a,
@@ -378,6 +379,7 @@ mod map {
         len: usize,
     }
 
+    #[derive(Debug)]
     pub struct IntoIter<K, V> {
         node: Option<Box<Node<K, V>>>,
         len: usize,
@@ -390,6 +392,7 @@ mod map {
             match self.node {
                 None => None,
                 Some(n) => {
+                    debug_assert!(self.len > 0);
                     self.len -= 1;
                     match &n.right {
                         RSome(r) => {
@@ -519,20 +522,31 @@ mod map {
 
         #[test]
         fn iter() {
-            let mut m: BstMap<u8, u8> = BstMap::new();
-            assert_eq!(m.insert(5, 1), None);
-            assert_eq!(m.insert(2, 2), None);
-            assert_eq!(m.insert(3, 3), None);
-            assert_eq!(m.insert(8, 4), None);
-            assert_eq!(m.insert(1, 5), None);
-            assert_eq!(m.len(), 5);
-            assert!(!m.is_empty());
-            assert_eq!(m.insert(2, 6), Some(2));
+            {
+                let mut m: BstMap<u8, u8> = BstMap::new();
+                assert_eq!(m.insert(5, 1), None);
+                assert_eq!(m.insert(2, 2), None);
+                assert_eq!(m.insert(3, 3), None);
+                assert_eq!(m.insert(8, 4), None);
+                assert_eq!(m.insert(1, 5), None);
+                assert_eq!(m.len(), 5);
+                assert!(!m.is_empty());
+                assert_eq!(m.insert(2, 6), Some(2));
 
-            let entries: Vec<_> = m.iter().collect();
-            assert_eq!(entries.len(), m.len());
-            let expected: Vec<(&u8, &u8)> = vec![(&1, &5), (&2, &6), (&3, &3), (&5, &1), (&8, &4)];
-            assert_eq!(entries, expected);
+                let entries: Vec<_> = m.iter().collect();
+                assert_eq!(entries.len(), m.len());
+                let expected: Vec<(&u8, &u8)> = vec![(&1, &5), (&2, &6), (&3, &3), (&5, &1), (&8, &4)];
+                assert_eq!(entries, expected);
+            }
+            {
+                let mut m: BstMap<String, u8> = BstMap::new();
+                m.insert("alpha".into(), 1);
+                m.insert("beta".into(), 2);
+                let mut i = m.iter();
+                assert_eq!(i.next(), Some((&"alpha".to_owned(), &1)));
+                assert_eq!(i.next(), Some((&"beta".to_owned(), &2)));
+                assert_eq!(i.next(), None);
+            }
         }
 
         #[test]

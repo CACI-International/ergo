@@ -42,24 +42,18 @@ impl Buffer {
     }
 
     /// Get a reference of type T.
-    pub fn as_ref<T>(&self) -> &T {
+    ///
+    /// Unsafe because callers must ensure the Buffer holds the type T.
+    pub unsafe fn as_ref<T>(&self) -> &T {
         Self::check_type::<T>();
         let ptr = &self.0 as *const [u8; 24] as *const T;
-        unsafe { ptr.as_ref().unwrap() }
+        ptr.as_ref().unwrap()
     }
 
     fn check_type<T>() {
-        assert!(std::mem::size_of::<T>() <= std::mem::size_of::<Self>());
-        assert!(std::mem::align_of::<T>() <= std::mem::align_of::<Self>());
+        debug_assert!(std::mem::size_of::<T>() <= std::mem::size_of::<Self>());
+        debug_assert!(std::mem::align_of::<T>() <= std::mem::align_of::<Self>());
     }
-}
-
-/// Get the alignment of the given pointer.
-///
-/// This may overestimate the alignment, but we are willing to allow that.
-/// This will always return a power of 2 in [1,16].
-fn align_of_ptr<T>(v: *const T) -> usize {
-    std::cmp::min(1 << (v as usize).trailing_zeros(), 16)
 }
 
 /// A type which stores a value with the type erased.
@@ -201,12 +195,13 @@ use triv::{trivialize, Trivialize};
 
 /// An Erased type for Trivial types.
 ///
-/// Unlike Erased, this trait can implement Clone, PartialEq, Eq, and Hash.
+/// Unlike Erased, this type implements Clone, PartialEq, Eq, and Hash.
 #[derive(Debug, StableAbi)]
 #[repr(C)]
 pub struct ErasedTrivial {
     data: Buffer,
-    is_box_and_size: usize, // first bit indicates box, rest indicate size
+    size: u32,
+    is_box_and_align: u8, // first bit indicates box, remaining indicate alignment
 }
 
 // ErasedTrivial will always be Send and Sync by definition of Trivial, though we are requiring
@@ -215,14 +210,19 @@ unsafe impl Send for ErasedTrivial {}
 unsafe impl Sync for ErasedTrivial {}
 
 impl ErasedTrivial {
-    const IS_BOX_MASK_AND_MAX_SIZE: usize = 1 << (std::mem::size_of::<usize>() * 8 - 1);
+    const IS_BOX_MASK_AND_MAX_ALIGN: u8 = 1 << (std::mem::size_of::<u8>() * 8 - 1);
 
     /// Create a new ErasedTrivial from the given value.
     pub fn new<T: Eraseable + Trivial>(v: T) -> Self {
         if std::mem::size_of_val(&v) <= std::mem::size_of::<Buffer>()
             && std::mem::align_of_val(&v) <= std::mem::align_of::<Buffer>()
         {
-            Self::from_type(v, false, std::mem::size_of::<T>())
+            Self::from_type(
+                v,
+                false,
+                std::mem::size_of::<T>(),
+                std::mem::align_of::<T>(),
+            )
         } else {
             // Box<T: Sized> is defined as having the same size as usize/pointer, so the size
             // assertions should be true on any platform.
@@ -234,7 +234,7 @@ impl ErasedTrivial {
     ///
     /// When retrieving the value later, one should use `as_ref::<T>()`/`to_owned::<T>()`.
     pub fn from_boxed<T: Eraseable + Trivial>(v: Box<T>) -> Self {
-        Self::from_type(v, true, std::mem::size_of::<T>())
+        Self::from_type(v, true, std::mem::size_of::<T>(), std::mem::align_of::<T>())
     }
 
     /// Create a new ErasedTrivial from the given boxed slice.
@@ -242,7 +242,8 @@ impl ErasedTrivial {
     /// When retrieving the value later, one should use `as_slice::<T>()`/`to_boxed_slice::<T>()`.
     pub fn from_slice<T: Eraseable + Trivial>(v: Box<[T]>) -> Self {
         let size = std::mem::size_of_val(&*v);
-        Self::from_type(v, true, size)
+        let align = std::mem::align_of_val(&*v);
+        Self::from_type(v, true, size, align)
     }
 
     /// Create a new ErasedTrivial from the given boxed str.
@@ -254,35 +255,42 @@ impl ErasedTrivial {
 
     /// Create an ErasedTrivial from the given type, assuming the size and alignment of the type will fit
     /// in the Buffer. Panics if these constraints are not satisfied (in debug builds).
-    fn from_type<T: Eraseable>(v: T, boxed: bool, size: usize) -> Self {
+    fn from_type<T: Eraseable>(v: T, boxed: bool, size: usize, align: usize) -> Self {
         debug_assert!(std::mem::size_of::<T>() <= std::mem::size_of::<Buffer>());
         debug_assert!(std::mem::align_of::<T>() <= std::mem::align_of::<Buffer>());
-        debug_assert!(size < Self::IS_BOX_MASK_AND_MAX_SIZE);
+        assert!(size <= u32::MAX as usize);
+        assert!(align < Self::IS_BOX_MASK_AND_MAX_ALIGN as usize);
         ErasedTrivial {
             data: Buffer::new(v),
-            is_box_and_size: (if boxed {
-                Self::IS_BOX_MASK_AND_MAX_SIZE
+            size: size as u32,
+            is_box_and_align: (if boxed {
+                Self::IS_BOX_MASK_AND_MAX_ALIGN
             } else {
                 0
-            }) + size,
+            }) + (align as u8),
         }
     }
 
     /// Convert this ErasedTrivial into raw components.
-    pub fn into_raw_bytes(mut self) -> Box<[u8]> {
-        if self.is_box() {
-            let ptr = unsafe { self.data.as_value::<*mut u8>() };
-            let ret = unsafe {
-                Box::from_raw(std::slice::from_raw_parts_mut(ptr, self.size()) as *mut [u8])
-            };
-            self.is_box_and_size = 0;
-            ret
+    ///
+    /// Returns a boxed slice and the required alignment of the bytes.
+    pub fn into_raw(mut self) -> (Box<[u8]>, usize) {
+        let ptr = if self.is_box() {
+            unsafe { self.data.as_value::<*mut u8>() }
         } else {
-            let mut bytes = self.data.0.to_vec();
-            bytes.resize(self.size(), 0);
-            self.is_box_and_size = 0;
-            bytes.into_boxed_slice()
-        }
+            unsafe {
+                let ptr = alloc(Layout::from_size_align_unchecked(self.size(), self.align()));
+                ptr.copy_from_nonoverlapping(self.data.0.as_ptr(), self.size());
+                ptr
+            }
+        };
+
+        let ret = (
+            unsafe { Box::from_raw(std::slice::from_raw_parts_mut(ptr, self.size()) as *mut [u8]) },
+            self.align(),
+        );
+        self.clear();
+        ret
     }
 
     /// Create an ErasedTrivial from raw components.
@@ -290,20 +298,19 @@ impl ErasedTrivial {
     /// # Safety
     /// This is unsafe because the pointer's alignment and the size must match that of the type it
     /// represents. This should generally only be called with arguments returned by a call to
-    /// `into_raw_bytes`.
-    pub unsafe fn from_raw_bytes(bytes: Box<[u8]>) -> Self {
-        let align = align_of_ptr(bytes.as_ptr());
-        if bytes.len() <= std::mem::size_of::<Buffer>() && align <= std::mem::align_of::<Buffer>() {
-            let v: Vec<u8> = bytes.into();
-            let len = v.len();
+    /// `into_raw`.
+    pub unsafe fn from_raw(bytes: Box<[u8]>, align: usize) -> Self {
+        let size = bytes.len();
+        if size <= std::mem::size_of::<Buffer>() && align <= std::mem::align_of::<Buffer>() {
             let mut b = Buffer::default();
-            b.0.copy_from_slice(&v);
+            b.0[..size].copy_from_slice(&bytes);
             ErasedTrivial {
                 data: b,
-                is_box_and_size: len,
+                size: size as u32,
+                is_box_and_align: align as u8,
             }
         } else {
-            Self::from_slice(bytes)
+            Self::from_type(bytes, true, size, align)
         }
     }
 
@@ -323,8 +330,11 @@ impl ErasedTrivial {
     ///
     /// Unsafe because callers must ensure the data is a [T].
     pub unsafe fn as_slice<T>(&self) -> &[T] {
-        assert!(self.is_box());
-        let ptr: *const T = *self.data.as_ref::<*const T>();
+        let ptr = if self.is_box() {
+            *self.data.as_ref::<*const T>()
+        } else {
+            self.data.as_ref::<T>() as *const T
+        };
         std::slice::from_raw_parts(ptr, self.size() / std::mem::size_of::<T>())
     }
 
@@ -341,10 +351,11 @@ impl ErasedTrivial {
     pub unsafe fn to_owned<T>(mut self) -> T {
         if self.is_box() {
             let v = self.data.as_value::<Box<T>>();
-            self.is_box_and_size = 0;
+            self.clear();
             *v
         } else {
             let v = self.data.as_value::<T>();
+            self.clear();
             v
         }
     }
@@ -353,13 +364,19 @@ impl ErasedTrivial {
     ///
     /// Unsafe because callers must ensure the data is a [T].
     pub unsafe fn to_boxed_slice<T>(mut self) -> Box<[T]> {
-        assert!(self.is_box());
-        let ptr = self.data.as_value::<*mut T>();
+        let ptr = if self.is_box() {
+            self.data.as_value::<*mut T>()
+        } else {
+            let ptr = alloc(Layout::from_size_align_unchecked(self.size(), self.align()));
+            ptr.copy_from_nonoverlapping(self.data.0.as_ptr(), self.size());
+            ptr as *mut T
+        };
+
         let ret = Box::from_raw(std::slice::from_raw_parts_mut(
             ptr,
             self.size() / std::mem::size_of::<T>(),
         ) as *mut [T]);
-        self.is_box_and_size = 0;
+        self.clear();
         ret
     }
 
@@ -376,8 +393,7 @@ impl ErasedTrivial {
     ///
     /// TODO: use serde?
     pub fn serialize(self, v: &mut Vec<u8>) {
-        let bytes = self.as_bytes();
-        let align = align_of_ptr(bytes.as_ptr());
+        let (bytes, align) = self.into_raw();
         let size = bytes.len();
 
         debug_assert!(align <= u8::MAX as usize);
@@ -398,31 +414,41 @@ impl ErasedTrivial {
         use std::convert::TryInto;
         let align = v[0] as usize;
         let size = u32::from_be_bytes(v[1..5].try_into().expect("incorrect array length")) as usize;
-        let ptr = unsafe {
-            std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(size, align))
-        };
+        let ptr = unsafe { alloc(Layout::from_size_align_unchecked(size, align)) };
 
-        let mut boxed = unsafe { Vec::from_raw_parts(ptr, size, size) }.into_boxed_slice();
+        let mut boxed =
+            unsafe { Box::from_raw(std::slice::from_raw_parts_mut(ptr, size) as *mut [u8]) };
         boxed.copy_from_slice(&v[5..(5 + size)]);
         *v = &v[(5 + size)..];
-        unsafe { Self::from_raw_bytes(boxed) }
+        unsafe { Self::from_raw(boxed, align) }
     }
 
     /// Return whether the underlying buffer is a Box or not.
     fn is_box(&self) -> bool {
-        self.is_box_and_size >= Self::IS_BOX_MASK_AND_MAX_SIZE
+        self.is_box_and_align >= Self::IS_BOX_MASK_AND_MAX_ALIGN
     }
 
     /// Return the size of the stored type.
     fn size(&self) -> usize {
-        self.is_box_and_size & !Self::IS_BOX_MASK_AND_MAX_SIZE
+        self.size as usize
+    }
+
+    fn align(&self) -> usize {
+        (self.is_box_and_align & !Self::IS_BOX_MASK_AND_MAX_ALIGN) as usize
+    }
+
+    fn clear(&mut self) {
+        self.size = 0;
+        self.is_box_and_align = 0;
     }
 
     /// Return the underlying data bytes as a slice.
     fn as_bytes(&self) -> &[u8] {
         if self.is_box() {
-            let ptr = *self.data.as_ref::<*const u8>();
-            unsafe { std::slice::from_raw_parts(ptr, self.size()) }
+            unsafe {
+                let ptr = *self.data.as_ref::<*const u8>();
+                std::slice::from_raw_parts(ptr, self.size())
+            }
         } else {
             &self.data.0[..self.size()]
         }
@@ -431,11 +457,13 @@ impl ErasedTrivial {
 
 impl Drop for ErasedTrivial {
     fn drop(&mut self) {
-        if self.is_box() {
-            let ptr = *self.data.as_ref::<*mut u8>();
-            let align = align_of_ptr(ptr);
+        if self.is_box() && self.size() > 0 {
             unsafe {
-                std::alloc::dealloc(ptr, Layout::from_size_align_unchecked(self.size(), align))
+                let ptr = *self.data.as_ref::<*mut u8>();
+                std::alloc::dealloc(
+                    ptr,
+                    Layout::from_size_align_unchecked(self.size(), self.align()),
+                )
             };
         }
     }
@@ -445,34 +473,33 @@ impl Default for ErasedTrivial {
     fn default() -> Self {
         ErasedTrivial {
             data: unsafe { std::mem::MaybeUninit::uninit().assume_init() },
-            is_box_and_size: 0,
+            size: 0,
+            is_box_and_align: 0,
         }
     }
 }
 
 impl Clone for ErasedTrivial {
     fn clone(&self) -> Self {
-        if self.is_box() {
-            let from = *self.data.as_ref::<*const u8>();
-            let align = 1 << (from as usize).trailing_zeros();
-            let mem = unsafe { alloc(Layout::from_size_align_unchecked(self.size(), align)) };
-            unsafe { mem.copy_from(from, self.size()) };
-            ErasedTrivial {
-                data: Buffer::new(mem),
-                is_box_and_size: self.is_box_and_size,
+        let data = if self.is_box() {
+            unsafe {
+                let from = *self.data.as_ref::<*const u8>();
+                let mem = alloc(Layout::from_size_align_unchecked(self.size(), self.align()));
+                mem.copy_from_nonoverlapping(from, self.size());
+                Buffer::new(mem)
             }
         } else {
-            ErasedTrivial {
-                data: self.data.clone(),
-                is_box_and_size: self.is_box_and_size,
-            }
-        }
+            self.data.clone()
+        };
+        ErasedTrivial { data, ..*self }
     }
 }
 
 impl PartialEq for ErasedTrivial {
     fn eq(&self, other: &Self) -> bool {
-        self.is_box_and_size == other.is_box_and_size && self.as_bytes() == other.as_bytes()
+        self.size == other.size
+            && self.is_box_and_align == other.is_box_and_align
+            && self.as_bytes() == other.as_bytes()
     }
 }
 
@@ -480,16 +507,18 @@ impl Eq for ErasedTrivial {}
 
 impl PartialOrd for ErasedTrivial {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.is_box_and_size
-            .partial_cmp(&other.is_box_and_size)
+        self.size
+            .partial_cmp(&other.size)
+            .or_else(|| self.is_box_and_align.partial_cmp(&other.is_box_and_align))
             .or_else(|| self.as_bytes().partial_cmp(other.as_bytes()))
     }
 }
 
 impl Ord for ErasedTrivial {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.is_box_and_size
-            .cmp(&other.is_box_and_size)
+        self.size
+            .cmp(&other.size)
+            .then_with(|| self.is_box_and_align.cmp(&other.is_box_and_align))
             .then_with(|| self.as_bytes().cmp(other.as_bytes()))
     }
 }
@@ -631,5 +660,28 @@ mod test {
         assert_eq!(erased, copied);
         assert_eq!(&*unsafe { erased.to_boxed_slice::<u8>() }, &[1, 3, 5, 7]);
         assert_ne!(copied, ErasedTrivial::from_slice(o.into_boxed_slice()));
+    }
+
+    #[test]
+    fn erased_trivial_serialize() {
+        let a: Vec<u8> = vec![1, 3, 5, 7];
+        let b: Vec<u8> = vec![2, 4, 6, 8];
+        let mut buf: Vec<u8> = Vec::new();
+        let erased_a = ErasedTrivial::from_slice(a.clone().into_boxed_slice());
+        let erased_b = ErasedTrivial::from_slice(b.clone().into_boxed_slice());
+        erased_a.serialize(&mut buf);
+        erased_b.serialize(&mut buf);
+
+        let buf_serialized = ErasedTrivial::from_slice(buf.into_boxed_slice());
+        let mut buf2 = Vec::new();
+        buf_serialized.serialize(&mut buf2);
+
+        let recovered_buf = ErasedTrivial::deserialize(&mut &buf2[..]);
+        let mut bytes = unsafe { recovered_buf.as_slice::<u8>() };
+
+        let recovered_a = ErasedTrivial::deserialize(&mut bytes);
+        let recovered_b = ErasedTrivial::deserialize(&mut bytes);
+        assert_eq!(unsafe { recovered_a.as_slice::<u8>() }, a.as_slice());
+        assert_eq!(unsafe { recovered_b.as_slice::<u8>() }, b.as_slice());
     }
 }

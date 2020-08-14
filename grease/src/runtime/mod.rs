@@ -231,7 +231,10 @@ impl std::error::Error for BuilderError {
 
 impl ContextBuilder {
     /// Set the logger to use.
-    pub fn logger<T: LogTarget + Send + 'static>(mut self, logger: T) -> (Self, OriginalLogger<T>) {
+    pub fn logger<T: LogTarget + Send + 'static>(
+        mut self,
+        logger: T,
+    ) -> (Self, std::sync::Arc<OriginalLogger<T>>) {
         let (logger, orig) = logger_ref(logger);
         self.logger = Some(logger.into());
         (self, orig)

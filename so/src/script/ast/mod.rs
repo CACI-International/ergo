@@ -17,7 +17,6 @@ pub enum Expression {
     Command(Box<Expr>, Exprs),
     Block(Exprs),
     Function(CmdPat, Box<Expr>),
-    If(Box<Expr>, Box<Expr>, Box<Expr>),
     Match(Box<Expr>, Vec<(Pat, Expr)>),
 }
 

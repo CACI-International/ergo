@@ -153,7 +153,10 @@ impl Traits {
 
     /// Get a trait for a ValueType, if it is implemented.
     pub fn get_type<Impl: trt::GreaseTrait>(&self, tp: &Type) -> Option<trt::Ref<Impl>> {
-        match self.inner.traits.read().get::<Impl>(tp) {
+        // If we leave this expression in the match expression, it will not drop the read lock until
+        // the match expression is closed.
+        let imp = self.inner.traits.read().get::<Impl>(tp);
+        match imp {
             Some(v) => v,
             None => {
                 // Try generators to find implementation.

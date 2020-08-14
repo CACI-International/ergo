@@ -50,7 +50,7 @@ impl fmt::Display for Token {
 
 impl PartialEq<Source<Self>> for Token {
     fn eq(&self, other: &Source<Self>) -> bool {
-        self == &*other
+        self == &**other
     }
 }
 

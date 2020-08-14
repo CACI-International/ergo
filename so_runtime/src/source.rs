@@ -346,32 +346,6 @@ impl<T> Source<T> {
     }
 }
 
-#[derive(Debug)]
-struct ErrorWithSource {
-    err: grease::value::Error,
-    context: Source<String>,
-}
-
-impl ErrorWithSource {
-    pub fn new(err: grease::value::Error, context: Source<String>) -> Self {
-        ErrorWithSource { err, context }
-    }
-}
-
-impl fmt::Display for ErrorWithSource {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, "{}", self.err)?;
-        write!(f, "note: {}", self.context)?;
-        Ok(())
-    }
-}
-
-impl std::error::Error for ErrorWithSource {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(self.err.error_ref())
-    }
-}
-
 impl<T: ToString> Source<T> {
     /// Add extra context to an error.
     pub fn context_for_error(&self, e: grease::value::Error) -> grease::value::Error {

@@ -40,7 +40,7 @@ macro_rules! script_value_as {
     ($val:expr , $ty:ty , $err:expr) => {{
         let (source, v) = $val.take();
         match v.typed::<$ty>() {
-            Err(e) => Err(grease::value::Error::from(
+            Err(_) => Err(grease::value::Error::from(
                 source.with(grease::value::Error::from($err).error()),
             )),
             Ok(v) => v.get().map_err(|e| source.with(e.error()).into()),
@@ -52,7 +52,7 @@ macro_rules! script_value_sourced_as {
     ($val:expr , $ty:ty , $err:expr) => {{
         let (source, v) = $val.take();
         match v.typed::<$ty>() {
-            Err(e) => Err(grease::value::Error::from(
+            Err(_) => Err(grease::value::Error::from(
                 source.with(grease::value::Error::from($err).error()),
             )),
             Ok(v) => match v.get() {
@@ -187,9 +187,8 @@ pub fn load_script(ctx: &mut Context<FunctionCall>) -> EvalResult {
                     .clone(),
                 PathBuf,
                 format!("'{}' must be a path", WORKING_DIRECTORY_BINDING)
-            )?
-            .as_ref()
-            .as_ref();
+            )?;
+            let mod_path = mod_path.as_ref().as_ref();
 
             let mut ancestors = mod_path.ancestors().peekable();
             if loading_workspace {
@@ -211,8 +210,13 @@ pub fn load_script(ctx: &mut Context<FunctionCall>) -> EvalResult {
 
     let mut was_loading = false;
     let to_load = to_load.and_then(|p| {
-        if ctx.loading.contains(&PathBuf::from(p)) {
-            was_loading = true;
+        for l_path in ctx.loading.iter() {
+            if l_path.as_ref() == p {
+                was_loading = true;
+                break;
+            }
+        }
+        if was_loading {
             None
         } else {
             Some(p)
@@ -222,7 +226,7 @@ pub fn load_script(ctx: &mut Context<FunctionCall>) -> EvalResult {
     // Load if some module was found.
     if let Some(p) = to_load {
         let p = p.canonicalize().unwrap(); // unwrap because is_file() should guarantee that canonicalize will succeed
-        if !ctx.load_cache.contains_key(&PathBuf::from(p)) {
+        if !ctx.load_cache.contains_key(&PathBuf::from(p.clone())) {
             // Only load prelude if this is not a workspace.
             let load_prelude = p.file_name().unwrap() != SCRIPT_WORKSPACE_NAME; // unwrap because p must have a final component
 
@@ -270,12 +274,15 @@ pub fn load_script(ctx: &mut Context<FunctionCall>) -> EvalResult {
                                 None => e.source().map(has_load_failed_error).unwrap_or(false),
                             }
                         }
+                        None
+                        /* TODO
                         if has_load_failed_error(e.error_ref()) {
                             None
                         } else {
                             ctx.loading.pop();
                             return Err(e);
                         }
+                        */
                     }
                     Ok(v) => Some(
                         v.map(|v| match v.typed::<types::Map>() {
@@ -299,7 +306,10 @@ pub fn load_script(ctx: &mut Context<FunctionCall>) -> EvalResult {
             let mut top_level_env: ScriptEnv = Default::default();
             top_level_env.insert(
                 LOAD_PATH_BINDING.into(),
-                Ok(Source::builtin(types::Array(rvec![mod_path]).into())).into(),
+                Ok(Source::builtin(
+                    types::Array(rvec![mod_path.clone()]).into(),
+                ))
+                .into(),
             );
             if let Some(v) = prelude {
                 let (source, v) = v.take();
@@ -486,85 +496,6 @@ impl From<String> for Error {
     }
 }
 
-/*
-#[derive(Debug)]
-pub struct SourceContext<T> {
-    value: Source<T>,
-    context: Vec<Source<String>>,
-}
-
-impl<T> SourceContext<T> {
-    pub fn add_context(&mut self, ctx: Source<String>) {
-        self.context.push(ctx)
-    }
-}
-
-impl<T: ToString> SourceContext<T> {
-    pub fn nest_into<U, V>(self, v: V) -> SourceContext<U>
-    where
-        V: Into<SourceContext<U>>,
-    {
-        let mut ret = v.into();
-        ret.context.push(self.value.map(|v| v.to_string()));
-        ret.context.extend(self.context);
-        ret
-    }
-
-    pub fn nest<V: Into<Self>>(self, v: V) -> Self {
-        self.nest_into(v)
-    }
-}
-
-impl<U> From<Source<U>> for SourceContext<Error>
-where
-    Error: From<U>,
-{
-    fn from(u: Source<U>) -> SourceContext<Error> {
-        SourceContext {
-            value: u.map(Error::from),
-            context: vec![],
-        }
-    }
-}
-
-impl<T> std::iter::Extend<Source<String>> for SourceContext<T> {
-    fn extend<U>(&mut self, iter: U)
-    where
-        U: IntoIterator<Item = Source<String>>,
-    {
-        self.context.extend(iter);
-    }
-}
-
-impl<T, U: ToString> std::iter::Extend<SourceContext<U>> for SourceContext<T> {
-    fn extend<I>(&mut self, iter: I)
-    where
-        I: IntoIterator<Item = SourceContext<U>>,
-    {
-        for i in iter {
-            self.context.push(i.value.map(|v| v.to_string()));
-            self.context.extend(i.context);
-        }
-    }
-}
-
-impl<T: fmt::Display> fmt::Display for SourceContext<T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, "{}", self.value)?;
-        for c in &self.context {
-            writeln!(f, "{}", c)?;
-        }
-        Ok(())
-    }
-}
-
-impl<T: std::error::Error + 'static> std::error::Error for SourceContext<T> {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&self.value)
-    }
-}
-*/
-
 /// Apply the value to the given arguments.
 ///
 /// If `env_lookup` is true and `v` is a `ScriptString`, it will be looked up in the environment.
@@ -697,7 +628,7 @@ fn _apply_pattern(
             (Ok(result), Some(val)) => {
                 if *result != (*val).literal {
                     errs.push(
-                        result.with("value definition").context_for_error(
+                        result.source().with("value definition").context_for_error(
                             source
                                 .with(Error::PatternMismatch((*result).clone()))
                                 .into(),
@@ -1161,45 +1092,6 @@ impl Plan<FunctionCall> for Rt<&'_ types::Function> {
             ctx.args.clear();
         }
         ret
-        /*
-        match self {
-            ScriptFunction::UserFunction(pat, e, env) => {
-                let src = e.source();
-
-                ctx.substituting_env(vec![env.clone()], |ctx| {
-                    let args = std::mem::take(&mut ctx.args);
-                    Ok(
-                        match ctx
-                            .split_map(move |ctx| apply_command_pattern(ctx, pat.clone(), args))
-                        {
-                            Ok(bindings) => {
-                                ctx.inner.env.push(bindings);
-                                e.clone().plan_split(ctx).map(Source::unwrap)
-                            }
-                            Err(errs) => {
-                                let mut err =
-                                    SourceContext::from(src.with(Error::ArgumentMismatch));
-                                err.extend(errs);
-                                ctx.error(err);
-                                Eval::Error
-                            }
-                        },
-                    )
-                })
-            }
-            ScriptFunction::BuiltinFunction(f) => match f(ctx) {
-                Err(e) => {
-                    ctx.args.clear();
-                    Err(e)
-                }
-                Ok(Eval::Error) => {
-                    ctx.args.clear();
-                    Ok(Eval::Error)
-                }
-                v => v,
-            },
-        }
-            */
     }
 }
 
@@ -1306,29 +1198,29 @@ impl Plan<Runtime> for Rt<Expression> {
                 .map(Source::unwrap) // TODO: don't do this
             }
             Block(_) => panic!("Block expression must be evaluated at a higher level"),
-            Function(pat, e) => Ok(
-                todo!(), /*types::Function::new(|ctx| {
-                             let src = e.source();
+            Function(pat, e) => {
+                let env = ctx.env_flatten();
+                Ok(types::Function::new(move |ctx| {
+                    let src = e.source();
 
-                             ctx.substituting_env(vec![env.clone()], |ctx| {
-                                 let args = std::mem::take(&mut ctx.args);
-                                 Ok(
-                                     match ctx
-                                         .split_map(move |ctx| apply_command_pattern(ctx, pat.clone(), args))
-                                     {
-                                         Ok(bindings) => {
-                                             ctx.inner.env.push(bindings);
-                                             e.clone().plan_split(ctx).map(Source::unwrap)
-                                         }
-                                         Err(errs) => Err(grease::value::Error::aggregate(errs)
-                                             .context_for_error(src.with(Error::ArgumentMismatch))),
-                                     },
-                                 )
-                             })
-                         })
-                         .into_value()*/
-            ),
-            If(_, _, _) => unimplemented!(),
+                    ctx.substituting_env(rvec![env.clone()], |ctx| {
+                        let args = std::mem::take(&mut ctx.args);
+                        match ctx.split_map(|ctx| apply_command_pattern(ctx, pat.clone(), args)) {
+                            Ok(bindings) => {
+                                ctx.env_scoped(bindings, |ctx| {
+                                    Rt(e.as_ref().clone()).plan_split(ctx)
+                                })
+                                .0
+                            }
+                            Err(errs) => Err(grease::value::Error::from(
+                                src.with(Error::ArgumentMismatch),
+                            )
+                            .with_context(grease::value::Error::aggregate(errs))),
+                        }
+                    })
+                })
+                .into_value())
+            }
             /*
             If(cond, t, f) => {
                 let cond = match cond.plan(ctx) {
@@ -1369,11 +1261,10 @@ impl Plan<FunctionCall> for Rt<Source<&'_ types::Function>> {
     type Output = EvalResult;
 
     fn plan(self, ctx: &mut Context<FunctionCall>) -> Self::Output {
-        let (source, f) = self.take();
+        let (source, f) = self.0.take();
         Rt(f).plan(ctx).map(|v| {
-            source.with(
+            source.clone().with(
                 source
-                    .clone()
                     .with("while evaluating value returned by this function call")
                     .imbue_error_context(v.unwrap()),
             )
@@ -1385,13 +1276,13 @@ impl Plan<Runtime> for Rt<Source<Expression>> {
     type Output = EvalResult;
 
     fn plan(self, ctx: &mut Context<Runtime>) -> Self::Output {
-        let (source, expr) = self.take();
+        let (source, expr) = self.0.take();
         if let Expression::Block(es) = expr {
             Rt(source.with(es)).plan(ctx)
         } else {
             Rt(expr).plan(ctx).map(|v| {
                 //v.map(|v| {
-                source.with(
+                source.clone().with(
                     source
                         .with("while evaluating value returned by this expression")
                         .imbue_error_context(v),
@@ -1406,7 +1297,7 @@ impl Plan<Runtime> for Rt<Source<MergeExpression>> {
     type Output = SoResult<Source<(bool, Source<Value>)>>;
 
     fn plan(self, ctx: &mut Context<Runtime>) -> Self::Output {
-        let (source, val) = self.take();
+        let (source, val) = self.0.take();
         let merge = val.merge;
         Rt(val.expr).plan(ctx).map(move |e| source.with((merge, e)))
     }
@@ -1416,7 +1307,7 @@ impl Plan<Runtime> for Rt<Source<Vec<Source<MergeExpression>>>> {
     type Output = EvalResult;
 
     fn plan(self, ctx: &mut Context<Runtime>) -> Self::Output {
-        let (self_source, this) = self.take();
+        let (self_source, this) = self.0.take();
 
         // Evaluate in a new scope
         let (val, scope) = ctx.env_scoped(Default::default(), |ctx| {

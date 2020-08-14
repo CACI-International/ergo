@@ -2,13 +2,14 @@ use std::path::Path;
 use std::process::Command;
 
 const PROGRAM: &'static str = env!("CARGO_BIN_EXE_so");
+const MANIFEST: &'static str = env!("CARGO_MANIFEST_DIR");
 
 type Result<T> = std::io::Result<T>;
 
 fn run(args: &[&str], word: &[u8]) -> Result<()> {
     Command::new(PROGRAM)
         .args(args)
-        .current_dir(Path::new(file!()).with_extension(""))
+        .current_dir(dbg!(Path::new(MANIFEST).parent().unwrap().join(file!()).with_extension("")))
         .output()
         .and_then(|output| {
             if output.status.success() {

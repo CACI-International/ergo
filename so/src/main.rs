@@ -1,4 +1,7 @@
-use abi_stable::std_types::{RDuration, ROption, RSlice, RString, RVec};
+use abi_stable::{
+    rvec,
+    std_types::{RDuration, ROption, RSlice, RString, RVec},
+};
 use grease::runtime::*;
 use simplelog::WriteLogger;
 use so_runtime::{source::Source, traits, types, ScriptEnv};
@@ -13,7 +16,6 @@ mod sync;
 /// Constant values shared throughout the program.
 mod constants {
     pub const PROGRAM_NAME: &'static str = env!("CARGO_PKG_NAME");
-    pub const PROJECT_ROOT_BINDING: &'static str = "project-root";
     pub const LOAD_PATH_BINDING: &'static str = "load-path";
     pub const WORKING_DIRECTORY_BINDING: &'static str = "work-dir";
     pub const SCRIPT_EXTENSION: &'static str = concat!(env!("CARGO_PKG_NAME"), "s");
@@ -126,11 +128,11 @@ fn run(opts: Opts) -> Result<String, grease::value::Error> {
         // holding onto the logger given in on_error) doesn't reliably shutdown as it drops the
         // ThreadPool asynchronously, and likewise for general logging we shouldn't rely on
         // values cleaning up after themselves.
-        let weak = std::sync::Arc::downgrade(&logger);
-        let logger_weak = logger_ref(WeakLogTarget(weak.clone())).0;
+        let weak = std::sync::Arc::downgrade(&orig_logger);
+        let logger_weak = logger_ref(WeakLogTarget(std::sync::Arc::downgrade(&logger))).0;
         script::script_context(
             Context::builder()
-                .logger_ref(logger_weak.clone().into())
+                .logger_ref(logger_weak.into())
                 .storage_directory(working_dir.join(opts.storage))
                 .threads(opts.jobs)
                 .keep_going(!opts.stop)
@@ -163,21 +165,17 @@ fn run(opts: Opts) -> Result<String, grease::value::Error> {
     let source = Source::new(StringSource::new("<command line>", to_eval));
     let mut loaded = Script::load(source).app_err_result("failed to parse script file")?;
 
+    let work_dir: grease::value::Value = grease::path::PathBuf::from(working_dir).into();
+
     // Add initial load path and working directory.
     let mut env: ScriptEnv = Default::default();
     env.insert(
         constants::LOAD_PATH_BINDING.into(),
-        Ok(Source::builtin(
-            types::Array(vec![working_dir.clone().into()]).into(),
-        ))
-        .into(),
+        Ok(Source::builtin(types::Array(rvec![work_dir.clone()]).into())).into(),
     );
     env.insert(
         constants::WORKING_DIRECTORY_BINDING.into(),
-        Ok(Source::builtin(
-            grease::path::PathBuf::from(working_dir).into(),
-        ))
-        .into(),
+        Ok(Source::builtin(work_dir)).into(),
     );
     loaded.top_level_env(env);
     let script_output = loaded
