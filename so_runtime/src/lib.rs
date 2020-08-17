@@ -19,8 +19,11 @@ use abi_stable::{
 use grease::bst::BstMap;
 use grease::path::PathBuf;
 use grease::runtime::Context;
+use grease::type_erase::{Eraseable, Erased};
 use grease::value::{Error, Value};
 use std::collections::BTreeMap;
+
+pub use so_runtime_macro::plugin_entry;
 
 /// The Result type.
 pub type Result<T> = std::result::Result<T, Error>;
@@ -70,6 +73,7 @@ pub struct Runtime {
     env: RVec<ScriptEnv>,
     pub load_cache: BstMap<PathBuf, EvalResultAbi>,
     pub loading: RVec<PathBuf>,
+    lifetime: RVec<Erased>,
 }
 
 /// Script function call context.
@@ -166,6 +170,11 @@ impl Runtime {
             e.append(&mut m.clone());
             e
         })
+    }
+
+    /// Store a value for the duration of the runtime's lifetime.
+    pub fn lifetime<T: Eraseable>(&mut self, v: T) {
+        self.lifetime.push(Erased::new(v));
     }
 }
 
@@ -462,3 +471,32 @@ pub trait ContextEnv: GetEnv {
 }
 
 impl<T: GetEnv> ContextEnv for T {}
+
+#[macro_export]
+macro_rules! script_value_as {
+    ($val:expr , $ty:ty , $err:expr) => {{
+        let (source, v) = $val.take();
+        match v.typed::<$ty>() {
+            Err(_) => Err(grease::value::Error::from(
+                source.with(grease::value::Error::from($err).error()),
+            )),
+            Ok(v) => v.get().map_err(|e| source.with(e.error()).into()),
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! script_value_sourced_as {
+    ($val:expr , $ty:ty , $err:expr) => {{
+        let (source, v) = $val.take();
+        match v.typed::<$ty>() {
+            Err(_) => Err(grease::value::Error::from(
+                source.with(grease::value::Error::from($err).error()),
+            )),
+            Ok(v) => match v.get() {
+                Ok(v) => Ok(source.with(v)),
+                Err(e) => Err(source.with(e.error()).into()),
+            },
+        }
+    }};
+}

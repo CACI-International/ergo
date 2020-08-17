@@ -7,6 +7,7 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+abi_stable = "0.8"
 grease = { path = "../grease" }
 so_runtime = { path = "../so_runtime" }
 

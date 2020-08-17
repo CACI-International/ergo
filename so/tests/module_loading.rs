@@ -9,7 +9,7 @@ type Result<T> = std::io::Result<T>;
 fn run(args: &[&str], word: &[u8]) -> Result<()> {
     Command::new(PROGRAM)
         .args(args)
-        .current_dir(dbg!(Path::new(MANIFEST).parent().unwrap().join(file!()).with_extension("")))
+        .current_dir(Path::new(MANIFEST).parent().unwrap().join(file!()).with_extension(""))
         .output()
         .and_then(|output| {
             if output.status.success() {

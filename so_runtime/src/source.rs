@@ -363,6 +363,7 @@ impl<T: ToString> Source<T> {
 }
 
 impl<T, E> Source<Result<T, E>> {
+    /// Move the source into the Ok/Err result.
     pub fn transpose(self) -> Result<Source<T>, Source<E>> {
         let (source, v) = self.take();
         match v {
@@ -371,11 +372,13 @@ impl<T, E> Source<Result<T, E>> {
         }
     }
 
+    /// Move the source into the Ok result.
     pub fn transpose_ok(self) -> Result<Source<T>, E> {
         let (source, v) = self.take();
         v.map(move |t| source.with(t))
     }
 
+    /// Move the source into the Err result.
     pub fn transpose_err(self) -> Result<T, Source<E>> {
         let (source, v) = self.take();
         v.map_err(move |e| source.with(e))
@@ -385,6 +388,16 @@ impl<T, E> Source<Result<T, E>> {
 impl<T: PartialEq> Source<T> {
     pub fn total_eq(this: &Self, other: &Self) -> bool {
         this.value == other.value && this.location == other.location && this.source == other.source
+    }
+}
+
+impl<E> Source<E>
+where
+    E: Into<grease::value::Error>,
+{
+    /// Convert a sourced error into a grease::value::Error.
+    pub fn into_grease_error(self) -> grease::value::Error {
+        self.map(|v| v.into().error()).into()
     }
 }
 

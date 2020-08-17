@@ -11,7 +11,7 @@ use crate::constants::{
     LOAD_PATH_BINDING, SCRIPT_EXTENSION, SCRIPT_PRELUDE_NAME, SCRIPT_WORKSPACE_NAME,
     WORKING_DIRECTORY_BINDING,
 };
-use abi_stable::rvec;
+use abi_stable::{rvec, std_types::RResult};
 use grease::{
     bst::BstMap,
     depends, match_value,
@@ -20,12 +20,13 @@ use grease::{
     types::GreaseType,
     value::{IntoValue, Value},
 };
+use libloading as dl;
 use log::trace;
 use so_runtime::source::{FileSource, IntoSource, Source};
 use so_runtime::Result as SoResult;
 use so_runtime::{
-    types, ContextEnv, EvalResult, FunctionArguments, FunctionCall, ResultIterator, Runtime,
-    ScriptEnv, UncheckedFunctionArguments,
+    script_value_as, script_value_sourced_as, types, ContextEnv, EvalResult, FunctionArguments,
+    FunctionCall, ResultIterator, Runtime, ScriptEnv, UncheckedFunctionArguments,
 };
 use std::collections::BTreeMap;
 use std::fmt;
@@ -36,31 +37,60 @@ use std::str::FromStr;
 #[derive(Clone, Copy, Debug, GreaseType, Hash)]
 pub struct ScriptEnvIntoMap;
 
-macro_rules! script_value_as {
-    ($val:expr , $ty:ty , $err:expr) => {{
-        let (source, v) = $val.take();
-        match v.typed::<$ty>() {
-            Err(_) => Err(grease::value::Error::from(
-                source.with(grease::value::Error::from($err).error()),
-            )),
-            Ok(v) => v.get().map_err(|e| source.with(e.error()).into()),
-        }
-    }};
-}
+/// Look at the file contents to determine if the file is a plugin (dynamic library).
+fn is_plugin(f: &path::Path) -> bool {
+    use std::fs::File;
+    use std::io::Read;
 
-macro_rules! script_value_sourced_as {
-    ($val:expr , $ty:ty , $err:expr) => {{
-        let (source, v) = $val.take();
-        match v.typed::<$ty>() {
-            Err(_) => Err(grease::value::Error::from(
-                source.with(grease::value::Error::from($err).error()),
-            )),
-            Ok(v) => match v.get() {
-                Ok(v) => Ok(source.with(v)),
-                Err(e) => Err(source.with(e.error()).into()),
-            },
+    let mut file = File::open(f).expect("could not open file for reading");
+    if cfg!(target_os = "macos") {
+        let mut magic: [u8; 4] = [0; 4];
+        if file.read_exact(&mut magic).is_err() {
+            return false;
         }
-    }};
+        return &magic == &[0xfe, 0xed, 0xfa, 0xce]
+            || &magic == &[0xfe, 0xed, 0xfa, 0xcf]
+            || &magic == &[0xca, 0xfe, 0xba, 0xbe];
+    } else if cfg!(target_os = "windows") {
+        use std::io::{Seek, SeekFrom};
+
+        // DOS header
+        let mut m1: [u8; 2] = [0; 2];
+        if file.read_exact(&mut m1).is_err() {
+            return false;
+        }
+        if &m1 != b"MZ" && &m1 != b"ZM" {
+            return false;
+        }
+
+        // PE header offset
+        if file.seek(SeekFrom::Start(0x3c)).is_err() {
+            return false;
+        }
+        let mut offset: [u8; 4] = [0; 4];
+        if file.read_exact(&mut offset).is_err() {
+            return false;
+        }
+        let offset = u32::from_ne_bytes(offset);
+
+        // PE header
+        if file.seek(SeekFrom::Start(offset as _)).is_err() {
+            return false;
+        }
+        let mut magic: [u8; 4] = [0; 4];
+        if file.read_exact(&mut magic).is_err() {
+            return false;
+        }
+        return &magic == b"PE\0\0";
+    } else if cfg!(target_os = "linux") {
+        let mut magic: [u8; 4] = [0; 4];
+        if let Err(_) = file.read_exact(&mut magic) {
+            return false;
+        }
+        return &magic == b"\x7fELF";
+    } else {
+        panic!("unsupported operating system");
+    }
 }
 
 pub fn load_script(ctx: &mut Context<FunctionCall>) -> EvalResult {
@@ -298,9 +328,8 @@ pub fn load_script(ctx: &mut Context<FunctionCall>) -> EvalResult {
                 None
             };
 
-            let mut script = super::Script::load(Source::new(FileSource(p.clone())))?;
-
             let mod_path: Value = PathBuf::from(mod_path.to_owned()).into();
+            let plugin = is_plugin(&p);
 
             // Add initial load path binding first; the prelude may override it.
             let mut top_level_env: ScriptEnv = Default::default();
@@ -311,22 +340,42 @@ pub fn load_script(ctx: &mut Context<FunctionCall>) -> EvalResult {
                 ))
                 .into(),
             );
-            if let Some(v) = prelude {
-                let (source, v) = v.take();
-                top_level_env.extend(
-                    v.into_iter()
-                        .map(|(k, v)| (k, Ok(source.clone().with(v)).into())),
-                );
+
+            if !plugin {
+                if let Some(v) = prelude {
+                    let (source, v) = v.take();
+                    top_level_env.extend(
+                        v.into_iter()
+                            .map(|(k, v)| (k, Ok(source.clone().with(v)).into())),
+                    );
+                }
             }
+
             // Add mod path binding last; it should not be overriden.
             top_level_env.insert(
                 WORKING_DIRECTORY_BINDING.into(),
                 Ok(Source::builtin(mod_path)).into(),
             );
-            script.top_level_env(top_level_env);
-            let result = ctx.split_map(|ctx: &mut Context<Runtime>| script.plan(ctx));
-            ctx.load_cache
-                .insert(PathBuf::from(p.clone()), result.into());
+
+            let result = if !plugin {
+                let mut script = super::Script::load(Source::new(FileSource(p.clone())))?;
+                script.top_level_env(top_level_env);
+                ctx.split_map(|ctx: &mut Context<Runtime>| script.plan(ctx))
+                    .into()
+            } else {
+                let lib = dl::Library::new(&p)?;
+                let f: dl::Symbol<
+                    extern "C" fn(
+                        &mut Context<Runtime>,
+                    )
+                        -> RResult<Source<Value>, grease::value::Error>,
+                > = unsafe { lib.get(b"_so_plugin") }?;
+                let result = ctx.split_map(|ctx: &mut Context<Runtime>| f(ctx));
+                ctx.lifetime(lib);
+                result
+            };
+
+            ctx.load_cache.insert(PathBuf::from(p.clone()), result);
             ctx.loading.pop();
         }
 

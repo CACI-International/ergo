@@ -42,6 +42,9 @@ struct InternalTraitGeneratorByTrait(
     *const (),
 );
 
+unsafe impl Send for InternalTraitGeneratorByTrait {}
+unsafe impl Sync for InternalTraitGeneratorByTrait {}
+
 impl InternalTraitGeneratorByTrait {
     pub fn call(&self, trts: &Traits, tp: &Type) -> ROption<Erased> {
         (self.0)(self.1, trts as *const _, tp as *const _)
