@@ -57,6 +57,13 @@ impl Type {
 pub trait GreaseType {
     /// Return the associated grease `Type`.
     fn grease_type() -> Type;
+
+    /// Return whether the Self type matches the given grease type.
+    ///
+    /// The default implementation tests for total equality with `Self::grease_type()`.
+    fn matches_grease_type(a: &Type) -> bool {
+        &Self::grease_type() == a
+    }
 }
 
 #[derive(Clone, Debug, Default)]

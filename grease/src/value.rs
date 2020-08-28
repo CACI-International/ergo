@@ -185,7 +185,7 @@ impl Value {
     ///
     /// If the conversion fails, the Err result contains the original Value.
     pub fn typed<T: GreaseType>(self) -> std::result::Result<TypedValue<T>, Value> {
-        if *self.grease_type() == T::grease_type() {
+        if T::matches_grease_type(&*self.grease_type()) {
             Ok(TypedValue {
                 inner: self,
                 phantom: Default::default(),
@@ -272,7 +272,7 @@ macro_rules! match_value_type {
     ( $value:expr => { $( $t:ty => $e:expr $(,)? )+ => $else:expr } ) => {
         {
             use $crate::types::GreaseType;
-            $( if $value == <$t>::grease_type() { $e } else )+ { $else }
+            $( if <$t>::matches_grease_type(&$value) { $e } else )+ { $else }
         }
     }
 }

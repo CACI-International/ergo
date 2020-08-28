@@ -85,11 +85,12 @@ extern "C" fn apply_trait_generator_by_trait(
 
 extern "C" fn trait_generator_to_erased<Impl: trt::GreaseTrait>(
     f: *const (),
-    traits: &Traits,
-    tp: &Type,
+    traits: *const Traits,
+    tp: *const Type,
 ) -> ROption<Erased> {
     (unsafe { std::mem::transmute::<*const (), fn(&Traits, &Type) -> ROption<Impl>>(f) })(
-        traits, tp,
+        unsafe { traits.as_ref() }.unwrap(),
+        unsafe { tp.as_ref() }.unwrap(),
     )
     .map(Erased::new)
 }
@@ -297,7 +298,7 @@ impl Traits {
             .entry(Impl::grease_trait())
             .or_default()
             .push(InternalTraitGeneratorByTrait(
-                unsafe { std::mem::transmute(&trait_generator_to_erased::<Impl>) },
+                trait_generator_to_erased::<Impl>,
                 gen as *const (),
             ));
     }

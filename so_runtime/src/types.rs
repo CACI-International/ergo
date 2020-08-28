@@ -92,12 +92,20 @@ impl Function {
 }
 
 /// Script either type, used for conditional results.
-///
-/// When Values are made with this type, the type should have sideband data with `TypeParameters`
-/// of each of the possible `Value` types. `Either::new` manages this safely.
-#[derive(Clone, Debug, GreaseType, StableAbi)]
+#[derive(Clone, Debug, StableAbi)]
 #[repr(C)]
 pub struct Either(usize, Value);
+
+impl GreaseType for Either {
+    fn grease_type() -> Type {
+        Type::named(b"so_runtime::types::Either")
+    }
+
+    /// Ignores the extra type information.
+    fn matches_grease_type(a: &Type) -> bool {
+        Self::grease_type().id == a.id
+    }
+}
 
 impl Either {
     /// Create a new Either TypedValue.
@@ -117,7 +125,7 @@ impl Either {
             deps,
         )
         .typed::<Self>()
-        .unwrap()
+        .expect("must return an Either type")
     }
 
     /// Get the full grease type (with either types).

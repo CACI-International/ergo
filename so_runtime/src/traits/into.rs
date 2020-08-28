@@ -97,7 +97,8 @@ pub fn traits(traits: &mut Traits) {
         use grease::types::TypeParameters;
 
         extern "C" fn gen(traits: &Traits, tp: &Type, trt: &Trait) -> ROption<Erased> {
-            if *tp != Either::grease_type() || trt.id != IntoTyped::<()>::grease_trait().id {
+            // We only want cases with any either type and any IntoTyped trait.
+            if !Either::matches_grease_type(tp) || trt.id != IntoTyped::<()>::grease_trait().id {
                 return ROption::RNone;
             }
 

@@ -2,7 +2,10 @@
 
 use super::type_name;
 use crate::types;
-use abi_stable::{std_types::RString, StableAbi};
+use abi_stable::{
+    std_types::{ROption, RString},
+    StableAbi,
+};
 use grease::path::PathBuf;
 use grease::runtime::Traits;
 use grease::traits::*;
@@ -176,5 +179,25 @@ pub fn traits(traits: &mut Traits) {
     Display::add_impl::<PathBuf>(traits);
     Display::add_impl::<types::Array>(traits);
     Display::add_impl::<types::Map>(traits);
-    Display::add_impl::<types::Either>(traits);
+
+    // types::Either
+    {
+        extern "C" fn fmt(t: &Traits, data: &Erased) -> RString {
+            let either = unsafe { data.as_ref::<types::Either>() };
+            format!(
+                "either({}): {}",
+                either.index(),
+                display(t, &either.value())
+            )
+            .into()
+        }
+
+        traits.add_generator_by_trait_for_trait(|_traits, tp| {
+            if !types::Either::matches_grease_type(tp) {
+                return ROption::RNone;
+            }
+
+            ROption::RSome(Display { fmt })
+        });
+    }
 }

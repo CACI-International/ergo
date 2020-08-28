@@ -3,7 +3,7 @@
 //! This trait is used to expose nested Values within Value types.
 
 use crate::types;
-use abi_stable::StableAbi;
+use abi_stable::{std_types::ROption, StableAbi};
 use futures::future::{FutureExt, TryFutureExt};
 use futures::stream::{futures_unordered::FuturesUnordered, TryStreamExt};
 use grease::{
@@ -53,16 +53,25 @@ impl GreaseNested for types::Map {
     }
 }
 
-impl GreaseNested for types::Either {
-    fn nested(&self) -> BTreeSet<Value> {
-        vec![self.value()].into_iter().collect()
-    }
-}
-
 pub fn traits(traits: &mut Traits) {
     Nested::add_impl::<types::Array>(traits);
     Nested::add_impl::<types::Map>(traits);
-    Nested::add_impl::<types::Either>(traits);
+
+    // types::Either
+    {
+        extern "C" fn nested(data: &Erased) -> BstSet<Value> {
+            let either = unsafe { data.as_ref::<types::Either>() };
+            vec![either.value()].into_iter().collect()
+        }
+
+        traits.add_generator_by_trait_for_trait(|_traits, tp| {
+            if !types::Either::matches_grease_type(tp) {
+                return ROption::RNone;
+            }
+
+            ROption::RSome(Nested { nested })
+        });
+    }
 }
 
 macro_rules! add_value {
