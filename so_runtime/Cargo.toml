@@ -6,6 +6,8 @@ edition = "2018"
 
 [dependencies]
 abi_stable = "0.8"
+bincode = "^1.2"
 futures = "^0.3"
 grease = { path = "../grease" }
+log = "^0.4"
 so_runtime_macro = { path = "../so_runtime_macro" }

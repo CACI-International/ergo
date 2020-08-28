@@ -21,17 +21,15 @@ use grease::{
     value::{IntoValue, Value},
 };
 use libloading as dl;
-use log::trace;
 use so_runtime::source::{FileSource, IntoSource, Source};
 use so_runtime::Result as SoResult;
 use so_runtime::{
-    script_value_as, script_value_sourced_as, types, ContextEnv, EvalResult, FunctionArguments,
-    FunctionCall, ResultIterator, Runtime, ScriptEnv, UncheckedFunctionArguments,
+    apply_value, script_value_as, types, ContextEnv, EvalResult, FunctionArguments, FunctionCall,
+    ResultIterator, Runtime, ScriptEnv,
 };
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path;
-use std::str::FromStr;
 
 /// Script type indicating that the env should be returned as a map.
 #[derive(Clone, Copy, Debug, GreaseType, Hash)]
@@ -403,14 +401,8 @@ pub fn load_script(ctx: &mut Context<FunctionCall>) -> EvalResult {
 /// Script runtime errors.
 #[derive(Debug)]
 pub enum Error {
-    /// An integer index (for arrays) was expected.
-    NonIntegerIndex,
-    /// An index was not present.
-    MissingIndex(String),
     /// An indexing operation was attempted on a type that is not an array or map.
     InvalidIndex,
-    /// An expression is in call-position (had arguments) but is not callable.
-    NonCallableExpression(Value),
     /// No binding with the given name is available in the current environment.
     MissingBinding(String),
     /// A merge expression cannot be evaluated.
@@ -451,10 +443,7 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use Error::*;
         match self {
-            NonIntegerIndex => write!(f, "positive integer index expected"),
-            MissingIndex(s) => write!(f, "index missing: {}", s),
             InvalidIndex => write!(f, "type is not an array or map; cannot index"),
-            NonCallableExpression(_) => write!(f, "cannot pass arguments to non-callable value"),
             MissingBinding(s) => write!(f, "'{}' is not available in the current environment", s),
             CannotMerge(s) => write!(f, "cannot merge: {}", s),
             PatternMapTooManyRest => write!(f, "map pattern may only have one merge subpattern"),
@@ -543,84 +532,6 @@ impl From<String> for Error {
     fn from(s: String) -> Self {
         Error::GenericError(s)
     }
-}
-
-/// Apply the value to the given arguments.
-///
-/// If `env_lookup` is true and `v` is a `ScriptString`, it will be looked up in the environment.
-pub fn apply_value(
-    ctx: &mut Context<Runtime>,
-    v: Source<Value>,
-    mut args: UncheckedFunctionArguments,
-    env_lookup: bool,
-) -> EvalResult {
-    let v_source = v.source();
-
-    v.map(|v| {
-        let v = if env_lookup {
-            match v.typed::<types::String>() {
-                Ok(val) => {
-                    let s = val.get()?.owned();
-                    trace!("looking up '{}' in environment", s);
-                    // Lookup string in environment, and apply result to remaining arguments
-                    match ctx.inner.env_get(&s) {
-                        Some(value) => {
-                            let value = value?;
-                            trace!("found match in environment for '{}': {}", s, value.id());
-                            value.clone().unwrap()
-                        }
-                        None => {
-                            return Err(Error::MissingBinding(s.into_string()).into());
-                        }
-                    }
-                }
-                Err(v) => v,
-            }
-        } else {
-            v
-        };
-
-        if args.peek().is_none() {
-            return Ok(v_source.with(v.into()));
-        }
-
-        match_value!(v => {
-            types::Array => |val| {
-                let index = script_value_sourced_as!(args.next().unwrap(), types::String, "index must be a string")?;
-                let val = index.map(|index| match usize::from_str(index.as_ref()) {
-                    Err(_) => Err(Error::NonIntegerIndex),
-                    Ok(ind) => val.get()?.0.get(ind).cloned()
-                        .ok_or(Error::MissingIndex(index.owned().into()))
-                }).transpose()?;
-
-                let (source,val) = val.take();
-
-                apply_value(ctx, Source::from((v_source,source)).with(val), args, false)
-            },
-            types::Map => |val| {
-                let index = script_value_sourced_as!(args.next().unwrap(), types::String, "index must be a string")?;
-
-                let val = index.map(|index|
-                        val.get()?.0.get(index.as_ref()).cloned()
-                            .ok_or(Error::MissingIndex(index.owned().into()))
-                    )
-                    .transpose()?;
-
-                let (source,val) = val.take();
-
-                apply_value(ctx, Source::from((v_source,source)).with(val), args, false)
-            },
-            types::Function => |val| {
-                Rt(val.get()?.as_ref()).plan_join(ctx, (args.into(), v_source))
-            },
-            => |v| {
-                Err(Error::NonCallableExpression(v).into())
-            }
-        })
-    })
-    .map(|v| v.map_err(|e| e.error()))
-    .transpose_err()
-    .map_err(|e| e.into())
 }
 
 #[derive(Clone, Debug)]

@@ -32,7 +32,7 @@ impl<T: GreaseType + StableAbi + 'static> IntoTyped<T> {
     {
         traits.add_impl_for_type::<U, IntoTyped<T>>(IntoTyped {
             into: Closure::from(|v: Value| {
-                v.typed::<U>().unwrap().map(|v| T::from(v.clone())).into()
+                v.typed::<U>().unwrap().map(|v| T::from(v.owned())).into()
             }),
             _phantom: Default::default(),
         })
@@ -55,6 +55,16 @@ pub fn traits(traits: &mut Traits) {
             ROption::RNone
         }
         unsafe { traits.add_generator(id) };
+    }
+
+    // Anything -> bool (true)
+    {
+        traits.add_generator_by_trait_for_trait::<IntoTyped<bool>>(|_traits, _type| {
+            ROption::RSome(IntoTyped {
+                into: (|v: Value| v.then(true.into_value())).into(),
+                _phantom: Default::default(),
+            })
+        });
     }
 
     // () -> bool (false)
@@ -91,7 +101,7 @@ pub fn traits(traits: &mut Traits) {
                 return ROption::RNone;
             }
 
-            let params = TypeParameters::from(tp.sideband.clone());
+            let params = TypeParameters::from(tp.data.clone());
             let impls: Option<Vec<_>> = params.0.iter().map(|t| traits.get_impl(t, trt)).collect();
             let to_type = TypeParameters::from(trt.data.clone())
                 .0

@@ -2,14 +2,6 @@
 //!
 //! All types (where necessary) are ABI-stable.
 
-use std::iter::FromIterator;
-
-pub mod source;
-pub mod traits;
-pub mod types;
-
-pub use source::Source;
-
 use abi_stable::{
     sabi_trait,
     sabi_trait::prelude::*,
@@ -17,16 +9,30 @@ use abi_stable::{
     StableAbi,
 };
 use grease::bst::BstMap;
+use grease::match_value;
 use grease::path::PathBuf;
-use grease::runtime::Context;
+use grease::runtime::{Context, JoinMap};
 use grease::type_erase::{Eraseable, Erased};
 use grease::value::{Error, Value};
+use log::trace;
 use std::collections::BTreeMap;
+use std::iter::FromIterator;
+use std::str::FromStr;
+
+pub mod error;
+pub mod source;
+pub mod traits;
+pub mod types;
+
+pub use source::Source;
 
 pub use so_runtime_macro::plugin_entry;
 
 /// The Result type.
 pub type Result<T> = std::result::Result<T, Error>;
+
+/// The ABI-safe RResult type.
+pub type ResultAbi<T> = RResult<T, Error>;
 
 pub trait ResultIterator<T> {
     /// Collect values into a Result, where errors will be aggregated.
@@ -57,7 +63,8 @@ where
 /// Runtime evaluation result.
 pub type EvalResult = Result<Source<Value>>;
 
-type EvalResultAbi = RResult<Source<Value>, Error>;
+/// ABI-safe runtime evaluation result.
+pub type EvalResultAbi = ResultAbi<Source<Value>>;
 
 /// Script environment bindings.
 pub type ScriptEnv = BstMap<RString, EvalResultAbi>;
@@ -178,34 +185,6 @@ impl Runtime {
     }
 }
 
-/// The error returned when a function does not accept a specific non-positional argument.
-#[derive(Debug)]
-pub struct UnexpectedNonPositionalArgument(String);
-
-impl std::fmt::Display for UnexpectedNonPositionalArgument {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(
-            f,
-            "the function does not accept a non-positional argument with key '{}'",
-            self.0
-        )
-    }
-}
-
-impl std::error::Error for UnexpectedNonPositionalArgument {}
-
-/// The error returned when a function does not accept one or more positional arguments.
-#[derive(Debug)]
-pub struct UnexpectedPositionalArguments;
-
-impl std::fmt::Display for UnexpectedPositionalArguments {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "extraneous positional arguments")
-    }
-}
-
-impl std::error::Error for UnexpectedPositionalArguments {}
-
 impl FunctionCall {
     /// Return whether there were unused non-positional arguments, and add errors for each unused
     /// argument to the context errors.
@@ -215,7 +194,8 @@ impl FunctionCall {
             Ok(())
         } else {
             Err(Error::aggregate(kw.into_iter().map(|(k, v)| {
-                v.with(UnexpectedNonPositionalArgument(k.into())).into()
+                v.with(error::UnexpectedNonPositionalArgument(k.into()))
+                    .into()
             })))
         }
     }
@@ -228,7 +208,7 @@ impl FunctionCall {
         } else {
             let mut vec: Vec<Error> = Vec::new();
             while let Some(v) = self.args.next() {
-                vec.push(v.with(UnexpectedPositionalArguments).into());
+                vec.push(v.with(error::UnexpectedPositionalArguments).into());
             }
             Err(Error::aggregate(vec))
         }
@@ -499,4 +479,90 @@ macro_rules! script_value_sourced_as {
             },
         }
     }};
+}
+
+/// Apply the value to the given arguments.
+///
+/// If `env_lookup` is true and `v` is a `ScriptString`, it will be looked up in the environment.
+pub fn apply_value(
+    ctx: &mut Context<Runtime>,
+    v: Source<Value>,
+    mut args: UncheckedFunctionArguments,
+    env_lookup: bool,
+) -> EvalResult {
+    let v_source = v.source();
+
+    v.map(|v| {
+        let v = if env_lookup {
+            match v.typed::<types::String>() {
+                Ok(val) => {
+                    let s = val.get()?.owned();
+                    trace!("looking up '{}' in environment", s);
+                    // Lookup string in environment, and apply result to remaining arguments
+                    match ctx.inner.env_get(&s) {
+                        Some(value) => {
+                            let value = value?;
+                            trace!("found match in environment for '{}': {}", s, value.id());
+                            value.clone().unwrap()
+                        }
+                        None => {
+                            return Err(error::MissingBinding(s.into_string()).into());
+                        }
+                    }
+                }
+                Err(v) => v,
+            }
+        } else {
+            v
+        };
+
+        if args.peek().is_none() {
+            return Ok(v_source.with(v.into()));
+        }
+
+        match_value!(v => {
+            types::Array => |val| {
+                let index = script_value_sourced_as!(args.next().unwrap(), types::String, "index must be a string")?;
+                let val = index.map(|index| match usize::from_str(index.as_ref()) {
+                    Err(_) => Err(Error::from(error::NonIntegerIndex)),
+                    Ok(ind) => val.get()?.0.get(ind).cloned()
+                        .ok_or(error::MissingIndex(index.owned().into()).into())
+                }).transpose().map_err(|e| e.into_grease_error())?;
+
+                let (source,val) = val.take();
+
+                apply_value(ctx, Source::from((v_source,source)).with(val), args, false)
+            },
+            types::Map => |val| {
+                let index = script_value_sourced_as!(args.next().unwrap(), types::String, "index must be a string")?;
+
+                let val = index.map(|index|
+                        val.get()?.0.get(index.as_ref()).cloned()
+                            .ok_or(Error::from(error::MissingIndex(index.owned().into())))
+                    )
+                    .transpose().map_err(|e| e.into_grease_error())?;
+
+                let (source,val) = val.take();
+
+                apply_value(ctx, Source::from((v_source,source)).with(val), args, false)
+            },
+            types::Function => |val| {
+                let f = val.get()?;
+                let f = f.as_ref();
+                ctx.join_map((args.into(), v_source), |fctx| {
+                    let ret = f.call(fctx);
+                    if ret.is_err() {
+                        fctx.args.clear();
+                    }
+                    ret
+                })
+            },
+            => |v| {
+                Err(error::NonCallableExpression(v).into())
+            }
+        })
+    })
+    .map(|v| v.map_err(|e| e.error()))
+    .transpose_err()
+    .map_err(|e| e.into())
 }

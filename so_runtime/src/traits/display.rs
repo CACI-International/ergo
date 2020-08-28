@@ -2,10 +2,7 @@
 
 use super::type_name;
 use crate::types;
-use abi_stable::{
-    std_types::{RString, RVec},
-    StableAbi,
-};
+use abi_stable::{std_types::RString, StableAbi};
 use grease::path::PathBuf;
 use grease::runtime::Traits;
 use grease::traits::*;
@@ -83,7 +80,7 @@ pub fn try_display<'t, 'v>(traits: &'t Traits, v: &'v Value) -> Result<Displayed
 #[macro_export]
 macro_rules! grease_display_basic {
     ( $t:ty ) => {
-        impl $crate::traits::display::GreaseDisplay for $t {
+        impl $crate::traits::GreaseDisplay for $t {
             fn fmt(&self, _: &grease::runtime::Traits) -> String {
                 format!("{}", self)
             }
@@ -109,15 +106,6 @@ grease_display_basic!(RString);
 impl GreaseDisplay for () {
     fn fmt(&self, _: &Traits) -> String {
         Default::default()
-    }
-}
-
-impl GreaseDisplay for RVec<u8> {
-    fn fmt(&self, _: &Traits) -> String {
-        match std::str::from_utf8(self) {
-            Ok(s) => s.into(),
-            Err(_) => "[bytes]".into(),
-        }
     }
 }
 
@@ -186,8 +174,6 @@ pub fn traits(traits: &mut Traits) {
     Display::add_impl::<bool>(traits);
     Display::add_impl::<RString>(traits);
     Display::add_impl::<PathBuf>(traits);
-    // TODO is this specialization appropraite?
-    Display::add_impl::<RVec<u8>>(traits);
     Display::add_impl::<types::Array>(traits);
     Display::add_impl::<types::Map>(traits);
     Display::add_impl::<types::Either>(traits);

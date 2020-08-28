@@ -84,6 +84,28 @@ pub trait SplitInto<To> {
     }
 }
 
+/// An inverse of SplitInto::split_map.
+///
+/// There is a blanket implementation that should cover all uses of the trait.
+pub trait JoinMap<T>: Sized
+where
+    T: SplitInto<Self>,
+{
+    /// Join this value with extra data and run the given function on the result.
+    fn join_map<F, Ret>(&mut self, extra: <T as SplitInto<Self>>::Extra, f: F) -> Ret
+    where
+        F: FnOnce(&mut T) -> Ret,
+    {
+        self.call_mut(move |this| {
+            let mut t = T::join(this, extra);
+            let ret = f(&mut t);
+            (t.split().0, ret)
+        })
+    }
+}
+
+impl<T, U> JoinMap<U> for T where U: SplitInto<T> {}
+
 impl<T> SplitInto<()> for T {
     type Extra = T;
 

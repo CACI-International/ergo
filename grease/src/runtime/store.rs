@@ -1,8 +1,9 @@
 //! Persistent storage.
 
+use crate::ffi::OsString as AbiOsString;
 use crate::path::PathBuf as AbiPathBuf;
 use crate::value::Value;
-use abi_stable::StableAbi;
+use abi_stable::{erased_types::DynTrait, std_types::RBox, StableAbi};
 use std::convert::TryFrom;
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
@@ -15,15 +16,22 @@ pub struct Store {
     root_directory: AbiPathBuf,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, StableAbi)]
+#[repr(C)]
 pub struct Item {
-    path: PathBuf,
-    item: OsString,
+    path: AbiPathBuf,
+    item: AbiOsString,
 }
 
-#[derive(Debug)]
+#[derive(StableAbi)]
+#[sabi(impl_InterfaceType(Debug, Send, IoRead, IoWrite, IoSeek))]
+#[repr(C)]
+struct ItemContentInterface;
+
+#[derive(Debug, StableAbi)]
+#[repr(C)]
 pub struct ItemContent {
-    file: File,
+    data: DynTrait<'static, RBox<()>, ItemContentInterface>,
 }
 
 /// An item name.
@@ -84,8 +92,8 @@ impl Store {
 
     /// Get the item with the given identifier.
     pub fn item<P: AsRef<ItemName>>(&self, id: P) -> Item {
-        let path = self.root_directory.clone().into_pathbuf();
-        let item = OsString::from(id.as_ref());
+        let path = self.root_directory.clone();
+        let item = AbiOsString::from(OsString::from(id.as_ref()));
         Item { path, item }
     }
 }
@@ -93,14 +101,14 @@ impl Store {
 impl Item {
     /// Get the sub-item with the given name.
     pub fn item<P: AsRef<ItemName>>(&self, name: P) -> Item {
-        let mut path: PathBuf = self.path.clone();
-        let mut sub = self.item.clone();
+        let mut path: PathBuf = self.path.clone().into_pathbuf();
+        let mut sub = self.item.clone().into_os_string();
         sub.push("-");
         path.push(sub);
         let item = OsString::from(name.as_ref());
         Item {
             path: path.into(),
-            item,
+            item: item.into(),
         }
     }
 
@@ -111,8 +119,8 @@ impl Item {
 
     /// Get the sub-item for the given value id.
     pub fn value_id(&self, id: u128) -> Item {
-        let mut path: PathBuf = self.path.clone();
-        let mut sub = self.item.clone();
+        let mut path: PathBuf = self.path.clone().into_pathbuf();
+        let mut sub = self.item.clone().into_os_string();
         sub.push("-v");
         path.push(sub);
         let id = format!("{:x}", id);
@@ -121,7 +129,7 @@ impl Item {
         let item = OsString::from(&id[4..]);
         Item {
             path: path.into(),
-            item,
+            item: item.into(),
         }
     }
 
@@ -149,10 +157,8 @@ impl Item {
 
     /// Open an item using the provided OpenOptions.
     pub fn open(&self, options: &OpenOptions) -> io::Result<ItemContent> {
-        std::fs::create_dir_all(&self.path)?;
-        Ok(ItemContent {
-            file: options.open(self.path())?,
-        })
+        std::fs::create_dir_all(self.path.as_ref())?;
+        Ok(ItemContent::from(options.open(self.path())?))
     }
 
     /// Get the path this item uses.
@@ -160,31 +166,39 @@ impl Item {
     /// # TODO
     /// Change this to a grease type representing an existing file.
     pub fn path(&self) -> PathBuf {
-        let mut path: PathBuf = self.path.clone();
+        let mut path: PathBuf = self.path.clone().into();
         std::fs::create_dir_all(&path).unwrap();
-        path.push(&self.item);
+        path.push(self.item.as_ref());
         path
+    }
+}
+
+impl From<File> for ItemContent {
+    fn from(f: File) -> Self {
+        ItemContent {
+            data: DynTrait::from_any_value(f, ItemContentInterface),
+        }
     }
 }
 
 impl io::Read for ItemContent {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.file.read(buf)
+        self.data.read(buf)
     }
 }
 
 impl io::Write for ItemContent {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.file.write(buf)
+        self.data.write(buf)
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        self.file.flush()
+        self.data.flush()
     }
 }
 
 impl io::Seek for ItemContent {
     fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
-        self.file.seek(pos)
+        self.data.seek(pos)
     }
 }

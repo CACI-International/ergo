@@ -38,6 +38,18 @@ impl From<PathBuf> for std::path::PathBuf {
     }
 }
 
+impl From<PathBuf> for OsString {
+    fn from(p: PathBuf) -> Self {
+        p.path
+    }
+}
+
+impl From<OsString> for PathBuf {
+    fn from(path: OsString) -> Self {
+        PathBuf { path }
+    }
+}
+
 impl PartialEq<std::path::Path> for PathBuf {
     fn eq(&self, other: &std::path::Path) -> bool {
         self.as_ref() == other

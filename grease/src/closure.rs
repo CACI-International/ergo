@@ -26,6 +26,7 @@ impl<Args, Ret> std::fmt::Debug for Closure<Args, Ret> {
 
 impl<Ret> Closure<(), Ret> {
     pub fn new<F: Fn() -> Ret + Eraseable>(f: F) -> Self {
+        #[allow(improper_ctypes_definitions)]
         extern "C" fn func<F: Fn() -> Ret, Ret>(data: &Erased, _: ()) -> Ret {
             (unsafe { data.as_ref::<F>() })()
         }

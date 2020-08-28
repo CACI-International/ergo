@@ -7,7 +7,6 @@ edition = "2018"
 [dependencies]
 abi_stable = "0.8"
 atty = "^0.2"
-bincode = "^1.2"
 chrono = "^0.4"
 ctrlc = "^3.1"
 directories = "^2.0"

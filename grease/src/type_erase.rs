@@ -392,15 +392,15 @@ impl ErasedTrivial {
     /// The value can be recreated with `deserialize`.
     ///
     /// TODO: use serde?
-    pub fn serialize(self, v: &mut Vec<u8>) {
+    pub fn serialize<W: std::io::Write>(self, w: &mut W) -> std::io::Result<()> {
         let (bytes, align) = self.into_raw();
         let size = bytes.len();
 
         debug_assert!(align <= u8::MAX as usize);
-        v.push(align as u8);
+        w.write_all(&[align as u8])?;
         debug_assert!(size <= u32::MAX as usize);
-        v.extend(&(size as u32).to_be_bytes());
-        v.extend(bytes.as_ref());
+        w.write_all(&(size as u32).to_be_bytes())?;
+        w.write_all(bytes.as_ref())
     }
 
     /// Deserialize an ErasedTrivial value from a slice.
@@ -410,17 +410,19 @@ impl ErasedTrivial {
     /// The slice is updated to the location where deserialization ended.
     ///
     /// This will always work if the value was written with `serialize`.
-    pub fn deserialize(v: &mut &[u8]) -> Self {
+    pub fn deserialize<R: std::io::Read>(r: &mut R) -> std::io::Result<Self> {
         use std::convert::TryInto;
-        let align = v[0] as usize;
-        let size = u32::from_be_bytes(v[1..5].try_into().expect("incorrect array length")) as usize;
+        let mut align_size = [0; 5];
+        r.read_exact(&mut align_size)?;
+        let align = align_size[0] as usize;
+        let size = u32::from_be_bytes(align_size[1..5].try_into().expect("incorrect array length"))
+            as usize;
         let ptr = unsafe { alloc(Layout::from_size_align_unchecked(size, align)) };
 
         let mut boxed =
             unsafe { Box::from_raw(std::slice::from_raw_parts_mut(ptr, size) as *mut [u8]) };
-        boxed.copy_from_slice(&v[5..(5 + size)]);
-        *v = &v[(5 + size)..];
-        unsafe { Self::from_raw(boxed, align) }
+        r.read_exact(boxed.as_mut())?;
+        Ok(unsafe { Self::from_raw(boxed, align) })
     }
 
     /// Return whether the underlying buffer is a Box or not.

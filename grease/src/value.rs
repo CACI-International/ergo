@@ -94,13 +94,23 @@ pub fn value_id(tp: &Type, deps: &Dependencies) -> Id {
 
 impl Value {
     /// Create a value with the given type, future, and dependencies.
-    pub fn new<'a, F, D>(tp: RArc<Type>, value: F, deps: D) -> Value
+    pub fn new<F, D>(tp: RArc<Type>, value: F, deps: D) -> Self
     where
         F: Future<Output = std::result::Result<RArc<Erased>, Error>> + Send + 'static,
         D: Into<Dependencies>,
     {
         let deps = deps.into();
         let id = value_id(tp.as_ref(), &deps);
+        Self::with_id(tp, value, id)
+    }
+
+    /// Create a value with the given type, future, and id.
+    ///
+    /// This differs from `new` which derives the id from the dependencies. Prefer `new`.
+    pub fn with_id<F>(tp: RArc<Type>, value: F, id: u128) -> Self
+    where
+        F: Future<Output = std::result::Result<RArc<Erased>, Error>> + Send + 'static,
+    {
         Value {
             tp,
             data: BoxSharedFuture::new(value.map(RResult::from)),
@@ -380,6 +390,21 @@ impl<T: GreaseType + Send + Sync + 'static> TypedValue<T> {
     /// Get a by-reference typed value.
     pub fn as_ref<'a>(&'a mut self) -> TypedValueRef<'a, T> {
         TypedValueRef::new(&mut self.inner)
+    }
+
+    /// Get the result of the value, if immediately available.
+    pub fn peek(&self) -> Option<std::result::Result<Ref<T>, Error>> {
+        self.inner.peek().map(|v| v.map(|v| unsafe { Ref::new(v) }))
+    }
+
+    /// Get the result of the value, assuming it was forced previously.
+    ///
+    /// This is a convenience method to unwrap the value. It will panic if the value is not
+    /// immediately available.
+    pub fn forced_value(&self) -> Ref<T> {
+        self.peek()
+            .expect("value should have been forced")
+            .expect("error should have been handled when value was previously forced")
     }
 }
 

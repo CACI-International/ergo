@@ -114,12 +114,14 @@ impl Traits {
     /// Get a trait implementation.
     ///
     /// Unsafe because the implementation type must correspond to the grease trait descriptor.
+    #[allow(dead_code)]
     pub unsafe fn get_unchecked<Impl>(&self, tp: &Type, trt: &Trait) -> Option<Option<Ref<Impl>>> {
         self.get_impl(tp, trt)
             .map(|i| i.map(|erased| Ref::new(erased)))
     }
 
     /// Get a trait implementation for the given type.
+    #[allow(dead_code)]
     pub fn get<Impl: GreaseTrait>(&self, tp: &Type) -> Option<Option<Ref<Impl>>> {
         unsafe { self.get_unchecked::<Impl>(tp, &Impl::grease_trait()) }
     }

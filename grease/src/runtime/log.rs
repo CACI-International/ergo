@@ -64,7 +64,7 @@ impl fmt::Display for LogLevel {
 }
 
 /// A single log entry.
-#[derive(StableAbi)]
+#[derive(Debug, StableAbi)]
 #[repr(C)]
 pub struct LogEntry {
     /// The log level.

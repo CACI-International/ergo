@@ -83,7 +83,7 @@ impl LogTarget for Output {
         self.update();
     }
 
-    fn dropped(&mut self, context: RVec<RString>) {
+    fn dropped(&mut self, _context: RVec<RString>) {
         if let Some(ref mut t) = self.threads {
             t.set(None);
         }
@@ -131,16 +131,10 @@ impl Render for ThreadStatus {
     fn render<Target: Write + Terminal>(&self, to: &mut Target) -> std::io::Result<()> {
         to.fg(term::color::YELLOW)?;
         // Assumes thread_mapping remains the same for order consistency
-        for (i, v) in self.thread_mapping.values().enumerate() {
-            writeln!(
-                to,
-                "{}: {}",
-                i + 1,
-                match v {
-                    None => "",
-                    Some(entry) => entry.args.as_ref(),
-                }
-            )?;
+        for v in self.thread_mapping.values() {
+            if let Some(entry) = v {
+                writeln!(to, "* {}", entry.args)?;
+            }
         }
         Ok(())
     }

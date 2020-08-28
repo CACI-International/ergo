@@ -13,7 +13,7 @@ use abi_stable::{
 use grease::bst::BstMap;
 use grease::depends;
 use grease::type_erase::Erased;
-use grease::types::{GreaseType, TypeParameters};
+use grease::types::{GreaseType, Type, TypeParameters};
 use grease::value::{TypedValue, Value};
 
 /// Script unit type.
@@ -100,16 +100,15 @@ impl Function {
 pub struct Either(usize, Value);
 
 impl Either {
-    pub fn new<F>(vals: Vec<Value>, index: TypedValue<usize>) -> TypedValue<Self> {
+    /// Create a new Either TypedValue.
+    pub fn new(vals: Vec<Value>, index: TypedValue<usize>) -> TypedValue<Self> {
         let deps = depends![^@vals, index];
         let types: Vec<_> = vals
             .iter()
             .map(|v| v.grease_type().as_ref().clone())
             .collect();
-        let mut tp = Self::grease_type();
-        tp.sideband = TypeParameters(types).into();
         Value::new(
-            RArc::new(tp),
+            RArc::new(Self::full_grease_type(types)),
             async move {
                 let idx = index.await?;
                 let v = vals.get(*idx).expect("invalid either index");
@@ -119,6 +118,18 @@ impl Either {
         )
         .typed::<Self>()
         .unwrap()
+    }
+
+    /// Get the full grease type (with either types).
+    pub fn full_grease_type(types: Vec<Type>) -> Type {
+        let mut tp = Self::grease_type();
+        tp.data = TypeParameters(types).into();
+        tp
+    }
+
+    /// Create an Either with the given resolved index and value.
+    pub fn with_value(index: usize, value: Value) -> Self {
+        Either(index, value)
     }
 
     /// The index of the chosen value.

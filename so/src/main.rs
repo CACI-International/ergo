@@ -145,6 +145,12 @@ fn run(opts: Opts) -> Result<String, grease::value::Error> {
         .expect("failed to create script context")
     };
 
+    // Set thread ids in the logger, as reported by the task manager.
+    {
+        let mut l = orig_logger.lock();
+        l.set_thread_ids(ctx.task.thread_ids().iter().cloned().collect());
+    }
+
     // Set interrupt signal handler to abort tasks.
     //
     // Keep _task in scope until the end of the function. After the function exits,
@@ -171,7 +177,10 @@ fn run(opts: Opts) -> Result<String, grease::value::Error> {
     let mut env: ScriptEnv = Default::default();
     env.insert(
         constants::LOAD_PATH_BINDING.into(),
-        Ok(Source::builtin(types::Array(rvec![work_dir.clone()]).into())).into(),
+        Ok(Source::builtin(
+            types::Array(rvec![work_dir.clone()]).into(),
+        ))
+        .into(),
     );
     env.insert(
         constants::WORKING_DIRECTORY_BINDING.into(),
@@ -182,12 +191,6 @@ fn run(opts: Opts) -> Result<String, grease::value::Error> {
         .plan(&mut ctx)
         .app_err_result("errors(s) while executing script");
     let script_output = script_output.app_err_result("an evaluation error occurred")?;
-
-    // Set thread ids in the logger, as reported by the task manager.
-    {
-        let mut l = orig_logger.lock();
-        l.set_thread_ids(ctx.task.thread_ids().iter().cloned().collect());
-    }
 
     let traits = ctx.traits.clone();
 

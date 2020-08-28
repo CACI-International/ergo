@@ -25,30 +25,13 @@ pub fn grease_type_uuid(name: &[u8]) -> Uuid {
 /// A grease type.
 ///
 /// The type is composed of an identifier and optional type-specific data.
-#[derive(Debug, Clone, Eq, StableAbi)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, StableAbi)]
 #[repr(C)]
 pub struct Type {
     /// The identifier for the type.
     pub id: Uuid,
     /// Optional type data.
     pub data: ErasedTrivial,
-    /// Optional type data which is _not_ used when checking for equality or hashing.
-    ///
-    /// Thus, in the context of `Value`s, this data does not directly describe the result.
-    pub sideband: ErasedTrivial,
-}
-
-impl PartialEq for Type {
-    fn eq(&self, other: &Type) -> bool {
-        self.id == other.id && self.data == other.data
-    }
-}
-
-impl std::hash::Hash for Type {
-    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
-        self.id.hash(h);
-        self.data.hash(h);
-    }
 }
 
 impl Type {
@@ -66,11 +49,7 @@ impl Type {
 
     /// Create a new Type with the given id and additional data.
     pub fn with_data(id: Uuid, data: ErasedTrivial) -> Self {
-        Type {
-            id,
-            data,
-            sideband: Default::default(),
-        }
+        Type { id, data }
     }
 }
 
@@ -87,7 +66,7 @@ impl From<TypeParameters> for ErasedTrivial {
     fn from(params: TypeParameters) -> Self {
         let mut bytes: Vec<u8> = Vec::new();
         for tp in params.0 {
-            ErasedTrivial::from(tp).serialize(&mut bytes);
+            ErasedTrivial::from(tp).serialize(&mut bytes).unwrap();
         }
         ErasedTrivial::from_slice(bytes.into_boxed_slice())
     }
@@ -99,8 +78,11 @@ impl From<ErasedTrivial> for TypeParameters {
         let bytes = unsafe { e.to_boxed_slice::<u8>() };
         let mut remaining: &[u8] = &bytes;
         while !remaining.is_empty() {
-            ret.0
-                .push(ErasedTrivial::deserialize(&mut remaining).into());
+            ret.0.push(
+                ErasedTrivial::deserialize(&mut remaining)
+                    .expect("invalid serialized type")
+                    .into(),
+            );
         }
         ret
     }
@@ -110,8 +92,7 @@ impl From<Type> for ErasedTrivial {
     fn from(tp: Type) -> Self {
         let mut bytes: Vec<u8> = Vec::new();
         bytes.extend(tp.id.as_bytes());
-        tp.data.serialize(&mut bytes);
-        tp.sideband.serialize(&mut bytes);
+        tp.data.serialize(&mut bytes).unwrap();
         ErasedTrivial::from_slice(bytes.into_boxed_slice())
     }
 }
@@ -121,9 +102,8 @@ impl From<ErasedTrivial> for Type {
         let bytes = unsafe { e.to_boxed_slice::<u8>() };
         let id = Uuid::from_bytes(bytes[..16].try_into().expect("invalid erased type"));
         let mut slice = &bytes[16..];
-        let data = ErasedTrivial::deserialize(&mut slice);
-        let sideband = ErasedTrivial::deserialize(&mut slice);
-        Type { id, data, sideband }
+        let data = ErasedTrivial::deserialize(&mut slice).expect("invalid serialized type data");
+        Type { id, data }
     }
 }
 

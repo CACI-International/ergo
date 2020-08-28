@@ -62,7 +62,6 @@ pub fn traits(traits: &mut Traits) {
     ValueByContent::add_impl::<types::String>(traits);
     ValueByContent::add_impl::<bool>(traits);
     ValueByContent::add_impl::<PathBuf>(traits);
-    ValueByContent::add_impl::<RVec<u8>>(traits);
 
     // types::Array
     {
