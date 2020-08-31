@@ -50,3 +50,45 @@ fn entry(ctx: &mut Context<Runtime>) -> EvalResult {
     m.insert("value".into(), value::module());
     Ok(Source::builtin(types::Map(m).into()))
 }
+
+#[cfg(test)]
+mod test {
+
+    /*
+    #[test]
+    fn if_expr() -> Result<(), String> {
+        script_eval_to("if () a b", SRString("b"))?;
+        script_eval_to("if r a b", SRString("a"))?;
+        Ok(())
+    }
+    */
+
+    /*
+    #[test]
+    fn string_format() -> Result<(), String> {
+        script_eval_to("string format \"hello {}\" world", SRString("hello world"))?;
+        script_eval_to("string format \"{1}{}{2}{0}\" a b c d", SRString("baca"))?;
+        script_eval_to(
+            "string format \"{my_named_arg} {}\" ^{my_named_arg = howdy} hi",
+            SRString("howdy hi"),
+        )?;
+        script_eval_to("string format \"{{{{}}\"", SRString("{{}"))?;
+        script_fail("string format \"{\"")?;
+        script_fail("string format \"}\"")?;
+        script_fail("string format \"{}\"")?;
+        script_fail("string format \"{named}\" ^{not-named=1}")?;
+        script_fail("string format \"{{{}}\" a")?;
+        Ok(())
+    }
+
+    #[test]
+    fn exec() -> Result<(), String> {
+        script_eval_to("(exec echo hello) stdout", SRAny)
+    }
+
+    #[test]
+    fn exec_failure() -> Result<(), String> {
+        script_result_fail("(exec false) stdout")
+    }
+    */
+}

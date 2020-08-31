@@ -58,18 +58,6 @@ impl std::fmt::Display for NonIntegerIndex {
 
 impl std::error::Error for NonIntegerIndex {}
 
-/// An index was not present.
-#[derive(Debug)]
-pub struct MissingIndex(pub String);
-
-impl std::fmt::Display for MissingIndex {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "index missing: {}", &self.0)
-    }
-}
-
-impl std::error::Error for MissingIndex {}
-
 /// An expression is in call-position (had arguments) but is not callable.
 #[derive(Debug)]
 pub struct NonCallableExpression(pub Value);

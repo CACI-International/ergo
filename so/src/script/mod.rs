@@ -137,7 +137,9 @@ mod test {
     #[test]
     fn index() -> Result<(), String> {
         script_eval_to("[a,b] 0", SRString("a"))?;
+        script_eval_to("[a,b] 2", SRUnit)?;
         script_eval_to("{alpha=one,beta=two} beta", SRString("two"))?;
+        script_eval_to("{alpha=one,beta=two} omega", SRUnit)?;
         script_eval_to("{alpha=[a,{key=b}]} alpha 1 key", SRString("b"))?;
         Ok(())
     }
@@ -152,35 +154,6 @@ mod test {
         Ok(())
     }
 
-    /*
-    #[test]
-    fn string_format() -> Result<(), String> {
-        script_eval_to("string format \"hello {}\" world", SRString("hello world"))?;
-        script_eval_to("string format \"{1}{}{2}{0}\" a b c d", SRString("baca"))?;
-        script_eval_to(
-            "string format \"{my_named_arg} {}\" ^{my_named_arg = howdy} hi",
-            SRString("howdy hi"),
-        )?;
-        script_eval_to("string format \"{{{{}}\"", SRString("{{}"))?;
-        script_fail("string format \"{\"")?;
-        script_fail("string format \"}\"")?;
-        script_fail("string format \"{}\"")?;
-        script_fail("string format \"{named}\" ^{not-named=1}")?;
-        script_fail("string format \"{{{}}\" a")?;
-        Ok(())
-    }
-
-    #[test]
-    fn exec() -> Result<(), String> {
-        script_eval_to("(exec echo hello) stdout", SRAny)
-    }
-
-    #[test]
-    fn exec_failure() -> Result<(), String> {
-        script_result_fail("(exec false) stdout")
-    }
-    */
-
     #[test]
     fn function() -> Result<(), String> {
         script_eval_to("f = fn ^_ -> a\nf something", SRString("a"))?;
@@ -190,15 +163,6 @@ mod test {
             SRMap(&[("a", SRString("1")), ("b", SRString("3"))]),
         )
     }
-
-    /*
-    #[test]
-    fn if_expr() -> Result<(), String> {
-        script_eval_to("if () a b", SRString("b"))?;
-        script_eval_to("if r a b", SRString("a"))?;
-        Ok(())
-    }
-    */
 
     #[test]
     fn match_expr() -> Result<(), String> {

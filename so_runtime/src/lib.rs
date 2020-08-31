@@ -538,8 +538,8 @@ pub fn apply_value(
                 let index = script_value_sourced_as!(args.next().unwrap(), types::String, "index must be a string")?;
                 let val = index.map(|index| match usize::from_str(index.as_ref()) {
                     Err(_) => Err(Error::from(error::NonIntegerIndex)),
-                    Ok(ind) => val.get()?.0.get(ind).cloned()
-                        .ok_or(error::MissingIndex(index.owned().into()).into())
+                    Ok(ind) => val.get().map(|v| v.0.get(ind).cloned()
+                        .unwrap_or(().into()))
                 }).transpose().map_err(|e| e.into_grease_error())?;
 
                 let (source,val) = val.take();
@@ -550,8 +550,8 @@ pub fn apply_value(
                 let index = script_value_sourced_as!(args.next().unwrap(), types::String, "index must be a string")?;
 
                 let val = index.map(|index|
-                        val.get()?.0.get(index.as_ref()).cloned()
-                            .ok_or(Error::from(error::MissingIndex(index.owned().into())))
+                        val.get().map(|v| v.0.get(index.as_ref()).cloned()
+                            .unwrap_or(().into()))
                     )
                     .transpose().map_err(|e| e.into_grease_error())?;
 
