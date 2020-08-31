@@ -1,0 +1,4 @@
+#!/usr/bin/env ergo
+
+# Compile our code!
+exec ^{env = {PATH=$}} c++ -o forty_two main.cpp lib.cpp

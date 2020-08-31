@@ -1,0 +1,26 @@
+#!/usr/bin/env ergo
+
+# Compile function, taking one argument indicating the file to compile.
+compile = fn source-file -> cache seq ^[
+    object-file = path new
+    exec ^{env = {PATH=$}} c++ -o $object-file -c (track $source-file)
+    $object-file
+]
+
+# Executable-linking function, which links all arguments.
+link_exe = fn ^objs -> cache seq ^[
+    exe = path new
+    exec ^{env = {PATH=$}} c++ -o $exe ^$objs
+    $exe
+]
+
+# Compile main.cpp
+main = compile main.cpp
+# Compile lib.cpp
+lib = compile lib.cpp
+
+# Link the object files together
+exe = link_exe $main $lib
+
+# Copy to a file in the current directory.
+fs copy $exe (path join $work-dir forty_two)

@@ -1,0 +1,22 @@
+[package]
+name = "ergo"
+version = "1.0.0-alpha.4"
+authors = ["Alex Franchuk <afranchuk@caci.com>"]
+edition = "2018"
+
+[dependencies]
+abi_stable = "0.8"
+atty = "^0.2"
+chrono = "^0.4"
+ctrlc = "^3.1"
+directories = "^2.0"
+futures = "^0.3"
+grease = { path = "../grease" }
+libloading = "^0.6"
+log = "^0.4"
+pom = { git = "https://github.com/afranchuk/pom", rev = "d56552b2b9b54a833e7afc1543d9dd26c338b2f5" }
+simplelog = "^0.7"
+ergo_runtime = { path = "../ergo_runtime" }
+structopt = "^0.3"
+term = "^0.6"
+uuid = "^0.7"

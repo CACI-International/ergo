@@ -1,0 +1,13 @@
+[package]
+name = "ergo_runtime"
+version = "1.0.0-alpha.4"
+authors = ["Alex Franchuk <afranchuk@caci.com>"]
+edition = "2018"
+
+[dependencies]
+abi_stable = "0.8"
+bincode = "^1.2"
+futures = "^0.3"
+grease = { path = "../grease" }
+log = "^0.4"
+ergo_runtime_macro = { path = "../ergo_runtime_macro" }

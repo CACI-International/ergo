@@ -3,11 +3,14 @@ This repository contains a bob core runtime implementation in rust. It has
 diverged from `bob`'s limitations, allowing arbitrary program execution.
 
 The project includes a few separate rust crates:
-* [`so`](so) - The main executable, using the other crates.
-* [`so-repo`](so-repo) - A web server allowing `so repo` commands to be run
+* [`ergo`](ergo) - The main executable, using the other crates.
+* [`ergo-repo`](ergo-repo) - A web server allowing `ergo repo` commands to be run
   automatically, triggered by repository state changes.
-* [`exec`](exec) - External executable launching and configuration.
+* [`ergo_runtime`](ergo_runtime) - The ergo runtime, building a type system with
+  `grease`.
+* [`ergo_runtime_macro`](ergo_runtime_macro) - Procedural macros exposed by
+  `ergo_runtime`.
+* [`ergo_std`](ergo_std) - The ergo standard library plugin.
 * [`grease`](grease) - A plan definition and runtime library.
 * [`grease_macro`](grease_macro) - Procedural macros exposed by `grease`.
-* [`tack`](tack) - A plugin interface.
 

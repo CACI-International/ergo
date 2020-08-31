@@ -20,7 +20,7 @@ pub type ExternalError = dyn std::error::Error + Send + Sync;
 
 /// Value error type.
 ///
-/// The type does not implement `Error` itself (so that `From<T: Error>`) can be implemented, but
+/// The type does not implement `Error` itself (so that `From<T: Error>` can be implemented), but
 /// you can get such an error with the `Error::error()` function.
 #[derive(Clone, Debug, StableAbi)]
 #[repr(C)]
