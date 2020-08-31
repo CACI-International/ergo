@@ -671,18 +671,18 @@ mod test {
         let mut buf: Vec<u8> = Vec::new();
         let erased_a = ErasedTrivial::from_slice(a.clone().into_boxed_slice());
         let erased_b = ErasedTrivial::from_slice(b.clone().into_boxed_slice());
-        erased_a.serialize(&mut buf);
-        erased_b.serialize(&mut buf);
+        erased_a.serialize(&mut buf).unwrap();
+        erased_b.serialize(&mut buf).unwrap();
 
         let buf_serialized = ErasedTrivial::from_slice(buf.into_boxed_slice());
         let mut buf2 = Vec::new();
-        buf_serialized.serialize(&mut buf2);
+        buf_serialized.serialize(&mut buf2).unwrap();
 
-        let recovered_buf = ErasedTrivial::deserialize(&mut &buf2[..]);
+        let recovered_buf = ErasedTrivial::deserialize(&mut &buf2[..]).unwrap();
         let mut bytes = unsafe { recovered_buf.as_slice::<u8>() };
 
-        let recovered_a = ErasedTrivial::deserialize(&mut bytes);
-        let recovered_b = ErasedTrivial::deserialize(&mut bytes);
+        let recovered_a = ErasedTrivial::deserialize(&mut bytes).unwrap();
+        let recovered_b = ErasedTrivial::deserialize(&mut bytes).unwrap();
         assert_eq!(unsafe { recovered_a.as_slice::<u8>() }, a.as_slice());
         assert_eq!(unsafe { recovered_b.as_slice::<u8>() }, b.as_slice());
     }

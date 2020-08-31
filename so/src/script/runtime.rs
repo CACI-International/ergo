@@ -254,14 +254,22 @@ pub fn load_script(ctx: &mut Context<FunctionCall>) -> EvalResult {
     // Load if some module was found.
     if let Some(p) = to_load {
         let p = p.canonicalize().unwrap(); // unwrap because is_file() should guarantee that canonicalize will succeed
-        if !ctx.load_cache.contains_key(&PathBuf::from(p.clone())) {
-            // Only load prelude if this is not a workspace.
-            let load_prelude = p.file_name().unwrap() != SCRIPT_WORKSPACE_NAME; // unwrap because p must have a final component
 
+        // FIXME if multiple threads are calling load, they may load the same script more than
+        // once. This could be changed into a cache of futures that yield the resulting value,
+        // though we need to clone contexts and the like. This was already attempted once but some
+        // recursive type errors also came up with async blocks.
+        let cache = ctx.load_cache.clone();
+        let cache = cache.lock();
+        let loaded = if !cache.contains_key(&PathBuf::from(p.clone())) {
             // Exclude path from loading in nested calls.
             // This should be done prior to prelude loading in the case where we are loading the
             // prelude.
             ctx.loading.push(PathBuf::from(p.clone()));
+            drop(cache);
+
+            // Only load prelude if this is not a workspace.
+            let load_prelude = p.file_name().unwrap() != SCRIPT_WORKSPACE_NAME; // unwrap because p must have a final component
 
             let mod_path = p.parent().unwrap(); // unwrap because file must exist in some directory
 
@@ -289,8 +297,8 @@ pub fn load_script(ctx: &mut Context<FunctionCall>) -> EvalResult {
                     },
                 );
                 match prelude_load {
-                    Err(e) => {
-                        fn has_load_failed_error(e: &(dyn std::error::Error + 'static)) -> bool {
+                    Err(_e) => {
+                        fn _has_load_failed_error(e: &(dyn std::error::Error + 'static)) -> bool {
                             match e.downcast_ref::<Error>() {
                                 Some(e) => {
                                     if let Error::LoadFailed { .. } = e {
@@ -299,7 +307,7 @@ pub fn load_script(ctx: &mut Context<FunctionCall>) -> EvalResult {
                                         false
                                     }
                                 }
-                                None => e.source().map(has_load_failed_error).unwrap_or(false),
+                                None => e.source().map(_has_load_failed_error).unwrap_or(false),
                             }
                         }
                         None
@@ -373,16 +381,15 @@ pub fn load_script(ctx: &mut Context<FunctionCall>) -> EvalResult {
                 result
             };
 
-            ctx.load_cache.insert(PathBuf::from(p.clone()), result);
+            let cache = ctx.load_cache.clone();
+            let mut cache = cache.lock();
+            cache.insert(PathBuf::from(p.clone()), result);
             ctx.loading.pop();
+            cache.get(&PathBuf::from(p)).unwrap().clone()
+        } else {
+            cache.get(&PathBuf::from(p)).unwrap().clone()
         }
-
-        let loaded = ctx
-            .load_cache
-            .get(&PathBuf::from(p))
-            .unwrap()
-            .clone()
-            .into_result()?; // unwrap because prior statement ensures the key exists
+        .into_result()?;
 
         let args = std::mem::take(&mut ctx.args);
         ctx.split_map(move |ctx| {

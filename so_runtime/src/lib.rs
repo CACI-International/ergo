@@ -3,9 +3,10 @@
 //! All types (where necessary) are ABI-stable.
 
 use abi_stable::{
+    external_types::RMutex,
     sabi_trait,
     sabi_trait::prelude::*,
-    std_types::{RBox, ROption, RResult, RString, RVec},
+    std_types::{RArc, RBox, ROption, RResult, RString, RVec},
     StableAbi,
 };
 use grease::bst::BstMap;
@@ -69,7 +70,7 @@ pub type EvalResultAbi = ResultAbi<Source<Value>>;
 /// Script environment bindings.
 pub type ScriptEnv = BstMap<RString, EvalResultAbi>;
 
-#[derive(Default, StableAbi)]
+#[derive(Clone, StableAbi)]
 #[repr(C)]
 /// The script runtime context.
 pub struct Runtime {
@@ -78,9 +79,9 @@ pub struct Runtime {
     /// clearing the environment when loading separate scripts easier.
     global_env: ScriptEnv,
     env: RVec<ScriptEnv>,
-    pub load_cache: BstMap<PathBuf, EvalResultAbi>,
     pub loading: RVec<PathBuf>,
-    lifetime: RVec<Erased>,
+    pub load_cache: RArc<RMutex<BstMap<PathBuf, EvalResultAbi>>>,
+    lifetime: RArc<RMutex<RVec<Erased>>>,
 }
 
 /// Script function call context.
@@ -119,6 +120,18 @@ pub struct UncheckedFunctionArguments {
 #[repr(C)]
 pub struct FunctionArguments {
     inner: UncheckedFunctionArguments,
+}
+
+impl Default for Runtime {
+    fn default() -> Self {
+        Runtime {
+            global_env: Default::default(),
+            env: Default::default(),
+            loading: Default::default(),
+            load_cache: RArc::new(RMutex::new(Default::default())),
+            lifetime: RArc::new(RMutex::new(Default::default())),
+        }
+    }
 }
 
 impl Runtime {
@@ -181,7 +194,7 @@ impl Runtime {
 
     /// Store a value for the duration of the runtime's lifetime.
     pub fn lifetime<T: Eraseable>(&mut self, v: T) {
-        self.lifetime.push(Erased::new(v));
+        self.lifetime.lock().push(Erased::new(v));
     }
 }
 

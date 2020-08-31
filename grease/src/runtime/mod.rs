@@ -3,7 +3,6 @@
 use abi_stable::StableAbi;
 use std::fmt;
 
-mod command;
 mod log;
 mod store;
 mod task_manager;
@@ -13,7 +12,6 @@ use self::log::EmptyLogTarget;
 pub use self::log::{
     logger_ref, Log, LogEntry, LogLevel, LogTarget, Logger, LoggerRef, OriginalLogger,
 };
-pub use command::Commands;
 pub use store::{Item, ItemContent, ItemName, Store};
 pub use task_manager::{thread_id, OnError, TaskManager};
 pub use traits::{TraitGenerator, TraitGeneratorByTrait, TraitGeneratorByType, Traits};
@@ -129,7 +127,6 @@ where
         (
             Context {
                 task: self.task,
-                cmd: self.cmd,
                 log: self.log,
                 store: self.store,
                 traits: self.traits,
@@ -142,7 +139,6 @@ where
     fn join(c: Context<O>, e: Self::Extra) -> Self {
         Context {
             task: c.task,
-            cmd: c.cmd,
             log: c.log,
             store: c.store,
             traits: c.traits,
@@ -202,13 +198,11 @@ where
 }
 
 /// Runtime context.
-#[derive(Debug, StableAbi)]
+#[derive(Clone, Debug, StableAbi)]
 #[repr(C)]
 pub struct Context<Inner = ()> {
     /// The task manager.
     pub task: TaskManager,
-    /// The command interface.
-    pub cmd: Commands,
     /// The logging interface.
     pub log: Log,
     /// The storage interface.
@@ -318,7 +312,6 @@ impl ContextBuilder {
                 self.on_error,
             )
             .map_err(BuilderError::TaskManagerError)?,
-            cmd: Commands::new(),
             log: Log::new(
                 self.logger
                     .unwrap_or_else(|| logger_ref(EmptyLogTarget).0.into()),

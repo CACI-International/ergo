@@ -20,9 +20,12 @@ mod variable;
 use grease::{bst::BstMap, runtime::Context};
 use so_runtime::{plugin_entry, source::Source, types, EvalResult, Runtime};
 
+mod collection;
 mod exec;
+mod fs;
 #[path = "if.rs"]
 mod if_;
+mod path;
 mod seq;
 mod string;
 mod task;
@@ -36,8 +39,11 @@ fn entry(ctx: &mut Context<Runtime>) -> EvalResult {
     exec::traits(&mut ctx.traits);
 
     let mut m = BstMap::default();
+    m.insert("collection".into(), collection::module());
     m.insert("exec".into(), exec::function());
+    m.insert("fs".into(), fs::module());
     m.insert("if".into(), if_::function());
+    m.insert("path".into(), path::module());
     m.insert("seq".into(), seq::function());
     m.insert("string".into(), string::module());
     m.insert("task".into(), task::function());

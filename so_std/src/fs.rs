@@ -1,58 +1,76 @@
 //! Filesystem runtime functions.
 
-use super::builtin_function_prelude::*;
 use glob::glob;
-use grease::make_value;
-use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use grease::{bst::BstMap, item_name, make_value, match_value, path::PathBuf, value::Value};
+use serde::{Deserialize, Serialize};
+use so_runtime::{script_value_as, traits, types};
+use std::path::Path;
 
-pub fn builtin() -> Value {
-    let mut map = BTreeMap::new();
-    map.insert("copy".to_owned(), copy_fn());
-    map.insert("exists".to_owned(), exists_fn());
-    map.insert("glob".to_owned(), glob_fn());
-    ScriptMap(map).into()
+pub fn module() -> Value {
+    let mut map = BstMap::new();
+    map.insert("copy".into(), copy_fn());
+    map.insert("exists".into(), exists_fn());
+    map.insert("glob".into(), glob_fn());
+    map.insert("track".into(), track_fn());
+    types::Map(map).into()
 }
 
-script_fn!(glob_fn, ctx => {
-    let pattern = ctx.args.next().ok_or("no glob pattern provided")?;
+fn glob_fn() -> Value {
+    types::Function::new(|ctx| {
+        let pattern = ctx.args.next().ok_or("no glob pattern provided")?;
 
-    if ctx.unused_arguments() {
-        return Ok(Eval::Error);
-    }
+        ctx.unused_arguments()?;
 
-    let pattern_source = pattern.source();
-    let pattern = eval_error!(ctx, pattern.map(|v| -> Result<_,&str> {
-        let t: grease::IntoTyped<String> = ctx.traits.get(&v).ok_or("cannot convert glob pattern value into string")?;
-        Ok(t.into_typed(v))
-    }).transpose_err());
+        let pattern_source = pattern.source();
+        let pattern = pattern
+            .map(|v| {
+                ctx.traits
+                    .get::<traits::IntoTyped<types::String>>(&v)
+                    .ok_or("cannot convert glob pattern value into string")
+                    .map(|t| t.into_typed(v))
+            })
+            .transpose_err()
+            .map_err(|e| e.into_grease_error())?;
 
-    let path = std::env::current_dir().unwrap();
+        let path = script_value_as!(
+            ctx.env_get("work-dir")
+                .ok_or(
+                    ctx.call_site
+                        .clone()
+                        .with("work-dir not set")
+                        .into_grease_error()
+                )?
+                .map(|v| v.clone())?,
+            PathBuf,
+            "work-dir is not a Path"
+        )?;
 
-    Ok(Eval::Value(make_value!((pattern) ["fs glob",path] {
-        let pattern = pattern.await?;
+        Ok(ctx.call_site.clone().with(make_value!((path, pattern) ["fs glob"] {
+            let pattern = pattern.await?;
 
-        let pattern = {
-            let mut p = path;
-            p.push(pattern.as_ref());
-            p
-        };
+            let pattern = {
+                let mut p = path.into_pathbuf();
+                p.push(pattern.as_str());
+                p
+            };
 
-        match glob(pattern.to_str().unwrap()) {
-            Err(e) => Err(pattern_source.with(e).into()),
-            Ok(paths) => {
-                let paths: Result<Vec<PathBuf>, glob::GlobError> = paths.collect();
-                let paths: Vec<Value> = paths
-                    .map_err(|e| Error::ValueError(pattern_source.with(e).into()))?
-                    .into_iter()
-                    .map(|v| v.into())
-                    .collect();
-                Ok(ScriptArray(paths))
+            match glob(pattern.to_str().unwrap()) {
+                Err(e) => Err(pattern_source.with(e).into()),
+                Ok(paths) => {
+                    let paths: Result<Vec<std::path::PathBuf>, glob::GlobError> = paths.collect();
+                    let paths: Vec<Value> = paths
+                        .map_err(|e| pattern_source.with(e))?
+                        .into_iter()
+                        .map(|v| PathBuf::from(v).into())
+                        .collect();
+                    Ok(types::Array(paths.into()))
+                }
             }
-        }
-    }).into()))
-
-});
+        })
+        .into()))
+    })
+    .into()
+}
 
 fn recursive_link<F: AsRef<Path>, T: AsRef<Path>>(from: F, to: T) -> Result<(), std::io::Error> {
     if to.as_ref().is_dir() {
@@ -81,42 +99,131 @@ fn recursive_link<F: AsRef<Path>, T: AsRef<Path>>(from: F, to: T) -> Result<(), 
     }
 }
 
-script_fn!(copy_fn, ctx => {
-    let from = ctx.args.next().ok_or("'from' missing")?;
-    let to = ctx.args.next().ok_or("'to' missing")?;
+fn copy_fn() -> Value {
+    types::Function::new(|ctx| {
+        let from = ctx.args.next().ok_or("'from' missing")?;
+        let to = ctx.args.next().ok_or("'to' missing")?;
 
-    if ctx.unused_arguments() {
-        return Ok(Eval::Error);
-    }
+        ctx.unused_arguments()?;
 
-    let from = eval_error!(ctx, from.map(|f| f.typed::<PathBuf>().map_err(|_| "'from' argument must be a path"))
-        .transpose_err());
+        let from = from.map(|v| v.typed::<PathBuf>()
+            .map_err(|_| "'from' argument must be a path"))
+            .transpose_err()
+            .map_err(|e| e.into_grease_error())?;
 
-    let to = eval_error!(ctx, to.map(|t| t.typed::<PathBuf>().map_err(|_| "'to' argument must be a path"))
-        .transpose_err());
+        let to = to.map(|v| v.typed::<PathBuf>()
+            .map_err(|_| "'to' argument must be a path"))
+            .transpose_err()
+            .map_err(|e| e.into_grease_error())?;
 
-    let log = ctx.log.sublog("fs::copy");
-    let task = ctx.task.clone();
-    Ok(Eval::Value(make_value!((from,to) ["fs copy"] {
-        let (from,to) = task.join(from, to).await?;
+        let log = ctx.log.sublog("fs::copy");
+        let task = ctx.task.clone();
+        Ok(ctx.call_site.clone().with(make_value!((from,to) ["fs copy"] {
+            let (from,to) = task.join(from, to).await?;
 
-        log.debug(format!("copying {} to {}", from.display(), to.display()));
+            log.debug(format!("copying {} to {}", from.as_ref().as_ref().display(), to.as_ref().as_ref().display()));
 
-        Ok(recursive_link(from.as_ref(), to.as_ref())?)
-    }).into()))
-});
+            Ok(recursive_link(from.as_ref().as_ref(), to.as_ref().as_ref())?)
+        })
+        .into()))
+    })
+    .into()
+}
 
-script_fn!(exists_fn, ctx => {
-    let path = ctx.args.next().ok_or("'path' missing")?;
+fn exists_fn() -> Value {
+    types::Function::new(|ctx| {
+        let path = ctx.args.next().ok_or("'path' missing")?;
 
-    if ctx.unused_arguments() {
-        return Ok(Eval::Error);
-    }
+        ctx.unused_arguments()?;
 
-    let path = eval_error!(ctx, path.map(|f| f.typed::<PathBuf>().map_err(|_| "'path' argument must be a path"))
-        .transpose_err());
+        let path = path
+            .map(|v| {
+                v.typed::<PathBuf>()
+                    .map_err(|_| "'path' argument must be a path")
+            })
+            .transpose_err()
+            .map_err(|e| e.into_grease_error())?;
 
-    Ok(Eval::Value(make_value!((path) ["fs exists"] {
-        Ok(path.await?.as_ref().exists())
-    }).into()))
-});
+        Ok(ctx.call_site.clone().with(
+            make_value!((path) ["fs exists"] {
+                Ok(path.await?.as_ref().as_ref().exists())
+            })
+            .into(),
+        ))
+    })
+    .into()
+}
+
+fn track_fn() -> Value {
+    types::Function::new(|ctx| {
+        let path = ctx.args.next().ok_or("no file provided to track")?;
+
+        ctx.unused_arguments()?;
+
+        let path = path
+            .map(|p| {
+                match_value!(p => {
+                    types::String => |v| {
+                        v.get().map(|v| v.owned().to_string().into())
+                    },
+                    PathBuf => |v| {
+                        v.get().map(|v| v.owned().into_pathbuf())
+                    },
+                    => |_| Err("track argument must be a string or path".into())
+                })
+            })
+            .transpose_err()
+            .map_err(|e| e.into_grease_error())?;
+
+        let store = ctx.store.item(item_name!("track"));
+
+        // TODO inefficient to load and store every time
+        let mut info = if store.exists() {
+            let content = store.read()?;
+            bincode::deserialize_from(content).map_err(|e| e.to_string())?
+        } else {
+            TrackInfo::new()
+        };
+
+        let meta = std::fs::metadata(&path)?;
+        let mod_time = meta.modified()?;
+
+        let calc_hash = match info.get(&path) {
+            Some(data) => data.modification_time < mod_time,
+            None => true,
+        };
+
+        if calc_hash {
+            let f = std::fs::File::open(&path)?;
+            let hash = grease::hash::hash_read(f)?;
+            info.insert(
+                path.clone(),
+                FileData {
+                    modification_time: mod_time,
+                    content_hash: hash,
+                },
+            );
+        }
+
+        let hash = info.get(&path).unwrap().content_hash;
+
+        {
+            let content = store.write()?;
+            bincode::serialize_into(content, &info).map_err(|e| e.to_string())?;
+        }
+
+        Ok(ctx
+            .call_site
+            .clone()
+            .with(make_value!((path) [hash] Ok(PathBuf::from(path))).into()))
+    })
+    .into()
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct FileData {
+    modification_time: std::time::SystemTime,
+    content_hash: u128,
+}
+
+type TrackInfo = std::collections::HashMap<std::path::PathBuf, FileData>;
