@@ -78,25 +78,20 @@ Within a script, the following are defined:
 ## Development Notes
 
 ### TODO
-* Data-manipulation functions (maybe as a plugin).
-* Improve errors to contain trace-backs of values.
-  * Find specific examples where this is useful.
 * Self-documentation. Accessed and printed directly while evaluating scripts
   and/or accessed with a `--doc` command-line argument. Add a way to attach
   documentation (or other metadata?) to arbitrary types in scripts.
 * Allow access to logging from scripts. Allow access to stdin/stdout/stderr.
   Allow mutually exclusive use of stdin/stdout/stderr for interactive programs.
 * Allow explicit error signaling from scripts. Maybe allow catching errors?
-* Add 'force' to force a value to be immediately evaluated?
-* Add error list at bottom of tty status output, and support continuing when an error occurs.
-  * Display more detailed error information at exit?
+* Display more detailed error information at exit?
 * Add a message/signal handler to exit gracefully.
+  * This has been added but child programs still capture the signal, need to
+    debug.
 * Revisit pattern literal matching.
   * This could use some sort of equality test on the value _data_, rather
     than comparing value identifiers.
 * Persist command timing information for better estimates.
-* Block set shorthand (if there's a line in a block that is just a string,
-  insert the environment value equal to that string into the block environment).
 * `string words`, `string lines`, `fetch`, maybe `fs mount` to open tarballs,
   zips, directories, urls to such?
 * Allow setting map keys from values rather than string constants?
@@ -105,29 +100,4 @@ Within a script, the following are defined:
   in a delayed context.
 * Allow functions to get call-site variables? Convenient for things like
   `work-dir`.
-* Add union types to the type system, allowing `if` and `match` to be delayed.
 * Allow fetching of urls and use of zip/tarballs with load command.
-
-### Plugin notes
-* Ideally, plugins are loaded just like other scripts: `so [path to plugin]`.
-  Duplication is handled as one would expect (only load things once). The loaded
-  plugin must return a Value (just like loading another script).
-* When loaded, plugins may also provide extensions to share interfaces/memory
-  with other plugins or the runtime. This may include hooks into certain events
-  (execution complete, loading, etc). Extensions may rely on other extensions.
-  * If extension dependency resolution is necessary, there either needs to be a
-    single point at which resolution occurs (maybe after loading certain prelude
-    files) or extensions must be loaded in a particular order (though this
-    precludes circular dependency resolution).
-* ABI must be stable at plugin boundaries.
-
-#### Native vs WASM plugins
-* Both types of plugins could be made in other languages if desired (though not
-  as convenient as types would have to be redefined to be ABI-compatible).
-  With regard to Rust:
-  * Native plugins could be smaller, but would need to be built for separate
-    platforms.
-  * WASM code by default is kind of large: a hello world comes out over a MB.
-    With std disabled it gets much smaller. This may be appropriate anyway since
-    std is not ABI-stable. Size may not be a big concern since they won't be
-    downloaded often. WASM allows the plugins to be loaded on any platform.
