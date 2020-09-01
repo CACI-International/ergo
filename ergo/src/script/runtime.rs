@@ -375,7 +375,7 @@ pub fn load_script(ctx: &mut Context<FunctionCall>) -> EvalResult {
                         &mut Context<Runtime>,
                     )
                         -> RResult<Source<Value>, grease::value::Error>,
-                > = unsafe { lib.get(b"_so_plugin") }?;
+                > = unsafe { lib.get(b"_ergo_plugin") }?;
                 let result = ctx.split_map(|ctx: &mut Context<Runtime>| f(ctx));
                 ctx.lifetime(lib);
                 result
