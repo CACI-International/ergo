@@ -101,3 +101,7 @@ Within a script, the following are defined:
 * Allow functions to get call-site variables? Convenient for things like
   `work-dir`.
 * Allow fetching of urls and use of zip/tarballs with load command.
+* Change value errors to be first-class types in the runtime.
+  * This allows, for instance, caching error results.
+  * Maybe best as something explicit rather than implicit: a function to capture
+    an error.
