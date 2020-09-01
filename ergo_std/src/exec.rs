@@ -603,7 +603,7 @@ pub fn function() -> Value {
                 arg.map(|v| {
                     ctx.traits
                         .get::<IntoTyped<CommandString>>(&v)
-                        .ok_or("cannot convert argument into command string")
+                        .ok_or(format!("cannot convert {} into command string", traits::type_name(&ctx.traits, &*v.grease_type())))
                         .map(|t| t.into_typed(v))
                 })
                 .transpose_err()
@@ -628,7 +628,7 @@ pub fn function() -> Value {
                 v.map(|v| {
                     ctx.traits
                         .get::<IntoTyped<PathBuf>>(&v)
-                        .ok_or("cannot convert value into path")
+                        .ok_or(format!("cannot convert pwd (typed {}) into path", traits::type_name(&ctx.traits, &*v.grease_type())))
                         .map(|t| t.into_typed(v))
                 })
                 .transpose_err()
@@ -644,7 +644,7 @@ pub fn function() -> Value {
                 v.map(|v| {
                     ctx.traits
                         .get::<IntoTyped<ByteStream>>(&v)
-                        .ok_or("cannot convert value into byte stream")
+                        .ok_or("cannot convert stdin into byte stream")
                         .map(|t| t.into_typed(v))
                 })
                 .transpose_err()

@@ -5,14 +5,14 @@ run-with-path = fn ^{^kwargs} ^args -> (exec ^{env = {PATH=$}} ^$kwargs ^$args) 
 copy-out = fn file name -> fs copy $file (path join $work-dir $name)
 
 # Compile function, taking one argument indicating the file to compile.
-compile = fn source-file -> cache seq ^[
+compile = fn source-file -> value cache seq ^[
     object-file = path new
-    run-with-path c++ -o $object-file -c (track $source-file)
+    run-with-path c++ -o $object-file -c (fs track $source-file)
     $object-file
 ]
 
 # Linking function, which passes all arguments to the link command.
-link = fn ^args -> cache seq ^[
+link = fn ^args -> value cache seq ^[
     exe = path new
     run-with-path c++ -o $exe ^$args
     $exe

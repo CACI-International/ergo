@@ -12,6 +12,12 @@ use crate::constants::{
     WORKING_DIRECTORY_BINDING,
 };
 use abi_stable::{rvec, std_types::RResult};
+use ergo_runtime::source::{FileSource, IntoSource, Source};
+use ergo_runtime::Result as SoResult;
+use ergo_runtime::{
+    apply_value, script_value_as, types, ContextEnv, EvalResult, FunctionArguments, FunctionCall,
+    ResultIterator, Runtime, ScriptEnv,
+};
 use grease::{
     bst::BstMap,
     depends, match_value,
@@ -21,12 +27,6 @@ use grease::{
     value::{IntoValue, Value},
 };
 use libloading as dl;
-use ergo_runtime::source::{FileSource, IntoSource, Source};
-use ergo_runtime::Result as SoResult;
-use ergo_runtime::{
-    apply_value, script_value_as, types, ContextEnv, EvalResult, FunctionArguments, FunctionCall,
-    ResultIterator, Runtime, ScriptEnv,
-};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path;
@@ -1188,24 +1188,6 @@ impl Plan<Runtime> for Rt<Expression> {
                 })
                 .into_value())
             }
-            /*
-            If(cond, t, f) => {
-                let cond = match cond.plan(ctx) {
-                    Eval::Value(v) => v.unwrap(),
-                    Eval::Error => return Ok(Eval::Error),
-                };
-
-                let to_bool: Option<grease::IntoTyped<bool>> = ctx.traits.get(&cond);
-                let cond = match to_bool {
-                    Some(t) => {
-                        let v = t.into_typed(cond).get()?;
-                        *v
-                    }
-                    None => true,
-                };
-                Ok(if cond { t.plan(ctx) } else { f.plan(ctx) }.map(Source::unwrap))
-            }
-            */
             Match(val, pats) => {
                 let val = Rt(*val).plan(ctx)?;
 

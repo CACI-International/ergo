@@ -9,7 +9,7 @@ use grease::path::PathBuf;
 use grease::runtime::Traits;
 use grease::traits::*;
 use grease::type_erase::Erased;
-use grease::types::{GreaseType, Type};
+use grease::types::{GreaseType, Type, TypeParameters};
 use grease::value::{IntoValue, TypedValue, Value};
 
 #[derive(GreaseTrait, StableAbi)]
@@ -43,9 +43,9 @@ pub fn traits(traits: &mut Traits) {
     // Identity: T -> T
     {
         extern "C" fn id(_traits: &Traits, tp: &Type, trt: &Trait) -> ROption<Erased> {
-            if trt.id == grease_trait_uuid(b"so_types::traits::IntoTyped") {
-                let trait_type: Type = trt.data.clone().into();
-                if tp == &trait_type {
+            if trt.id == IntoTyped::<()>::grease_trait().id {
+                let TypeParameters(trait_types) = trt.data.clone().into();
+                if tp == &trait_types[0] {
                     return ROption::RSome(Erased::new(IntoTyped::<()> {
                         into: (|v: Value| v).into(),
                         _phantom: Default::default(),
@@ -94,7 +94,6 @@ pub fn traits(traits: &mut Traits) {
     // types::Either
     {
         use crate::types::Either;
-        use grease::types::TypeParameters;
 
         extern "C" fn gen(traits: &Traits, tp: &Type, trt: &Trait) -> ROption<Erased> {
             // We only want cases with any either type and any IntoTyped trait.

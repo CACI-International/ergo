@@ -1,23 +1,23 @@
 #!/usr/bin/env ergo
 
 # Compile main.cpp
-main = cache seq ^[
+main = value cache seq ^[
     out = path new
-    exec ^{env = {PATH=$}} c++ -o $out -c (track main.cpp)
+    task "compiling main.cpp" exec ^{env = {PATH=$}} c++ -o $out -c (fs track main.cpp)
     $out
 ]
 
 # Compile lib.cpp
-lib = cache seq ^[
+lib = value cache seq ^[
     out = path new
-    exec ^{env = {PATH=$}} c++ -o $out -c (track lib.cpp)
+    task "compiling lib.cpp" exec ^{env = {PATH=$}} c++ -o $out -c (fs track lib.cpp)
     $out
 ]
 
 # Link the object files together
-exe = cache seq ^[
+exe = value cache seq ^[
     out = path new
-    exec ^{env = {PATH=$}} c++ -o $out $main $lib
+    task "linking executable" exec ^{env = {PATH=$}} c++ -o $out $main $lib
     $out
 ]
 

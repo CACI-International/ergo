@@ -9,20 +9,20 @@ copy-out = fn file name -> fs copy $file (path join $work-dir $name)
 # and a non-positional `includes` argument.
 compile = fn ^{^kwargs} source-file -> {
     incs = match $kwargs {
-        {includes,^_} = fold (fn incs p -> [^$incs,-I,$p]) [] $includes
+        {includes,^_} = collection fold (fn incs p -> [^$incs,-I,$p]) [] $includes
         _ = []
     }
     object-file = path new
-    cache seq ^[
-        run-with-path c++ -o $object-file ^$incs -c (track $source-file)
+    value cache seq ^[
+        task run-with-path c++ -o $object-file ^$incs -c (fs track $source-file)
         $object-file
     ]
 }
 
 # Linking function, which passes all arguments to the link command.
-link = fn ^args -> cache seq ^[
+link = fn name ^args -> value cache seq ^[
     exe = path new
-    run-with-path c++ -o $exe ^$args
+    task (string format "linking {}" $name) run-with-path c++ -o $exe ^$args
     $exe
 ]
 
@@ -30,14 +30,14 @@ link = fn ^args -> cache seq ^[
 link_exe = $link
 
 # Library-linking function, which links all arguments.
-link_so = fn ^args -> link -shared ^$args
+link_so = fn name ^args -> link $name -shared ^$args
 
 
 # Create a library from lib.cpp.
-lib = link_so "-Wl,-hlibadd2.so" (compile lib.cpp) 
+lib = link_so "add2 library" "-Wl,-hlibadd2.so" (compile lib.cpp) 
 
 # Create an executable using the library.
-exe = link_exe (compile main.cpp) $lib
+exe = link_exe forty_two (compile main.cpp) $lib
 
 # Download Catch2, build it and get the output include directory.
 Catch2 = {
@@ -51,13 +51,13 @@ Catch2 = {
         run-with-path ^{pwd=$build_dir} make test
     ]
     # Run the test suite before returning the library path
-    cache seq $run_tests (path join $catch_dir single_include)
+    value cache seq $run_tests (path join $catch_dir single_include)
 }
 
 # Create lib directory to link named library for testing
 libpath = {
     dir = path new
-    cache seq ^[
+    value cache seq ^[
         run mkdir -p $dir
         fs copy $lib (path join $dir libadd2.so)
         $dir
@@ -65,7 +65,7 @@ libpath = {
 }
 
 # Create and run a test executable using the library.
-test_prog = link_exe (compile test.cpp ^{ includes = [$Catch2] }) $lib
+test_prog = link_exe "test program" (compile test.cpp ^{ includes = [$Catch2] }) $lib
 test = run ^{ env = { LD_LIBRARY_PATH = $libpath } } $test_prog
 
 # Copy results into the current directory.
@@ -79,5 +79,5 @@ copy_result = [
     build = [$exe,$lib]
     test,
     # Only copy outputs if the tests pass.
-    release = seq (cache $test) $copy_result
+    release = seq (value cache $test) $copy_result
 }
