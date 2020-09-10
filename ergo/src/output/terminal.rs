@@ -62,8 +62,8 @@ impl super::Output for Output {
         self.log_level = log_level;
     }
 
-    fn new_error(&mut self) {
-        self.errors.inc();
+    fn on_error(&mut self, added: bool) {
+        self.errors.update(added);
         self.update();
     }
 }
@@ -193,8 +193,12 @@ impl Errors {
         }
     }
 
-    pub fn inc(&mut self) {
-        self.count += 1;
+    pub fn update(&mut self, added: bool) {
+        if added {
+            self.count += 1;
+        } else {
+            self.count -= 1;
+        }
     }
 }
 

@@ -8,7 +8,7 @@ mod terminal;
 pub trait Output: LogTarget {
     fn set_thread_ids(&mut self, ids: Vec<u64>);
     fn set_log_level(&mut self, log_level: LogLevel);
-    fn new_error(&mut self);
+    fn on_error(&mut self, added: bool);
 }
 
 pub fn output(format: crate::options::OutputFormat, keep_going: bool) -> Option<OutputInstance> {
@@ -45,8 +45,8 @@ impl Output for OutputInstance {
         self.inner.set_log_level(log_level)
     }
 
-    fn new_error(&mut self) {
-        self.inner.new_error()
+    fn on_error(&mut self, added: bool) {
+        self.inner.on_error(added)
     }
 }
 

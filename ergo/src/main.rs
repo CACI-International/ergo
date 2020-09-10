@@ -135,9 +135,9 @@ fn run(opts: Opts) -> Result<String, grease::value::Error> {
                 .storage_directory(working_dir.join(opts.storage))
                 .threads(opts.jobs)
                 .keep_going(!opts.stop)
-                .on_error(move || {
+                .on_error(move |added| {
                     if let Some(logger) = weak.upgrade() {
-                        logger.lock().new_error();
+                        logger.lock().on_error(added);
                     }
                 }),
         )

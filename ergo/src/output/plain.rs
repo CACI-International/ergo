@@ -24,7 +24,7 @@ impl super::Output for Output {
         self.log_level = log_level;
     }
 
-    fn new_error(&mut self) {}
+    fn on_error(&mut self, _added: bool) {}
 }
 
 impl LogTarget for Output {

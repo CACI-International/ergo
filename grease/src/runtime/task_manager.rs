@@ -28,17 +28,17 @@ struct ErrorCallback(*const (), Erased);
 unsafe impl Send for ErrorCallback {}
 
 impl ErrorCallback {
-    pub fn call(&self) {
-        unsafe { (std::mem::transmute::<*const (), fn(&Erased)>(self.0))(&self.1) }
+    pub fn call(&self, added: bool) {
+        unsafe { (std::mem::transmute::<*const (), fn(&Erased, bool)>(self.0))(&self.1, added) }
     }
 }
 
 /// Call the on_error handler for the active task manager.
-pub fn call_on_error() {
+pub fn call_on_error(added: bool) {
     ERROR_CALLBACK.with(|m| {
         let guard = m.lock();
         if let ROption::RSome(m2) = &*guard {
-            m2.lock().call()
+            m2.lock().call(added)
         }
     })
 }
@@ -48,12 +48,12 @@ pub fn thread_id() -> Option<u64> {
     THREAD_ID.with(|m| m.read().as_ref().copied().into_option())
 }
 
-fn call_on_error_internal(cb: &Erased) {
-    (unsafe { cb.as_ref::<Box<OnError>>() })()
+fn call_on_error_internal(cb: &Erased, added: bool) {
+    (unsafe { cb.as_ref::<Box<OnError>>() })(added)
 }
 
 /// Callback when an error is created in a task.
-pub type OnError = dyn Fn() + Send + Sync;
+pub type OnError = dyn Fn(bool) + Send + Sync;
 
 /// Trait to be able to make a trait object from `ThreadPool`.
 ///
