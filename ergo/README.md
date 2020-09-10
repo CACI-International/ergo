@@ -96,8 +96,7 @@ Within a script, the following are defined:
   zips, directories, urls to such?
 * Allow setting map keys from values rather than string constants?
 * Extend map, fold to operate on maps as well?
-* Reduce function captures to the bare minimum, and allow functions to be called
-  in a delayed context.
+* Reduce function captures to the bare minimum.
 * Allow functions to get call-site variables? Convenient for things like
   `work-dir`.
 * Allow fetching of urls and use of zip/tarballs with load command.
