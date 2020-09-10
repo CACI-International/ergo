@@ -1,20 +1,18 @@
 //! Concurrent task creation.
 
-use grease::{runtime::SplitInto, value::Value};
 use ergo_runtime::{apply_value, types};
+use futures::future::FutureExt;
+use grease::value::Value;
 
 pub fn function() -> Value {
-    types::Function::new(|ctx| {
+    types::Function::new(|ctx| async move {
         let desc = ctx.args.next().ok_or("no task description")?;
         let v = ctx.args.next().ok_or("no argument to task")?;
         let args = std::mem::take(&mut ctx.args);
 
-        let desc =
-            ergo_runtime::script_value_as!(desc, types::String, "task description must be a string")?;
+        let desc = ergo_runtime::source_value_as!(desc, types::String, ctx)?.unwrap();
 
-        let val = ctx
-            .split_map(move |ctx| apply_value(ctx, v, args.unchecked(), true))?
-            .unwrap();
+        let val = apply_value(ctx, v, args.unchecked(), true).await?.unwrap();
 
         let task = ctx.task.clone();
         let log = ctx.log.sublog("task");
@@ -24,13 +22,13 @@ pub fn function() -> Value {
             tp,
             async move {
                 task.spawn(async move {
-                    log.info(desc);
+                    log.info(desc.await?);
                     val.await
                 })
                 .await
             },
             id,
         )))
-    })
+    }.boxed())
     .into()
 }

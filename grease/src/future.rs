@@ -124,6 +124,14 @@ impl<T> From<Poll<T>> for task::Poll<T> {
 }
 
 #[sabi_trait]
+trait LocalFuture {
+    type Output;
+
+    #[sabi(last_prefix_field)]
+    fn poll(&mut self, cx: Context) -> Poll<Self::Output>;
+}
+
+#[sabi_trait]
 trait Future: Send {
     type Output;
 
@@ -143,16 +151,58 @@ trait SharedFuture: Clone + Debug + Send + Sync {
     fn peek(&self) -> Option<&Self::Output>;
 }
 
+/// A boxed, ABI-stable local future.
+///
+/// Unlike `BoxFuture`, `Send` is not required.
+#[derive(StableAbi)]
+#[repr(C)]
+pub struct LocalBoxFuture<'a, T> {
+    inner: LocalFuture_TO<'a, RBox<()>, T>,
+}
+
+impl<'a, T: StableAbi> LocalBoxFuture<'a, T> {
+    pub fn new<Fut: future::Future<Output = T> + 'a>(f: Fut) -> Self {
+        LocalBoxFuture {
+            inner: LocalFuture_TO::from_value(f, TU_Opaque),
+        }
+    }
+}
+
+impl<Fut> LocalFuture for Fut
+where
+    Fut: future::Future,
+{
+    type Output = <Fut as future::Future>::Output;
+
+    fn poll(&mut self, cx: Context) -> Poll<Self::Output> {
+        let waker = unsafe { task::Waker::from_raw(cx.0.into()) };
+        let mut ctx = task::Context::from_waker(&waker);
+        // Safe to use Pin::new_unchecked because these futures will _only_ be within a Box (and
+        // are moved into the box), so we guarantee that the future will not be moved out.
+        future::Future::poll(unsafe { Pin::new_unchecked(self) }, &mut ctx).into()
+    }
+}
+
+impl<'a, T> future::Future for LocalBoxFuture<'a, T> {
+    type Output = T;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut task::Context) -> task::Poll<Self::Output> {
+        unsafe { self.map_unchecked_mut(|s| &mut s.inner) }
+            .poll(Context(cx.into()))
+            .into()
+    }
+}
+
 /// A boxed, ABI-stable future.
 #[derive(StableAbi)]
 #[repr(C)]
-pub struct BoxFuture<T> {
-    inner: Future_TO<'static, RBox<()>, T>,
+pub struct BoxFuture<'a, T> {
+    inner: Future_TO<'a, RBox<()>, T>,
 }
 
-impl<T: StableAbi> BoxFuture<T> {
+impl<'a, T: StableAbi/* TODO + std::marker::Unpin*/> BoxFuture<'a, T> {
     /// Create a new boxed future.
-    pub fn new<Fut: future::Future<Output = T> + Send + 'static>(f: Fut) -> Self {
+    pub fn new<Fut: future::Future<Output = T> + Send + 'a>(f: Fut) -> Self {
         BoxFuture {
             inner: Future_TO::from_value(f, TU_Opaque),
         }
@@ -174,7 +224,7 @@ where
     }
 }
 
-impl<T> future::Future for BoxFuture<T> {
+impl<T> future::Future for BoxFuture<'_, T> {
     type Output = T;
 
     fn poll(self: Pin<&mut Self>, cx: &mut task::Context) -> task::Poll<Self::Output> {

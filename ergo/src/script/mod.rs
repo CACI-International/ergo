@@ -1,9 +1,9 @@
 //! Script loading and execution.
 
 use crate::constants::*;
-use grease::runtime::{Context, Plan};
 pub use ergo_runtime::source::{FileSource, Source, StringSource};
-use ergo_runtime::{ContextEnv, Runtime, ScriptEnv};
+use ergo_runtime::{ContextEnv, EvalResult, Runtime, ScriptEnv};
+use futures::future::FutureExt;
 
 mod ast;
 mod base;
@@ -20,7 +20,7 @@ pub struct Script {
 /// Create a script context from a context builder.
 pub fn script_context(
     cb: grease::runtime::ContextBuilder,
-) -> Result<Context<Runtime>, grease::runtime::BuilderError> {
+) -> Result<Runtime, grease::runtime::BuilderError> {
     let mut global_env = ScriptEnv::default();
     {
         let mut insert = |k: &str, v| global_env.insert(k.into(), Ok(Source::builtin(v)).into());
@@ -42,10 +42,10 @@ pub fn script_context(
         }
     }
 
-    cb.build_with(Runtime::new(global_env)).map(|mut ctx| {
+    cb.build().map(|mut ctx| {
         // Add initial traits
         ergo_runtime::traits::traits(&mut ctx.traits);
-        ctx
+        Runtime::new(ctx, global_env)
     })
 }
 
@@ -62,26 +62,23 @@ impl Script {
     pub fn top_level_env(&mut self, env: ScriptEnv) {
         self.top_level_env = env;
     }
-}
 
-impl Plan<Runtime> for Script {
-    type Output = <Rt<ast::Script> as Plan<Runtime>>::Output;
-
-    fn plan(self, ctx: &mut Context<Runtime>) -> Self::Output {
+    pub async fn evaluate(self, ctx: &mut Runtime) -> EvalResult {
         // Swap existing env; loading a script should have a clean environment besides the
         // configured top-level env.
         let ast = self.ast;
         ctx.substituting_env(vec![self.top_level_env].into(), move |ctx| {
-            Rt(ast).plan(ctx)
+            Rt(ast).evaluate(ctx).boxed()
         })
+        .await
     }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
-    use grease::value::Value;
     use ergo_runtime::types;
+    use grease::value::Value;
 
     #[derive(Clone, Debug)]
     enum ScriptResult {

@@ -1,7 +1,8 @@
 //! String manipulation functions.
 
+use ergo_runtime::{source_value_as, traits, types};
+use futures::future::FutureExt;
 use grease::{bst::BstMap, make_value, value::Value};
-use ergo_runtime::{script_value_as, traits, types};
 use std::fmt::Write;
 
 pub fn module() -> Value {
@@ -57,10 +58,13 @@ impl<'a> IntoIterator for &'a Fragments {
 }
 
 fn format_fn() -> Value {
-    types::Function::new(|ctx| {
+    types::Function::new(|ctx| async move {
     let format_str = ctx.args.next().ok_or("no format string provided")?;
     let source = format_str.source();
-    let format_str = script_value_as!(format_str, types::String, "format string must be a string")?;
+    let format_str = {
+        let s = source_value_as!(format_str, types::String, ctx)?;
+        s.await.unwrap()?
+    };
 
     let pos_args: Vec<_> = ctx.args.by_ref().collect();
     let kw_args = std::mem::take(&mut ctx.args.non_positional);
@@ -154,5 +158,5 @@ fn format_fn() -> Value {
             Ok(result)
         }).into()))
     }
-}).into()
+}.boxed()).into()
 }

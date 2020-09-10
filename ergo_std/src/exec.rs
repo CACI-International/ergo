@@ -1,6 +1,7 @@
 //! Execute (possibly with path-lookup) external programs.
 
 use abi_stable::{StableAbi, std_types::ROption};
+use futures::future::FutureExt;
 use futures::channel::oneshot::channel;
 use grease::{
     depends,
@@ -582,7 +583,7 @@ mod bytestream {
 pub use bytestream::ByteStream;
 
 pub fn function() -> Value {
-    types::Function::new(|ctx| {
+    types::Function::new(|ctx| async move {
         let cmd = ctx.args.next().ok_or("no command provided")?;
 
         let (cmdsource, cmd) = cmd.take();
@@ -776,7 +777,7 @@ pub fn function() -> Value {
         ret_map.insert("complete".into(), ctx.imbue_error_context(run_command.into(), "while evaluating result of exec command"));
 
         Ok(ctx.call_site.clone().with(types::Map(ret_map).into()))
-    })
+    }.boxed())
     .into()
 }
 

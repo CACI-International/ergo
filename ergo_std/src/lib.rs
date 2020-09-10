@@ -1,7 +1,6 @@
-/// Ergo standard module plugin.
-
-use grease::{bst::BstMap, runtime::Context};
 use ergo_runtime::{plugin_entry, source::Source, types, EvalResult, Runtime};
+/// Ergo standard module plugin.
+use grease::bst::BstMap;
 
 mod collection;
 mod exec;
@@ -17,7 +16,7 @@ mod value;
 pub use exec::{ByteStream, ExitStatus};
 
 #[plugin_entry]
-fn entry(ctx: &mut Context<Runtime>) -> EvalResult {
+fn entry(ctx: &mut Runtime) -> EvalResult {
     // Add trait implementations
     exec::traits(&mut ctx.traits);
 

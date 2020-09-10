@@ -1,9 +1,10 @@
 //! Filesystem runtime functions.
 
+use ergo_runtime::{source_value_as, traits, types};
+use futures::future::FutureExt;
 use glob::glob;
 use grease::{bst::BstMap, item_name, make_value, match_value, path::PathBuf, value::Value};
 use serde::{Deserialize, Serialize};
-use ergo_runtime::{script_value_as, traits, types};
 use std::path::Path;
 
 pub fn module() -> Value {
@@ -16,7 +17,7 @@ pub fn module() -> Value {
 }
 
 fn glob_fn() -> Value {
-    types::Function::new(|ctx| {
+    types::Function::new(|ctx| async move {
         let pattern = ctx.args.next().ok_or("no glob pattern provided")?;
 
         ctx.unused_arguments()?;
@@ -32,7 +33,7 @@ fn glob_fn() -> Value {
             .transpose_err()
             .map_err(|e| e.into_grease_error())?;
 
-        let path = script_value_as!(
+        let path = source_value_as!(
             ctx.env_get("work-dir")
                 .ok_or(
                     ctx.call_site
@@ -42,14 +43,15 @@ fn glob_fn() -> Value {
                 )?
                 .map(|v| v.clone())?,
             PathBuf,
-            "work-dir is not a Path"
-        )?;
+            ctx
+        )?.unwrap();
 
+        let task = ctx.task.clone();
         Ok(ctx.call_site.clone().with(make_value!((path, pattern) ["fs glob"] {
-            let pattern = pattern.await?;
+            let (path, pattern) = task.join(path,pattern).await?;
 
             let pattern = {
-                let mut p = path.into_pathbuf();
+                let mut p = path.owned().into_pathbuf();
                 p.push(pattern.as_str());
                 p
             };
@@ -68,7 +70,7 @@ fn glob_fn() -> Value {
             }
         })
         .into()))
-    })
+    }.boxed())
     .into()
 }
 
@@ -100,7 +102,7 @@ fn recursive_link<F: AsRef<Path>, T: AsRef<Path>>(from: F, to: T) -> Result<(), 
 }
 
 fn copy_fn() -> Value {
-    types::Function::new(|ctx| {
+    types::Function::new(|ctx| async move {
         let from = ctx.args.next().ok_or("'from' missing")?;
         let to = ctx.args.next().ok_or("'to' missing")?;
 
@@ -126,12 +128,12 @@ fn copy_fn() -> Value {
             Ok(recursive_link(from.as_ref().as_ref(), to.as_ref().as_ref())?)
         })
         .into()))
-    })
+    }.boxed())
     .into()
 }
 
 fn exists_fn() -> Value {
-    types::Function::new(|ctx| {
+    types::Function::new(|ctx| async move {
         let path = ctx.args.next().ok_or("'path' missing")?;
 
         ctx.unused_arguments()?;
@@ -150,28 +152,28 @@ fn exists_fn() -> Value {
             })
             .into(),
         ))
-    })
+    }.boxed())
     .into()
 }
 
 fn track_fn() -> Value {
-    types::Function::new(|ctx| {
+    types::Function::new(|ctx| async move {
         let path = ctx.args.next().ok_or("no file provided to track")?;
 
         ctx.unused_arguments()?;
 
         let path = path
-            .map(|p| {
+            .map_async(|p| async {
                 match_value!(p => {
                     types::String => |v| {
-                        v.get().map(|v| v.owned().to_string().into())
+                        v.await.map(|v| v.owned().to_string().into())
                     },
                     PathBuf => |v| {
-                        v.get().map(|v| v.owned().into_pathbuf())
+                        v.await.map(|v| v.owned().into_pathbuf())
                     },
                     => |_| Err("track argument must be a string or path".into())
                 })
-            })
+            }).await
             .transpose_err()
             .map_err(|e| e.into_grease_error())?;
 
@@ -216,7 +218,7 @@ fn track_fn() -> Value {
             .call_site
             .clone()
             .with(make_value!((path) [hash] Ok(PathBuf::from(path))).into()))
-    })
+    }.boxed())
     .into()
 }
 

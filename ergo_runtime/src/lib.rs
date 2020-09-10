@@ -9,10 +9,11 @@ use abi_stable::{
     std_types::{RArc, RBox, ROption, RResult, RString, RVec},
     StableAbi,
 };
+use futures::future::{BoxFuture, FutureExt};
 use grease::bst::BstMap;
 use grease::match_value;
 use grease::path::PathBuf;
-use grease::runtime::{Context, JoinMap};
+use grease::runtime::Context;
 use grease::type_erase::{Eraseable, Erased};
 use grease::value::{Error, Value};
 use log::trace;
@@ -74,6 +75,7 @@ pub type ScriptEnv = BstMap<RString, EvalResultAbi>;
 #[repr(C)]
 /// The script runtime context.
 pub struct Runtime {
+    context: Context,
     /// The global env exists as an optimization to exclude values that will
     /// always be accessible from being wrapped in capture environments. It also makes
     /// clearing the environment when loading separate scripts easier.
@@ -84,17 +86,56 @@ pub struct Runtime {
     lifetime: RArc<RMutex<RVec<Erased>>>,
 }
 
+impl std::ops::Deref for Runtime {
+    type Target = Context;
+
+    fn deref(&self) -> &Self::Target {
+        &self.context
+    }
+}
+
+impl std::ops::DerefMut for Runtime {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.context
+    }
+}
+
 /// Script function call context.
 #[derive(StableAbi)]
 #[repr(C)]
-pub struct FunctionCall {
-    runtime: Runtime,
+pub struct FunctionCall<'a> {
+    runtime: &'a mut Runtime,
     pub args: FunctionArguments,
     pub call_site: Source<()>,
 }
 
+impl<'a> FunctionCall<'a> {
+    /// Create a new FunctionCall context.
+    pub fn new(ctx: &'a mut Runtime, args: FunctionArguments, call_site: Source<()>) -> Self {
+        FunctionCall {
+            runtime: ctx,
+            args,
+            call_site,
+        }
+    }
+}
+
+impl std::ops::Deref for FunctionCall<'_> {
+    type Target = Runtime;
+
+    fn deref(&self) -> &Self::Target {
+        self.runtime
+    }
+}
+
+impl std::ops::DerefMut for FunctionCall<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.runtime
+    }
+}
+
 #[sabi_trait]
-pub trait PeekIter: Debug {
+pub trait PeekIter: Debug + Send {
     type Item;
 
     fn next(&mut self) -> ROption<Self::Item>;
@@ -122,24 +163,16 @@ pub struct FunctionArguments {
     inner: UncheckedFunctionArguments,
 }
 
-impl Default for Runtime {
-    fn default() -> Self {
+impl Runtime {
+    /// Create a new runtime.
+    pub fn new(context: Context, global_env: ScriptEnv) -> Self {
         Runtime {
-            global_env: Default::default(),
+            context,
+            global_env,
             env: Default::default(),
             loading: Default::default(),
             load_cache: RArc::new(RMutex::new(Default::default())),
             lifetime: RArc::new(RMutex::new(Default::default())),
-        }
-    }
-}
-
-impl Runtime {
-    /// Create a new runtime.
-    pub fn new(global_env: ScriptEnv) -> Self {
-        Runtime {
-            global_env,
-            ..Default::default()
         }
     }
 
@@ -198,7 +231,7 @@ impl Runtime {
     }
 }
 
-impl FunctionCall {
+impl FunctionCall<'_> {
     /// Return whether there were unused non-positional arguments, and add errors for each unused
     /// argument to the context errors.
     pub fn unused_non_positional(&mut self) -> std::result::Result<(), Error> {
@@ -244,41 +277,10 @@ impl FunctionCall {
     }
 }
 
-impl std::ops::Deref for FunctionCall {
-    type Target = Runtime;
-
-    fn deref(&self) -> &Self::Target {
-        &self.runtime
-    }
-}
-
-impl std::ops::DerefMut for FunctionCall {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.runtime
-    }
-}
-
-impl grease::runtime::SplitInto<Runtime> for FunctionCall {
-    type Extra = (FunctionArguments, Source<()>);
-
-    fn split(self) -> (Runtime, Self::Extra) {
-        (self.runtime, (self.args, self.call_site))
-    }
-
-    fn join(runtime: Runtime, extra: Self::Extra) -> Self {
-        let (args, call_site) = extra;
-        FunctionCall {
-            runtime,
-            args,
-            call_site,
-        }
-    }
-}
-
 impl<I> PeekIter for std::iter::Peekable<I>
 where
-    I: Iterator + std::fmt::Debug + ExactSizeIterator,
-    I::Item: std::fmt::Debug,
+    I: Iterator + std::fmt::Debug + Send + ExactSizeIterator,
+    I::Item: std::fmt::Debug + Send,
 {
     type Item = I::Item;
 
@@ -429,90 +431,94 @@ pub trait GetEnv {
     fn get_env(&mut self) -> &mut RVec<ScriptEnv>;
 }
 
-impl GetEnv for Context<Runtime> {
+impl GetEnv for Runtime {
     fn get_env(&mut self) -> &mut RVec<ScriptEnv> {
         &mut self.env
     }
 }
 
-impl GetEnv for Context<FunctionCall> {
+impl GetEnv for FunctionCall<'_> {
     fn get_env(&mut self) -> &mut RVec<ScriptEnv> {
         &mut self.env
     }
 }
 
 pub trait ContextEnv: GetEnv {
-    fn substituting_env<F, R>(&mut self, mut env: RVec<ScriptEnv>, f: F) -> R
+    /// Call the given function while substituting the current environment.
+    fn substituting_env<'b, F, R>(&'b mut self, mut env: RVec<ScriptEnv>, f: F) -> BoxFuture<'b, R>
     where
-        F: FnOnce(&mut Self) -> R,
+        F: for<'a> FnOnce(&'a mut Self) -> BoxFuture<'a, R> + Send + 'b,
+        Self: Send,
     {
-        std::mem::swap(self.get_env(), &mut env);
-        let ret = f(self);
-        std::mem::swap(self.get_env(), &mut env);
-        ret
+        async move {
+            std::mem::swap(self.get_env(), &mut env);
+            let ret = f(self).await;
+            std::mem::swap(self.get_env(), &mut env);
+            ret
+        }
+        .boxed()
     }
 
-    fn env_scoped<F, R>(&mut self, env: ScriptEnv, f: F) -> (R, ScriptEnv)
+    /// Call the given function in a new, scoped environment.
+    fn env_scoped<'b, F, R>(&'b mut self, env: ScriptEnv, f: F) -> BoxFuture<'b, (R, ScriptEnv)>
     where
-        F: FnOnce(&mut Self) -> R,
+        F: for<'a> FnOnce(&'a mut Self) -> BoxFuture<'a, R> + Send + 'b,
+        Self: Send,
     {
-        self.get_env().push(env);
-        let ret = f(self);
-        let env = self.get_env().pop().expect("env push/pop is not balanced");
-        (ret, env)
+        async move {
+            self.get_env().push(env);
+            let ret = f(self).await;
+            let env = self.get_env().pop().expect("env push/pop is not balanced");
+            (ret, env)
+        }
+        .boxed()
     }
 }
 
 impl<T: GetEnv> ContextEnv for T {}
 
 #[macro_export]
-macro_rules! script_value_as {
-    ($val:expr , $ty:ty , $err:expr) => {{
-        let (source, v) = $val.take();
-        match v.typed::<$ty>() {
-            Err(_) => Err(grease::value::Error::from(
-                source.with(grease::value::Error::from($err).error()),
-            )),
-            Ok(v) => v.get().map_err(|e| source.with(e.error()).into()),
+macro_rules! source_value_as {
+    ($val:expr , $ty:ty , $ctx:expr) => {
+        match $val.map(|v| v.typed::<$ty>()).transpose() {
+            Ok(v) => Ok(v),
+            Err(e) => {
+                let (source, v) = e.take();
+                Err(source
+                    .with(format!(
+                        "expected {}, found {}",
+                        $crate::traits::type_name(
+                            &$ctx.traits,
+                            &<$ty as grease::types::GreaseType>::grease_type()
+                        ),
+                        $crate::traits::type_name(&$ctx.traits, &*v.grease_type())
+                    ))
+                    .into_grease_error())
+            }
         }
-    }};
-}
-
-#[macro_export]
-macro_rules! script_value_sourced_as {
-    ($val:expr , $ty:ty , $err:expr) => {{
-        let (source, v) = $val.take();
-        match v.typed::<$ty>() {
-            Err(_) => Err(grease::value::Error::from(
-                source.with(grease::value::Error::from($err).error()),
-            )),
-            Ok(v) => match v.get() {
-                Ok(v) => Ok(source.with(v)),
-                Err(e) => Err(source.with(e.error()).into()),
-            },
-        }
-    }};
+    };
 }
 
 /// Apply the value to the given arguments.
 ///
 /// If `env_lookup` is true and `v` is a `ScriptString`, it will be looked up in the environment.
 pub fn apply_value(
-    ctx: &mut Context<Runtime>,
+    ctx: &mut Runtime,
     v: Source<Value>,
     mut args: UncheckedFunctionArguments,
     env_lookup: bool,
-) -> EvalResult {
-    let v_source = v.source();
+) -> BoxFuture<EvalResult> {
+    async move {
+        let v_source = v.source();
 
-    v.map(|v| {
+        v.map_async(|v| async {
         let v = if env_lookup {
             match v.typed::<types::String>() {
                 Ok(val) => {
-                    let s = val.get()?.owned();
+                    let s = val.await?.owned();
                     trace!("looking up '{}' in environment", s);
                     // Lookup string in environment, and apply result to remaining arguments
-                    match ctx.inner.env_get(&s) {
+                    match ctx.env_get(&s) {
                         Some(value) => {
                             let value = value?;
                             trace!("found match in environment for '{}': {}", s, value.id());
@@ -535,47 +541,48 @@ pub fn apply_value(
 
         match_value!(v => {
             types::Array => |val| {
-                let index = script_value_sourced_as!(args.next().unwrap(), types::String, "index must be a string")?;
-                let val = index.map(|index| match usize::from_str(index.as_ref()) {
+                let index = source_value_as!(args.next().unwrap(), types::String, ctx)?.await.transpose_ok()?;
+                let val = index.map_async(|index| async move { match usize::from_str(index.as_ref()) {
                     Err(_) => Err(Error::from(error::NonIntegerIndex)),
-                    Ok(ind) => val.get().map(|v| v.0.get(ind).cloned()
+                    Ok(ind) => val.await.map(|v| v.0.get(ind).cloned()
                         .unwrap_or(().into()))
-                }).transpose().map_err(|e| e.into_grease_error())?;
+                }
+                }).await.transpose().map_err(|e| e.into_grease_error())?;
 
                 let (source,val) = val.take();
 
-                apply_value(ctx, Source::from((v_source,source)).with(val), args, false)
+                apply_value(ctx, Source::from((v_source,source)).with(val), args, false).await
             },
             types::Map => |val| {
-                let index = script_value_sourced_as!(args.next().unwrap(), types::String, "index must be a string")?;
+                let index = source_value_as!(args.next().unwrap(), types::String, ctx)?.await.transpose_ok()?;
 
-                let val = index.map(|index|
-                        val.get().map(|v| v.0.get(index.as_ref()).cloned()
+                let val = index.map_async(|index| async move {
+                        val.await.map(|v| v.0.get(index.as_ref()).cloned()
                             .unwrap_or(().into()))
-                    )
-                    .transpose().map_err(|e| e.into_grease_error())?;
+                }).await.transpose().map_err(|e| e.into_grease_error())?;
 
                 let (source,val) = val.take();
 
-                apply_value(ctx, Source::from((v_source,source)).with(val), args, false)
+                apply_value(ctx, Source::from((v_source,source)).with(val), args, false).await
             },
             types::Function => |val| {
-                let f = val.get()?;
+                let f = val.await?;
                 let f = f.as_ref();
-                ctx.join_map((args.into(), v_source), |fctx| {
-                    let ret = f.call(fctx);
-                    if ret.is_err() {
-                        fctx.args.clear();
-                    }
-                    ret
-                })
+                let mut fcallctx = FunctionCall::new(ctx, args.into(), v_source);
+                let ret = f.call(&mut fcallctx).await;
+                if ret.is_err() {
+                    fcallctx.args.clear();
+                }
+                ret
             },
             => |v| {
                 Err(error::NonCallableExpression(v).into())
             }
         })
     })
+    .await
     .map(|v| v.map_err(|e| e.error()))
-    .transpose_err()
-    .map_err(|e| e.into())
+        .transpose_err()
+        .map_err(|e| e.into())
+    }.boxed()
 }

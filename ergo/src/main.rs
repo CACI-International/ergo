@@ -186,10 +186,8 @@ fn run(opts: Opts) -> Result<String, grease::value::Error> {
         Ok(Source::builtin(work_dir)).into(),
     );
     loaded.top_level_env(env);
-    let script_output = loaded
-        .plan(&mut ctx)
-        .app_err_result("errors(s) while executing script");
-    let script_output = script_output.app_err_result("an evaluation error occurred")?;
+    let script_output = futures::executor::block_on(loaded.evaluate(&mut ctx))
+        .app_err_result("errors(s) while executing script")?;
 
     let traits = ctx.traits.clone();
 

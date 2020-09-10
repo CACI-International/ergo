@@ -1,15 +1,16 @@
 //! Path operations module.
 
 use ergo_runtime::{types, EvalResult, FunctionCall};
+use futures::future::FutureExt;
 use grease::{
     depends, item_name, make_value, match_value,
     path::PathBuf,
-    runtime::{Context, ItemName},
+    runtime::ItemName,
     value::{Dependency, TypedValue, Value},
 };
 
 pub fn module() -> Value {
-    types::Function::new(|ctx| {
+    types::Function::new(|ctx| async move {
         let name = ctx.args.next().ok_or("missing argument")?;
 
         let name = name
@@ -20,7 +21,7 @@ pub fn module() -> Value {
             .transpose_err()
             .map_err(|e| e.into_grease_error())?;
 
-        let name = name.get()?;
+        let name = name.await?;
 
         match name.as_str() {
             "new" => new_value(ctx),
@@ -29,11 +30,11 @@ pub fn module() -> Value {
             "split" => split_fn(ctx),
             _ => Ok(ctx.call_site.clone().with(().into())),
         }
-    })
+    }.boxed())
     .into()
 }
 
-fn new_value(ctx: &mut Context<FunctionCall>) -> EvalResult {
+fn new_value(ctx: &mut FunctionCall) -> EvalResult {
     ctx.unused_arguments()?;
 
     let store = ctx.store.item(item_name!("path")).item(item_name!("new"));
@@ -64,7 +65,7 @@ impl From<&JoinComponent> for Dependency {
     }
 }
 
-fn join_fn(ctx: &mut Context<FunctionCall>) -> EvalResult {
+fn join_fn(ctx: &mut FunctionCall) -> EvalResult {
     let mut args = Vec::new();
 
     while let Some(sv) = ctx.args.next() {
@@ -108,7 +109,7 @@ fn join_fn(ctx: &mut Context<FunctionCall>) -> EvalResult {
     ))
 }
 
-fn split_fn(ctx: &mut Context<FunctionCall>) -> EvalResult {
+fn split_fn(ctx: &mut FunctionCall) -> EvalResult {
     let to_split = ctx.args.next().ok_or("no path to split")?;
 
     ctx.unused_arguments()?;
@@ -136,7 +137,7 @@ fn split_fn(ctx: &mut Context<FunctionCall>) -> EvalResult {
         }).into()))
 }
 
-fn relative_fn(ctx: &mut Context<FunctionCall>) -> EvalResult {
+fn relative_fn(ctx: &mut FunctionCall) -> EvalResult {
     let base = ctx.args.next().ok_or("no base path")?;
     let path = ctx.args.next().ok_or("no path")?;
 

@@ -310,6 +310,19 @@ impl<T> Source<T> {
         }
     }
 
+    /// Map the inner value of the source with an async function.
+    pub async fn map_async<U, F, Fut>(self, f: F) -> Source<U>
+    where
+        F: FnOnce(T) -> Fut,
+        Fut: Future<Output = U>,
+    {
+        Source {
+            value: f(self.value).await,
+            location: self.location,
+            source: self.source,
+        }
+    }
+
     /// Replace the contents of the source.
     pub fn with<U>(self, u: U) -> Source<U> {
         self.map(|_| u)

@@ -61,11 +61,11 @@ pub type OnError = dyn Fn() + Send + Sync;
 #[sabi_trait]
 trait ThreadPoolInterface: Clone + Debug + Send + Sync {
     #[sabi(last_prefix_field)]
-    fn spawn_ok(&self, future: BoxFuture<()>);
+    fn spawn_ok(&self, future: BoxFuture<'static, ()>);
 }
 
 impl ThreadPoolInterface for ThreadPool {
-    fn spawn_ok(&self, future: BoxFuture<()>) {
+    fn spawn_ok(&self, future: BoxFuture<'static, ()>) {
         self.spawn_ok(future)
     }
 }

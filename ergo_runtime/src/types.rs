@@ -12,7 +12,7 @@ use abi_stable::{
 };
 use grease::bst::BstMap;
 use grease::depends;
-use grease::runtime::{JoinMap, SplitInto};
+use grease::future::BoxFuture;
 use grease::type_erase::Erased;
 use grease::types::{GreaseType, Type, TypeParameters};
 use grease::value::{TypedValue, Value};
@@ -55,19 +55,15 @@ pub struct Function(FunctionAbi_TO<'static, RBox<()>>);
 #[sabi_trait]
 trait FunctionAbi: Send + Sync {
     #[sabi(last_prefix_field)]
-    fn call(&self, ctx: &mut grease::runtime::Context<crate::FunctionCall>)
-        -> crate::EvalResultAbi;
+    fn call<'a>(&'a self, ctx: &'a mut crate::FunctionCall) -> BoxFuture<'a, crate::EvalResultAbi>;
 }
 
 impl<F> FunctionAbi for F
 where
-    F: Fn(&mut grease::runtime::Context<crate::FunctionCall>) -> crate::EvalResult + Send + Sync,
+    F: for<'a> Fn(&'a mut crate::FunctionCall) -> futures::future::BoxFuture<'a, crate::EvalResult> + Send + Sync + 'static,
 {
-    fn call(
-        &self,
-        ctx: &mut grease::runtime::Context<crate::FunctionCall>,
-    ) -> crate::EvalResultAbi {
-        self(ctx).into()
+    fn call<'a>(&'a self, ctx: &'a mut crate::FunctionCall) -> BoxFuture<'a, crate::EvalResultAbi> {
+        BoxFuture::new(async move { self(ctx).await.into() })
     }
 }
 
@@ -75,59 +71,47 @@ impl Function {
     /// Create a new function with the given implementation.
     pub fn new<F>(f: F) -> Self
     where
-        F: Fn(&mut grease::runtime::Context<crate::FunctionCall>) -> crate::EvalResult
-            + Send
-            + Sync
-            + 'static,
+        F: for<'a> Fn(&'a mut crate::FunctionCall) -> futures::future::BoxFuture<'a, crate::EvalResult> + Send + Sync + 'static,
     {
         Function(FunctionAbi_TO::from_value(f, TU_Opaque))
     }
 
     /// Call the function.
-    pub fn call(
-        &self,
-        ctx: &mut grease::runtime::Context<crate::FunctionCall>,
-    ) -> crate::EvalResult {
-        self.0.call(ctx).into()
+    pub async fn call(&self, ctx: &mut crate::FunctionCall<'_>) -> crate::EvalResult {
+        self.0.call(ctx).await.into()
     }
 }
 
 /// A function which can be called using only function arguments and a call site source.
 #[derive(GreaseType)]
-pub struct PortableFunction(
-    grease::value::Ref<Function>,
-    grease::runtime::Context<crate::Runtime>,
-);
+pub struct PortableFunction(grease::value::Ref<Function>, crate::Runtime);
 
 impl PortableFunction {
     /// Call the function with the given arguments and call site source location.
-    pub fn call(
+    pub async fn call(
         &self,
         args: crate::FunctionArguments,
         call_site: crate::source::Source<()>,
     ) -> crate::EvalResult {
         let f = &self.0;
-        self.1
-            .clone()
-            .join_map((args, call_site), |ctx| f.call(ctx))
+        f.call(&mut crate::FunctionCall::new(
+            &mut self.1.clone(),
+            args,
+            call_site,
+        ))
+        .await
     }
 }
 
 /// Portable function extension trait.
 pub trait Portable {
     /// Wrap a function's context into a portable function to be called later.
-    fn portable<Ctx: SplitInto<grease::runtime::Context<crate::Runtime>>>(
-        self,
-        ctx: &mut Ctx,
-    ) -> TypedValue<PortableFunction>;
+    fn portable(self, ctx: &mut crate::Runtime) -> TypedValue<PortableFunction>;
 }
 
 impl Portable for TypedValue<Function> {
-    fn portable<Ctx: SplitInto<grease::runtime::Context<crate::Runtime>>>(
-        self,
-        ctx: &mut Ctx,
-    ) -> TypedValue<PortableFunction> {
-        let mut c = ctx.split_map(|ctx| ctx.clone());
+    fn portable(self, ctx: &mut crate::Runtime) -> TypedValue<PortableFunction> {
+        let mut c = ctx.clone();
         c.global_env.clear();
         c.env.clear();
         self.map(|v| PortableFunction(v, c))

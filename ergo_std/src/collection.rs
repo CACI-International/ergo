@@ -1,8 +1,8 @@
 //! Functions over collections.
 
-use abi_stable::std_types::RVec;
-use grease::{bst::BstMap, depends, make_value, value::Value};
 use ergo_runtime::{types, FunctionArguments};
+use futures::future::{ok, FutureExt, TryFutureExt};
+use grease::{bst::BstMap, depends, make_value, value::Value};
 
 pub fn module() -> Value {
     let mut map = BstMap::default();
@@ -12,7 +12,7 @@ pub fn module() -> Value {
 }
 
 fn fold_fn() -> Value {
-    types::Function::new(|ctx| {
+    types::Function::new(|ctx| async move {
         let func = ctx.args.next().ok_or("fold function not provided")?;
         let orig = ctx.args.next().ok_or("fold base value not provided")?;
         let vals = ctx.args.next().ok_or("fold values not provided")?;
@@ -42,30 +42,32 @@ fn fold_fn() -> Value {
                 let (func_source, func) = func.take();
                 let (vals_source, vals) = vals.take();
                 let (func, vals) = task.join(func, vals).await?;
-                let val = vals
-                    .owned()
-                    .0
-                    .into_iter()
-                    .fold(Ok(orig), |acc, v| {
-                        acc.and_then(|acc| {
-                            func.call(
-                                FunctionArguments::positional(vec![acc, vals_source.clone().with(v)]),
-                                func_source.clone(),
-                            )
-                            .into()
-                        })
-                    })?
-                    .unwrap();
-                val.await
+                let val = vals.owned().0.into_iter().fold(ok(orig).boxed(), |acc, v| {
+                    let f = &func;
+                    let src = &vals_source;
+                    let fsrc = &func_source;
+                    acc.and_then(move |accv| {
+                        f.call(
+                            FunctionArguments::positional(vec![
+                                accv,
+                                src.clone().with(v),
+                            ]),
+                            fsrc.clone(),
+                        )
+                    })
+                    .boxed()
+                });
+
+                val.await?.await.unwrap()
             },
             deps,
         )))
-    })
+    }.boxed())
     .into()
 }
 
 fn map_fn() -> Value {
-    types::Function::new(|ctx| {
+    types::Function::new(|ctx| async move {
         let func = ctx.args.next().ok_or("map function not provided")?;
         let arr = ctx.args.next().ok_or("map array not provided")?;
 
@@ -91,13 +93,11 @@ fn map_fn() -> Value {
             let (func_source, func) = func.take();
             let (arr_source, arr) = arr.take();
             let (func,arr) = task.join(func,arr).await?;
-            arr.owned()
-                .0
+            let arr = task.join_all(arr.owned().0
                 .into_iter()
-                .map(|d| func.call(FunctionArguments::positional(vec![arr_source.clone().with(d)]), func_source.clone())
-                            .map(|src| src.unwrap())
-                ).collect::<Result<RVec<_>, _>>()
-            .map(types::Array)
+                .map(|d| func.call(FunctionArguments::positional(vec![arr_source.clone().with(d)]), func_source.clone())));
+
+            Ok(types::Array(arr.await?.into_iter().map(|v| v.unwrap()).collect()))
         }).into()))
-    }).into()
+    }.boxed()).into()
 }

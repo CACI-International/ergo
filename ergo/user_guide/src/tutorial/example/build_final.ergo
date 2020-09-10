@@ -14,7 +14,7 @@ compile = fn ^{^kwargs} source-file -> {
     }
     object-file = path new
     value cache seq ^[
-        task run-with-path c++ -o $object-file ^$incs -c (fs track $source-file)
+        task (string format "compiling {}" $source-file) run-with-path c++ -o $object-file ^$incs -c (fs track $source-file)
         $object-file
     ]
 }

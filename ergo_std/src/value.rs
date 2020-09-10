@@ -1,6 +1,5 @@
 //! Value-related intrinsics.
 
-use grease::{bst::BstMap, depends, item_name, runtime::SplitInto, value::Value};
 use ergo_runtime::{
     apply_value,
     traits::{
@@ -8,6 +7,8 @@ use ergo_runtime::{
     },
     types,
 };
+use futures::future::FutureExt;
+use grease::{bst::BstMap, depends, item_name, value::Value};
 
 pub fn module() -> Value {
     let mut map = BstMap::default();
@@ -18,7 +19,7 @@ pub fn module() -> Value {
 }
 
 fn force_fn() -> Value {
-    types::Function::new(|ctx| {
+    types::Function::new(|ctx| async move {
         let val = ctx.args.next().ok_or("value not provided")?;
 
         ctx.unused_arguments()?;
@@ -36,21 +37,19 @@ fn force_fn() -> Value {
                 ))
                 .into_grease_error()),
         }
-    })
+    }.boxed())
     .into()
 }
 
 fn cache_fn() -> Value {
-    types::Function::new(|ctx| {
+    types::Function::new(|ctx| async move {
         let v = ctx.args.next().ok_or("no argument to cache")?;
         let args = std::mem::take(&mut ctx.args);
 
         let store = ctx.store.item(item_name!("cache"));
         let log = ctx.log.sublog("cache");
 
-        let to_cache = ctx
-            .split_map(move |ctx| apply_value(ctx, v, args.unchecked(), true))?
-            .unwrap();
+        let to_cache = apply_value(ctx, v, args.unchecked(), true).await?.unwrap();
 
         if let Some(_) = ctx.traits.get::<Stored>(&to_cache) {
             let deps = depends![to_cache];
@@ -90,12 +89,12 @@ fn cache_fn() -> Value {
         } else {
             Err("no stored trait implemented for value".into())
         }
-    })
+    }.boxed())
     .into()
 }
 
 fn variable_fn() -> Value {
-    types::Function::new(|ctx| {
+    types::Function::new(|ctx| async move {
         let v = ctx.args.next().ok_or("no argument to variable")?;
 
         let deps = if let Some(v) = ctx.args.kw("depends") {
@@ -107,9 +106,9 @@ fn variable_fn() -> Value {
         let args = std::mem::take(&mut ctx.args);
         ctx.unused_arguments()?;
 
-        let val = ctx.split_map(move |ctx| apply_value(ctx, v, args.unchecked(), true))?;
+        let val = apply_value(ctx, v, args.unchecked(), true).await?;
 
         Ok(val.map(|v| v.set_dependencies(deps)))
-    })
+    }.boxed())
     .into()
 }

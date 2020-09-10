@@ -221,14 +221,6 @@ impl Value {
         self.tp.clone()
     }
 
-    /// Get the result of the value.
-    ///
-    /// In general, this should only be called on a top-level value. This will block the caller
-    /// until the result is available.
-    pub fn get(self) -> Result {
-        futures::executor::block_on(self)
-    }
-
     /// Get the result of the value, if immediately available.
     pub fn peek(&self) -> Option<Result> {
         self.data.peek().map(|v| RResult::into_result(v.clone()))
@@ -356,14 +348,6 @@ impl<T: GreaseType + Send + Sync + 'static> TypedValue<T> {
         Self::ok(futures::future::ready(data), deps)
     }
 
-    /// Get the result of the value.
-    ///
-    /// In general, this should only be called on a top-level value. This will block the caller
-    /// until the result is available.
-    pub fn get(self) -> std::result::Result<Ref<T>, Error> {
-        futures::executor::block_on(self)
-    }
-
     /// Create a new TypedValue by consuming and mapping the result of this TypedValue.
     pub fn map<U, F>(self, f: F) -> TypedValue<U>
     where
@@ -437,16 +421,6 @@ impl<'a, T> TypedValueRef<'a, T> {
             inner,
             phantom: Default::default(),
         }
-    }
-}
-
-impl<'a, T: Sync> TypedValueRef<'a, T> {
-    /// Get the result of the value.
-    ///
-    /// In general, this should only be called on a top-level value. This will block the caller
-    /// until the result is available.
-    pub fn get(self) -> std::result::Result<&'a T, Error> {
-        futures::executor::block_on(self)
     }
 }
 
