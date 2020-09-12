@@ -8,7 +8,7 @@
 
 use super::ast::{ArrayPattern, CmdPat, Expression, MapPattern, MergeExpression, Pat, Pattern};
 use crate::constants::{
-    LOAD_PATH_BINDING, SCRIPT_EXTENSION, SCRIPT_PRELUDE_NAME, SCRIPT_WORKSPACE_NAME,
+    app_dirs, LOAD_PATH_BINDING, SCRIPT_EXTENSION, SCRIPT_PRELUDE_NAME, SCRIPT_WORKSPACE_NAME,
     WORKING_DIRECTORY_BINDING,
 };
 use abi_stable::{rvec, std_types::RResult};
@@ -91,6 +91,41 @@ fn is_plugin(f: &path::Path) -> bool {
     }
 }
 
+/// Add the LOAD_PATH_BINDING to the environment, with the working directory and
+/// any applicable system directories.
+pub fn add_load_path(env: &mut ScriptEnv, work_dir: &Value) {
+    let mut vals = rvec![work_dir.clone()];
+
+    // Add local data app dir
+    if let Some(proj_dirs) = app_dirs() {
+        let path = proj_dirs.data_local_dir().join("lib");
+        vals.push(PathBuf::from(path).into());
+    }
+
+    // Add system directories when installed in a prefix/bin pattern
+    if let (Ok(path), Some(dirs)) = (std::env::current_exe(), directories::BaseDirs::new()) {
+        if !path.starts_with(dirs.home_dir()) {
+            if let Some(parent) = path.parent() {
+                if parent.file_name() == Some("bin".as_ref()) {
+                    let path = parent
+                        .parent()
+                        .expect("must have parent directory")
+                        .join("share")
+                        .join(crate::constants::PROGRAM_NAME)
+                        .join("lib");
+                    vals.push(PathBuf::from(path).into());
+                }
+            }
+        }
+    }
+
+    env.insert(
+        LOAD_PATH_BINDING.into(),
+        Ok(Source::builtin(types::Array(vals).into())).into(),
+    );
+}
+
+/// Load and execute a script given the function call context.
 pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
     async move {
         let target = ctx.args.peek().ok_or("no load target provided")?;
@@ -349,13 +384,7 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
 
                         // Add initial load path binding first; the prelude may override it.
                         let mut top_level_env: ScriptEnv = Default::default();
-                        top_level_env.insert(
-                            LOAD_PATH_BINDING.into(),
-                            Ok(Source::builtin(
-                                types::Array(rvec![mod_path.clone()]).into(),
-                            ))
-                            .into(),
-                        );
+                        add_load_path(&mut top_level_env, &mod_path);
 
                         if !plugin {
                             if let Some(v) = prelude {

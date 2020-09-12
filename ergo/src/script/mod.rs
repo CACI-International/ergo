@@ -11,6 +11,8 @@ mod runtime;
 
 use runtime::*;
 
+pub use runtime::add_load_path;
+
 /// A loaded script.
 pub struct Script {
     ast: ast::Script,

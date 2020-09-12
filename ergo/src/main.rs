@@ -1,8 +1,5 @@
-use abi_stable::{
-    rvec,
-    std_types::{RDuration, ROption, RSlice, RString, RVec},
-};
-use ergo_runtime::{source::Source, traits, types, ScriptEnv};
+use abi_stable::std_types::{RDuration, ROption, RSlice, RString, RVec};
+use ergo_runtime::{source::Source, traits, ScriptEnv};
 use grease::runtime::*;
 use simplelog::WriteLogger;
 use std::io::Write;
@@ -31,7 +28,7 @@ mod constants {
 use constants::PROGRAM_NAME;
 use options::*;
 use output::{output, Output};
-use script::{Script, StringSource};
+use script::{add_load_path, Script, StringSource};
 
 trait AppErr {
     type Output;
@@ -174,13 +171,7 @@ fn run(opts: Opts) -> Result<String, grease::value::Error> {
 
     // Add initial load path and working directory.
     let mut env: ScriptEnv = Default::default();
-    env.insert(
-        constants::LOAD_PATH_BINDING.into(),
-        Ok(Source::builtin(
-            types::Array(rvec![work_dir.clone()]).into(),
-        ))
-        .into(),
-    );
+    add_load_path(&mut env, &work_dir);
     env.insert(
         constants::WORKING_DIRECTORY_BINDING.into(),
         Ok(Source::builtin(work_dir)).into(),
