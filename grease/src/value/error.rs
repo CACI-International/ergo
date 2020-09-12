@@ -26,14 +26,12 @@ pub type ExternalError = dyn std::error::Error + Send + Sync;
 #[repr(C)]
 pub struct Error {
     inner: InnerError,
-    counted: bool,
 }
 
 /// A wrapped `Error` which implements `std::error::Error`.
 #[derive(Clone, Debug)]
 pub struct WrappedError {
     inner: InnerError,
-    counted: bool,
 }
 
 impl std::fmt::Display for Error {
@@ -48,12 +46,47 @@ impl std::fmt::Display for WrappedError {
     }
 }
 
+/// A single error, tracked by call_on_error.
+#[derive(Debug, StableAbi)]
+#[repr(C)]
+struct SingleError {
+    error: RBoxError,
+    counted: bool,
+}
+
+impl SingleError {
+    pub fn new(e: Box<ExternalError>) -> Self {
+        let counted = !has_inner_error(e.as_ref());
+        if counted {
+            call_on_error(true);
+        }
+        SingleError {
+            error: RBoxError::from_box(e.into()),
+            counted,
+        }
+    }
+}
+
+impl std::fmt::Display for SingleError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}", self.error)
+    }
+}
+
+impl Drop for SingleError {
+    fn drop(&mut self) {
+        if self.counted {
+            call_on_error(false);
+        }
+    }
+}
+
 /// Value errors may be aborted, new errors, or nested sets of errors.
 #[derive(Clone, Debug, StableAbi)]
 #[repr(u8)]
 enum InnerError {
     Aborted,
-    New(RArc<RBoxError>),
+    New(RArc<SingleError>),
     Nested(RVec<RArc<RBoxError>>),
 }
 
@@ -76,7 +109,7 @@ impl std::fmt::Display for InnerError {
 impl std::error::Error for InnerError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            InnerError::New(e) => Some(e.as_ref()),
+            InnerError::New(e) => Some(&e.error),
             _ => None,
         }
     }
@@ -88,21 +121,10 @@ impl std::error::Error for WrappedError {
     }
 }
 
-impl Drop for WrappedError {
-    fn drop(&mut self) {
-        if self.counted {
-            call_on_error(false);
-        }
-    }
-}
-
 impl Error {
     /// Change the error into a type supporting `std::error::Error`.
-    pub fn error(mut self) -> WrappedError {
-        WrappedError {
-            inner: std::mem::replace(&mut self.inner, InnerError::Aborted),
-            counted: std::mem::replace(&mut self.counted, false),
-        }
+    pub fn error(self) -> WrappedError {
+        WrappedError { inner: self.inner }
     }
 
     /// Get a reference to the error as an external error.
@@ -130,7 +152,6 @@ impl Error {
                         .flatten()
                         .collect(),
                 ),
-                counted: false,
             }
         }
     }
@@ -147,7 +168,6 @@ impl Error {
     pub(crate) fn aborted() -> Self {
         Error {
             inner: InnerError::Aborted,
-            counted: false,
         }
     }
 }
@@ -175,29 +195,11 @@ where
     fn from(v: T) -> Self {
         let ext: Box<ExternalError> = v.into();
         match ext.downcast::<WrappedError>() {
-            Ok(mut v) => Error {
-                inner: std::mem::replace(&mut v.inner, InnerError::Aborted),
-                counted: std::mem::replace(&mut v.counted, false),
-            },
+            Ok(v) => Error { inner: v.inner },
             // TODO: traverse source() to find WrappedError?
-            Err(e) => {
-                let counted = !has_inner_error(e.as_ref());
-                if counted {
-                    call_on_error(true);
-                }
-                Error {
-                    inner: InnerError::New(RArc::new(RBoxError::from_box(e.into()))),
-                    counted,
-                }
-            }
-        }
-    }
-}
-
-impl Drop for Error {
-    fn drop(&mut self) {
-        if self.counted {
-            call_on_error(false);
+            Err(e) => Error {
+                inner: InnerError::New(RArc::new(SingleError::new(e))),
+            },
         }
     }
 }
