@@ -7,6 +7,7 @@ mod exec;
 mod fs;
 #[path = "if.rs"]
 mod if_;
+mod net;
 mod path;
 mod seq;
 mod string;
@@ -25,6 +26,7 @@ fn entry(ctx: &mut Runtime) -> EvalResult {
     m.insert("exec".into(), exec::function());
     m.insert("fs".into(), fs::module());
     m.insert("if".into(), if_::function());
+    m.insert("net".into(), net::module());
     m.insert("path".into(), path::module());
     m.insert("seq".into(), seq::function());
     m.insert("string".into(), string::module());
