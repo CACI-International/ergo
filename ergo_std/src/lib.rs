@@ -3,6 +3,7 @@ use ergo_runtime::{plugin_entry, source::Source, types, EvalResult, Runtime};
 use grease::bst::BstMap;
 
 mod collection;
+mod error;
 mod exec;
 mod fs;
 #[path = "if.rs"]
@@ -23,6 +24,7 @@ fn entry(ctx: &mut Runtime) -> EvalResult {
 
     let mut m = BstMap::default();
     m.insert("collection".into(), collection::module());
+    m.insert("error".into(), error::module());
     m.insert("exec".into(), exec::function());
     m.insert("fs".into(), fs::module());
     m.insert("if".into(), if_::function());
