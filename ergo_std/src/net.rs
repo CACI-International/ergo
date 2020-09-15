@@ -23,11 +23,6 @@ fn download_fn() -> Value {
             let url = source_value_as!(url, types::String, ctx)?.unwrap();
             let path = source_value_as!(path, PathBuf, ctx)?.unwrap();
 
-            let sha1sum = match ctx.args.kw("sha1sum") {
-                None => None,
-                Some(v) => Some(source_value_as!(v, types::String, ctx)?.unwrap()),
-            };
-
             let headers = match ctx.args.kw("headers") {
                 None => None,
                 Some(v) => Some(source_value_as!(v, types::Map, ctx)?),
@@ -36,9 +31,6 @@ fn download_fn() -> Value {
             ctx.unused_arguments()?;
 
             let mut deps = depends![url, path];
-            if let Some(v) = &sha1sum {
-                deps += depends![*v];
-            }
             if let Some(v) = &headers {
                 deps += depends![**v];
             }

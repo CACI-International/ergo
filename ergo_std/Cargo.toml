@@ -16,6 +16,7 @@ grease = { path = "../grease" }
 rand = "^0.7"
 reqwest = "0.10"
 serde = { version = "^1", features = ["derive"] }
+sha = "1.0"
 
 [lib]
 crate-type = ["cdylib"]

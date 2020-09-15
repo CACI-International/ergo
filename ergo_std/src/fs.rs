@@ -5,6 +5,7 @@ use futures::future::FutureExt;
 use glob::glob;
 use grease::{bst::BstMap, item_name, make_value, match_value, path::PathBuf, value::Value};
 use serde::{Deserialize, Serialize};
+use sha::sha1::Sha1;
 use std::path::Path;
 
 pub fn module() -> Value {
@@ -12,42 +13,45 @@ pub fn module() -> Value {
     map.insert("copy".into(), copy_fn());
     map.insert("exists".into(), exists_fn());
     map.insert("glob".into(), glob_fn());
+    map.insert("sha1".into(), sha1_fn());
     map.insert("track".into(), track_fn());
     types::Map(map).into()
 }
 
 fn glob_fn() -> Value {
-    types::Function::new(|ctx| async move {
-        let pattern = ctx.args.next().ok_or("no glob pattern provided")?;
+    types::Function::new(|ctx| {
+        async move {
+            let pattern = ctx.args.next().ok_or("no glob pattern provided")?;
 
-        ctx.unused_arguments()?;
+            ctx.unused_arguments()?;
 
-        let pattern_source = pattern.source();
-        let pattern = pattern
-            .map(|v| {
-                ctx.traits
-                    .get::<traits::IntoTyped<types::String>>(&v)
-                    .ok_or("cannot convert glob pattern value into string")
-                    .map(|t| t.into_typed(v))
-            })
-            .transpose_err()
-            .map_err(|e| e.into_grease_error())?;
+            let pattern_source = pattern.source();
+            let pattern = pattern
+                .map(|v| {
+                    ctx.traits
+                        .get::<traits::IntoTyped<types::String>>(&v)
+                        .ok_or("cannot convert glob pattern value into string")
+                        .map(|t| t.into_typed(v))
+                })
+                .transpose_err()
+                .map_err(|e| e.into_grease_error())?;
 
-        let path = source_value_as!(
-            ctx.env_get("work-dir")
-                .ok_or(
-                    ctx.call_site
-                        .clone()
-                        .with("work-dir not set")
-                        .into_grease_error()
-                )?
-                .map(|v| v.clone())?,
-            PathBuf,
-            ctx
-        )?.unwrap();
+            let path = source_value_as!(
+                ctx.env_get("work-dir")
+                    .ok_or(
+                        ctx.call_site
+                            .clone()
+                            .with("work-dir not set")
+                            .into_grease_error()
+                    )?
+                    .map(|v| v.clone())?,
+                PathBuf,
+                ctx
+            )?
+            .unwrap();
 
-        let task = ctx.task.clone();
-        Ok(ctx.call_site.clone().with(make_value!((path, pattern) ["fs glob"] {
+            let task = ctx.task.clone();
+            Ok(ctx.call_site.clone().with(make_value!((path, pattern) ["fs glob"] {
             let (path, pattern) = task.join(path,pattern).await?;
 
             let pattern = {
@@ -70,7 +74,9 @@ fn glob_fn() -> Value {
             }
         })
         .into()))
-    }.boxed())
+        }
+        .boxed()
+    })
     .into()
 }
 
@@ -133,92 +139,129 @@ fn copy_fn() -> Value {
 }
 
 fn exists_fn() -> Value {
-    types::Function::new(|ctx| async move {
-        let path = ctx.args.next().ok_or("'path' missing")?;
+    types::Function::new(|ctx| {
+        async move {
+            let path = ctx.args.next().ok_or("'path' missing")?;
 
-        ctx.unused_arguments()?;
+            ctx.unused_arguments()?;
 
-        let path = path
-            .map(|v| {
-                v.typed::<PathBuf>()
-                    .map_err(|_| "'path' argument must be a path")
-            })
-            .transpose_err()
-            .map_err(|e| e.into_grease_error())?;
+            let path = path
+                .map(|v| {
+                    v.typed::<PathBuf>()
+                        .map_err(|_| "'path' argument must be a path")
+                })
+                .transpose_err()
+                .map_err(|e| e.into_grease_error())?;
 
-        Ok(ctx.call_site.clone().with(
-            make_value!((path) ["fs exists"] {
-                Ok(path.await?.as_ref().as_ref().exists())
-            })
-            .into(),
-        ))
-    }.boxed())
+            Ok(ctx.call_site.clone().with(
+                make_value!((path) ["fs exists"] {
+                    Ok(path.await?.as_ref().as_ref().exists())
+                })
+                .into(),
+            ))
+        }
+        .boxed()
+    })
+    .into()
+}
+
+fn sha1_fn() -> Value {
+    types::Function::new(|ctx| {
+        async move {
+            let path = ctx.args.next().ok_or("no file provided to sha1")?;
+            let sum = ctx.args.next().ok_or("no checksum provided")?;
+
+            ctx.unused_arguments()?;
+
+            let path = source_value_as!(path, PathBuf, ctx)?.unwrap();
+            let sum = source_value_as!(sum, types::String, ctx)?.unwrap();
+
+            let task = ctx.task.clone();
+            Ok(ctx
+                .call_site
+                .clone()
+                .with(make_value!(["fs sha1", path, sum] {
+                    let (path,sum) = task.join(path, sum).await?;
+
+                    let mut f = std::fs::File::open(path.as_ref().as_ref())?;
+                    let mut digest = Sha1::default();
+                    std::io::copy(&mut f, &mut digest)?;
+                    use sha::utils::DigestExt;
+                    Ok(digest.to_hex().eq_ignore_ascii_case(sum.as_ref().as_str()))
+                }).into()))
+        }
+        .boxed()
+    })
     .into()
 }
 
 fn track_fn() -> Value {
-    types::Function::new(|ctx| async move {
-        let path = ctx.args.next().ok_or("no file provided to track")?;
+    types::Function::new(|ctx| {
+        async move {
+            let path = ctx.args.next().ok_or("no file provided to track")?;
 
-        ctx.unused_arguments()?;
+            ctx.unused_arguments()?;
 
-        let path = path
-            .map_async(|p| async {
-                match_value!(p => {
-                    types::String => |v| {
-                        v.await.map(|v| v.owned().to_string().into())
-                    },
-                    PathBuf => |v| {
-                        v.await.map(|v| v.owned().into_pathbuf())
-                    },
-                    => |_| Err("track argument must be a string or path".into())
+            let path = path
+                .map_async(|p| async {
+                    match_value!(p => {
+                        types::String => |v| {
+                            v.await.map(|v| v.owned().to_string().into())
+                        },
+                        PathBuf => |v| {
+                            v.await.map(|v| v.owned().into_pathbuf())
+                        },
+                        => |_| Err("track argument must be a string or path".into())
+                    })
                 })
-            }).await
-            .transpose_err()
-            .map_err(|e| e.into_grease_error())?;
+                .await
+                .transpose_err()
+                .map_err(|e| e.into_grease_error())?;
 
-        let store = ctx.store.item(item_name!("track"));
+            let store = ctx.store.item(item_name!("track"));
 
-        // TODO inefficient to load and store every time
-        let mut info = if store.exists() {
-            let content = store.read()?;
-            bincode::deserialize_from(content).map_err(|e| e.to_string())?
-        } else {
-            TrackInfo::new()
-        };
+            // TODO inefficient to load and store every time
+            let mut info = if store.exists() {
+                let content = store.read()?;
+                bincode::deserialize_from(content).map_err(|e| e.to_string())?
+            } else {
+                TrackInfo::new()
+            };
 
-        let meta = std::fs::metadata(&path)?;
-        let mod_time = meta.modified()?;
+            let meta = std::fs::metadata(&path)?;
+            let mod_time = meta.modified()?;
 
-        let calc_hash = match info.get(&path) {
-            Some(data) => data.modification_time < mod_time,
-            None => true,
-        };
+            let calc_hash = match info.get(&path) {
+                Some(data) => data.modification_time < mod_time,
+                None => true,
+            };
 
-        if calc_hash {
-            let f = std::fs::File::open(&path)?;
-            let hash = grease::hash::hash_read(f)?;
-            info.insert(
-                path.clone(),
-                FileData {
-                    modification_time: mod_time,
-                    content_hash: hash,
-                },
-            );
+            if calc_hash {
+                let f = std::fs::File::open(&path)?;
+                let hash = grease::hash::hash_read(f)?;
+                info.insert(
+                    path.clone(),
+                    FileData {
+                        modification_time: mod_time,
+                        content_hash: hash,
+                    },
+                );
+            }
+
+            let hash = info.get(&path).unwrap().content_hash;
+
+            {
+                let content = store.write()?;
+                bincode::serialize_into(content, &info).map_err(|e| e.to_string())?;
+            }
+
+            Ok(ctx
+                .call_site
+                .clone()
+                .with(make_value!((path) [hash] Ok(PathBuf::from(path))).into()))
         }
-
-        let hash = info.get(&path).unwrap().content_hash;
-
-        {
-            let content = store.write()?;
-            bincode::serialize_into(content, &info).map_err(|e| e.to_string())?;
-        }
-
-        Ok(ctx
-            .call_site
-            .clone()
-            .with(make_value!((path) [hash] Ok(PathBuf::from(path))).into()))
-    }.boxed())
+        .boxed()
+    })
     .into()
 }
 
