@@ -13,6 +13,7 @@ pub fn module() -> Value {
     map.insert("copy".into(), copy_fn());
     map.insert("exists".into(), exists_fn());
     map.insert("glob".into(), glob_fn());
+    map.insert("mount".into(), mount_fn());
     map.insert("sha1".into(), sha1_fn());
     map.insert("track".into(), track_fn());
     types::Map(map).into()
@@ -165,6 +166,102 @@ fn exists_fn() -> Value {
     .into()
 }
 
+#[cfg(unix)]
+fn set_permissions(p: &mut std::fs::Permissions, mode: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    p.set_mode(mode);
+}
+
+#[cfg(windows)]
+fn set_permissions(p: &mut std::fs::Permissions, mode: u32) {}
+
+fn mount_fn() -> Value {
+    types::Function::new(|ctx| {
+        async move {
+            let from = ctx.args.next().ok_or("mount 'from' missing")?;
+            let to = ctx.args.next().ok_or("mount 'to' missing")?;
+
+            ctx.unused_arguments()?;
+
+            let (from_source, from) = source_value_as!(from, PathBuf, ctx)?.take();
+            let to = source_value_as!(to, PathBuf, ctx)?.unwrap();
+
+            let task = ctx.task.clone();
+            Ok(ctx.call_site.clone().with(make_value!(["fs mount", from, to] {
+                let (from, to) = task.join(from, to).await?;
+
+                let from_path = from.as_ref().as_ref();
+                let to_path = to.as_ref().as_ref();
+                if from_path.is_dir() {
+                    recursive_link(from_path, to_path)?;
+                }
+                else if from_path.is_file() {
+                    let mut f = std::fs::File::open(from_path)?;
+                    use std::io::Read;
+                    use std::io::Seek;
+
+                    let mut magic = [0; 6];
+                    if let Ok(bytes) = f.read(&mut magic) {
+                        f.seek(std::io::SeekFrom::Start(0))?;
+
+                        // zip archive
+                        if bytes >= 4 && magic[0..4] == [b'P', b'K', 3, 4] {
+                            use zip::ZipArchive;
+                            let mut archive = ZipArchive::new(f)?;
+                            for i in 0..archive.len() {
+                                let mut file = archive.by_index(i)?;
+                                if file.is_dir() {
+                                    std::fs::create_dir_all(to_path.join(file.name()))?;
+                                }
+                                else if file.is_file() {
+                                    let p = to_path.join(file.name());
+                                    std::fs::create_dir_all(p.parent().expect("no parent path in zip output"))?;
+                                    let mut to_file = std::fs::File::create(p)?;
+                                    std::io::copy(&mut file, &mut to_file)?;
+                                    let mut permissions = to_file.metadata()?.permissions();
+                                    if let Some(mode) = file.unix_mode() {
+                                        set_permissions(&mut permissions, mode);
+                                    }
+                                    to_file.set_permissions(permissions)?;
+                                }
+                            }
+                        } else {
+                            let archive : Box<dyn std::io::Read> =
+                                // gzip
+                                if bytes >= 2 && magic[0..2] == [0x1f, 0x8b] {
+                                    use flate2::read::GzDecoder;
+                                    Box::new(GzDecoder::new(f))
+                                }
+                                // bzip2
+                                else if bytes >= 3 && magic[0..3] == [b'B', b'Z', b'h'] {
+                                    use bzip2::read::BzDecoder;
+                                    Box::new(BzDecoder::new(f))
+                                }
+                                // lzma
+                                else if bytes >= 6 && magic[0..6] == [0xfd, b'7', b'z', b'X', b'Z', 0] {
+                                    use xz::read::XzDecoder;
+                                    Box::new(XzDecoder::new(f))
+                                } else {
+                                    Box::new(f)
+                                };
+
+                            use tar::Archive;
+                            // TODO check whether file is a tar archive (need to buffer and seek into output
+                            // stream)
+                            let mut tar = Archive::new(archive);
+                            tar.unpack(to_path)?;
+                        }
+                    }
+                }
+                else {
+                    return Err(from_source.with("path is not a file nor directory").into_grease_error());
+                }
+                Ok(())
+            }).into()))
+        }.boxed()
+    }).into()
+}
+
 fn sha1_fn() -> Value {
     types::Function::new(|ctx| {
         async move {
@@ -177,10 +274,8 @@ fn sha1_fn() -> Value {
             let sum = source_value_as!(sum, types::String, ctx)?.unwrap();
 
             let task = ctx.task.clone();
-            Ok(ctx
-                .call_site
-                .clone()
-                .with(make_value!(["fs sha1", path, sum] {
+            Ok(ctx.call_site.clone().with(
+                make_value!(["fs sha1", path, sum] {
                     let (path,sum) = task.join(path, sum).await?;
 
                     let mut f = std::fs::File::open(path.as_ref().as_ref())?;
@@ -188,7 +283,9 @@ fn sha1_fn() -> Value {
                     std::io::copy(&mut f, &mut digest)?;
                     use sha::utils::DigestExt;
                     Ok(digest.to_hex().eq_ignore_ascii_case(sum.as_ref().as_str()))
-                }).into()))
+                })
+                .into(),
+            ))
         }
         .boxed()
     })

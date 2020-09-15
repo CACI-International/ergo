@@ -9,7 +9,9 @@ edition = "2018"
 [dependencies]
 abi_stable = "0.8"
 bincode = "^1.2"
+bzip2 = "0.4"
 ergo_runtime = { path = "../ergo_runtime" }
+flate2 = "1.0"
 futures = "0.3"
 glob = "^0.3"
 grease = { path = "../grease" }
@@ -17,6 +19,9 @@ rand = "^0.7"
 reqwest = "0.10"
 serde = { version = "^1", features = ["derive"] }
 sha = "1.0"
+tar = "0.4"
+xz = "0.1"
+zip = "0.5"
 
 [lib]
 crate-type = ["cdylib"]
