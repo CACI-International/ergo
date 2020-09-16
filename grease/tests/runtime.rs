@@ -1,17 +1,12 @@
-use abi_stable::{rvec, std_types::RVec};
-use futures::future::TryFutureExt;
-use grease::{
-    make_value,
-    runtime::{Context, Plan},
-    value::TypedValue,
-};
+use abi_stable::rvec;
+use futures::{executor::block_on, future::TryFutureExt};
+use grease::{make_value, runtime::Context, value::TypedValue};
 
-struct TestRuntimePlan;
+#[test]
+fn runtime_tasks() -> Result<(), String> {
+    let ctx = Context::builder().build().map_err(|e| format!("{}", e))?;
 
-impl Plan for TestRuntimePlan {
-    type Output = TypedValue<RVec<u8>>;
-
-    fn plan(self, ctx: &mut Context) -> Self::Output {
+    let result = block_on({
         let a = TypedValue::constant(rvec![0]);
         let tsk = ctx.task.clone();
         let b = make_value!([vec![1]] {
@@ -29,17 +24,9 @@ impl Plan for TestRuntimePlan {
                 o
             })).await?
         })
-    }
-}
+    })
+    .map_err(|e| e.to_string())?;
 
-#[test]
-fn runtime_tasks() -> Result<(), String> {
-    let mut ctx = Context::builder().build().map_err(|e| format!("{}", e))?;
-
-    let result = TestRuntimePlan
-        .plan(&mut ctx)
-        .get()
-        .map_err(|e| e.to_string())?;
     assert!(*result == rvec![0, 1]);
     Ok(())
 }
