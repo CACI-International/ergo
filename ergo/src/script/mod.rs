@@ -80,6 +80,8 @@ impl Script {
 mod test {
     use super::*;
     use ergo_runtime::types;
+    use futures::executor::block_on;
+    use futures::future::{BoxFuture, FutureExt};
     use grease::value::Value;
 
     #[derive(Clone, Debug)]
@@ -392,17 +394,17 @@ mod test {
     }
 
     fn script_eval_to(s: &str, expected: ScriptResult) -> Result<(), String> {
-        val_match(script_eval(s)?, expected)
+        block_on(async move { val_match(script_eval(s).await?, expected).await })
     }
 
     fn script_result_fail(s: &str) -> Result<(), String> {
-        let mut fail = script_eval(s)?;
-        assert!(futures::executor::block_on(&mut fail).is_err());
+        let mut fail = block_on(script_eval(s))?;
+        assert!(block_on(&mut fail).is_err());
         Ok(())
     }
 
     fn script_fail(s: &str) -> Result<(), String> {
-        match script_eval(s) {
+        match block_on(script_eval(s)) {
             Ok(v) => Err(format!("expected failure, got {:?}", v)),
             Err(_) => Ok(()),
         }
@@ -422,72 +424,66 @@ mod test {
         }
     }
 
-    fn val_match(v: Value, expected: ScriptResult) -> Result<(), String> {
-        match expected {
-            SRUnit => v
-                .typed::<types::Unit>()
-                .map(|_| ())
-                .expect_ok("expected unit"),
-            SRString(s) => v
-                .typed::<types::String>()
-                .expect_ok("expected string")
-                .and_then(|v| v.get().map_err(|e| e.to_string()))
-                .and_then(|st| {
-                    if st.as_ref().as_str() == s {
+    fn val_match(v: Value, expected: ScriptResult) -> BoxFuture<'static, Result<(), String>> {
+        async move {
+            match expected {
+                SRUnit => v
+                    .typed::<types::Unit>()
+                    .map(|_| ())
+                    .expect_ok("expected unit"),
+                SRString(s) => {
+                    let string = v.typed::<types::String>().expect_ok("expected string")?;
+                    let string = string.await.map_err(|e| e.to_string())?;
+                    let got = string.as_ref().as_str();
+                    if got == s {
                         Ok(())
                     } else {
                         Err(format!(
                             "string mismatch, expected \"{}\", got \"{}\"",
-                            s,
-                            st.as_ref()
+                            s, got
                         ))
                     }
-                }),
-            SRArray(arr) => v
-                .typed::<types::Array>()
-                .expect_ok("expected array")
-                .and_then(|v| v.get().map_err(|e| e.to_string()))
-                .map(|v| v.owned())
-                .and_then(|types::Array(varr)| {
-                    if varr.len() != arr.len() {
+                }
+                SRArray(expected_arr) => {
+                    let arr = v.typed::<types::Array>().expect_ok("expected array")?;
+                    let arr = arr.await.map_err(|e| e.to_string())?;
+                    let types::Array(varr) = arr.owned();
+                    if varr.len() != expected_arr.len() {
                         Err("array length mismatch".into())
                     } else {
-                        varr.into_iter()
-                            .zip(arr)
-                            .map(|(v, e)| val_match(v, e.clone()))
-                            .collect()
+                        for (v, expected_v) in varr.iter().zip(expected_arr) {
+                            val_match(v.clone(), expected_v.clone()).await?;
+                        }
+                        Ok(())
                     }
-                }),
-            SRMap(entries) => v
-                .typed::<types::Map>()
-                .expect_ok("expected map")
-                .and_then(|v| v.get().map_err(|e| e.to_string()))
-                .map(|v| v.owned())
-                .and_then(|types::Map(mut m)| {
+                }
+                SRMap(entries) => {
+                    let map = v.typed::<types::Map>().expect_ok("expected map")?;
+                    let map = map.await.map_err(|e| e.to_string())?;
+                    let types::Map(mut m) = map.owned();
                     if m.len() != entries.len() {
                         Err("map length mismatch".into())
                     } else {
-                        entries
-                            .iter()
-                            .map(|(k, e)| {
-                                m.remove(*k)
-                                    .map(|v| val_match(v, e.clone()))
-                                    .unwrap_or(Err("missing expected key".into()))
-                            })
-                            .collect()
+                        for (k, e) in entries.iter() {
+                            let v = m.remove(*k).ok_or("missing expected key")?;
+                            val_match(v, e.clone()).await?;
+                        }
+                        Ok(())
                     }
-                }),
-            SRAny => Ok(()),
+                }
+                SRAny => Ok(()),
+            }
         }
+        .boxed()
     }
 
-    fn script_eval(s: &str) -> Result<Value, String> {
-        let mut ctx = script_context(Context::builder()).map_err(|e| e.to_string())?;
-        ctx.plan(
-            Script::load(Source::new(StringSource::new("<string>", s.to_owned())))
-                .map_err(|e| e.to_string())?,
-        )
-        .map(|sv| sv.unwrap())
-        .map_err(|e| format!("{:?}", e))
+    async fn script_eval(s: &str) -> Result<Value, String> {
+        let mut ctx = script_context(Default::default()).map_err(|e| e.to_string())?;
+        Script::load(Source::new(StringSource::new("<string>", s.to_owned())))
+            .map_err(|e| e.to_string())?
+            .evaluate(&mut ctx)
+            .await
+            .map(|sv| sv.unwrap())
+            .map_err(|e| format!("{:?}", e))
     }
 }
