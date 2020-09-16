@@ -81,26 +81,19 @@ Within a script, the following are defined:
 * Self-documentation. Accessed and printed directly while evaluating scripts
   and/or accessed with a `--doc` command-line argument. Add a way to attach
   documentation (or other metadata?) to arbitrary types in scripts.
-* Allow access to logging from scripts. Allow access to stdin/stdout/stderr.
-  Allow mutually exclusive use of stdin/stdout/stderr for interactive programs.
-* Allow explicit error signaling from scripts. Maybe allow catching errors?
+* Allow mutually exclusive use of stdin/stdout/stderr for interactive programs.
 * Display more detailed error information at exit?
 * Add a message/signal handler to exit gracefully.
   * This has been added but child programs still capture the signal, need to
-    debug.
+    change the process group to prevent this.
 * Revisit pattern literal matching.
   * This could use some sort of equality test on the value _data_, rather
     than comparing value identifiers.
 * Persist command timing information for better estimates.
-* `string words`, `string lines`, `fetch`, maybe `fs mount` to open tarballs,
-  zips, directories, urls to such?
+* `string words`, `string lines`
 * Allow setting map keys from values rather than string constants?
 * Extend map, fold to operate on maps as well?
 * Reduce function captures to the bare minimum.
 * Allow functions to get call-site variables? Convenient for things like
   `work-dir`.
 * Allow fetching of urls and use of zip/tarballs with load command.
-* Change value errors to be first-class types in the runtime.
-  * This allows, for instance, caching error results.
-  * Maybe best as something explicit rather than implicit: a function to capture
-    an error.
