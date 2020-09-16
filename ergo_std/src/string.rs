@@ -8,6 +8,7 @@ use std::fmt::Write;
 pub fn module() -> Value {
     let mut map = BstMap::default();
     map.insert("format".into(), format_fn());
+    map.insert("from".into(), from_fn());
     types::Map(map).into()
 }
 
@@ -159,4 +160,29 @@ fn format_fn() -> Value {
         }).into()))
     }
 }.boxed()).into()
+}
+
+fn from_fn() -> Value {
+    types::Function::new(|ctx| {
+        async move {
+            let value = ctx.args.next().ok_or("value not provided")?;
+
+            ctx.unused_arguments()?;
+
+            Ok(ctx.call_site.clone().with(
+                ctx.traits
+                    .get::<traits::IntoTyped<types::String>>(&value)
+                    .ok_or(
+                        value
+                            .source()
+                            .with("cannot convert value into string")
+                            .into_grease_error(),
+                    )?
+                    .into_typed(value.unwrap())
+                    .into(),
+            ))
+        }
+        .boxed()
+    })
+    .into()
 }
