@@ -92,7 +92,6 @@ Within a script, the following are defined:
 * Persist command timing information for better estimates.
 * `string words`, `string lines`
 * Allow setting map keys from values rather than string constants?
-* Extend map, fold to operate on maps as well?
 * Reduce function captures to the bare minimum.
 * Allow functions to get call-site variables? Convenient for things like
   `work-dir`.
