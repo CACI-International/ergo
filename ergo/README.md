@@ -95,4 +95,3 @@ Within a script, the following are defined:
 * Reduce function captures to the bare minimum.
 * Allow functions to get call-site variables? Convenient for things like
   `work-dir`.
-* Allow fetching of urls and use of zip/tarballs with load command.
