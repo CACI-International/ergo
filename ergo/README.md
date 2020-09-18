@@ -90,8 +90,8 @@ Within a script, the following are defined:
   * This could use some sort of equality test on the value _data_, rather
     than comparing value identifiers.
 * Persist command timing information for better estimates.
-* `string words`, `string lines`
 * Allow setting map keys from values rather than string constants?
 * Reduce function captures to the bare minimum.
 * Allow functions to get call-site variables? Convenient for things like
   `work-dir`.
+* Add work recording to script.
