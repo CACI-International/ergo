@@ -339,19 +339,16 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                                     .into(),
                             );
                             match fctx.env_scoped(env, load_script).await.0 {
-                                Ok(v) => Some(
-                                    v.map_async(|v| async {
-                                        match v.typed::<types::Map>() {
-                                            Ok(v) => Ok(v.await?.owned().0),
-                                            Err(_) => Err(Error::CannotMerge(
+                                Ok(v) => {
+                                    let (v_source, v) = v.take();
+                                    match_value!(v => {
+                                        () => |_| None,
+                                        types::Map => |v| Some(v_source.with(v).await.transpose_ok()?.map(|v| v.owned().0)),
+                                        => |_| return Err(v_source.with(Error::CannotMerge(
                                                 "prelude did not evaluate to a map".into(),
-                                            )),
-                                        }
+                                            )).into())
                                     })
-                                    .await
-                                    .transpose()?,
-                                ),
-
+                                },
                                 Err(e) => {
                                     fctx.args.clear();
                                     fn has_load_failed_error(

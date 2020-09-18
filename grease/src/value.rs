@@ -284,11 +284,15 @@ macro_rules! match_value {
         loop {
             let mut match_value__val = $value;
             $( match_value__val = match match_value__val.typed::<$t>() {
+                // Unreachable code avoids warnings when return/panic is used
+                #[allow(unreachable_code)]
                 Ok($bind) => break $e,
                 Err(v) => v
             };)*
             {
                 let $elsebind = match_value__val;
+                // Unreachable code avoids warnings when return/panic is used
+                #[allow(unreachable_code)]
                 break $else
             }
         }
