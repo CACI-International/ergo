@@ -9,6 +9,8 @@ pub fn module() -> Value {
     let mut map = BstMap::default();
     map.insert("format".into(), format_fn());
     map.insert("from".into(), from_fn());
+    map.insert("split".into(), split_fn());
+    map.insert("trim".into(), trim_fn());
     types::Map(map).into()
 }
 
@@ -180,6 +182,54 @@ fn from_fn() -> Value {
                     )?
                     .into_typed(value.unwrap())
                     .into(),
+            ))
+        }
+        .boxed()
+    })
+    .into()
+}
+
+fn split_fn() -> Value {
+    types::Function::new(|ctx| {
+        async move {
+            let s = ctx.args.next().ok_or("string not provided")?;
+            let pat = ctx.args.next().ok_or("split pattern not provided")?;
+
+            ctx.unused_arguments()?;
+
+            let s = source_value_as!(s, types::String, ctx)?.unwrap();
+            let pat = source_value_as!(pat, types::String, ctx)?.unwrap();
+
+            let task = ctx.task.clone();
+            Ok(ctx.call_site.clone().with(
+                make_value!(["string split", s, pat] {
+                    let (s, pat) = task.join(s,pat).await?;
+                    let v = s.as_ref().as_str().split(pat.as_ref().as_str()).map(|s| types::String::from(s).into()).collect();
+                    Ok(types::Array(v))
+                })
+                .into(),
+            ))
+        }
+        .boxed()
+    })
+    .into()
+}
+
+fn trim_fn() -> Value {
+    types::Function::new(|ctx| {
+        async move {
+            let s = ctx.args.next().ok_or("string not provided")?;
+
+            ctx.unused_arguments()?;
+
+            let s = source_value_as!(s, types::String, ctx)?.unwrap();
+
+            Ok(ctx.call_site.clone().with(
+                make_value!(["string trim", s] {
+                    let s = s.await?;
+                    Ok(types::String::from(s.as_ref().as_str().trim()))
+                })
+                .into(),
             ))
         }
         .boxed()
