@@ -99,20 +99,22 @@ pub fn add_load_path(env: &mut ScriptEnv, work_dir: &Value) {
     // Add local data app dir
     if let Some(proj_dirs) = app_dirs() {
         let path = proj_dirs.data_local_dir().join("lib");
-        vals.push(PathBuf::from(path).into());
+        if path.exists() {
+            vals.push(PathBuf::from(path).into());
+        }
     }
 
-    // Add system directories when installed in a prefix/bin pattern
-    if let (Ok(path), Some(dirs)) = (std::env::current_exe(), directories::BaseDirs::new()) {
-        if !path.starts_with(dirs.home_dir()) {
-            if let Some(parent) = path.parent() {
-                if parent.file_name() == Some("bin".as_ref()) {
-                    let path = parent
-                        .parent()
-                        .expect("must have parent directory")
-                        .join("share")
-                        .join(crate::constants::PROGRAM_NAME)
-                        .join("lib");
+    // Add system directories when running in a [prefix]/bin directory.
+    if let Ok(path) = std::env::current_exe() {
+        if let Some(parent) = path.parent() {
+            if parent.file_name() == Some("bin".as_ref()) {
+                let path = parent
+                    .parent()
+                    .expect("must have parent directory")
+                    .join("share")
+                    .join(crate::constants::PROGRAM_NAME)
+                    .join("lib");
+                if path.exists() {
                     vals.push(PathBuf::from(path).into());
                 }
             }
