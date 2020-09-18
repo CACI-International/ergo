@@ -46,6 +46,17 @@ impl std::fmt::Display for WrappedError {
     }
 }
 
+/// Downcast an error that is potentially an `Error`, accounting for inner type erasure.
+pub fn downcast_ref<'a, T: std::error::Error + 'static>(
+    error: &'a (dyn std::error::Error + 'static),
+) -> Option<&'a T> {
+    error.downcast_ref::<T>().or_else(|| {
+        error
+            .downcast_ref::<RBoxError>()
+            .and_then(|e| e.downcast_ref::<T>())
+    })
+}
+
 /// A single error, tracked by call_on_error.
 #[derive(Debug, StableAbi)]
 #[repr(C)]

@@ -321,10 +321,6 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                         // Load the prelude. The prelude may not exist (without error), however if it does
                         // exist it must evaluate to a map.
                         let prelude = if load_prelude {
-                            ctx.env_insert(
-                                WORKING_DIRECTORY_BINDING.into(),
-                                Ok(Source::builtin(PathBuf::from(mod_path.to_owned()).into())),
-                            );
                             let call_site = ctx.call_site.clone();
                             let mut fctx = FunctionCall::new(
                                 ctx,
@@ -333,7 +329,16 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                                 )]),
                                 call_site,
                             );
-                            match load_script(&mut fctx).await {
+
+                            // New scope with working directory set to that of the script, so that
+                            // prelude loading is relative to that directory.
+                            let mut env = ScriptEnv::default();
+                            env.insert(
+                                WORKING_DIRECTORY_BINDING.into(),
+                                Ok(Source::builtin(PathBuf::from(mod_path.to_owned()).into()))
+                                    .into(),
+                            );
+                            match fctx.env_scoped(env, load_script).await.0 {
                                 Ok(v) => Some(
                                     v.map_async(|v| async {
                                         match v.typed::<types::Map>() {
@@ -347,12 +352,12 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                                     .transpose()?,
                                 ),
 
-                                Err(_e) => {
+                                Err(e) => {
                                     fctx.args.clear();
-                                    fn _has_load_failed_error(
+                                    fn has_load_failed_error(
                                         e: &(dyn std::error::Error + 'static),
                                     ) -> bool {
-                                        match e.downcast_ref::<Error>() {
+                                        match grease::value::error::downcast_ref::<Error>(e) {
                                             Some(e) => {
                                                 if let Error::LoadFailed { .. } = e {
                                                     true
@@ -362,19 +367,16 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                                             }
                                             None => e
                                                 .source()
-                                                .map(_has_load_failed_error)
+                                                .map(has_load_failed_error)
                                                 .unwrap_or(false),
                                         }
                                     }
-                                    None
-                                    /* TODO
                                     if has_load_failed_error(e.error_ref()) {
                                         None
                                     } else {
                                         ctx.loading.pop();
                                         return Err(e);
                                     }
-                                    */
                                 }
                             }
                         } else {
