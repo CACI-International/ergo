@@ -3,6 +3,7 @@ use ergo_runtime::{plugin_entry, source::Source, types, EvalResult, Runtime};
 use grease::bst::BstMap;
 
 mod collection;
+mod env;
 mod error;
 mod exec;
 mod fs;
@@ -25,6 +26,7 @@ fn entry(ctx: &mut Runtime) -> EvalResult {
 
     let mut m = BstMap::default();
     m.insert("collection".into(), collection::module());
+    m.insert("env".into(), env::module());
     m.insert("error".into(), error::module());
     m.insert("exec".into(), exec::function());
     m.insert("fs".into(), fs::module());

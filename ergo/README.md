@@ -95,3 +95,4 @@ Within a script, the following are defined:
 * Allow functions to get call-site variables? Convenient for things like
   `work-dir`.
 * Add work recording to script.
+* Either deconstruction with `match`.
