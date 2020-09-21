@@ -1,6 +1,6 @@
 //! Filesystem runtime functions.
 
-use ergo_runtime::{source_value_as, traits, types};
+use ergo_runtime::{ergo_function, source_value_as, traits, types};
 use futures::future::FutureExt;
 use glob::glob;
 use grease::{bst::BstMap, item_name, make_value, match_value, path::PathBuf, value::Value};
@@ -11,6 +11,7 @@ use std::path::Path;
 pub fn module() -> Value {
     let mut map = BstMap::new();
     map.insert("copy".into(), copy_fn());
+    map.insert("create-dir".into(), create_dir_fn());
     map.insert("exists".into(), exists_fn());
     map.insert("glob".into(), glob_fn());
     map.insert("mount".into(), mount_fn());
@@ -162,6 +163,28 @@ fn exists_fn() -> Value {
             ))
         }
         .boxed()
+    })
+    .into()
+}
+
+fn create_dir_fn() -> Value {
+    ergo_function!(|ctx| {
+        let path = ctx.args.next().ok_or("'path' missing")?;
+
+        ctx.unused_arguments()?;
+
+        let path = path
+            .map(|v| {
+                v.typed::<PathBuf>()
+                    .map_err(|_| "'path' argument must be a path")
+            })
+            .transpose_err()
+            .map_err(|e| e.into_grease_error())?;
+
+        make_value!(["fs create-dir", path] {
+            Ok(std::fs::create_dir_all(path.await?.as_ref().as_ref())?)
+        })
+        .into()
     })
     .into()
 }

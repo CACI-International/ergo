@@ -1,6 +1,6 @@
 //! Path operations module.
 
-use ergo_runtime::{types, EvalResult, FunctionCall};
+use ergo_runtime::{source_value_as, types, EvalResult, FunctionCall};
 use futures::future::FutureExt;
 use grease::{
     depends, item_name, make_value, match_value,
@@ -10,27 +10,31 @@ use grease::{
 };
 
 pub fn module() -> Value {
-    types::Function::new(|ctx| async move {
-        let name = ctx.args.next().ok_or("missing argument")?;
+    types::Function::new(|ctx| {
+        async move {
+            let name = ctx.args.next().ok_or("missing argument")?;
 
-        let name = name
-            .map(|v| {
-                v.typed::<types::String>()
-                    .map_err(|_| "module argument must be a string")
-            })
-            .transpose_err()
-            .map_err(|e| e.into_grease_error())?;
+            let name = name
+                .map(|v| {
+                    v.typed::<types::String>()
+                        .map_err(|_| "module argument must be a string")
+                })
+                .transpose_err()
+                .map_err(|e| e.into_grease_error())?;
 
-        let name = name.await?;
+            let name = name.await?;
 
-        match name.as_str() {
-            "new" => new_value(ctx),
-            "join" => join_fn(ctx),
-            "relative" => relative_fn(ctx),
-            "split" => split_fn(ctx),
-            _ => Ok(ctx.call_site.clone().with(().into())),
+            match name.as_str() {
+                "new" => new_value(ctx),
+                "join" => join_fn(ctx),
+                "parent" => parent_fn(ctx),
+                "relative" => relative_fn(ctx),
+                "split" => split_fn(ctx),
+                _ => Ok(ctx.call_site.clone().with(().into())),
+            }
         }
-    }.boxed())
+        .boxed()
+    })
     .into()
 }
 
@@ -135,6 +139,19 @@ fn split_fn(ctx: &mut FunctionCall) -> EvalResult {
             }
             Ok(types::Array(vals.into()))
         }).into()))
+}
+
+fn parent_fn(ctx: &mut FunctionCall) -> EvalResult {
+    let path = ctx.args.next().ok_or("no path provided")?;
+
+    ctx.unused_arguments()?;
+
+    let path = source_value_as!(path, PathBuf, ctx)?.unwrap();
+
+    Ok(ctx.call_site.clone().with(make_value!(["path parent", path] {
+        let path = path.await?;
+        Ok(PathBuf::from(path.as_ref().as_ref().parent().ok_or("path does not have a parent")?.to_owned()))
+    }).into()))
 }
 
 fn relative_fn(ctx: &mut FunctionCall) -> EvalResult {
