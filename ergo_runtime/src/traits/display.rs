@@ -154,8 +154,7 @@ impl GreaseDisplay for types::Map {
 impl GreaseDisplay for types::Either {
     fn fmt(&self, traits: &Traits) -> String {
         format!(
-            "either({}): {}",
-            self.index(),
+            "{}",
             display(traits, &self.value())
         )
     }
