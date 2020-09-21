@@ -60,7 +60,10 @@ trait FunctionAbi: Send + Sync {
 
 impl<F> FunctionAbi for F
 where
-    F: for<'a> Fn(&'a mut crate::FunctionCall) -> futures::future::BoxFuture<'a, crate::EvalResult> + Send + Sync + 'static,
+    F: for<'a> Fn(&'a mut crate::FunctionCall) -> futures::future::BoxFuture<'a, crate::EvalResult>
+        + Send
+        + Sync
+        + 'static,
 {
     fn call<'a>(&'a self, ctx: &'a mut crate::FunctionCall) -> BoxFuture<'a, crate::EvalResultAbi> {
         BoxFuture::new(async move { self(ctx).await.into() })
@@ -71,7 +74,12 @@ impl Function {
     /// Create a new function with the given implementation.
     pub fn new<F>(f: F) -> Self
     where
-        F: for<'a> Fn(&'a mut crate::FunctionCall) -> futures::future::BoxFuture<'a, crate::EvalResult> + Send + Sync + 'static,
+        F: for<'a> Fn(
+                &'a mut crate::FunctionCall,
+            ) -> futures::future::BoxFuture<'a, crate::EvalResult>
+            + Send
+            + Sync
+            + 'static,
     {
         Function(FunctionAbi_TO::from_value(f, TU_Opaque))
     }
@@ -80,6 +88,19 @@ impl Function {
     pub async fn call(&self, ctx: &mut crate::FunctionCall<'_>) -> crate::EvalResult {
         self.0.call(ctx).await.into()
     }
+}
+
+/// A convenience macro to wrap a closure returning a Value as an ergo Function.
+///
+/// The closure takes a single &mut FunctionCall context argument, can use the try operator or
+/// return EvalResult directly, and should evaluate to a Value.
+#[macro_export]
+macro_rules! ergo_function {
+    ( |$ctx:ident| $body:expr ) => {
+        $crate::types::Function::new(|$ctx| {
+            $crate::future::FutureExt::boxed(async move { Ok($ctx.call_site.clone().with($body)) })
+        })
+    };
 }
 
 /// A function which can be called using only function arguments and a call site source.

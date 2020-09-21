@@ -21,6 +21,8 @@ use std::collections::BTreeMap;
 use std::iter::FromIterator;
 use std::str::FromStr;
 
+pub use futures::future;
+
 pub mod error;
 pub mod source;
 pub mod traits;
