@@ -15,7 +15,7 @@ use grease::depends;
 use grease::future::BoxFuture;
 use grease::type_erase::Erased;
 use grease::types::{GreaseType, Type, TypeParameters};
-use grease::value::{TypedValue, Value};
+use grease::value::{Dependencies, TypedValue, Value};
 
 /// Script unit type.
 pub type Unit = ();
@@ -72,7 +72,7 @@ where
 
 impl Function {
     /// Create a new function with the given implementation.
-    pub fn new<F>(f: F) -> Self
+    pub fn new<F>(f: F, deps: Dependencies) -> TypedValue<Self>
     where
         F: for<'a> Fn(
                 &'a mut crate::FunctionCall,
@@ -81,7 +81,7 @@ impl Function {
             + Sync
             + 'static,
     {
-        Function(FunctionAbi_TO::from_value(f, TU_Opaque))
+        TypedValue::constant_deps(Function(FunctionAbi_TO::from_value(f, TU_Opaque)), deps)
     }
 
     /// Call the function.
@@ -90,15 +90,56 @@ impl Function {
     }
 }
 
-/// A convenience macro to wrap a closure returning a Value as an ergo Function.
+impl std::fmt::Debug for Function {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "Function ({:p})", self.0.obj.sabi_erased_ref())
+    }
+}
+
+/// Create a namespace id from the given namespaced name.
+///
+/// Example usage:
+/// ```
+/// # #[macro_use] extern crate ergo_runtime;
+/// namespace_id!(string::format)
+/// ```
+#[macro_export]
+macro_rules! namespace_id {
+    ( $( $l:ident )::+ ) => {
+        {
+            let mut id = ::grease::uuid::grease_uuid(b"ergo");
+            $( id = ::grease::uuid::Uuid::new_v5(&id, stringify!($l).as_bytes()); )+
+            id
+        }
+    }
+}
+
+/// A macro to wrap a closure returning a Value as an ergo Function.
+///
+/// The first argument should be a namespace identifier for the function, with an optional
+/// 'independent' prefix which, if present, prevents the produced value from depending on the
+/// function identity.
 ///
 /// The closure takes a single &mut FunctionCall context argument, can use the try operator or
 /// return EvalResult directly, and should evaluate to a Value.
 #[macro_export]
 macro_rules! ergo_function {
-    ( |$ctx:ident| $body:expr ) => {
-        $crate::types::Function::new(|$ctx| {
-            $crate::future::FutureExt::boxed(async move { Ok($ctx.call_site.clone().with($body)) })
+    ( independent $( $l:ident )::+ , |$ctx:ident| $body:expr ) => {
+        $crate::types::Function::new(
+            move |$ctx| {
+                $crate::future::FutureExt::boxed(
+                    async move { Ok($ctx.call_site.clone().with($body)) }
+                )
+            },
+            ::grease::depends![$crate::namespace_id!($( $l )::+)]
+        )
+    };
+
+    ( $( $l:ident )::+ , |$ctx:ident| $body:expr ) => {
+        $crate::ergo_function!(independent $( $l )::+, |$ctx| {
+            let val: ::grease::value::Value = $body;
+            let new_deps = ::grease::depends![$crate::namespace_id!($( $l )::+), val.id()];
+            val.set_dependencies(new_deps)
         })
     };
 }
@@ -196,17 +237,5 @@ impl Either {
     /// The chosen value.
     pub fn value(&self) -> Value {
         self.1.clone()
-    }
-}
-
-impl std::hash::Hash for Function {
-    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
-        std::ptr::hash(self.0.obj.sabi_erased_ref(), h)
-    }
-}
-
-impl std::fmt::Debug for Function {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "Function ({:p})", self.0.obj.sabi_erased_ref())
     }
 }

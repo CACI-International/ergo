@@ -1,11 +1,10 @@
 //! Concurrent task creation.
 
-use ergo_runtime::{apply_value, types};
-use futures::future::FutureExt;
+use ergo_runtime::{apply_value, ergo_function, types};
 use grease::value::Value;
 
 pub fn function() -> Value {
-    types::Function::new(|ctx| async move {
+    ergo_function!(independent std::task, |ctx| {
         let desc = ctx.args.next().ok_or("no task description")?;
         let v = ctx.args.next().ok_or("no argument to task")?;
         let args = std::mem::take(&mut ctx.args);
@@ -18,7 +17,7 @@ pub fn function() -> Value {
         let log = ctx.log.sublog("task");
         let tp = val.grease_type();
         let id = val.id();
-        Ok(ctx.call_site.clone().with(Value::with_id(
+        Value::with_id(
             tp,
             async move {
                 task.spawn(async move {
@@ -28,7 +27,7 @@ pub fn function() -> Value {
                 .await
             },
             id,
-        )))
-    }.boxed())
+        )
+    })
     .into()
 }

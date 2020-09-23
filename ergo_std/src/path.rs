@@ -1,7 +1,6 @@
 //! Path operations module.
 
-use ergo_runtime::{source_value_as, types, EvalResult, FunctionCall};
-use futures::future::FutureExt;
+use ergo_runtime::{ergo_function, namespace_id, source_value_as, types, FunctionCall};
 use grease::{
     depends, item_name, make_value, match_value,
     path::PathBuf,
@@ -10,49 +9,44 @@ use grease::{
 };
 
 pub fn module() -> Value {
-    types::Function::new(|ctx| {
-        async move {
-            let name = ctx.args.next().ok_or("missing argument")?;
+    ergo_function!(independent std::path, |ctx| {
+        let name = ctx.args.next().ok_or("missing argument")?;
 
-            let name = name
-                .map(|v| {
-                    v.typed::<types::String>()
-                        .map_err(|_| "module argument must be a string")
-                })
-                .transpose_err()
-                .map_err(|e| e.into_grease_error())?;
+        let name = name
+            .map(|v| {
+                v.typed::<types::String>()
+                    .map_err(|_| "module argument must be a string")
+            })
+            .transpose_err()
+            .map_err(|e| e.into_grease_error())?;
 
-            let name = name.await?;
+        let name = name.await?;
 
-            match name.as_str() {
-                "new" => new_value(ctx),
-                "join" => join_fn(ctx),
-                "parent" => parent_fn(ctx),
-                "relative" => relative_fn(ctx),
-                "split" => split_fn(ctx),
-                _ => Ok(ctx.call_site.clone().with(().into())),
-            }
+        match name.as_str() {
+            "new" => new_value(ctx)?,
+            "join" => join_fn(ctx)?,
+            "parent" => parent_fn(ctx)?,
+            "relative" => relative_fn(ctx)?,
+            "split" => split_fn(ctx)?,
+            _ => ().into(),
         }
-        .boxed()
     })
     .into()
 }
 
-fn new_value(ctx: &mut FunctionCall) -> EvalResult {
+fn new_value(ctx: &mut FunctionCall) -> ergo_runtime::Result<Value> {
     ctx.unused_arguments()?;
 
     let store = ctx.store.item(item_name!("path")).item(item_name!("new"));
 
-    Ok(ctx.call_site.clone().with(
-        make_value!(["path new"] {
-            use rand::random;
-            use std::convert::TryInto;
-            let s = format!("{:x}", random::<u64>());
-            let name: &ItemName = s.as_str().try_into().unwrap();
-            Ok(PathBuf::from(store.item(name).path()))
-        })
-        .into(),
-    ))
+    Ok(make_value!([namespace_id!(std::path::new)] {
+        use rand::random;
+        use std::convert::TryInto;
+        let s = format!("{:x}", random::<u64>());
+        let name: &ItemName = s.as_str().try_into().unwrap();
+        Ok(PathBuf::from(store.item(name).path()))
+    })
+    .into())
 }
 
 enum JoinComponent {
@@ -69,7 +63,7 @@ impl From<&JoinComponent> for Dependency {
     }
 }
 
-fn join_fn(ctx: &mut FunctionCall) -> EvalResult {
+fn join_fn(ctx: &mut FunctionCall) -> ergo_runtime::Result<Value> {
     let mut args = Vec::new();
 
     while let Some(sv) = ctx.args.next() {
@@ -98,22 +92,20 @@ fn join_fn(ctx: &mut FunctionCall) -> EvalResult {
 
     let deps = depends![^@args];
 
-    Ok(ctx.call_site.clone().with(
-        make_value!(["path join", ^deps] {
-            let mut path = std::path::PathBuf::new();
-            for a in args {
-                match a {
-                    JoinComponent::String(s) => path.push(s.await?.as_ref().as_str()),
-                    JoinComponent::Path(p) => path.push(p.await?.as_ref().as_ref()),
-                }
+    Ok(make_value!([namespace_id!(std::path::join), ^deps] {
+        let mut path = std::path::PathBuf::new();
+        for a in args {
+            match a {
+                JoinComponent::String(s) => path.push(s.await?.as_ref().as_str()),
+                JoinComponent::Path(p) => path.push(p.await?.as_ref().as_ref()),
             }
-            Ok(PathBuf::from(path))
-        })
-        .into(),
-    ))
+        }
+        Ok(PathBuf::from(path))
+    })
+    .into())
 }
 
-fn split_fn(ctx: &mut FunctionCall) -> EvalResult {
+fn split_fn(ctx: &mut FunctionCall) -> ergo_runtime::Result<Value> {
     let to_split = ctx.args.next().ok_or("no path to split")?;
 
     ctx.unused_arguments()?;
@@ -126,7 +118,7 @@ fn split_fn(ctx: &mut FunctionCall) -> EvalResult {
         .transpose_err()
         .map_err(|e| e.into_grease_error())?;
 
-    Ok(ctx.call_site.clone().with(make_value!(["path split", to_split] {
+    Ok(make_value!([namespace_id!(std::path::split), to_split] {
             let mut vals: Vec<Value> = Vec::new();
             for c in to_split.clone().await?.owned().into_pathbuf().iter() {
                 match c.to_str() {
@@ -138,23 +130,23 @@ fn split_fn(ctx: &mut FunctionCall) -> EvalResult {
                 }
             }
             Ok(types::Array(vals.into()))
-        }).into()))
+        }).into())
 }
 
-fn parent_fn(ctx: &mut FunctionCall) -> EvalResult {
+fn parent_fn(ctx: &mut FunctionCall) -> ergo_runtime::Result<Value> {
     let path = ctx.args.next().ok_or("no path provided")?;
 
     ctx.unused_arguments()?;
 
     let path = source_value_as!(path, PathBuf, ctx)?.unwrap();
 
-    Ok(ctx.call_site.clone().with(make_value!(["path parent", path] {
+    Ok(make_value!([namespace_id!(std::path::parent), path] {
         let path = path.await?;
         Ok(PathBuf::from(path.as_ref().as_ref().parent().ok_or("path does not have a parent")?.to_owned()))
-    }).into()))
+    }).into())
 }
 
-fn relative_fn(ctx: &mut FunctionCall) -> EvalResult {
+fn relative_fn(ctx: &mut FunctionCall) -> ergo_runtime::Result<Value> {
     let base = ctx.args.next().ok_or("no base path")?;
     let path = ctx.args.next().ok_or("no path")?;
 
@@ -170,12 +162,9 @@ fn relative_fn(ctx: &mut FunctionCall) -> EvalResult {
         .map_err(|e| e.into_grease_error())?;
 
     let task = ctx.task.clone();
-    Ok(ctx.call_site.clone().with(
-            make_value!(["path relative", base, path] {
-                let (base,path) = task.join(base,path).await?;
-                path.as_ref().as_ref()
-                    .strip_prefix(base.as_ref().as_ref()).map(|p| PathBuf::from(p.to_owned())).map_err(|e| e.into())
-            })
-            .into(),
-        ))
+    Ok(make_value!([namespace_id!(std::path::relative), base, path] {
+        let (base,path) = task.join(base,path).await?;
+        path.as_ref().as_ref()
+            .strip_prefix(base.as_ref().as_ref()).map(|p| PathBuf::from(p.to_owned())).map_err(|e| e.into())
+    }).into())
 }

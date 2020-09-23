@@ -12,7 +12,7 @@ pub fn module() -> Value {
 }
 
 pub fn get_fn() -> Value {
-    ergo_function!(|ctx| {
+    ergo_function!(independent std::env::get, |ctx| {
         let name = ctx
             .args
             .next()
@@ -37,14 +37,14 @@ pub fn get_fn() -> Value {
 
 pub fn home_path() -> Value {
     let path = directories::BaseDirs::new().map(|d| d.home_dir().to_owned());
-    make_value!(["env home", path] {
+    make_value!([ergo_runtime::namespace_id!(std::env::home), path] {
         path.map(|d| PathBuf::from(d)).ok_or("home path could not be retrieved".into())
     })
     .into()
 }
 
 pub fn path_search_fn() -> Value {
-    ergo_function!(|ctx| {
+    ergo_function!(std::env::path_search, |ctx| {
         let name = ctx.args.next().ok_or("no search argument provided")?;
 
         ctx.unused_arguments()?;
@@ -55,7 +55,7 @@ pub fn path_search_fn() -> Value {
             .map(|path| std::env::split_paths(&path).collect())
             .unwrap_or(vec![]);
 
-        make_value!(["env path-search", paths, name] {
+        make_value!([paths, name] {
             let name = name.await?;
 
             for p in paths {

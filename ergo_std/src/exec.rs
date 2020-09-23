@@ -1,7 +1,6 @@
 //! Execute (possibly with path-lookup) external programs.
 
 use abi_stable::{StableAbi, std_types::ROption};
-use futures::future::FutureExt;
 use futures::channel::oneshot::channel;
 use grease::{
     depends,
@@ -13,7 +12,7 @@ use grease::{
     types::GreaseType,
     value::{Dependencies, Value},
 };
-use ergo_runtime::{traits, traits::IntoTyped, types};
+use ergo_runtime::{ergo_function, traits, traits::IntoTyped, types};
 use std::process::{Command, Stdio};
 
 /// Strings used for commands and arguments.
@@ -583,7 +582,7 @@ mod bytestream {
 pub use bytestream::ByteStream;
 
 pub fn function() -> Value {
-    types::Function::new(|ctx| async move {
+    ergo_function!(std::exec, |ctx| {
         let cmd = ctx.args.next().ok_or("no command provided")?;
 
         let (cmdsource, cmd) = cmd.take();
@@ -670,6 +669,7 @@ pub fn function() -> Value {
 
         let task = ctx.task.clone();
         let traits = ctx.traits.clone();
+        let log = ctx.log.sublog("exec");
 
         // Create channels for outputs
         let (send_stdout, rcv_stdout) = channel();
@@ -725,6 +725,8 @@ pub fn function() -> Value {
             command.stdout(Stdio::piped());
             command.stderr(Stdio::piped());
 
+            log.debug(format!("spawning child process: {:?}", command));
+
             let mut child = command.spawn()?;
             if let (Some(input),Some(v)) = (&mut child.stdin, &stdin) {
                 std::io::copy(&mut v.forced_value().read(), input)?;
@@ -767,8 +769,7 @@ pub fn function() -> Value {
 
         let mut ret_map = BstMap::default();
         let stdout = make_value!((run_command) ["stdout"] { run_command.await?; Ok(ByteStream::new(std::io::Cursor::new(rcv_stdout.await?))) });
-        let stderr =
-            make_value!((run_command) ["stderr"] { run_command.await?; Ok(ByteStream::new(std::io::Cursor::new(rcv_stderr.await?))) });
+        let stderr = make_value!((run_command) ["stderr"] { run_command.await?; Ok(ByteStream::new(std::io::Cursor::new(rcv_stderr.await?))) });
         let exit_status = make_value!((run_command) ["exit_status"] { run_command.await?; Ok(ExitStatus::from(rcv_status.await?)) });
         
         ret_map.insert("stdout".into(), ctx.imbue_error_context(stdout.into(), "while evaluating stdout of exec command"));
@@ -776,8 +777,8 @@ pub fn function() -> Value {
         ret_map.insert("exit-status".into(), ctx.imbue_error_context(exit_status.into(), "while evaluating exit_status of exec command"));
         ret_map.insert("complete".into(), ctx.imbue_error_context(run_command.into(), "while evaluating result of exec command"));
 
-        Ok(ctx.call_site.clone().with(types::Map(ret_map).into()))
-    }.boxed())
+        types::Map(ret_map).into()
+    })
     .into()
 }
 

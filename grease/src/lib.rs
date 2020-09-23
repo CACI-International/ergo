@@ -17,7 +17,7 @@ pub mod runtime;
 pub mod traits;
 pub mod type_erase;
 pub mod types;
-mod u128;
+pub mod u128;
 pub mod uuid;
 pub mod value;
 

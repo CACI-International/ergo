@@ -2,7 +2,7 @@
 
 use crate::{types, ResultIterator};
 use abi_stable::{
-    std_types::{RArc, RResult, RVec},
+    std_types::{RArc, ROption, RResult, RVec},
     StableAbi,
 };
 use grease::{
@@ -134,8 +134,12 @@ pub fn traits(traits: &mut Traits) {
             .into()
         }
 
-        traits.add_impl_for_type::<types::Either, ValueByContent>(ValueByContent {
-            value_by_content,
+        traits.add_generator_by_trait_for_trait(|_traits, tp| {
+            if !types::Either::matches_grease_type(tp) {
+                ROption::RNone
+            } else {
+                ROption::RSome(ValueByContent { value_by_content })
+            }
         });
     }
 }

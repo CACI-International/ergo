@@ -96,17 +96,9 @@ fn is_plugin(f: &path::Path) -> bool {
 pub fn add_load_path(env: &mut ScriptEnv, work_dir: &Value) {
     let mut vals = rvec![work_dir.clone()];
 
-    // Add local data app dir
-    if let Some(proj_dirs) = app_dirs() {
-        let path = proj_dirs.data_local_dir().join("lib");
-        if path.exists() {
-            vals.push(PathBuf::from(path).into());
-        }
-    }
-
-    // Add system directories when running in a [prefix]/bin directory.
-    if let Ok(path) = std::env::current_exe() {
-        if let Some(parent) = path.parent() {
+    // Add neighboring share directories when running in a [prefix]/bin directory.
+    let mut neighbor_dir = std::env::current_exe().ok().and_then(|path| {
+        path.parent().and_then(|parent| {
             if parent.file_name() == Some("bin".as_ref()) {
                 let path = parent
                     .parent()
@@ -115,10 +107,35 @@ pub fn add_load_path(env: &mut ScriptEnv, work_dir: &Value) {
                     .join(crate::constants::PROGRAM_NAME)
                     .join("lib");
                 if path.exists() {
-                    vals.push(PathBuf::from(path).into());
+                    Some(path)
+                } else {
+                    None
                 }
+            } else {
+                None
             }
+        })
+    });
+
+    // If the neighbor directory is somewhere in the home directory, it should be added prior to the local
+    // data app dir.
+    if let (Some(dir), Some(user_dirs)) = (&neighbor_dir, &directories::UserDirs::new()) {
+        if dir.starts_with(user_dirs.home_dir()) {
+            vals.push(PathBuf::from(neighbor_dir.take().unwrap()).into());
         }
+    }
+
+    // Add local data app dir.
+    if let Some(proj_dirs) = app_dirs() {
+        let path = proj_dirs.data_local_dir().join("lib");
+        if path.exists() {
+            vals.push(PathBuf::from(path).into());
+        }
+    }
+
+    // If the neighbor directory wasn't added, it should be added now, after the local data app dir.
+    if let Some(dir) = neighbor_dir {
+        vals.push(PathBuf::from(dir).into());
     }
 
     env.insert(
@@ -139,12 +156,16 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
         ) -> impl FnMut(&path::Path) -> Option<path::PathBuf> + 'a {
             move |path| {
                 if try_add_extension {
-                    let mut p = name.as_ref().file_name().unwrap().to_owned();
-                    p.push(".");
-                    p.push(SCRIPT_EXTENSION);
-                    let path_with_extension = path.join(name.as_ref()).with_file_name(p);
-                    if path_with_extension.exists() {
-                        Some(path_with_extension)
+                    if let Some(file_name) = name.as_ref().file_name() {
+                        let mut p = file_name.to_owned();
+                        p.push(".");
+                        p.push(SCRIPT_EXTENSION);
+                        let path_with_extension = path.join(name.as_ref()).with_file_name(p);
+                        if path_with_extension.exists() {
+                            Some(path_with_extension)
+                        } else {
+                            None
+                        }
                     } else {
                         None
                     }
@@ -313,8 +334,10 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
 
                 match cached {
                     None => {
-                        // Only load prelude if this is not a workspace.
-                        let load_prelude = p.file_name().unwrap() != SCRIPT_WORKSPACE_NAME; // unwrap because p must have a final component
+                        let plugin = is_plugin(&p);
+
+                        // Only load prelude if this is not a workspace nor a plugin.
+                        let load_prelude = p.file_name().unwrap() != SCRIPT_WORKSPACE_NAME && !plugin; // unwrap because p must have a final component
 
                         let mod_path = p.parent().unwrap(); // unwrap because file must exist in some directory
 
@@ -381,7 +404,6 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                         };
 
                         let mod_path: Value = PathBuf::from(mod_path.to_owned()).into();
-                        let plugin = is_plugin(&p);
 
                         // Add initial load path binding first; the prelude may override it.
                         let mut top_level_env: ScriptEnv = Default::default();
@@ -1244,6 +1266,14 @@ impl Rt<Expression> {
             Block(_) => panic!("Block expression must be evaluated at a higher level"),
             Function(pat, e) => {
                 let env = ctx.env_flatten();
+                let mut env_deps = grease::value::Dependencies::default();
+                for (k,v) in env.iter() {
+                    env_deps += depends![k];
+                    if let RResult::ROk(v) = v {
+                        env_deps += depends![**v];
+                    }
+                }
+                let deps = depends![^env_deps, pat, e];
                 Ok(types::Function::new(move |ctx| {
                     let e = e.clone();
                     let pat = pat.clone();
@@ -1273,8 +1303,8 @@ impl Rt<Expression> {
                         .await
                     }
                     .boxed()
-                })
-                .into_value())
+                }, deps)
+                .into())
             }
             Match(val, pats) => {
                 let val = Rt(*val).evaluate(ctx).await?;

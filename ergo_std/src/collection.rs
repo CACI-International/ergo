@@ -1,7 +1,7 @@
 //! Functions over collections.
 
 use abi_stable::std_types::RVec;
-use ergo_runtime::{source_value_as, types, FunctionArguments};
+use ergo_runtime::{ergo_function, source_value_as, types, FunctionArguments};
 use futures::future::{ok, FutureExt, TryFutureExt};
 use grease::{bst::BstMap, depends, make_value, value::Value};
 
@@ -14,62 +14,59 @@ pub fn module() -> Value {
 }
 
 fn fold_fn() -> Value {
-    types::Function::new(|ctx| {
-        async move {
-            let func = ctx.args.next().ok_or("fold function not provided")?;
-            let orig = ctx.args.next().ok_or("fold base value not provided")?;
-            let vals = ctx.args.next().ok_or("fold values not provided")?;
+    ergo_function!(std::collection::fold, |ctx| {
+        let func = ctx.args.next().ok_or("fold function not provided")?;
+        let orig = ctx.args.next().ok_or("fold base value not provided")?;
+        let vals = ctx.args.next().ok_or("fold values not provided")?;
 
-            ctx.unused_arguments()?;
+        ctx.unused_arguments()?;
 
-            let func = func
-                .map(|f| {
-                    f.typed::<types::Function>()
-                        .map_err(|_| "expected a function")
-                })
-                .transpose()
-                .map_err(|e| e.into_grease_error())?;
+        let func = func
+            .map(|f| {
+                f.typed::<types::Function>()
+                    .map_err(|_| "expected a function")
+            })
+            .transpose()
+            .map_err(|e| e.into_grease_error())?;
 
-            let vals = vals
-                .map(|v| v.typed::<types::Array>().map_err(|_| "expected an array"))
-                .transpose()
-                .map_err(|e| e.into_grease_error())?;
+        let vals = vals
+            .map(|v| v.typed::<types::Array>().map_err(|_| "expected an array"))
+            .transpose()
+            .map_err(|e| e.into_grease_error())?;
 
-            let deps = depends!["fold", *func, *orig, *vals];
+        let deps = depends![*func, *orig, *vals];
 
-            let task = ctx.task.clone();
-            let func = func.map(|v| types::Portable::portable(v, ctx));
-            Ok(ctx.call_site.clone().with(Value::new(
-                orig.grease_type(),
-                async move {
-                    let (func_source, func) = func.take();
-                    let (vals_source, vals) = vals.take();
-                    let (func, vals) = task.join(func, vals).await?;
-                    let val = vals.owned().0.into_iter().fold(ok(orig).boxed(), |acc, v| {
-                        let f = &func;
-                        let src = &vals_source;
-                        let fsrc = &func_source;
-                        acc.and_then(move |accv| {
-                            f.call(
-                                FunctionArguments::positional(vec![accv, src.clone().with(v)]),
-                                fsrc.clone(),
-                            )
-                        })
-                        .boxed()
-                    });
+        let task = ctx.task.clone();
+        let func = func.map(|v| types::Portable::portable(v, ctx));
+        Value::new(
+            orig.grease_type(),
+            async move {
+                let (func_source, func) = func.take();
+                let (vals_source, vals) = vals.take();
+                let (func, vals) = task.join(func, vals).await?;
+                let val = vals.owned().0.into_iter().fold(ok(orig).boxed(), |acc, v| {
+                    let f = &func;
+                    let src = &vals_source;
+                    let fsrc = &func_source;
+                    acc.and_then(move |accv| {
+                        f.call(
+                            FunctionArguments::positional(vec![accv, src.clone().with(v)]),
+                            fsrc.clone(),
+                        )
+                    })
+                    .boxed()
+                });
 
-                    val.await?.await.unwrap()
-                },
-                deps,
-            )))
-        }
-        .boxed()
+                val.await?.await.unwrap()
+            },
+            deps,
+        )
     })
     .into()
 }
 
 fn map_fn() -> Value {
-    types::Function::new(|ctx| async move {
+    ergo_function!(std::collection::map, |ctx| {
         let func = ctx.args.next().ok_or("map function not provided")?;
         let arr = ctx.args.next().ok_or("map array not provided")?;
 
@@ -91,7 +88,7 @@ fn map_fn() -> Value {
 
         let task = ctx.task.clone();
         let func = func.map(|v| types::Portable::portable(v, ctx));
-        Ok(ctx.call_site.clone().with(make_value!(["map",*func,*arr] {
+        make_value!([*func,*arr] {
             let (func_source, func) = func.take();
             let (arr_source, arr) = arr.take();
             let (func,arr) = task.join(func,arr).await?;
@@ -100,36 +97,31 @@ fn map_fn() -> Value {
                 .map(|d| func.call(FunctionArguments::positional(vec![arr_source.clone().with(d)]), func_source.clone())));
 
             Ok(types::Array(arr.await?.into_iter().map(|v| v.unwrap()).collect()))
-        }).into()))
-    }.boxed()).into()
+        }).into()
+    }).into()
 }
 
 fn entries_fn() -> Value {
-    types::Function::new(|ctx| {
-        async move {
-            let value = ctx.args.next().ok_or("map not provided")?;
+    ergo_function!(std::collection::entries, |ctx| {
+        let value = ctx.args.next().ok_or("map not provided")?;
 
-            ctx.unused_arguments()?;
+        ctx.unused_arguments()?;
 
-            let map = source_value_as!(value, types::Map, ctx)?.unwrap();
+        let map = source_value_as!(value, types::Map, ctx)?.unwrap();
 
-            Ok(ctx.call_site.clone().with(
-                make_value!(["entries", map] {
-                    let mut vals = RVec::new();
-                    for (k,v) in map.await?.owned().0 {
-                        let mut entry = BstMap::new();
-                        entry.insert("key".into(), types::String::from(k).into());
-                        entry.insert("value".into(), v);
+        make_value!([map] {
+            let mut vals = RVec::new();
+            for (k,v) in map.await?.owned().0 {
+                let mut entry = BstMap::new();
+                entry.insert("key".into(), types::String::from(k).into());
+                entry.insert("value".into(), v);
 
-                        vals.push(types::Map(entry).into());
-                    }
+                vals.push(types::Map(entry).into());
+            }
 
-                    Ok(types::Array(vals))
-                })
-                .into(),
-            ))
-        }
-        .boxed()
+            Ok(types::Array(vals))
+        })
+        .into()
     })
     .into()
 }

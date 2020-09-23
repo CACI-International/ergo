@@ -108,6 +108,7 @@ pub fn traits(traits: &mut Traits) {
                 .get(0)
                 .unwrap()
                 .clone();
+
             impls
                 .map(move |impls| {
                     let impls = std::sync::Arc::new(impls);

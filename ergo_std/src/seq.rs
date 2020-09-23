@@ -1,11 +1,10 @@
 //! Execute values in order, returning the result of the last one.
 
-use ergo_runtime::{traits::force_value_nested, types};
-use futures::future::FutureExt;
+use ergo_runtime::{ergo_function, traits::force_value_nested};
 use grease::{depends, value::Value};
 
 pub fn function() -> Value {
-    types::Function::new(|ctx| async move {
+    ergo_function!(independent std::seq, |ctx| {
         let mut val = ctx.args.next().ok_or("no values provided")?;
         while let Some(next) = ctx.args.next() {
             // TODO attribute errors to correct Source
@@ -29,7 +28,7 @@ pub fn function() -> Value {
 
         ctx.unused_arguments()?;
 
-        Ok(val)
-    }.boxed())
+        val.unwrap()
+    })
     .into()
 }

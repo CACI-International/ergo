@@ -70,7 +70,6 @@ grease_type_name!(types::Array, "Array");
 grease_type_name!(types::Map, "Map");
 grease_type_name!(types::Function, "Function");
 grease_type_name!(types::Either, "Either");
-//TODO grease_type_name!(std::process::ExitStatus, "exit_status");
 
 impl<T: GreaseTypeName> GreaseTypeName for RVec<T> {
     fn grease_type_name() -> String {
@@ -97,7 +96,15 @@ pub fn traits(traits: &mut Traits) {
     TypeName::add_impl::<types::Array>(traits);
     TypeName::add_impl::<types::Function>(traits);
     TypeName::add_impl::<types::Map>(traits);
-    TypeName::add_impl::<types::Either>(traits);
+    traits.add_generator_by_trait_for_trait(|_traits, tp| {
+        if !types::Either::matches_grease_type(tp) {
+            ROption::RNone
+        } else {
+            ROption::RSome(TypeName {
+                name: "Either".into(),
+            })
+        }
+    });
     traits.add_generator_by_trait_for_trait(|traits, tp| {
         if tp.id == RVec::<()>::grease_type().id {
             let inner_type = Type::from(tp.data.clone());

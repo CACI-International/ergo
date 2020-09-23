@@ -96,3 +96,4 @@ Within a script, the following are defined:
   `work-dir`.
 * Add work recording to script.
 * Either deconstruction with `match`.
+* Add value dependency tree print to help debug consistency issues.

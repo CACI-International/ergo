@@ -3,30 +3,31 @@
 //! This trait is used to expose nested Values within Value types.
 
 use crate::types;
-use abi_stable::{std_types::ROption, StableAbi};
+use abi_stable::{
+    std_types::{ROption, RVec},
+    StableAbi,
+};
 use futures::future::{FutureExt, TryFutureExt};
 use futures::stream::{futures_unordered::FuturesUnordered, TryStreamExt};
 use grease::{
-    bst::BstSet, runtime::Traits, traits::GreaseTrait, type_erase::Erased, types::GreaseType,
-    value::Value,
+    runtime::Traits, traits::GreaseTrait, type_erase::Erased, types::GreaseType, value::Value,
 };
-use std::collections::BTreeSet;
 
 /// A grease trait which exposes nested Values within a single Value's data.
 #[derive(Clone, GreaseTrait, StableAbi)]
 #[repr(C)]
 pub struct Nested {
-    nested: extern "C" fn(&Erased) -> BstSet<Value>,
+    nested: extern "C" fn(&Erased) -> RVec<Value>,
 }
 
 impl Nested {
-    pub fn nested(&self, data: &Erased) -> BstSet<Value> {
+    pub fn nested(&self, data: &Erased) -> RVec<Value> {
         (self.nested)(data)
     }
 
     /// Add an implementation of the trait for values with type T.
     pub fn add_impl<T: GreaseType + GreaseNested + Sync>(traits: &mut Traits) {
-        extern "C" fn nested<T: GreaseNested>(data: &Erased) -> BstSet<Value> {
+        extern "C" fn nested<T: GreaseNested>(data: &Erased) -> RVec<Value> {
             unsafe { data.as_ref::<T>() }.nested().into()
         }
 
@@ -38,17 +39,17 @@ impl Nested {
 
 /// Describe the nested Values within a type.
 pub trait GreaseNested {
-    fn nested(&self) -> BTreeSet<Value>;
+    fn nested(&self) -> Vec<Value>;
 }
 
 impl GreaseNested for types::Array {
-    fn nested(&self) -> BTreeSet<Value> {
+    fn nested(&self) -> Vec<Value> {
         self.0.iter().cloned().collect()
     }
 }
 
 impl GreaseNested for types::Map {
-    fn nested(&self) -> BTreeSet<Value> {
+    fn nested(&self) -> Vec<Value> {
         self.0.iter().map(|t| t.1).cloned().collect()
     }
 }
@@ -59,7 +60,7 @@ pub fn traits(traits: &mut Traits) {
 
     // types::Either
     {
-        extern "C" fn nested(data: &Erased) -> BstSet<Value> {
+        extern "C" fn nested(data: &Erased) -> RVec<Value> {
             let either = unsafe { data.as_ref::<types::Either>() };
             vec![either.value()].into_iter().collect()
         }

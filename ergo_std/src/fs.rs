@@ -1,7 +1,6 @@
 //! Filesystem runtime functions.
 
 use ergo_runtime::{ergo_function, source_value_as, traits, types};
-use futures::future::FutureExt;
 use glob::glob;
 use grease::{bst::BstMap, item_name, make_value, match_value, path::PathBuf, value::Value};
 use serde::{Deserialize, Serialize};
@@ -21,39 +20,39 @@ pub fn module() -> Value {
 }
 
 fn glob_fn() -> Value {
-    types::Function::new(|ctx| {
-        async move {
-            let pattern = ctx.args.next().ok_or("no glob pattern provided")?;
+    ergo_function!(std::fs::glob, |ctx| {
+        let pattern = ctx.args.next().ok_or("no glob pattern provided")?;
 
-            ctx.unused_arguments()?;
+        ctx.unused_arguments()?;
 
-            let pattern_source = pattern.source();
-            let pattern = pattern
-                .map(|v| {
-                    ctx.traits
-                        .get::<traits::IntoTyped<types::String>>(&v)
-                        .ok_or("cannot convert glob pattern value into string")
-                        .map(|t| t.into_typed(v))
-                })
-                .transpose_err()
-                .map_err(|e| e.into_grease_error())?;
+        let pattern_source = pattern.source();
+        let pattern = pattern
+            .map(|v| {
+                ctx.traits
+                    .get::<traits::IntoTyped<types::String>>(&v)
+                    .ok_or("cannot convert glob pattern value into string")
+                    .map(|t| t.into_typed(v))
+            })
+            .transpose_err()
+            .map_err(|e| e.into_grease_error())?;
 
-            let path = source_value_as!(
-                ctx.env_get("work-dir")
-                    .ok_or(
-                        ctx.call_site
-                            .clone()
-                            .with("work-dir not set")
-                            .into_grease_error()
-                    )?
-                    .map(|v| v.clone())?,
-                PathBuf,
-                ctx
-            )?
-            .unwrap();
+        let path = source_value_as!(
+            ctx.env_get("work-dir")
+                .ok_or(
+                    ctx.call_site
+                        .clone()
+                        .with("work-dir not set")
+                        .into_grease_error()
+                )?
+                .map(|v| v.clone())?,
+            PathBuf,
+            ctx
+        )?
+        .unwrap();
 
-            let task = ctx.task.clone();
-            Ok(ctx.call_site.clone().with(make_value!((path, pattern) ["fs glob"] {
+        let task = ctx.task.clone();
+
+        make_value!((path, pattern) {
             let (path, pattern) = task.join(path,pattern).await?;
 
             let pattern = {
@@ -75,9 +74,7 @@ fn glob_fn() -> Value {
                 }
             }
         })
-        .into()))
-        }
-        .boxed()
+        .into()
     })
     .into()
 }
@@ -110,7 +107,7 @@ fn recursive_link<F: AsRef<Path>, T: AsRef<Path>>(from: F, to: T) -> Result<(), 
 }
 
 fn copy_fn() -> Value {
-    types::Function::new(|ctx| async move {
+    ergo_function!(std::fs::copy, |ctx| {
         let from = ctx.args.next().ok_or("'from' missing")?;
         let to = ctx.args.next().ok_or("'to' missing")?;
 
@@ -128,47 +125,20 @@ fn copy_fn() -> Value {
 
         let log = ctx.log.sublog("fs::copy");
         let task = ctx.task.clone();
-        Ok(ctx.call_site.clone().with(make_value!((from,to) ["fs copy"] {
+        make_value!((from,to) {
             let (from,to) = task.join(from, to).await?;
 
             log.debug(format!("copying {} to {}", from.as_ref().as_ref().display(), to.as_ref().as_ref().display()));
 
             Ok(recursive_link(from.as_ref().as_ref(), to.as_ref().as_ref())?)
         })
-        .into()))
-    }.boxed())
-    .into()
-}
-
-fn exists_fn() -> Value {
-    types::Function::new(|ctx| {
-        async move {
-            let path = ctx.args.next().ok_or("'path' missing")?;
-
-            ctx.unused_arguments()?;
-
-            let path = path
-                .map(|v| {
-                    v.typed::<PathBuf>()
-                        .map_err(|_| "'path' argument must be a path")
-                })
-                .transpose_err()
-                .map_err(|e| e.into_grease_error())?;
-
-            Ok(ctx.call_site.clone().with(
-                make_value!((path) ["fs exists"] {
-                    Ok(path.await?.as_ref().as_ref().exists())
-                })
-                .into(),
-            ))
-        }
-        .boxed()
+        .into()
     })
     .into()
 }
 
-fn create_dir_fn() -> Value {
-    ergo_function!(|ctx| {
+fn exists_fn() -> Value {
+    ergo_function!(std::fs::exists, |ctx| {
         let path = ctx.args.next().ok_or("'path' missing")?;
 
         ctx.unused_arguments()?;
@@ -181,7 +151,29 @@ fn create_dir_fn() -> Value {
             .transpose_err()
             .map_err(|e| e.into_grease_error())?;
 
-        make_value!(["fs create-dir", path] {
+        make_value!((path) {
+            Ok(path.await?.as_ref().as_ref().exists())
+        })
+        .into()
+    })
+    .into()
+}
+
+fn create_dir_fn() -> Value {
+    ergo_function!(std::fs::create_dir, |ctx| {
+        let path = ctx.args.next().ok_or("'path' missing")?;
+
+        ctx.unused_arguments()?;
+
+        let path = path
+            .map(|v| {
+                v.typed::<PathBuf>()
+                    .map_err(|_| "'path' argument must be a path")
+            })
+            .transpose_err()
+            .map_err(|e| e.into_grease_error())?;
+
+        make_value!([path] {
             Ok(std::fs::create_dir_all(path.await?.as_ref().as_ref())?)
         })
         .into()
@@ -199,188 +191,175 @@ fn set_permissions(p: &mut std::fs::Permissions, mode: u32) {
 fn set_permissions(p: &mut std::fs::Permissions, mode: u32) {}
 
 fn mount_fn() -> Value {
-    types::Function::new(|ctx| {
-        async move {
-            let from = ctx.args.next().ok_or("mount 'from' missing")?;
-            let to = ctx.args.next().ok_or("mount 'to' missing")?;
+    ergo_function!(std::fs::mount, |ctx| {
+        let from = ctx.args.next().ok_or("mount 'from' missing")?;
+        let to = ctx.args.next().ok_or("mount 'to' missing")?;
 
-            ctx.unused_arguments()?;
+        ctx.unused_arguments()?;
 
-            let (from_source, from) = source_value_as!(from, PathBuf, ctx)?.take();
-            let to = source_value_as!(to, PathBuf, ctx)?.unwrap();
+        let (from_source, from) = source_value_as!(from, PathBuf, ctx)?.take();
+        let to = source_value_as!(to, PathBuf, ctx)?.unwrap();
 
-            let task = ctx.task.clone();
-            Ok(ctx.call_site.clone().with(make_value!(["fs mount", from, to] {
-                let (from, to) = task.join(from, to).await?;
+        let task = ctx.task.clone();
+        make_value!([from, to] {
+            let (from, to) = task.join(from, to).await?;
 
-                let from_path = from.as_ref().as_ref();
-                let to_path = to.as_ref().as_ref();
-                if from_path.is_dir() {
-                    recursive_link(from_path, to_path)?;
-                }
-                else if from_path.is_file() {
-                    let mut f = std::fs::File::open(from_path)?;
-                    use std::io::Read;
-                    use std::io::Seek;
+            let from_path = from.as_ref().as_ref();
+            let to_path = to.as_ref().as_ref();
+            if from_path.is_dir() {
+                recursive_link(from_path, to_path)?;
+            }
+            else if from_path.is_file() {
+                let mut f = std::fs::File::open(from_path)?;
+                use std::io::Read;
+                use std::io::Seek;
 
-                    let mut magic = [0; 6];
-                    if let Ok(bytes) = f.read(&mut magic) {
-                        f.seek(std::io::SeekFrom::Start(0))?;
+                let mut magic = [0; 6];
+                if let Ok(bytes) = f.read(&mut magic) {
+                    f.seek(std::io::SeekFrom::Start(0))?;
 
-                        // zip archive
-                        if bytes >= 4 && magic[0..4] == [b'P', b'K', 3, 4] {
-                            use zip::ZipArchive;
-                            let mut archive = ZipArchive::new(f)?;
-                            for i in 0..archive.len() {
-                                let mut file = archive.by_index(i)?;
-                                if file.is_dir() {
-                                    std::fs::create_dir_all(to_path.join(file.name()))?;
-                                }
-                                else if file.is_file() {
-                                    let p = to_path.join(file.name());
-                                    std::fs::create_dir_all(p.parent().expect("no parent path in zip output"))?;
-                                    let mut to_file = std::fs::File::create(p)?;
-                                    std::io::copy(&mut file, &mut to_file)?;
-                                    let mut permissions = to_file.metadata()?.permissions();
-                                    if let Some(mode) = file.unix_mode() {
-                                        set_permissions(&mut permissions, mode);
-                                    }
-                                    to_file.set_permissions(permissions)?;
-                                }
+                    // zip archive
+                    if bytes >= 4 && magic[0..4] == [b'P', b'K', 3, 4] {
+                        use zip::ZipArchive;
+                        let mut archive = ZipArchive::new(f)?;
+                        for i in 0..archive.len() {
+                            let mut file = archive.by_index(i)?;
+                            if file.is_dir() {
+                                std::fs::create_dir_all(to_path.join(file.name()))?;
                             }
-                        } else {
-                            let archive : Box<dyn std::io::Read> =
-                                // gzip
-                                if bytes >= 2 && magic[0..2] == [0x1f, 0x8b] {
-                                    use flate2::read::GzDecoder;
-                                    Box::new(GzDecoder::new(f))
+                            else if file.is_file() {
+                                let p = to_path.join(file.name());
+                                std::fs::create_dir_all(p.parent().expect("no parent path in zip output"))?;
+                                let mut to_file = std::fs::File::create(p)?;
+                                std::io::copy(&mut file, &mut to_file)?;
+                                let mut permissions = to_file.metadata()?.permissions();
+                                if let Some(mode) = file.unix_mode() {
+                                    set_permissions(&mut permissions, mode);
                                 }
-                                // bzip2
-                                else if bytes >= 3 && magic[0..3] == [b'B', b'Z', b'h'] {
-                                    use bzip2::read::BzDecoder;
-                                    Box::new(BzDecoder::new(f))
-                                }
-                                // lzma
-                                else if bytes >= 6 && magic[0..6] == [0xfd, b'7', b'z', b'X', b'Z', 0] {
-                                    use xz::read::XzDecoder;
-                                    Box::new(XzDecoder::new(f))
-                                } else {
-                                    Box::new(f)
-                                };
-
-                            use tar::Archive;
-                            // TODO check whether file is a tar archive (need to buffer and seek into output
-                            // stream)
-                            let mut tar = Archive::new(archive);
-                            tar.unpack(to_path)?;
+                                to_file.set_permissions(permissions)?;
+                            }
                         }
+                    } else {
+                        let archive : Box<dyn std::io::Read> =
+                            // gzip
+                            if bytes >= 2 && magic[0..2] == [0x1f, 0x8b] {
+                                use flate2::read::GzDecoder;
+                                Box::new(GzDecoder::new(f))
+                            }
+                            // bzip2
+                            else if bytes >= 3 && magic[0..3] == [b'B', b'Z', b'h'] {
+                                use bzip2::read::BzDecoder;
+                                Box::new(BzDecoder::new(f))
+                            }
+                            // lzma
+                            else if bytes >= 6 && magic[0..6] == [0xfd, b'7', b'z', b'X', b'Z', 0] {
+                                use xz::read::XzDecoder;
+                                Box::new(XzDecoder::new(f))
+                            } else {
+                                Box::new(f)
+                            };
+
+                        use tar::Archive;
+                        // TODO check whether file is a tar archive (need to buffer and seek into output
+                        // stream)
+                        let mut tar = Archive::new(archive);
+                        tar.unpack(to_path)?;
                     }
                 }
-                else {
-                    return Err(from_source.with("path is not a file nor directory").into_grease_error());
-                }
-                Ok(())
-            }).into()))
-        }.boxed()
+            }
+            else {
+                return Err(from_source.with("path is not a file nor directory").into_grease_error());
+            }
+            Ok(())
+        }).into()
     }).into()
 }
 
 fn sha1_fn() -> Value {
-    types::Function::new(|ctx| {
-        async move {
-            let path = ctx.args.next().ok_or("no file provided to sha1")?;
-            let sum = ctx.args.next().ok_or("no checksum provided")?;
+    ergo_function!(std::fs::sha1, |ctx| {
+        let path = ctx.args.next().ok_or("no file provided to sha1")?;
+        let sum = ctx.args.next().ok_or("no checksum provided")?;
 
-            ctx.unused_arguments()?;
+        ctx.unused_arguments()?;
 
-            let path = source_value_as!(path, PathBuf, ctx)?.unwrap();
-            let sum = source_value_as!(sum, types::String, ctx)?.unwrap();
+        let path = source_value_as!(path, PathBuf, ctx)?.unwrap();
+        let sum = source_value_as!(sum, types::String, ctx)?.unwrap();
 
-            let task = ctx.task.clone();
-            Ok(ctx.call_site.clone().with(
-                make_value!(["fs sha1", path, sum] {
-                    let (path,sum) = task.join(path, sum).await?;
+        let task = ctx.task.clone();
+        make_value!([path, sum] {
+            let (path,sum) = task.join(path, sum).await?;
 
-                    let mut f = std::fs::File::open(path.as_ref().as_ref())?;
-                    let mut digest = Sha1::default();
-                    std::io::copy(&mut f, &mut digest)?;
-                    use sha::utils::DigestExt;
-                    Ok(digest.to_hex().eq_ignore_ascii_case(sum.as_ref().as_str()))
-                })
-                .into(),
-            ))
-        }
-        .boxed()
+            let mut f = std::fs::File::open(path.as_ref().as_ref())?;
+            let mut digest = Sha1::default();
+            std::io::copy(&mut f, &mut digest)?;
+            use sha::utils::DigestExt;
+            Ok(digest.to_hex().eq_ignore_ascii_case(sum.as_ref().as_str()))
+        })
+        .into()
     })
     .into()
 }
 
 fn track_fn() -> Value {
-    types::Function::new(|ctx| {
-        async move {
-            let path = ctx.args.next().ok_or("no file provided to track")?;
+    ergo_function!(independent std::fs::track, |ctx| {
+        let path = ctx.args.next().ok_or("no file provided to track")?;
 
-            ctx.unused_arguments()?;
+        ctx.unused_arguments()?;
 
-            let path = path
-                .map_async(|p| async {
-                    match_value!(p => {
-                        types::String => |v| {
-                            v.await.map(|v| v.owned().to_string().into())
-                        },
-                        PathBuf => |v| {
-                            v.await.map(|v| v.owned().into_pathbuf())
-                        },
-                        => |_| Err("track argument must be a string or path".into())
-                    })
-                })
-                .await
-                .transpose_err()
-                .map_err(|e| e.into_grease_error())?;
-
-            let store = ctx.store.item(item_name!("track"));
-
-            // TODO inefficient to load and store every time
-            let mut info = if store.exists() {
-                let content = store.read()?;
-                bincode::deserialize_from(content).map_err(|e| e.to_string())?
-            } else {
-                TrackInfo::new()
-            };
-
-            let meta = std::fs::metadata(&path)?;
-            let mod_time = meta.modified()?;
-
-            let calc_hash = match info.get(&path) {
-                Some(data) => data.modification_time < mod_time,
-                None => true,
-            };
-
-            if calc_hash {
-                let f = std::fs::File::open(&path)?;
-                let hash = grease::hash::hash_read(f)?;
-                info.insert(
-                    path.clone(),
-                    FileData {
-                        modification_time: mod_time,
-                        content_hash: hash,
+        let path = path
+            .map_async(|p| async {
+                match_value!(p => {
+                    types::String => |v| {
+                        v.await.map(|v| v.owned().to_string().into())
                     },
-                );
-            }
+                    PathBuf => |v| {
+                        v.await.map(|v| v.owned().into_pathbuf())
+                    },
+                    => |_| Err("track argument must be a string or path".into())
+                })
+            })
+            .await
+            .transpose_err()
+            .map_err(|e| e.into_grease_error())?;
 
-            let hash = info.get(&path).unwrap().content_hash;
+        let store = ctx.store.item(item_name!("track"));
 
-            {
-                let content = store.write()?;
-                bincode::serialize_into(content, &info).map_err(|e| e.to_string())?;
-            }
+        // TODO inefficient to load and store every time
+        let mut info = if store.exists() {
+            let content = store.read()?;
+            bincode::deserialize_from(content).map_err(|e| e.to_string())?
+        } else {
+            TrackInfo::new()
+        };
 
-            Ok(ctx
-                .call_site
-                .clone()
-                .with(make_value!((path) [hash] Ok(PathBuf::from(path))).into()))
+        let meta = std::fs::metadata(&path)?;
+        let mod_time = meta.modified()?;
+
+        let calc_hash = match info.get(&path) {
+            Some(data) => data.modification_time < mod_time,
+            None => true,
+        };
+
+        if calc_hash {
+            let f = std::fs::File::open(&path)?;
+            let hash = grease::hash::hash_read(f)?;
+            info.insert(
+                path.clone(),
+                FileData {
+                    modification_time: mod_time,
+                    content_hash: hash,
+                },
+            );
         }
-        .boxed()
+
+        let hash = info.get(&path).unwrap().content_hash;
+
+        {
+            let content = store.write()?;
+            bincode::serialize_into(content, &info).map_err(|e| e.to_string())?;
+        }
+
+        make_value!((path) [hash] Ok(PathBuf::from(path))).into()
     })
     .into()
 }
