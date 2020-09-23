@@ -242,8 +242,12 @@ impl ErasedTrivial {
     /// When retrieving the value later, one should use `as_slice::<T>()`/`to_boxed_slice::<T>()`.
     pub fn from_slice<T: Eraseable + Trivial>(v: Box<[T]>) -> Self {
         let size = std::mem::size_of_val(&*v);
-        let align = std::mem::align_of_val(&*v);
-        Self::from_type(v, true, size, align)
+        if size == 0 {
+            Self::default()
+        } else {
+            let align = std::mem::align_of_val(&*v);
+            Self::from_type(v, true, size, align)
+        }
     }
 
     /// Create a new ErasedTrivial from the given boxed str.
@@ -499,9 +503,7 @@ impl Clone for ErasedTrivial {
 
 impl PartialEq for ErasedTrivial {
     fn eq(&self, other: &Self) -> bool {
-        self.size == other.size
-            && self.is_box_and_align == other.is_box_and_align
-            && self.as_bytes() == other.as_bytes()
+        self.align() == other.align() && self.as_bytes() == other.as_bytes()
     }
 }
 
@@ -509,18 +511,16 @@ impl Eq for ErasedTrivial {}
 
 impl PartialOrd for ErasedTrivial {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.size
-            .partial_cmp(&other.size)
-            .or_else(|| self.is_box_and_align.partial_cmp(&other.is_box_and_align))
+        self.align()
+            .partial_cmp(&other.align())
             .or_else(|| self.as_bytes().partial_cmp(other.as_bytes()))
     }
 }
 
 impl Ord for ErasedTrivial {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.size
-            .cmp(&other.size)
-            .then_with(|| self.is_box_and_align.cmp(&other.is_box_and_align))
+        self.align()
+            .cmp(&other.align())
             .then_with(|| self.as_bytes().cmp(other.as_bytes()))
     }
 }

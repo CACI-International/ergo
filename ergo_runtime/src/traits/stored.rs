@@ -2,7 +2,10 @@
 
 use super::type_name;
 use crate::{types, Result, ResultAbi};
-use abi_stable::{std_types::RVec, StableAbi};
+use abi_stable::{
+    std_types::{ROption, RVec},
+    StableAbi,
+};
 use bincode;
 use grease::{
     bst::BstMap,
@@ -201,6 +204,15 @@ impl GreaseStored for types::Either {
     }
 }
 
+macro_rules! try_abi {
+    ( $e:expr ) => {
+        match $e {
+            Ok(v) => v,
+            Err(e) => return Err(e.into()).into(),
+        }
+    };
+}
+
 /// Builtin traits implementations.
 pub fn traits(traits: &mut Traits) {
     Stored::add_impl::<types::Unit>(traits);
@@ -208,7 +220,41 @@ pub fn traits(traits: &mut Traits) {
     Stored::add_impl::<PathBuf>(traits);
     Stored::add_impl::<types::Array>(traits);
     Stored::add_impl::<types::Map>(traits);
-    Stored::add_impl::<types::Either>(traits);
+
+    // types::Either
+    {
+        #[allow(improper_ctypes_definitions)]
+        extern "C" fn put(
+            ctx: &StoredContext,
+            data: &Erased,
+            mut into: ItemContent,
+        ) -> ResultAbi<()> {
+            let either = unsafe { data.as_ref::<types::Either>() };
+            try_abi!(bincode::serialize_into(&mut into, &either.index()));
+            try_abi!(ctx.write_to_store(either.value()));
+            Ok(try_abi!(bincode::serialize_into(
+                into,
+                &either.value().id()
+            )))
+            .into()
+        }
+
+        #[allow(improper_ctypes_definitions)]
+        extern "C" fn get(ctx: &StoredContext, mut from: ItemContent) -> ResultAbi<Erased> {
+            let ind: usize = try_abi!(bincode::deserialize_from(&mut from));
+            let id: u128 = try_abi!(bincode::deserialize_from(from));
+            let val = try_abi!(ctx.read_from_store(id));
+            Ok(Erased::new(types::Either::with_value(ind, val))).into()
+        }
+
+        traits.add_generator_by_trait_for_trait(|_traits, tp| {
+            if !types::Either::matches_grease_type(tp) {
+                return ROption::RNone;
+            }
+
+            ROption::RSome(Stored { put, get })
+        });
+    }
 }
 
 /// Read a Value from the store by id.

@@ -101,7 +101,7 @@ impl std::fmt::Debug for Function {
 /// Example usage:
 /// ```
 /// # #[macro_use] extern crate ergo_runtime;
-/// namespace_id!(string::format)
+/// namespace_id!(string::format);
 /// ```
 #[macro_export]
 macro_rules! namespace_id {

@@ -75,12 +75,11 @@ fn cache_fn() -> Value {
                         }
                         Err(e) => e,
                     };
-                    log.debug(format!("failed to read cache entry, (re)caching: {}", err));
+                    log.debug(format!("failed to read cache value for {}, (re)caching: {}", to_cache.id(), err));
                     force_value_nested(&traits, to_cache.clone()).await?;
                     if let Err(e) = write_to_store(&traits, &store, to_cache.clone())
-                        .map_err(|e| e.to_string())
                     {
-                        log.warn(format!("failed to cache value: {}", e));
+                        log.warn(format!("failed to cache value for {}: {}", to_cache.id(), e));
                     }
                     Ok(to_cache
                         .await
