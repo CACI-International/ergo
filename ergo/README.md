@@ -97,3 +97,5 @@ Within a script, the following are defined:
 * Add work recording to script.
 * Either deconstruction with `match`.
 * Add value dependency tree print to help debug consistency issues.
+* Add left-associative pipe operator syntax for chaining final values?
+  * `value | f args... | b argsb...` -> `b argsb... (f args... value)`
