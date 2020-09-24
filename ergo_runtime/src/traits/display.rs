@@ -153,10 +153,7 @@ impl GreaseDisplay for types::Map {
 
 impl GreaseDisplay for types::Either {
     fn fmt(&self, traits: &Traits) -> String {
-        format!(
-            "{}",
-            display(traits, &self.value())
-        )
+        format!("{}", display(traits, &self.value()))
     }
 }
 
@@ -183,12 +180,7 @@ pub fn traits(traits: &mut Traits) {
     {
         extern "C" fn fmt(t: &Traits, data: &Erased) -> RString {
             let either = unsafe { data.as_ref::<types::Either>() };
-            format!(
-                "either({}): {}",
-                either.index(),
-                display(t, &either.value())
-            )
-            .into()
+            format!("{}", display(t, &either.value())).into()
         }
 
         traits.add_generator_by_trait_for_trait(|_traits, tp| {

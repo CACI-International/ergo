@@ -28,7 +28,10 @@ pub fn module() -> Value {
             "parent" => parent_fn(ctx)?,
             "relative" => relative_fn(ctx)?,
             "split" => split_fn(ctx)?,
-            _ => ().into(),
+            _ => {
+                ctx.unused_arguments()?;
+                ().into()
+            },
         }
     })
     .into()
