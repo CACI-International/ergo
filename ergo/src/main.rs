@@ -120,10 +120,10 @@ fn run(opts: Opts) -> Result<String, grease::value::Error> {
     // Create build context
     let mut ctx = {
         // Use a weak pointer to the logger in the context, so that when the logger goes out of
-        // scope the output is cleaned up reliably. futures::executor::ThreadPool (which ends up
-        // holding onto the logger given in on_error) doesn't reliably shutdown as it drops the
-        // ThreadPool asynchronously, and likewise for general logging we shouldn't rely on
-        // values cleaning up after themselves.
+        // scope the output is cleaned up reliably. The runtime (which ends up holding onto the
+        // logger given in on_error) doesn't reliably shutdown as it drops the ThreadPool
+        // asynchronously, and likewise for general logging we shouldn't rely on values cleaning up
+        // after themselves.
         let weak = std::sync::Arc::downgrade(&orig_logger);
         let logger_weak = logger_ref(WeakLogTarget(std::sync::Arc::downgrade(&logger))).0;
         script::script_context(
@@ -177,12 +177,14 @@ fn run(opts: Opts) -> Result<String, grease::value::Error> {
         Ok(Source::builtin(work_dir)).into(),
     );
     loaded.top_level_env(env);
-    let script_output = futures::executor::block_on(loaded.evaluate(&mut ctx))
+    let task = ctx.task.clone();
+    let script_output = task
+        .block_on(loaded.evaluate(&mut ctx))
         .app_err_result("errors(s) while executing script")?;
 
     let traits = ctx.traits.clone();
 
-    // Drop context, which removes any unneeded values that may be cached.
+    // Drop context, which removes any unneeded values that may be held.
     //
     // This is *important* as some values (like those returned by exec) behave differently if their
     // peers still exist or not.
@@ -190,7 +192,7 @@ fn run(opts: Opts) -> Result<String, grease::value::Error> {
 
     script_output
         .map(|v| {
-            futures::executor::block_on(traits::force_value_nested(&traits, v.clone()))?;
+            task.block_on(traits::force_value_nested(&traits, v.clone()))?;
             Ok(traits::display(&traits, &v).to_string())
         })
         .unwrap()

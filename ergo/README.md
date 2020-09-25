@@ -99,3 +99,18 @@ Within a script, the following are defined:
 * Add value dependency tree print to help debug consistency issues.
 * Add left-associative pipe operator syntax for chaining final values?
   * `value | f args... | b argsb...` -> `b argsb... (f args... value)`
+* Support calling functions with no arguments.
+  * This would likely require changing `$name` to not be simply an alias for
+    `(name)`, as elegant as that has been :D
+  * This will require some thought on how the syntax will understand `(map
+    key-for-function)` accesses a function in a map rather than calling it.
+    `((map key-for-function))` might be awkward? Though maybe it's not all that
+    common. Also, `map key-for-function args` should still call the function
+    with the arguments. Alternatively, we can keep everything behaving the way
+    it does now, but if a command expression (`(...)`) has the first value
+    evaluate to a function, make it call that rather that returning it. Thus,
+    `((path new))` would call that function, or `($no-arg-function)`. But then
+    syntax is different between `(arg-function arg)` and `($no-arg-function)`,
+    which may be confusing.
+* Add `dir.ergo` functionality that is preferred to `workspace.ergo` when
+  searching, and doesn't exclude the prelude?

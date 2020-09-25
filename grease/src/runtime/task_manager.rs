@@ -1,6 +1,6 @@
 //! Task manager.
 
-use crate::future::BoxFuture;
+use crate::future::{BoxFuture, LocalBoxFuture};
 use crate::type_erase::Erased;
 use crate::value::Error;
 use abi_stable::{
@@ -10,9 +10,9 @@ use abi_stable::{
     std_types::{RArc, RBox, ROption, RVec},
     StableAbi,
 };
-use futures::executor::ThreadPool;
 use futures::future::{abortable, try_join, try_join_all, AbortHandle, Aborted, Future, FutureExt};
 use log::debug;
+use tokio::runtime as tokio_runtime;
 
 thread_local! {
     static ERROR_CALLBACK: RMutex<ROption<RArc<RMutex<ErrorCallback>>>> = RMutex::new(ROption::RNone);
@@ -60,13 +60,19 @@ pub type OnError = dyn Fn(bool) + Send + Sync;
 /// The only method we currently use on `ThreadPool` is `spawn_ok`.
 #[sabi_trait]
 trait ThreadPoolInterface: Clone + Debug + Send + Sync {
-    #[sabi(last_prefix_field)]
     fn spawn_ok(&self, future: BoxFuture<'static, ()>);
+
+    #[sabi(last_prefix_field)]
+    fn block_on<'a>(&self, future: LocalBoxFuture<'a, ()>);
 }
 
-impl ThreadPoolInterface for ThreadPool {
+impl ThreadPoolInterface for std::sync::Arc<tokio_runtime::Runtime> {
     fn spawn_ok(&self, future: BoxFuture<'static, ()>) {
-        self.spawn_ok(future)
+        self.spawn(future);
+    }
+
+    fn block_on<'a>(&self, future: LocalBoxFuture<'a, ()>) {
+        self.as_ref().handle().block_on(future)
     }
 }
 
@@ -122,6 +128,7 @@ impl TaskManager {
         let threads = num_threads.unwrap_or_else(|| std::cmp::max(1, num_cpus::get()));
         let barrier = std::sync::Arc::new(std::sync::Barrier::new(threads + 1));
         let thread_ids = std::sync::Arc::new(std::sync::Mutex::new(Vec::with_capacity(threads)));
+        let is_core = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
 
         let error_cb = ROption::from(on_error.map(|v| {
             RArc::new(RMutex::new(ErrorCallback(
@@ -135,23 +142,30 @@ impl TaskManager {
 
         let closure_thread_ids = thread_ids.clone();
         let closure_barrier = barrier.clone();
-        let pool = ThreadPool::builder()
-            .pool_size(threads)
-            .after_start(move |_| {
-                ERROR_CALLBACK.with(|m| {
-                    *m.lock() = error_cb.clone();
-                });
-                let thread_id = NEXT_THREAD_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                THREAD_ID.with(|m| {
-                    *m.write() = ROption::RSome(thread_id);
-                });
-                {
-                    let mut v = closure_thread_ids.lock().unwrap();
-                    v.push(thread_id);
+        let closure_is_core = is_core.clone();
+        let pool = tokio_runtime::Builder::new()
+            .threaded_scheduler()
+            .enable_all()
+            .core_threads(threads)
+            .thread_name("grease-thread")
+            .on_thread_start(move || {
+                if closure_is_core.load(std::sync::atomic::Ordering::Relaxed) {
+                    ERROR_CALLBACK.with(|m| {
+                        *m.lock() = error_cb.clone();
+                    });
+                    let thread_id =
+                        NEXT_THREAD_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    THREAD_ID.with(|m| {
+                        *m.write() = ROption::RSome(thread_id);
+                    });
+                    {
+                        let mut v = closure_thread_ids.lock().unwrap();
+                        v.push(thread_id);
+                    }
+                    closure_barrier.wait();
                 }
-                closure_barrier.wait();
             })
-            .before_stop(|_| {
+            .on_thread_stop(|| {
                 ERROR_CALLBACK.with(|m| {
                     *m.lock() = ROption::RNone;
                 });
@@ -159,12 +173,13 @@ impl TaskManager {
                     *m.write() = ROption::RNone;
                 });
             })
-            .create()?;
+            .build()?;
         barrier.wait();
+        is_core.store(false, std::sync::atomic::Ordering::Relaxed);
         let ids = thread_ids.lock().unwrap().drain(..).collect();
 
         Ok(TaskManager {
-            pool: ThreadPoolInterface_TO::from_value(pool, TU_Opaque),
+            pool: ThreadPoolInterface_TO::from_value(std::sync::Arc::new(pool), TU_Opaque),
             thread_ids: ids,
             abort_handles: RArc::new(RMutex::new(Default::default())),
             aggregate_errors,
@@ -239,6 +254,19 @@ impl TaskManager {
         for handle in self.abort_handles.lock().iter() {
             handle.abort();
         }
+    }
+
+    /// Block on the given future completing.
+    pub fn block_on<F: Future>(&self, fut: F) -> F::Output {
+        let (send, mut rcv) = futures::channel::oneshot::channel();
+        self.pool.block_on(LocalBoxFuture::new(async move {
+            send.send(fut.await)
+                .map_err(|_| ())
+                .expect("failed to send result");
+        }));
+        rcv.try_recv()
+            .expect("channel unexpectedly cancelled")
+            .expect("value not sent")
     }
 }
 

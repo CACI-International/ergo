@@ -1,6 +1,6 @@
 [package]
 name = "ergo_runtime_macro"
-version = "1.0.0-beta.0"
+version = "1.0.0-beta.1"
 authors = ["Alex Franchuk <afranchuk@caci.com>"]
 edition = "2018"
 
