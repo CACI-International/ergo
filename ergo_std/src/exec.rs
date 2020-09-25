@@ -12,7 +12,7 @@ use grease::{
     types::GreaseType,
     value::{Dependencies, Value},
 };
-use ergo_runtime::{ergo_function, traits, traits::IntoTyped, types};
+use ergo_runtime::{ergo_function, namespace_id, traits, traits::IntoTyped, types};
 use std::process::{Command, Stdio};
 
 /// Strings used for commands and arguments.
@@ -582,7 +582,7 @@ mod bytestream {
 pub use bytestream::ByteStream;
 
 pub fn function() -> Value {
-    ergo_function!(std::exec, |ctx| {
+    ergo_function!(independent std::exec, |ctx| {
         let cmd = ctx.args.next().ok_or("no command provided")?;
 
         let (cmdsource, cmd) = cmd.take();
@@ -676,7 +676,7 @@ pub fn function() -> Value {
         let (send_stderr, rcv_stderr) = channel();
         let (send_status, rcv_status) = channel();
         
-        let run_command = make_value!([^deps] {
+        let run_command = make_value!([namespace_id!(std::exec::complete), ^deps] {
             let mut vals: Vec<Value> = Vec::new();
             vals.push(cmd.clone().into());
             for v in &args {
@@ -768,9 +768,9 @@ pub fn function() -> Value {
         });
 
         let mut ret_map = BstMap::default();
-        let stdout = make_value!((run_command) ["stdout"] { run_command.await?; Ok(ByteStream::new(std::io::Cursor::new(rcv_stdout.await?))) });
-        let stderr = make_value!((run_command) ["stderr"] { run_command.await?; Ok(ByteStream::new(std::io::Cursor::new(rcv_stderr.await?))) });
-        let exit_status = make_value!((run_command) ["exit_status"] { run_command.await?; Ok(ExitStatus::from(rcv_status.await?)) });
+        let stdout = make_value!((run_command) [namespace_id!(std::exec::stdout)] { run_command.await?; Ok(ByteStream::new(std::io::Cursor::new(rcv_stdout.await?))) });
+        let stderr = make_value!((run_command) [namespace_id!(std::exec::stderr)] { run_command.await?; Ok(ByteStream::new(std::io::Cursor::new(rcv_stderr.await?))) });
+        let exit_status = make_value!((run_command) [namespace_id!(std::exec::exit_status)] { run_command.await?; Ok(ExitStatus::from(rcv_status.await?)) });
         
         ret_map.insert("stdout".into(), ctx.imbue_error_context(stdout.into(), "while evaluating stdout of exec command"));
         ret_map.insert("stderr".into(), ctx.imbue_error_context(stderr.into(), "while evaluating stderr of exec command"));

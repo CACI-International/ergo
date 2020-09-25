@@ -3,8 +3,8 @@
 use ergo_runtime::{ergo_function, source_value_as, traits, types};
 use grease::{bst::BstMap, depends, make_value, path::PathBuf, value::Value};
 use reqwest::{
+    blocking::Client,
     header::{HeaderMap, HeaderName, HeaderValue},
-    Client,
 };
 
 pub fn module() -> Value {
@@ -50,13 +50,10 @@ fn download_fn() -> Value {
             }
 
             let client = Client::new();
-            let mut response = client.get(url.as_str()).headers(http_headers).send().await?.error_for_status()?;
+            let mut response = client.get(url.as_str()).headers(http_headers).send()?.error_for_status()?;
 
             let mut f = std::fs::File::create(path.as_ref().as_ref())?;
-            while let Some(chunk) = response.chunk().await? {
-                use std::io::Write;
-                f.write_all(chunk.as_ref())?;
-            }
+            std::io::copy(&mut response, &mut f)?;
 
             Ok(())
         })
