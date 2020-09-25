@@ -114,3 +114,4 @@ Within a script, the following are defined:
     which may be confusing.
 * Add `dir.ergo` functionality that is preferred to `workspace.ergo` when
   searching, and doesn't exclude the prelude?
+* Support using ancestor `workspace.ergo` as root of the storage directory.
