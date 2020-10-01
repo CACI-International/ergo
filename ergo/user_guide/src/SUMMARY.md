@@ -16,3 +16,4 @@
   - [Macros](rfc/macros.md)
   - [Function Semantic Consistency](rfc/lazy-fn.md)
   - [Script Design](rfc/script-design.md)
+  - [No-Argument Functions](rfc/no-arg-fn.md)
