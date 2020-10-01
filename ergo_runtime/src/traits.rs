@@ -22,4 +22,5 @@ pub fn traits(traits: &mut grease::runtime::Traits) {
     stored::traits(traits);
     type_name::traits(traits);
     value_by_content::traits(traits);
+    crate::types::byte_stream::traits(traits);
 }

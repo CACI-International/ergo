@@ -17,6 +17,10 @@ use grease::type_erase::Erased;
 use grease::types::{GreaseType, Type, TypeParameters};
 use grease::value::{Dependencies, TypedValue, Value};
 
+pub(crate) mod byte_stream;
+
+pub use byte_stream::ByteStream;
+
 /// Script unit type.
 pub type Unit = ();
 

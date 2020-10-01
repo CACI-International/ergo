@@ -17,7 +17,7 @@ mod string;
 mod task;
 mod value;
 
-pub use exec::{ByteStream, ExitStatus};
+pub use exec::ExitStatus;
 
 #[plugin_entry]
 fn entry(ctx: &mut Runtime) -> EvalResult {

@@ -13,9 +13,12 @@ pub fn module() -> Value {
     map.insert("create-dir".into(), create_dir_fn());
     map.insert("exists".into(), exists_fn());
     map.insert("glob".into(), glob_fn());
-    map.insert("mount".into(), mount_fn());
+    map.insert("read".into(), read_fn());
+    map.insert("remove".into(), remove_fn());
     map.insert("sha1".into(), sha1_fn());
     map.insert("track".into(), track_fn());
+    map.insert("unarchive".into(), unarchive_fn());
+    map.insert("write".into(), write_fn());
     types::Map(map).into()
 }
 
@@ -190,7 +193,7 @@ fn set_permissions(p: &mut std::fs::Permissions, mode: u32) {
 #[cfg(windows)]
 fn set_permissions(p: &mut std::fs::Permissions, mode: u32) {}
 
-fn mount_fn() -> Value {
+fn unarchive_fn() -> Value {
     ergo_function!(std::fs::mount, |ctx| {
         let from = ctx.args.next().ok_or("mount 'from' missing")?;
         let to = ctx.args.next().ok_or("mount 'to' missing")?;
@@ -371,3 +374,76 @@ struct FileData {
 }
 
 type TrackInfo = std::collections::HashMap<std::path::PathBuf, FileData>;
+
+fn remove_fn() -> Value {
+    ergo_function!(std::fs::remove, |ctx| {
+        let path = ctx.args.next().ok_or("'path' missing")?;
+
+        ctx.unused_arguments()?;
+
+        let path = source_value_as!(path, PathBuf, ctx)?.unwrap();
+
+        make_value!([path] {
+            let path = path.await?;
+            let path = path.as_ref().as_ref();
+            if path.is_file() {
+                std::fs::remove_file(path)?;
+            }
+            else if path.is_dir() {
+                std::fs::remove_dir_all(path)?;
+            }
+            Ok(())
+        })
+        .into()
+    })
+    .into()
+}
+
+fn read_fn() -> Value {
+    ergo_function!(std::fs::read, |ctx| {
+        let path = ctx.args.next().ok_or("'path' missing")?;
+
+        ctx.unused_arguments()?;
+
+        let path = source_value_as!(path, PathBuf, ctx)?.unwrap();
+
+        make_value!([path] {
+            let path = path.await?;
+            let path = path.as_ref().as_ref();
+            Ok(types::ByteStream::new(std::fs::File::open(path)?))
+        })
+        .into()
+    })
+    .into()
+}
+
+fn write_fn() -> Value {
+    ergo_function!(std::fs::read, |ctx| {
+        let path = ctx.args.next().ok_or("'path' missing")?;
+        let (datasource, data) = ctx.args.next().ok_or("'data' missing")?.take();
+
+        ctx.unused_arguments()?;
+
+        let path = source_value_as!(path, PathBuf, ctx)?.unwrap();
+        let data = ctx
+            .traits
+            .get::<traits::IntoTyped<types::ByteStream>>(&data)
+            .ok_or(
+                datasource
+                    .with("cannot convert value into byte stream")
+                    .into_grease_error(),
+            )?
+            .into_typed(data);
+
+        let task = ctx.task.clone();
+
+        make_value!([path,data] {
+            let (path, data) = task.join(path,data).await?;
+            let mut f = std::fs::File::create(path.as_ref().as_ref())?;
+            std::io::copy(&mut data.read(), &mut f)?;
+            Ok(())
+        })
+        .into()
+    })
+    .into()
+}
