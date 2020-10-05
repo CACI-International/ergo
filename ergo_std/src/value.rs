@@ -1,7 +1,7 @@
 //! Value-related intrinsics.
 
 use ergo_runtime::{
-    apply_value, ergo_function,
+    ergo_function,
     traits::{
         force_value_nested, read_from_store, type_name, write_to_store, Stored, ValueByContent,
     },
@@ -45,13 +45,12 @@ fn force_fn() -> Value {
 
 fn cache_fn() -> Value {
     ergo_function!(independent std::value::cache, |ctx| {
-        let v = ctx.args.next().ok_or("no argument to cache")?;
-        let args = std::mem::take(&mut ctx.args);
+        let to_cache = ctx.args.next().ok_or("no argument to cache")?.unwrap();
+
+        ctx.unused_arguments()?;
 
         let store = ctx.store.item(item_name!("cache"));
         let log = ctx.log.sublog("cache");
-
-        let to_cache = apply_value(ctx, v, args.unchecked(), true).await?.unwrap();
 
         if let Some(_) = ctx.traits.get::<Stored>(&to_cache) {
             let deps = depends![to_cache];
@@ -96,7 +95,7 @@ fn cache_fn() -> Value {
 
 fn variable_fn() -> Value {
     ergo_function!(independent std::value::variable, |ctx| {
-        let v = ctx.args.next().ok_or("no argument to variable")?;
+        let val = ctx.args.next().ok_or("no argument to variable")?.unwrap();
 
         let deps = if let Some(v) = ctx.args.kw("depends") {
             depends![*v]
@@ -104,12 +103,9 @@ fn variable_fn() -> Value {
             Default::default()
         };
 
-        let args = std::mem::take(&mut ctx.args);
         ctx.unused_arguments()?;
 
-        let val = apply_value(ctx, v, args.unchecked(), true).await?;
-
-        val.unwrap().set_dependencies(deps)
+        val.set_dependencies(deps)
     })
     .into()
 }

@@ -2,8 +2,8 @@
 
 use super::tokenize::{Tok, Token};
 use super::*;
-use pom::parser::*;
 use ergo_runtime::source::{IntoSource, Source};
+use pom::parser::*;
 use std::iter::FromIterator;
 
 /// A parser alias.
@@ -100,30 +100,41 @@ mod expression {
 
     /// A nested expression.
     ///
-    /// Expressions may be nested with parentheses or the shorthand $expr.
+    /// Expressions may be nested with parentheses or indexing.
     fn nested<'a>() -> Parser<'a, Expr> {
-        let word_nested = is_a(|t: Tok| match *t {
-            Token::String(_) => true,
-            _ => false,
-        })
-        .repeat(1..)
-        .convert(|e| expression(false).parse(&e));
-        let self_nested =
-            call(|| nested()).map(|e| e.clone().with(Expression::Command(e.into(), vec![])));
-
         let paren_expr = (sym(Token::OpenParen) - spacenl() + expression(false) - spacenl()
             + sym(Token::CloseParen))
         .map(|res| res.into_source().map(|(e, _)| e.unwrap().1.unwrap()));
         let empty_parens = (sym(Token::OpenParen) + sym(Token::CloseParen))
             .map(|res| res.into_source().with(Expression::Empty));
-        let dollar = sym(Token::Dollar) * (word_nested | array() | block() | self_nested);
-        let empty_dollar = sym(Token::Dollar).map(|res: Source<_>| res.with(Expression::Empty));
+        let empty_index = sym(Token::Colon).map(|res: Source<_>| res.with(Expression::Empty));
 
-        paren_expr | empty_parens | dollar | empty_dollar
+        paren_expr | empty_parens | index(false) | empty_index
+    }
+
+    /// An index expression.
+    ///
+    /// Prior determines whether to try to parse a previous argument value. If true, this may
+    /// return a non-index expression (the prior if an index expression is not found).
+    fn index<'a>(prior: bool) -> Parser<'a, Expr> {
+        let ind = (sym(Token::Colon) + arg_no_index()).map(|res| res.into_source().map(|v| v.1));
+        if prior {
+            (arg_no_index() + ind.repeat(0..)).map(|(p, i)| {
+                i.into_iter().fold(p, |acc, v| {
+                    v.map(|v| Expression::Index(Some(acc.into()), v.into()))
+                })
+            })
+        } else {
+            ind.map(|v| v.map(|v| Expression::Index(None, v.into())))
+        }
     }
 
     /// An expression in argument position (words are interpreted as strings rather than as commands).
     pub fn arg<'a>() -> Parser<'a, Expr> {
+        call(|| index(true))
+    }
+
+    fn arg_no_index<'a>() -> Parser<'a, Expr> {
         call(|| nested() | eqword().map(|s| s.map(Expression::String)) | array() | block())
     }
 
@@ -134,7 +145,9 @@ mod expression {
     ///
     /// Specifically, if `string_literal` is true then:
     /// `something` -> string
-    /// `(binding)` or `$binding` -> single-string command
+    /// `command arg1 ...` -> command
+    /// else:
+    /// `something` -> no-arg command
     /// `command arg1 ...` -> command
     fn command<'a>(string_literal: bool) -> Parser<'a, Expr> {
         (arg() + (req_space() * list(merge_with(arg()), req_space())).opt()).map(move |res| {
@@ -198,7 +211,7 @@ mod expression {
     /// A block expression.
     fn block<'a>() -> Parser<'a, Expr> {
         // Change literal strings in blocks to set the string from the currently-bound value
-        // i.e., { a } -> { a = $a }
+        // i.e., { a } -> { a = :a }
         let item = expression(true).map(|e| {
             let (source, e) = e.take();
             source.clone().with(match e {
@@ -206,9 +219,9 @@ mod expression {
                     source.clone().with(Pattern::Binding(s.clone())).into(),
                     source
                         .clone()
-                        .with(Expression::Command(
+                        .with(Expression::Index(
+                            None,
                             source.with(Expression::String(s)).into(),
-                            vec![],
                         ))
                         .into(),
                 ),
@@ -513,12 +526,9 @@ mod test {
         #[test]
         fn args() -> Result {
             assert_parse(
-                &[Dollar, String("howdy".to_owned())],
+                &[Colon, String("howdy".to_owned())],
                 |_| arg(),
-                Expression::Command(
-                    Box::new(src(Expression::String("howdy".to_owned()))),
-                    vec![],
-                ),
+                Expression::Index(None, Box::new(src(Expression::String("howdy".to_owned())))),
             )?;
             assert_parse(
                 &[
@@ -557,7 +567,7 @@ mod test {
                     String("a".into()),
                     CloseParen,
                     Newline,
-                    Dollar,
+                    Colon,
                     String("b".into()),
                     Newline,
                     CloseBracket,
@@ -568,9 +578,9 @@ mod test {
                         src(Expression::String("a".into())).into(),
                         vec![],
                     )),
-                    nomerge(Expression::Command(
+                    nomerge(Expression::Index(
+                        None,
                         src(Expression::String("b".into())).into(),
-                        vec![],
                     )),
                 ]),
             )?;
@@ -579,8 +589,8 @@ mod test {
 
         #[test]
         fn empty() -> Result {
-            assert(&[Dollar], Expression::Empty)?;
-            //assert(&[OpenParen, CloseParen], Expression::Empty)?;
+            assert(&[Colon], Expression::Empty)?;
+            assert(&[OpenParen, CloseParen], Expression::Empty)?;
             Ok(())
         }
 
@@ -630,7 +640,12 @@ mod test {
                     ))
                     .into(),
                 ),
-            )
+            )?;
+            assert(
+                &[String("a".to_owned()), Equal, String("a".to_owned())],
+                Expression::Set(pat("a"), src(Expression::String("a".into())).into()),
+            )?;
+            Ok(())
         }
 
         #[test]
@@ -650,7 +665,7 @@ mod test {
                     String("a".to_owned()),
                     Newline,
                     Whitespace,
-                    Dollar,
+                    Colon,
                     Whitespace,
                     Newline,
                     String("c".to_owned()),
@@ -666,9 +681,9 @@ mod test {
                 Expression::Block(vec![
                     nomerge(Expression::Set(
                         pat("a"),
-                        src(Expression::Command(
+                        src(Expression::Index(
+                            None,
                             src(Expression::String("a".into())).into(),
-                            vec![],
                         ))
                         .into(),
                     )),
@@ -705,7 +720,7 @@ mod test {
         }
 
         #[test]
-        fn index_call() -> Result {
+        fn index() -> Result {
             assert(
                 &[
                     OpenBracket,
@@ -713,16 +728,41 @@ mod test {
                     Comma,
                     String("b".into()),
                     CloseBracket,
-                    Whitespace,
+                    Colon,
                     String("0".into()),
                 ],
-                Expression::Command(
-                    src(Expression::Array(vec![
-                        nomerge(Expression::String("a".into())).into(),
-                        nomerge(Expression::String("b".into())).into(),
-                    ]))
-                    .into(),
-                    vec![nomerge(Expression::String("0".into())).into()],
+                Expression::Index(
+                    Some(
+                        src(Expression::Array(vec![
+                            nomerge(Expression::String("a".into())).into(),
+                            nomerge(Expression::String("b".into())).into(),
+                        ]))
+                        .into(),
+                    ),
+                    src(Expression::String("0".into())).into(),
+                ),
+            )
+        }
+
+        #[test]
+        fn multi_index() -> Result {
+            assert(
+                &[
+                    String("a".into()),
+                    Colon,
+                    String("b".into()),
+                    Colon,
+                    String("c".into()),
+                ],
+                Expression::Index(
+                    Some(
+                        src(Expression::Index(
+                            Some(src(Expression::String("a".into())).into()),
+                            src(Expression::String("b".into())).into(),
+                        ))
+                        .into(),
+                    ),
+                    src(Expression::String("c".into())).into(),
                 ),
             )
         }

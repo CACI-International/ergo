@@ -11,15 +11,12 @@ use abi_stable::{
 };
 use futures::future::{BoxFuture, FutureExt};
 use grease::bst::BstMap;
-use grease::match_value;
 use grease::path::PathBuf;
 use grease::runtime::Context;
 use grease::type_erase::{Eraseable, Erased};
 use grease::value::{Error, Value};
-use log::trace;
 use std::collections::BTreeMap;
 use std::iter::FromIterator;
-use std::str::FromStr;
 
 pub use futures::future;
 
@@ -499,92 +496,4 @@ macro_rules! source_value_as {
             }
         }
     };
-}
-
-/// Apply the value to the given arguments.
-///
-/// If `env_lookup` is true and `v` is a `ScriptString`, it will be looked up in the environment.
-pub fn apply_value(
-    ctx: &mut Runtime,
-    v: Source<Value>,
-    mut args: UncheckedFunctionArguments,
-    env_lookup: bool,
-) -> BoxFuture<EvalResult> {
-    async move {
-        let v_source = v.source();
-
-        v.map_async(|v| async {
-        let v = if env_lookup {
-            match v.typed::<types::String>() {
-                Ok(val) => {
-                    let s = val.await?.owned();
-                    trace!("looking up '{}' in environment", s);
-                    // Lookup string in environment, and apply result to remaining arguments
-                    match ctx.env_get(&s) {
-                        Some(value) => {
-                            let value = value?;
-                            trace!("found match in environment for '{}': {}", s, value.id());
-                            value.clone().unwrap()
-                        }
-                        None => {
-                            return Err(error::MissingBinding(s.into_string()).into());
-                        }
-                    }
-                }
-                Err(v) => v,
-            }
-        } else {
-            v
-        };
-
-        if args.peek().is_none() {
-            return Ok(v_source.with(v.into()));
-        }
-
-        match_value!(v => {
-            types::Array => |val| {
-                let index = source_value_as!(args.next().unwrap(), types::String, ctx)?.await.transpose_ok()?;
-                let val = index.map_async(|index| async move { match usize::from_str(index.as_ref()) {
-                    Err(_) => Err(Error::from(error::NonIntegerIndex)),
-                    Ok(ind) => val.await.map(|v| v.0.get(ind).cloned()
-                        .unwrap_or(().into()))
-                }
-                }).await.transpose().map_err(|e| e.into_grease_error())?;
-
-                let (source,val) = val.take();
-
-                apply_value(ctx, Source::from((v_source,source)).with(val), args, false).await
-            },
-            types::Map => |val| {
-                let index = source_value_as!(args.next().unwrap(), types::String, ctx)?.await.transpose_ok()?;
-
-                let val = index.map_async(|index| async move {
-                        val.await.map(|v| v.0.get(index.as_ref()).cloned()
-                            .unwrap_or(().into()))
-                }).await.transpose().map_err(|e| e.into_grease_error())?;
-
-                let (source,val) = val.take();
-
-                apply_value(ctx, Source::from((v_source,source)).with(val), args, false).await
-            },
-            types::Function => |val| {
-                let f = val.await?;
-                let f = f.as_ref();
-                let mut fcallctx = FunctionCall::new(ctx, args.into(), v_source);
-                let ret = f.call(&mut fcallctx).await;
-                if ret.is_err() {
-                    fcallctx.args.clear();
-                }
-                ret
-            },
-            => |v| {
-                Err(error::NonCallableExpression(v).into())
-            }
-        })
-    })
-    .await
-    .map(|v| v.map_err(|e| e.error()))
-        .transpose_err()
-        .map_err(|e| e.into())
-    }.boxed()
 }

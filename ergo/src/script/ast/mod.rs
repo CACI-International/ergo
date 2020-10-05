@@ -15,6 +15,7 @@ pub enum Expression {
     Set(Box<Pat>, Box<Expr>),
     Unset(String),
     Command(Box<Expr>, Exprs),
+    Index(Option<Box<Expr>>, Box<Expr>),
     Block(Exprs),
     Function(CmdPat, Box<Expr>),
     Match(Box<Expr>, Vec<(Pat, Expr)>),

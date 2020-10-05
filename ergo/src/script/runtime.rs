@@ -15,8 +15,8 @@ use abi_stable::{rvec, std_types::RResult};
 use ergo_runtime::source::{FileSource, IntoSource, Source};
 use ergo_runtime::Result as SoResult;
 use ergo_runtime::{
-    apply_value, source_value_as, types, ContextEnv, EvalResult, FunctionArguments, FunctionCall,
-    ResultIterator, Runtime, ScriptEnv,
+    source_value_as, types, ContextEnv, EvalResult, FunctionArguments, FunctionCall,
+    ResultIterator, Runtime, ScriptEnv, UncheckedFunctionArguments,
 };
 use futures::future::{BoxFuture, FutureExt};
 use grease::{
@@ -27,9 +27,11 @@ use grease::{
     value::{IntoValue, Value},
 };
 use libloading as dl;
+use log::{debug, trace};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path;
+use std::str::FromStr;
 
 /// Script type indicating that the env should be returned as a map.
 #[derive(Clone, Copy, Debug, GreaseType, Hash)]
@@ -374,24 +376,29 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                                 },
                                 Err(e) => {
                                     fctx.args.clear();
-                                    fn has_load_failed_error(
+                                    fn has_ignored_error(
                                         e: &(dyn std::error::Error + 'static),
                                     ) -> bool {
-                                        match grease::value::error::downcast_ref::<Error>(e) {
-                                            Some(e) => {
-                                                if let Error::LoadFailed { .. } = e {
-                                                    true
-                                                } else {
-                                                    false
-                                                }
+                                        if let Some(e) = grease::value::error::downcast_ref::<Error>(e) {
+                                            if let Error::LoadFailed { .. } = e {
+                                                debug!("not loading prelude: load failed");
+                                                true
+                                            } else {
+                                                false
                                             }
-                                            None => e
-                                                .source()
-                                                .map(has_load_failed_error)
-                                                .unwrap_or(false),
+                                        }
+                                        else if let Some(_) = grease::value::error::downcast_ref::<Source<ergo_runtime::error::UnexpectedPositionalArguments>>(e) {
+                                            debug!("not loading prelude: workspace did not accept prelude argument");
+                                            true
+                                        }
+                                        else {
+                                            e
+                                            .source()
+                                            .map(has_ignored_error)
+                                            .unwrap_or(false)
                                         }
                                     }
-                                    if has_load_failed_error(e.error_ref()) {
+                                    if has_ignored_error(e.error_ref()) {
                                         None
                                     } else {
                                         ctx.loading.pop();
@@ -454,8 +461,16 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                 .into_result()?
             };
 
-            let args = std::mem::take(&mut ctx.args);
-            apply_value(ctx, source.with(loaded.unwrap()), args.unchecked(), false).await
+            match loaded.unwrap().typed::<types::Function>() {
+                Ok(f) => {
+                    let args = std::mem::take(&mut ctx.args);
+                    apply_value(ctx, source.with(f.into()), args.unchecked(), false).await
+                },
+                Err(v) => {
+                    ctx.unused_arguments()?;
+                    Ok(source.with(v))
+                }
+            }
         } else {
             Err(Error::LoadFailed {
                 was_loading,
@@ -475,6 +490,12 @@ pub enum Error {
     InvalidIndex,
     /// No binding with the given name is available in the current environment.
     MissingBinding(String),
+    /// An integer index (for arrays) was expected.
+    NonIntegerIndex,
+    /// A type that cannot be indexed was used in an index expression.
+    NonIndexableValue(Value),
+    /// An expression is in call-position (had arguments) but is not callable.
+    NonCallableExpression(Value),
     /// A merge expression cannot be evaluated.
     CannotMerge(String),
     /// A map pattern has too many rest patterns.
@@ -515,6 +536,9 @@ impl fmt::Display for Error {
         match self {
             InvalidIndex => write!(f, "type is not an array or map; cannot index"),
             MissingBinding(s) => write!(f, "'{}' is not available in the current environment", s),
+            NonIntegerIndex => write!(f, "positive integer index expected"),
+            NonIndexableValue(_v) => write!(f, "value cannot be indexed"),
+            NonCallableExpression(_v) => write!(f, "cannot pass arguments to non-callable value"),
             CannotMerge(s) => write!(f, "cannot merge: {}", s),
             PatternMapTooManyRest => write!(f, "map pattern may only have one merge subpattern"),
             PatternMapExtraKeys(_) => write!(f, "map pattern doesn't match all values in map"),
@@ -1128,6 +1152,66 @@ pub async fn apply_command_pattern(
     }
 }
 
+/// Apply the value to the given arguments.
+///
+/// If `env_lookup` is true and `v` is a `String`, it will be looked up in the environment.
+pub fn apply_value(
+    ctx: &mut Runtime,
+    v: Source<Value>,
+    args: UncheckedFunctionArguments,
+    env_lookup: bool,
+) -> BoxFuture<EvalResult> {
+    async move {
+        let v_source = v.source();
+
+        v.map_async(|v| async {
+            let v = if env_lookup {
+                match v.typed::<types::String>() {
+                    Ok(val) => {
+                        let s = val.await?.owned();
+                        trace!("looking up '{}' in environment", s);
+                        // Lookup string in environment, and apply result to remaining arguments
+                        match ctx.env_get(&s) {
+                            Some(value) => {
+                                let value = value?;
+                                trace!("found match in environment for '{}': {}", s, value.id());
+                                value.clone().unwrap()
+                            }
+                            None => {
+                                return Err(Error::MissingBinding(s.into_string()).into());
+                            }
+                        }
+                    }
+                    Err(v) => v,
+                }
+            } else {
+                v
+            };
+
+            match_value!(v => {
+                types::Function => |val| {
+                    let f = val.await?;
+                    let f = f.as_ref();
+                    let mut fcallctx = FunctionCall::new(ctx, args.into(), v_source);
+                    let ret = f.call(&mut fcallctx).await;
+                    if ret.is_err() {
+                        fcallctx.args.clear();
+                    }
+                    ret
+                },
+                => |v| {
+                    Err(Error::NonCallableExpression(v).into())
+                }
+            })
+        })
+        .await
+        .map(|v| v.map_err(|e| e.error()))
+        .transpose_err()
+        .map_err(|e| e.into())
+    }
+    .boxed()
+}
+
 pub struct Rt<T>(pub T);
 
 impl<T> std::ops::Deref for Rt<T> {
@@ -1144,18 +1228,6 @@ impl<T> std::ops::DerefMut for Rt<T> {
     }
 }
 
-/*
-impl Rt<&'_ types::Function> {
-    pub async fn evaluate(self, ctx: &mut FunctionCall<'_>) -> EvalResult {
-        let ret = self.call(ctx).await;
-        if ret.is_err() {
-            ctx.args.clear();
-        }
-        ret
-    }
-}
-*/
-
 impl Rt<Expression> {
     pub fn evaluate<'a>(self, ctx: &'a mut Runtime) -> BoxFuture<'a, SoResult<Value>> {
         async move {
@@ -1163,6 +1235,57 @@ impl Rt<Expression> {
         match self.0 {
             Empty => Ok(().into_value().into()),
             Expression::String(s) => Ok(types::String::from(s).into_value().into()),
+            Index(v,ind) => {
+                // ind should evaluate to a string
+                let ind = source_value_as!(Rt(*ind).evaluate(ctx).await?, types::String, ctx)?.await.transpose_ok()?;
+
+                let lookup = |ctx: &mut Runtime, v: grease::value::Ref<types::String>| {
+                    let s = v.as_ref();
+                    trace!("looking up '{}' in environment", s);
+                    match ctx.env_get(s) {
+                        None => Err(Error::MissingBinding(s.as_str().into()).into()),
+                        Some(value) => {
+                            let value = value?;
+                            trace!("found match in environment for '{}': {}", s, value.id());
+                            Ok(value.clone().unwrap())
+                        }
+                    }
+                };
+
+                match v {
+                    None => {
+                        // Lookup in environment
+                        lookup(ctx, ind.unwrap())
+                    },
+                    Some(v) => {
+                        let v = Rt(*v).evaluate(ctx).await?.unwrap();
+
+                        // If a string, first lookup in environment
+                        let v = match v.typed::<types::String>() {
+                            Err(v) => v,
+                            Ok(s) => lookup(ctx, s.await?)?
+                        };
+
+                        match_value!(v => {
+                            types::Array => |val| {
+                                ind.map_async(|index| async move { match usize::from_str(index.as_ref()) {
+                                    Err(_) => Err(Error::NonIntegerIndex.into()),
+                                    Ok(ind) => val.await.map(|v| v.0.get(ind).cloned()
+                                        .unwrap_or(().into()))
+                                }
+                                }).await.transpose_err().map_err(|e| e.into_grease_error())
+                            },
+                            types::Map => |val| {
+                                ind.map_async(|index| async move {
+                                        val.await.map(|v| v.0.get(index.as_ref()).cloned()
+                                            .unwrap_or(().into()))
+                                }).await.transpose_err().map_err(|e| e.into_grease_error())
+                            },
+                            => |v| Err(Error::NonIndexableValue(v).into())
+                        })
+                    }
+                }
+            },
             Array(es) => {
                 let all_vals = {
                     let mut results = Vec::new();
@@ -1325,21 +1448,6 @@ impl Rt<Expression> {
     }.boxed()
     }
 }
-
-/*
-impl Rt<Source<&'_ types::Function>> {
-    pub async fn evaluate(self, ctx: &mut FunctionCall<'_>) -> EvalResult {
-        let (source, f) = self.0.take();
-        Rt(f).evaluate(ctx).await.map(|v| {
-            source.clone().with(
-                source
-                    .with("while evaluating value returned by this function call")
-                    .imbue_error_context(v.unwrap()),
-            )
-        })
-    }
-}
-*/
 
 impl Rt<Source<Expression>> {
     pub async fn evaluate(self, ctx: &mut Runtime) -> EvalResult {

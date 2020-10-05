@@ -1,2 +1,6 @@
-prelude = {}
-return = fn ret -> $ret
+fn a ^args -> {
+    match :a {
+        =prelude = {}
+        =return = args:0
+    }
+}

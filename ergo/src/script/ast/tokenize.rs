@@ -3,6 +3,61 @@
 use ergo_runtime::source::Source;
 use std::fmt;
 
+const MAX_TOKEN_LENGTH: u8 = 3;
+
+struct LookaheadIterator<I: Iterator> {
+    inner: I,
+    lookahead: [Option<I::Item>; MAX_TOKEN_LENGTH as usize],
+    next: u8,
+}
+
+impl<I: Iterator> LookaheadIterator<I> {
+    pub fn new(iter: I) -> Self {
+        let mut ret = LookaheadIterator {
+            inner: iter,
+            lookahead: Default::default(),
+            next: 0,
+        };
+        for i in 0..(MAX_TOKEN_LENGTH as usize) {
+            ret.lookahead[i] = ret.inner.next();
+        }
+        ret
+    }
+
+    pub fn peek(&self) -> Option<&I::Item> {
+        self.peek_at(0)
+    }
+
+    pub fn peek_at(&self, to: usize) -> Option<&I::Item> {
+        debug_assert!(to < MAX_TOKEN_LENGTH as usize);
+        self.lookahead[(self.next as usize + to) % MAX_TOKEN_LENGTH as usize].as_ref()
+    }
+
+    pub fn peek_match(&self, rest: &[I::Item]) -> bool
+    where
+        I::Item: PartialEq,
+    {
+        debug_assert!(rest.len() <= MAX_TOKEN_LENGTH as usize);
+        for i in 0..rest.len() {
+            if !self.peek_at(i).map(|v| v == &rest[i]).unwrap_or(false) {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+impl<I: Iterator> Iterator for LookaheadIterator<I> {
+    type Item = I::Item;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let ret = std::mem::replace(&mut self.lookahead[self.next as usize], self.inner.next());
+        self.next += 1;
+        self.next %= MAX_TOKEN_LENGTH;
+        ret
+    }
+}
+
 /// Script tokens.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Token {
@@ -14,11 +69,14 @@ pub enum Token {
     CloseCurly,
     OpenParen,
     CloseParen,
-    Dollar,
     Comma,
     Semicolon,
     Equal,
     Caret,
+    Colon,
+    Pipe,
+    PipeLeft,
+    PipeRight,
     Newline,
     /// One or more whitespace characters (except newlines).
     Whitespace,
@@ -37,11 +95,14 @@ impl fmt::Display for Token {
             Token::CloseCurly => write!(f, "}}"),
             Token::OpenParen => write!(f, "("),
             Token::CloseParen => write!(f, ")"),
-            Token::Dollar => write!(f, "$"),
             Token::Comma => write!(f, ","),
             Token::Semicolon => write!(f, ";"),
             Token::Equal => write!(f, "="),
             Token::Caret => write!(f, "^"),
+            Token::Colon => write!(f, ":"),
+            Token::Pipe => write!(f, "|"),
+            Token::PipeLeft => write!(f, "<|"),
+            Token::PipeRight => write!(f, "|>"),
             Token::Newline => write!(f, "\n"),
             Token::Whitespace => write!(f, " "),
         }
@@ -76,7 +137,7 @@ impl std::error::Error for Error {}
 
 /// Iterator producing tokens or errors.
 pub struct Tokens<I: Iterator> {
-    iter: std::iter::Peekable<I>,
+    iter: LookaheadIterator<I>,
     source: Source<()>,
 }
 
@@ -87,7 +148,7 @@ where
     fn from(s: Source<T>) -> Self {
         let (source, i) = s.take();
         Tokens {
-            iter: i.into_iter().peekable(),
+            iter: LookaheadIterator::new(i.into_iter()),
             source,
         }
     }
@@ -113,7 +174,7 @@ impl<I: Iterator<Item = char>> Iterator for Tokens<I> {
                 self.next()
             } else {
                 // The remaining parsing will always result in some token based on the consumed
-                // character.
+                // character(s).
                 let tokentype =
                     // Quoted strings
                     if c == '"' {
@@ -178,8 +239,6 @@ impl<I: Iterator<Item = char>> Iterator for Tokens<I> {
                         Ok(Token::OpenParen)
                     } else if c == ')' {
                         Ok(Token::CloseParen)
-                    } else if c == '$' {
-                        Ok(Token::Dollar)
                     } else if c == ',' {
                         Ok(Token::Comma)
                     } else if c == ';' {
@@ -188,13 +247,23 @@ impl<I: Iterator<Item = char>> Iterator for Tokens<I> {
                         Ok(Token::Equal)
                     } else if c == '^' {
                         Ok(Token::Caret)
+                    } else if c == ':' {
+                        Ok(Token::Colon)
+                    } else if c == '|' {
+                        Ok(if self.iter.peek_match(&['>']) {
+                            self.iter.next();
+                            Token::PipeRight
+                        } else { Token::Pipe })
+                    } else if c == '<' && self.iter.peek_match(&['|']) {
+                        self.iter.next();
+                        Ok(Token::PipeLeft)
                     }
                     // Words
                     else {
                         let mut s = String::new();
                         s.push(c);
                         while let Some(c) = self.iter.peek() {
-                            if c.is_whitespace() || "[](){},;$=^".contains(*c) {
+                            if c.is_whitespace() || "[](){},;=^|:".contains(*c) || self.iter.peek_match(&['<','|']) {
                                 break;
                             } else {
                                 s.push(self.iter.next().unwrap());
@@ -219,7 +288,7 @@ mod test {
     #[test]
     fn symbols() -> Result<(), Source<Error>> {
         assert_tokens(
-            "[]{}()$,;=^\n",
+            "[]{}(),;=^:|<||>\n",
             &[
                 Token::OpenBracket,
                 Token::CloseBracket,
@@ -227,11 +296,14 @@ mod test {
                 Token::CloseCurly,
                 Token::OpenParen,
                 Token::CloseParen,
-                Token::Dollar,
                 Token::Comma,
                 Token::Semicolon,
                 Token::Equal,
                 Token::Caret,
+                Token::Colon,
+                Token::Pipe,
+                Token::PipeLeft,
+                Token::PipeRight,
                 Token::Newline,
             ],
         )
@@ -254,11 +326,11 @@ mod test {
     #[test]
     fn strings() -> Result<(), Source<Error>> {
         assert_tokens(
-            "hello \"world[]{}()$,;=^\" \"escape\\\"quote\\n\"",
+            "hello \"world[]{}():,;=^|\" \"escape\\\"quote\\n\"",
             &[
                 Token::String("hello".to_owned()),
                 Token::Whitespace,
-                Token::String("world[]{}()$,;=^".to_owned()),
+                Token::String("world[]{}():,;=^|".to_owned()),
                 Token::Whitespace,
                 Token::String("escape\"quote\n".to_owned()),
             ],
@@ -268,7 +340,7 @@ mod test {
     #[test]
     fn string_ends() -> Result<(), Source<Error>> {
         assert_tokens(
-            "a[b]c{d}e(f)g$h,i;j^k=l\nm ",
+            "a[b]c{d}e(f)g:h,i;j^k=l\nm n|o<|p|>",
             &[
                 Token::String("a".to_owned()),
                 Token::OpenBracket,
@@ -283,7 +355,7 @@ mod test {
                 Token::String("f".to_owned()),
                 Token::CloseParen,
                 Token::String("g".to_owned()),
-                Token::Dollar,
+                Token::Colon,
                 Token::String("h".to_owned()),
                 Token::Comma,
                 Token::String("i".to_owned()),
@@ -296,6 +368,12 @@ mod test {
                 Token::Newline,
                 Token::String("m".to_owned()),
                 Token::Whitespace,
+                Token::String("n".to_owned()),
+                Token::Pipe,
+                Token::String("o".to_owned()),
+                Token::PipeLeft,
+                Token::String("p".to_owned()),
+                Token::PipeRight,
             ],
         )
     }
@@ -315,10 +393,10 @@ mod test {
     #[test]
     fn comments() -> Result<(), Source<Error>> {
         assert_tokens(
-            "# This is a comment\n$ #This is also a comment\n#One last comment",
+            "# This is a comment\n: #This is also a comment\n#One last comment",
             &[
                 Token::Newline,
-                Token::Dollar,
+                Token::Colon,
                 Token::Whitespace,
                 Token::Newline,
             ],

@@ -1,3 +1,5 @@
-prelude = {
-    val = workspace_parent
+fn a -> {
+    match :a {
+        =prelude = { val = workspace_parent }
+    }
 }
