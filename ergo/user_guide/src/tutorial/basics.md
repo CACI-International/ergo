@@ -37,7 +37,7 @@ we'll also make a shared library.
 
 Let's create a new ergo script file, called `build.ergo` (though you can call it
 whatever you want, with or without an extension):
-```sh
+```ergo
 {{#include example/build_basic.ergo}}
 ```
 
@@ -96,7 +96,7 @@ any character except special characters used in the rest of the syntax and
 whitespace. However, you can create strings containing arbitrary characters by
 surrounding them with quotes.
 
-```sh
+```ergo
 this_is_a_string!
 "this is a quoted {} []: \"string\"\n"
 these are each individual strings
@@ -106,7 +106,7 @@ these are each individual strings
 Arrays and maps are also supported in scripts. Items in arrays and maps can be
 separated by commas, newlines, or semicolons indescriminately.
 
-```sh
+```ergo
 [this,is,an,array]
 [newlines
  separate
@@ -120,7 +120,7 @@ environment scope (which can have bindings that shadow outer environments), and
 the block itself evaluates to the map of environment bindings if the final
 expression in the map is a binding:
 
-```sh
+```ergo
 {
   file = main.cpp
   output = exec c++ $file
@@ -129,10 +129,10 @@ expression in the map is a binding:
 
 Evaluates to a map with `file` and `output` as keys, whereas
 
-```sh
+```ergo
 {
   file = main.cpp
-  exec c++ $file
+  exec c++ :file
 }
 ```
 
@@ -149,7 +149,7 @@ accepts a number of special non-positional arguments (as we saw with `env`) and
 tries to convert positional arguments into strings suitable for commands.
 
 You may nest commands with parentheses:
-```sh
+```ergo
 command1 arg1 (command2-giving-arg2 a b c) arg3
 ```
 
@@ -157,8 +157,11 @@ The first value of a command, if it is a string (for instance, `exec`), is
 queried in the current environment to resolve to a bound value. Otherwise (if
 not a string), the value is used as-is.
 
-This means that querying any value from the environment is done by invoking a
-command. For instance, `(something)` will retrieve the value bound to
-`something` in the environment.  As a convenient shorthand for this case, one
-may prefix a string with `$` to have the same effect: `$something` is shorthand
-for `(something)`.
+### Binding Retrieval
+Querying any value from the environment is done by using a colon. For instance,
+`:something` will retrieve the value bound to `something` in the environment.
+Similarly, indexing into a map or array also uses a colon, except prior to the
+colon the value to index is provided. Like commands, if the value to index is a
+string, it will be queried in the current environment. Thus,
+`my_map:my_key:key2` and `:my_map:my_key:key2` are the same (the leading colon
+is unnecessary).

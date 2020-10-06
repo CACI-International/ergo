@@ -1,25 +1,25 @@
 #!/usr/bin/env ergo
 
 # Compile main.cpp
-main = value cache seq ^[
-    out = path new
-    task "compiling main.cpp" exec ^{env = {PATH=$}} c++ -o $out -c (fs track main.cpp)
-    $out
+main = value:cache <| seq ^[
+    out = (path:new)
+    task "compiling main.cpp" exec ^{env = {PATH=:}} c++ -o :out -c (fs:track main.cpp)
+    :out
 ]
 
 # Compile lib.cpp
-lib = value cache seq ^[
-    out = path new
-    task "compiling lib.cpp" exec ^{env = {PATH=$}} c++ -o $out -c (fs track lib.cpp)
-    $out
+lib = value:cache <| seq ^[
+    out = (path:new)
+    task "compiling lib.cpp" exec ^{env = {PATH=:}} c++ -o :out -c (fs:track lib.cpp)
+    :out
 ]
 
 # Link the object files together
-exe = value cache seq ^[
-    out = path new
-    task "linking executable" exec ^{env = {PATH=$}} c++ -o $out $main $lib
-    $out
+exe = value:cache <| seq ^[
+    out = (path:new)
+    task "linking executable" exec ^{env = {PATH=:}} c++ -o :out :main :lib
+    :out
 ]
 
 # Copy to a file in the current directory.
-fs copy $exe (path join $work-dir forty_two)
+fs:copy :exe (path:join :work-dir forty_two)

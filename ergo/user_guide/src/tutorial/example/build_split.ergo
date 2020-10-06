@@ -1,38 +1,38 @@
 #!/usr/bin/env ergo
 
 # Convenience bindings for following functions
-run-with-path = fn ^{^kwargs} ^args -> (exec ^{env = {PATH=$}} ^$kwargs ^$args) complete
-copy-out = fn file name -> fs copy $file (path join $work-dir $name)
+run-with-path = fn ^{^kwargs} ^args -> (exec ^{env = {PATH=:}} ^:kwargs ^:args) complete
+copy-out = fn file name -> fs:copy :file (path:join :work-dir :name)
 
 # Compile function, taking one argument indicating the file to compile.
-compile = fn source-file -> value cache seq ^[
-    object-file = path new
-    run-with-path c++ -o $object-file -c (fs track $source-file)
-    $object-file
+compile = fn source-file -> value:cache <| seq ^[
+    object-file = (path:new)
+    run-with-path c++ -o :object-file -c (fs:track :source-file)
+    :object-file
 ]
 
 # Linking function, which passes all arguments to the link command.
-link = fn ^args -> value cache seq ^[
-    exe = path new
-    run-with-path c++ -o $exe ^$args
-    $exe
+link = fn ^args -> value:cache <| seq ^[
+    exe = (path:new)
+    run-with-path c++ -o :exe ^:args
+    :exe
 ]
 
 # Executable-linking function, which links all arguments.
-link_exe = $link
+link_exe = :link
 
 # Library-linking function, which links all arguments.
-link_so = fn ^args -> link -shared ^$args
+link_so = fn ^args -> link -shared ^:args
 
 
 # Create a library from lib.cpp.
 lib = link_so "-Wl,-hlibadd2.so" (compile lib.cpp) 
 
 # Create an executable using the library.
-exe = link_exe (compile main.cpp) $lib
+exe = link_exe (compile main.cpp) :lib
 
 # Copy results into the current directory.
 [
-    copy-out $exe forty_two
-    copy-out $lib libadd2.so
+    copy-out :exe forty_two
+    copy-out :lib libadd2.so
 ]

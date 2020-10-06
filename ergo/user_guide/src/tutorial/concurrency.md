@@ -6,7 +6,7 @@ much to be gained here, but for more complex code &mdash; especially C++ code
 &mdash; this can make a huge difference. Let's change the script to perform
 compilation and linking separately:
 
-```sh
+```ergo
 {{#include example/build_concurrent.ergo}}
 ```
 
@@ -35,33 +35,33 @@ body.
 
 Let's make compiling and linking into functions:
 
-```sh
+```ergo
 {{#include example/build_concurrent_fn.ergo}}
 ```
 
-This is looking much more manageable. Note that both functions have a `cache
-seq` expression, and the final expression of the block is what is returned when
-the function is invoked.
+This is looking much more manageable. Note that both functions have a
+`value:cache <| seq` expression, and the final expression of the block is what
+is returned when the function is invoked.
 
 ## Mapping over arrays
 Ideally we'd like to map the `compile` function over an array of the files;
-luckily there's a built-in command for that, `map`. It takes a function and an
+luckily there's a built-in command for that, `collection:map`. It takes a function and an
 array and maps the function on each value in the array, returning an array with
 the result.
 
 Let's take advantage of this:
-```sh
+```ergo
 {{#include example/build_concurrent_map.ergo}}
 ```
 
 We've also condensed our final command by nesting commands in it. Note the `^`
-array merge to pass the resulting array values of the `map` function each as
-arguments to `link_exe`.
+array merge to pass the resulting array values of the `collection:map` function
+each as arguments to `link_exe`.
 
 ## Command consistency and reproducibility
 
 If you were running the script file as these changes were made, you may have
-noticed that only `fs copy` was run each time (as it always is when outputs are
+noticed that only `fs:copy` was run each time (as it always is when outputs are
 readily available). The three versions of the script on this page are
 functionally identical, so even though they look fairly different, they share
 the same outputs. The value identities are the same throughout.

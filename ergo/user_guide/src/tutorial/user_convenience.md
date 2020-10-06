@@ -3,16 +3,15 @@
 As we wrap up this example, let's make our script more convenient for users
 running it (the only change is at the end of the script):
 
-```sh
+```ergo
 {{#include example/build_final.ergo}}
 ```
 
 Note that a string without any following arguments (thus evaluating to a string
 rather than a command) in a map will bind that value in the map's environment to
-the currently-bound value, e.g. `{test}` is the same as `{test = $test}`.
+the currently-bound value, e.g. `{test}` is the same as `{test = :test}`.
 
-We're returning a map with keys that can be accessed on the command-line. In
-order, a user can run:
+We're returning a function which allows a user to run:
 * `./path-to-script build` to only build the exe and library,
 * `./path-to-script test` to build and run the test suite, and
 * `./path-to-script release` to ensure tests pass and link the results to the current

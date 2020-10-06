@@ -8,7 +8,7 @@ shared library and an executable, and write/run some unit tests for the library.
 Splitting up our application is as simple as you might expect, except we need to
 have a separate link step for the library:
 
-```sh
+```ergo
 {{#include example/build_split.ergo}}
 ```
 
@@ -32,7 +32,7 @@ tests with CMake and make, and use the library to make a test program. Note that
 we're only running the Catch2 tests for the sake of demonstration and
 thoroughness, since Catch2 is a single header-only library.
 
-```sh
+```ergo
 {{#include example/build_test.ergo}}
 ```
 
@@ -54,7 +54,7 @@ which to unpack it, and unpack it.
 The `tar` command is using a new `exec` non-positional argument, `pwd`. It's
 simple enough: it sets the working directory of the process.
 
-We also are using the `path join` function, which joins path components into a
+We also are using the `path:join` function, which joins path components into a
 single path.
 
 After unpacking, we build the tests with `cmake` and `make`.
@@ -67,7 +67,7 @@ run tests every time we retrieve the value.
 The final change we made is that we compile a test program using the new
 `compile` function feature and the Catch2 library, and run it before copying our
 outputs in the last line. This is fairly straightforward and follows from what
-has been previously discussed (like passing `{ includes = [$Catch2] }` to the
+has been previously discussed (like passing `{ includes = [:Catch2] }` to the
 `compile` function). We do however need to make a temporary library directory so
 that our test executable can find the libraries it needs. The `libpath` block
 handles this: it creates a directory, copies the library into it with the

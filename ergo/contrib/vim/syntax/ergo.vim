@@ -9,12 +9,14 @@ syn keyword ergoKeys fn match
 syn match ergoIndex /:/
 syn match ergoMerge /\^/
 syn match ergoSugar /\(|>\?\|<|\)/
-syn match ergoDataDelimiter /[\[\]{}"]/
+syn match ergoDataDelimiter /[\[\]{}]/
+syn region ergoQuotedString start=/\(\\\)\@<!"/ skip=/\\[\\"]/ end=/"/
 syn match ergoComment /#.*$/
 
 let b:current_syntax = "ergo"
 
 hi def link ergoComment Comment
+hi def link ergoQuotedString String
 hi def link ergoDataDelimiter Normal
 hi def link ergoIndex Type
 hi def link ergoMerge Type

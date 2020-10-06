@@ -1,17 +1,17 @@
 #!/usr/bin/env ergo
 
 # Compile function, taking one argument indicating the file to compile.
-compile = fn source-file -> value cache seq ^[
-    object-file = path new
-    task (string format "compiling {}" $source-file) exec ^{env = {PATH=$}} c++ -o $object-file -c (fs track $source-file)
-    $object-file
+compile = fn source-file -> value:cache <| seq ^[
+    object-file = (path:new)
+    task (string:format "compiling {}" :source-file) exec ^{env = {PATH=:}} c++ -o :object-file -c (fs:track :source-file)
+    :object-file
 ]
 
 # Executable-linking function, which links all arguments.
-link_exe = fn name ^objs -> value cache seq ^[
-    exe = path new
-    task (string format "linking executable {}" $name) exec ^{env = {PATH=$}} c++ -o $exe ^$objs
-    $exe
+link_exe = fn name ^objs -> value:cache <| seq ^[
+    exe = (path:new)
+    task (string:format "linking executable {}" :name) exec ^{env = {PATH=:}} c++ -o :exe ^:objs
+    :exe
 ]
 
 # Compile main.cpp
@@ -20,7 +20,7 @@ main = compile main.cpp
 lib = compile lib.cpp
 
 # Link the object files together
-exe = link_exe forty_two $main $lib
+exe = link_exe forty_two :main :lib
 
 # Copy to a file in the current directory.
-fs copy $exe (path join $work-dir forty_two)
+fs:copy :exe (path:join :work-dir forty_two)
