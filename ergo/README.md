@@ -97,6 +97,4 @@ Within a script, the following are defined:
 * Add work recording to script.
 * Either deconstruction with `match`.
 * Add value dependency tree print to help debug consistency issues.
-* Add `dir.ergo` functionality that is preferred to `workspace.ergo` when
-  searching, and doesn't exclude the prelude?
 * Support using ancestor `workspace.ergo` as root of the storage directory.

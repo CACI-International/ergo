@@ -8,8 +8,8 @@
 
 use super::ast::{ArrayPattern, CmdPat, Expression, MapPattern, MergeExpression, Pat, Pattern};
 use crate::constants::{
-    app_dirs, LOAD_PATH_BINDING, SCRIPT_EXTENSION, SCRIPT_PRELUDE_NAME, SCRIPT_WORKSPACE_NAME,
-    WORKING_DIRECTORY_BINDING,
+    app_dirs, LOAD_PATH_BINDING, SCRIPT_DIR_NAME, SCRIPT_EXTENSION, SCRIPT_PRELUDE_NAME,
+    SCRIPT_WORKSPACE_NAME, WORKING_DIRECTORY_BINDING,
 };
 use abi_stable::{rvec, std_types::RResult};
 use ergo_runtime::source::{FileSource, IntoSource, Source};
@@ -184,7 +184,18 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                 })
                 .and_then(|mut p| {
                     while p.is_dir() {
-                        p = p.join(SCRIPT_WORKSPACE_NAME);
+                        // Prefer dir script to workspace
+                        let dir = p.join(SCRIPT_DIR_NAME);
+                        if dir.exists() {
+                            p = dir;
+                        } else {
+                            let ws = p.join(SCRIPT_WORKSPACE_NAME);
+                            if ws.exists() {
+                                p = ws
+                            } else {
+                                break;
+                            }
+                        }
                     }
                     if p.is_file() {
                         Some(p)
