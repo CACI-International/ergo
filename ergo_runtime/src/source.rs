@@ -398,6 +398,17 @@ impl<T, E> Source<Result<T, E>> {
     }
 }
 
+impl<T> Source<Option<T>> {
+    /// Move the source into the Some value.
+    pub fn transpose(self) -> Option<Source<T>> {
+        let (source, v) = self.take();
+        match v {
+            Some(v) => Some(source.with(v)),
+            None => None,
+        }
+    }
+}
+
 impl<T: PartialEq> Source<T> {
     pub fn total_eq(this: &Self, other: &Self) -> bool {
         this.value == other.value && this.location == other.location && this.source == other.source

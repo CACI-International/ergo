@@ -4,6 +4,7 @@ use super::tokenize::{Tok, Token};
 use super::*;
 use ergo_runtime::source::{IntoSource, Source};
 use pom::parser::*;
+use std::collections::VecDeque;
 use std::iter::FromIterator;
 
 /// A parser alias.
@@ -138,7 +139,37 @@ mod expression {
         call(|| nested() | eqword().map(|s| s.map(Expression::String)) | array() | block())
     }
 
-    /// A command expression.
+    struct CommandArgs {
+        cmd: MergeExpr,
+        args: VecDeque<MergeExpr>,
+    }
+
+    impl CommandArgs {
+        pub fn new<I: IntoIterator<Item = MergeExpr>>(cmd: MergeExpr, vals: I) -> Self {
+            CommandArgs {
+                cmd,
+                args: vals.into_iter().collect(),
+            }
+        }
+    }
+
+    impl IntoSource for CommandArgs {
+        type Output = (MergeExpr, Vec<MergeExpr>);
+
+        fn into_source(self) -> Source<Self::Output> {
+            (self.cmd, Vec::from(self.args))
+                .into_source()
+                .map(|(a, b)| (a, b.unwrap()))
+        }
+    }
+
+    /// Get command arguments.
+    fn command_args<'a>() -> Parser<'a, CommandArgs> {
+        (merge_with(arg()) + (req_space() * merge_with(arg())).repeat(0..))
+            .map(|(first, rest)| CommandArgs::new(first, rest))
+    }
+
+    /// Translate command arguments into a command expression.
     ///
     /// If `string_literal` is true, a lone string will be interpreted as a string literal (rather
     /// than a command with no arguments).
@@ -149,27 +180,96 @@ mod expression {
     /// else:
     /// `something` -> no-arg command
     /// `command arg1 ...` -> command
-    fn command<'a>(string_literal: bool) -> Parser<'a, Expr> {
-        (arg() + (req_space() * list(merge_with(arg()), req_space())).opt()).map(move |res| {
-            res.into_source().map(move |(cmd, args)| {
+    ///
+    /// Returns None if the first argument is a merge expression.
+    fn command(cmd: CommandArgs, string_literal: bool) -> Option<Expr> {
+        cmd.into_source()
+            .map(move |(cmd, args)| {
+                if cmd.merge {
+                    return None;
+                }
+                let cmd = cmd.unwrap().expr;
                 let is_string = match &*cmd {
                     Expression::String(_) => true,
                     _ => false,
                 };
-                let no_args = match &*args {
-                    None => true,
-                    Some(v) => v.is_empty(),
-                };
-                if no_args && (!is_string || (is_string && string_literal)) {
-                    cmd.unwrap()
+                let no_args = args.is_empty();
+                Some(
+                    if no_args && (!is_string || (is_string && string_literal)) {
+                        cmd.unwrap()
+                    } else {
+                        Expression::Command(Box::new(cmd), args)
+                    },
+                )
+            })
+            .transpose()
+    }
+
+    /// A command which may contain pipe operators.
+    ///
+    /// The pipe operators are syntax sugar for nested expressions (and sometimes the order of
+    /// expressions, too).
+    ///
+    /// l |> r -> (l) r, left-associative, low precedence
+    /// l <| r -> l (r), right-associative, high precedence
+    /// l | r -> r (l), left-associative, low precedence
+    fn command_pipes<'a>(string_literal: bool) -> Parser<'a, Expr> {
+        fn merge_expr(e: Expr) -> MergeExpr {
+            e.source().with(MergeExpression {
+                merge: false,
+                expr: e,
+            })
+        }
+
+        const MERGE_EXPR_ERROR: &'static str = "cannot begin a command with a merge expression";
+
+        fn backward_pipes<'a>() -> Parser<'a, CommandArgs> {
+            (command_args()
+                + (space() * sym(Token::PipeLeft) * spacenl() * command_args()).repeat(0..))
+            .convert(|(first, rest)| {
+                if rest.is_empty() {
+                    Ok(first)
                 } else {
-                    Expression::Command(
-                        Box::new(cmd),
-                        args.unwrap().map(|e| e.unwrap()).unwrap_or(vec![]),
-                    )
+                    let mut iter = rest.into_iter().rev().chain(std::iter::once(first));
+                    let first = iter.next().unwrap();
+                    iter.fold(Some(first), |cmd, mut v| {
+                        v.args.push_back(merge_expr(command(cmd?, false)?));
+                        Some(v)
+                    })
+                    .ok_or(MERGE_EXPR_ERROR)
                 }
             })
-        })
+        }
+
+        let forward_pipes = (backward_pipes()
+            + (space() * one_of([Token::Pipe, Token::PipeRight].as_ref()) - spacenl()
+                + backward_pipes())
+            .repeat(0..))
+        .convert(|(first, rest)| {
+            if rest.is_empty() {
+                Ok(first)
+            } else {
+                rest.into_iter()
+                    .fold(Some(first), |cmd, (tp, mut v)| {
+                        let cmd_merge_expr = merge_expr(command(cmd?, false)?);
+                        Some(if tp == Token::Pipe {
+                            v.args.push_back(cmd_merge_expr);
+                            v
+                        } else {
+                            debug_assert!(tp == Token::PipeRight);
+                            let mut args = v.args;
+                            args.push_front(v.cmd);
+                            CommandArgs {
+                                cmd: cmd_merge_expr,
+                                args,
+                            }
+                        })
+                    })
+                    .ok_or(MERGE_EXPR_ERROR)
+            }
+        });
+
+        forward_pipes.convert(move |args| command(args, string_literal).ok_or(MERGE_EXPR_ERROR))
     }
 
     /// A function expression.
@@ -254,7 +354,7 @@ mod expression {
 
     /// A single expression.
     pub fn expression<'a>(string_literal: bool) -> Parser<'a, Expr> {
-        call(move || kw_expr() | set() | unset() | command(string_literal))
+        call(move || kw_expr() | set() | unset() | command_pipes(string_literal))
     }
 }
 
@@ -519,6 +619,155 @@ mod test {
                 Expression::Command(
                     Box::new(src(Expression::String("echo".to_owned()))),
                     vec![nomerge(Expression::String("howdy".to_owned()))],
+                ),
+            )
+        }
+
+        #[test]
+        fn pipe_commands() -> Result {
+            assert(
+                &[
+                    String("e".into()),
+                    Pipe,
+                    String("d".into()),
+                    Pipe,
+                    String("a".into()),
+                    Whitespace,
+                    String("b".into()),
+                    Whitespace,
+                    String("c".into()),
+                ],
+                Expression::Command(
+                    src(Expression::String("a".into())).into(),
+                    vec![
+                        nomerge(Expression::String("b".into())),
+                        nomerge(Expression::String("c".into())),
+                        nomerge(Expression::Command(
+                            src(Expression::String("d".into())).into(),
+                            vec![nomerge(Expression::Command(
+                                src(Expression::String("e".into())).into(),
+                                vec![],
+                            ))],
+                        )),
+                    ],
+                ),
+            )
+        }
+
+        #[test]
+        fn pipe_right_commands() -> Result {
+            assert(
+                &[
+                    String("a".into()),
+                    Whitespace,
+                    String("b".into()),
+                    PipeRight,
+                    String("c".into()),
+                    PipeRight,
+                    String("d".into()),
+                    Whitespace,
+                    String("e".into()),
+                ],
+                Expression::Command(
+                    src(Expression::Command(
+                        src(Expression::Command(
+                            src(Expression::String("a".into())).into(),
+                            vec![nomerge(Expression::String("b".into()))],
+                        ))
+                        .into(),
+                        vec![nomerge(Expression::String("c".into()))],
+                    ))
+                    .into(),
+                    vec![
+                        nomerge(Expression::String("d".into())),
+                        nomerge(Expression::String("e".into())),
+                    ],
+                ),
+            )
+        }
+
+        #[test]
+        fn pipe_left_commands() -> Result {
+            assert(
+                &[
+                    String("a".into()),
+                    Whitespace,
+                    String("b".into()),
+                    PipeLeft,
+                    String("c".into()),
+                    PipeLeft,
+                    String("d".into()),
+                    Whitespace,
+                    String("e".into()),
+                ],
+                Expression::Command(
+                    src(Expression::String("a".into())).into(),
+                    vec![
+                        nomerge(Expression::String("b".into())),
+                        nomerge(Expression::Command(
+                            src(Expression::String("c".into())).into(),
+                            vec![nomerge(Expression::Command(
+                                src(Expression::String("d".into())).into(),
+                                vec![nomerge(Expression::String("e".into()))],
+                            ))],
+                        )),
+                    ],
+                ),
+            )
+        }
+
+        #[test]
+        fn pipe_commands_precedence() -> Result {
+            // a | b <| c <| d | e |> f <| g | h
+            assert(
+                &[
+                    String("a".into()),
+                    Pipe,
+                    String("b".into()),
+                    PipeLeft,
+                    String("c".into()),
+                    PipeLeft,
+                    String("d".into()),
+                    Pipe,
+                    String("e".into()),
+                    PipeRight,
+                    String("f".into()),
+                    PipeLeft,
+                    String("g".into()),
+                    Pipe,
+                    String("h".into()),
+                ],
+                Expression::Command(
+                    src(Expression::String("h".into())).into(),
+                    vec![nomerge(Expression::Command(
+                        src(Expression::Command(
+                            src(Expression::String("e".into())).into(),
+                            vec![nomerge(Expression::Command(
+                                src(Expression::String("b".into())).into(),
+                                vec![
+                                    nomerge(Expression::Command(
+                                        src(Expression::String("c".into())).into(),
+                                        vec![nomerge(Expression::Command(
+                                            src(Expression::String("d".into())).into(),
+                                            vec![],
+                                        ))],
+                                    )),
+                                    nomerge(Expression::Command(
+                                        src(Expression::String("a".into())).into(),
+                                        vec![],
+                                    )),
+                                ],
+                            ))],
+                        ))
+                        .into(),
+                        vec![
+                            nomerge(Expression::String("f".into())),
+                            nomerge(Expression::Command(
+                                src(Expression::String("g".into())).into(),
+                                vec![],
+                            )),
+                        ],
+                    ))],
                 ),
             )
         }
