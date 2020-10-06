@@ -242,7 +242,8 @@ mod expression {
         }
 
         let forward_pipes = (backward_pipes()
-            + (space() * one_of([Token::Pipe, Token::PipeRight].as_ref()) - spacenl()
+            + (space() * one_of([Token::Pipe, Token::PipeRight].as_ref())
+                + spacenl_present()
                 + backward_pipes())
             .repeat(0..))
         .convert(|(first, rest)| {
@@ -250,19 +251,50 @@ mod expression {
                 Ok(first)
             } else {
                 rest.into_iter()
-                    .fold(Some(first), |cmd, (tp, mut v)| {
-                        let cmd_merge_expr = merge_expr(command(cmd?, false)?);
+                    .fold(Some(first), |cmd, ((tp, ws), mut v)| {
+                        let cmd = command(cmd?, false)?;
                         Some(if tp == Token::Pipe {
-                            v.args.push_back(cmd_merge_expr);
+                            v.args.push_back(merge_expr(cmd));
                             v
                         } else {
                             debug_assert!(tp == Token::PipeRight);
+
+                            // If no whitespace, check whether the first expression is an index
+                            // expression without prior, and if so index into the command.
+                            let indexed_cmd = if !ws {
+                                if let MergeExpression {
+                                    merge: false,
+                                    ref mut expr,
+                                } = &mut *v.cmd
+                                {
+                                    let mut expr: &mut Expr = expr;
+                                    loop {
+                                        if let Expression::Index(ref mut a, _) = &mut **expr {
+                                            if let Some(v) = a {
+                                                expr = &mut *v;
+                                            } else {
+                                                *a = Some(cmd.into());
+                                                break Ok(v.cmd);
+                                            }
+                                        } else {
+                                            break Err((v.cmd, cmd));
+                                        }
+                                    }
+                                } else {
+                                    Err((v.cmd, cmd))
+                                }
+                            } else {
+                                Err((v.cmd, cmd))
+                            };
+
                             let mut args = v.args;
-                            args.push_front(v.cmd);
-                            CommandArgs {
-                                cmd: cmd_merge_expr,
-                                args,
-                            }
+
+                            let cmd = indexed_cmd.unwrap_or_else(|(arg, cmd)| {
+                                args.push_front(arg);
+                                merge_expr(cmd)
+                            });
+
+                            CommandArgs { cmd, args }
                         })
                     })
                     .ok_or(MERGE_EXPR_ERROR)
@@ -416,9 +448,15 @@ fn space<'a>() -> Parser<'a, ()> {
 
 /// Zero or more whitespace characters, including newlines.
 fn spacenl<'a>() -> Parser<'a, ()> {
+    spacenl_present().discard()
+}
+
+/// Zero or more whitespace characters, including newlines.
+/// Returns whether whitespace was present or not.
+fn spacenl_present<'a>() -> Parser<'a, bool> {
     one_of([Token::Newline, Token::Whitespace].as_ref())
         .repeat(0..)
-        .discard()
+        .map(|v| !v.is_empty())
 }
 
 /// A separating delimiter.
@@ -770,6 +808,45 @@ mod test {
                     ))],
                 ),
             )
+        }
+
+        #[test]
+        fn pipe_indexing() -> Result {
+            assert(
+                &[
+                    String("a".into()),
+                    PipeRight,
+                    Whitespace,
+                    Colon,
+                    String("b".into()),
+                ],
+                Expression::Command(
+                    src(Expression::Command(
+                        src(Expression::String("a".into())).into(),
+                        vec![],
+                    ))
+                    .into(),
+                    vec![nomerge(Expression::Index(
+                        None,
+                        src(Expression::String("b".into())).into(),
+                    ))],
+                ),
+            )?;
+
+            assert(
+                &[String("a".into()), PipeRight, Colon, String("b".into())],
+                Expression::Index(
+                    Some(
+                        src(Expression::Command(
+                            src(Expression::String("a".into())).into(),
+                            vec![],
+                        ))
+                        .into(),
+                    ),
+                    src(Expression::String("b".into())).into(),
+                ),
+            )?;
+            Ok(())
         }
 
         #[test]
