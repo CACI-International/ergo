@@ -118,6 +118,17 @@ fn run(opts: Opts) -> Result<String, grease::value::Error> {
 
     let working_dir = std::env::current_dir().expect("could not get current directory");
 
+    // Search for furthest workspace ancestor, and set as storage directory root
+    let storage_dir_root = if let Some(p) = working_dir
+        .ancestors()
+        .filter(|p| p.join(constants::SCRIPT_WORKSPACE_NAME).exists())
+        .last()
+    {
+        p.to_owned()
+    } else {
+        working_dir.clone()
+    };
+
     // Create build context
     let mut ctx = {
         // Use a weak pointer to the logger in the context, so that when the logger goes out of
@@ -130,7 +141,7 @@ fn run(opts: Opts) -> Result<String, grease::value::Error> {
         script::script_context(
             Context::builder()
                 .logger_ref(logger_weak.into())
-                .storage_directory(working_dir.join(opts.storage))
+                .storage_directory(storage_dir_root.join(opts.storage))
                 .threads(opts.jobs)
                 .keep_going(!opts.stop)
                 .on_error(move |added| {

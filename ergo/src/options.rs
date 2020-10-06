@@ -39,7 +39,9 @@ pub struct Opts {
     pub jobs: Option<usize>,
 
     #[structopt(long, default_value = concat!(".", env!("CARGO_PKG_NAME"), "_work"))]
-    /// The storage directory for the runtime.
+    /// The storage directory for the runtime. If a relative path, it will be made relative to the
+    /// furthest ancestor directory that is a workspace. If none are found, the current directory
+    /// is used.
     pub storage: std::path::PathBuf,
 
     #[structopt(short = "S", long)]
