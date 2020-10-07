@@ -1,9 +1,6 @@
 ^(ergo std)
 
-mod = fn m -> fn a ^args -> {
-    v = m::a
-    if :v (v ^:args)
-}
+mod = fn m -> fn a -> m::a
 
 mod {
     prelude = ergo std
