@@ -3,7 +3,6 @@
 use crate::constants::*;
 pub use ergo_runtime::source::{FileSource, Source, StringSource};
 use ergo_runtime::{ContextEnv, EvalResult, Runtime, ScriptEnv};
-use futures::future::FutureExt;
 
 mod ast;
 mod base;
@@ -70,7 +69,7 @@ impl Script {
         // configured top-level env.
         let ast = self.ast;
         ctx.substituting_env(vec![self.top_level_env].into(), move |ctx| {
-            Rt(ast).evaluate(ctx).boxed()
+            Rt(ast).evaluate(ctx)
         })
         .await
     }

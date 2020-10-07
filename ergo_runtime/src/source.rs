@@ -375,6 +375,14 @@ impl<T: ToString> Source<T> {
     }
 }
 
+impl<E: Into<grease::value::Error>> Source<E> {
+    /// Add context to the inner error and return a new error.
+    pub fn inject_context<S: ToString>(self, ctx: S) -> grease::value::Error {
+        let (src, e) = self.take();
+        src.with(ctx).context_for_error(e.into())
+    }
+}
+
 impl<T, E> Source<Result<T, E>> {
     /// Move the source into the Ok/Err result.
     pub fn transpose(self) -> Result<Source<T>, Source<E>> {
@@ -395,6 +403,24 @@ impl<T, E> Source<Result<T, E>> {
     pub fn transpose_err(self) -> Result<T, Source<E>> {
         let (source, v) = self.take();
         v.map_err(move |e| source.with(e))
+    }
+}
+
+impl<T, E: Into<grease::value::Error>> Source<Result<T, E>> {
+    /// Move the source into the Ok/Err result, and inject the given context into the error result.
+    pub fn transpose_with_context<S: ToString>(
+        self,
+        ctx: S,
+    ) -> Result<Source<T>, grease::value::Error> {
+        self.transpose().map_err(move |e| e.inject_context(ctx))
+    }
+
+    /// Move the source into the Err result with the given context.
+    pub fn transpose_err_with_context<S: ToString>(
+        self,
+        ctx: S,
+    ) -> Result<T, grease::value::Error> {
+        self.transpose_err().map_err(move |e| e.inject_context(ctx))
     }
 }
 

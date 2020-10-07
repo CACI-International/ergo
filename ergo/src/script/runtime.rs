@@ -710,7 +710,7 @@ fn _apply_pattern<'a>(
                     name.into(),
                     match val {
                         Some(v) => Ok(v.map(|v| v.binding)),
-                        None => Err("errored value".into()),
+                        None => Err(grease::value::error::Error::aborted()),
                     }
                     .into(),
                 );
@@ -1217,8 +1217,7 @@ pub fn apply_value(
         })
         .await
         .map(|v| v.map_err(|e| e.error()))
-        .transpose_err()
-        .map_err(|e| e.into())
+        .transpose_err_with_context("while applying function")
     }
     .boxed()
 }
@@ -1284,13 +1283,13 @@ impl Rt<Expression> {
                                     Ok(ind) => val.await.map(|v| v.0.get(ind).cloned()
                                         .unwrap_or(().into()))
                                 }
-                                }).await.transpose_err().map_err(|e| e.into_grease_error())
+                                }).await.transpose_err_with_context("while indexing array")
                             },
                             types::Map => |val| {
                                 ind.map_async(|index| async move {
                                         val.await.map(|v| v.0.get(index.as_ref()).cloned()
                                             .unwrap_or(().into()))
-                                }).await.transpose_err().map_err(|e| e.into_grease_error())
+                                }).await.transpose_err_with_context("while indexing map")
                             },
                             => |v| Err(Error::NonIndexableValue(v).into())
                         })
@@ -1467,13 +1466,11 @@ impl Rt<Source<Expression>> {
             Rt(source.with(es)).evaluate(ctx).await
         } else {
             Rt(expr).evaluate(ctx).await.map(|v| {
-                //v.map(|v| {
                 source.clone().with(
                     source
                         .with("while evaluating value returned by this expression")
                         .imbue_error_context(v),
                 )
-                //})
             })
         }
     }

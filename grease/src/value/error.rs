@@ -176,7 +176,9 @@ impl Error {
     }
 
     /// Create an aborted error.
-    pub(crate) fn aborted() -> Self {
+    ///
+    /// Abborted errors will be dropped/removed when aggregating errors.
+    pub fn aborted() -> Self {
         Error {
             inner: InnerError::Aborted,
         }
