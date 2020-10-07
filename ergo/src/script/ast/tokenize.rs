@@ -252,10 +252,12 @@ impl<I: Iterator<Item = char>> Iterator for Tokens<I> {
                     } else if c == '|' {
                         Ok(if self.iter.peek_match(&['>']) {
                             self.iter.next();
+                            self.source.location.length += 1;
                             Token::PipeRight
                         } else { Token::Pipe })
                     } else if c == '<' && self.iter.peek_match(&['|']) {
                         self.iter.next();
+                        self.source.location.length += 1;
                         Ok(Token::PipeLeft)
                     }
                     // Words
@@ -273,8 +275,8 @@ impl<I: Iterator<Item = char>> Iterator for Tokens<I> {
                         Ok(Token::String(s))
                     };
                 Some(match tokentype {
-                    Ok(t) => Ok(self.source.clone().map(move |()| t)),
-                    Err(e) => Err(self.source.clone().map(move |()| e)),
+                    Ok(t) => Ok(self.source.clone().with(t)),
+                    Err(e) => Err(self.source.clone().with(e)),
                 })
             }
         })
