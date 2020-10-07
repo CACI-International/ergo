@@ -8,6 +8,7 @@ pub fn module() -> Value {
     map.insert("get".into(), get_fn());
     map.insert("home".into(), home_path());
     map.insert("path-search".into(), path_search_fn());
+    map.insert("current-dir".into(), current_dir_path());
     types::Map(map).into()
 }
 
@@ -31,6 +32,14 @@ pub fn get_fn() -> Value {
             )
             .into(),
         }
+    })
+    .into()
+}
+
+pub fn current_dir_path() -> Value {
+    let path = std::env::current_dir().ok();
+    make_value!([ergo_runtime::namespace_id!(std::env::current_dir), path] {
+        path.map(|d| PathBuf::from(d)).ok_or("current directory path could not be retrieved".into())
     })
     .into()
 }
