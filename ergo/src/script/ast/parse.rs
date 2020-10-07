@@ -227,7 +227,7 @@ mod expression {
                     let mut iter = rest.into_iter().rev().chain(std::iter::once(first));
                     let first = iter.next().unwrap();
                     iter.fold(Some(first), |cmd, mut v| {
-                        v.args.push_back(merge_expr(command(cmd?, false)?));
+                        v.args.push_back(merge_expr(command(cmd?, true)?));
                         Some(v)
                     })
                     .ok_or(MERGE_EXPR_ERROR)
@@ -246,7 +246,7 @@ mod expression {
             } else {
                 rest.into_iter()
                     .fold(Some(first), |cmd, ((tp, ws), mut v)| {
-                        let cmd = command(cmd?, false)?;
+                        let cmd = command(cmd?, true)?;
                         Some(if tp == Token::Pipe {
                             v.args.push_back(merge_expr(cmd));
                             v
@@ -702,10 +702,7 @@ mod test {
                         nomerge(Expression::String("c".into())),
                         nomerge(Expression::Command(
                             src(Expression::String("d".into())).into(),
-                            vec![nomerge(Expression::Command(
-                                src(Expression::String("e".into())).into(),
-                                vec![],
-                            ))],
+                            vec![nomerge(Expression::String("e".into()))],
                         )),
                     ],
                 ),
@@ -805,25 +802,16 @@ mod test {
                                 vec![
                                     nomerge(Expression::Command(
                                         src(Expression::String("c".into())).into(),
-                                        vec![nomerge(Expression::Command(
-                                            src(Expression::String("d".into())).into(),
-                                            vec![],
-                                        ))],
+                                        vec![nomerge(Expression::String("d".into()))],
                                     )),
-                                    nomerge(Expression::Command(
-                                        src(Expression::String("a".into())).into(),
-                                        vec![],
-                                    )),
+                                    nomerge(Expression::String("a".into())),
                                 ],
                             ))],
                         ))
                         .into(),
                         vec![
                             nomerge(Expression::String("f".into())),
-                            nomerge(Expression::Command(
-                                src(Expression::String("g".into())).into(),
-                                vec![],
-                            )),
+                            nomerge(Expression::String("g".into())),
                         ],
                     ))],
                 ),
@@ -841,11 +829,7 @@ mod test {
                     String("b".into()),
                 ],
                 Expression::Command(
-                    src(Expression::Command(
-                        src(Expression::String("a".into())).into(),
-                        vec![],
-                    ))
-                    .into(),
+                    src(Expression::String("a".into())).into(),
                     vec![nomerge(Expression::Index(
                         None,
                         src(Expression::String("b".into())).into(),
@@ -856,13 +840,7 @@ mod test {
             assert(
                 &[String("a".into()), PipeRight, Colon, String("b".into())],
                 Expression::Index(
-                    Some(
-                        src(Expression::Command(
-                            src(Expression::String("a".into())).into(),
-                            vec![],
-                        ))
-                        .into(),
-                    ),
+                    Some(src(Expression::String("a".into())).into()),
                     src(Expression::String("b".into())).into(),
                 ),
             )?;
