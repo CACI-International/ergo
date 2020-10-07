@@ -472,16 +472,18 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                 .into_result()?
             };
 
-            match loaded.unwrap().typed::<types::Function>() {
+            let loaded_context = source.with(format!("loaded from '{}'", p.display()));
+
+            match loaded.map(|v| v.typed::<types::Function>()).transpose() {
                 Ok(f) => {
                     let args = std::mem::take(&mut ctx.args);
-                    apply_value(ctx, source.with(f.into()), args.unchecked(), false).await
+                    apply_value(ctx, f.map(|f| f.into()), args.unchecked(), false).await
                 },
                 Err(v) => {
                     ctx.unused_arguments()?;
-                    Ok(source.with(v))
+                    Ok(v)
                 }
-            }
+            }.map(|v| v.map(|v| loaded_context.imbue_error_context(v)))
         } else {
             Err(Error::LoadFailed {
                 was_loading,
@@ -1452,7 +1454,7 @@ impl Rt<Expression> {
                     }
                 }
 
-                Err(Error::MatchFailed(val.unwrap()).into())
+                Err(val.source().with(Error::MatchFailed(val.unwrap())).into())
             }
         }
     }.boxed()

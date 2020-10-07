@@ -26,16 +26,6 @@ pub fn script_context(
     {
         let mut insert = |k: &str, v| global_env.insert(k.into(), Ok(Source::builtin(v)).into());
 
-        /* TODO restore something akin to this functionality
-            if let Some(dirs) = app_dirs() {
-                insert(
-                    LOAD_PATH_BINDING,
-                    types::ScriptArray(vec![dirs.config_dir().to_owned().into_value()])
-                        .into_value(),
-                );
-            }
-        */
-
         // Add initial environment functions
         let env = vec![(PROGRAM_NAME, base::load())];
         for (k, v) in env.into_iter() {
