@@ -171,10 +171,10 @@ mod expression {
 
     /// Translate command arguments into a command expression.
     ///
-    /// If `string_literal` is true, a lone string will be interpreted as a string literal (rather
-    /// than a command with no arguments).
+    /// If `literal` is true, a lone argument will be returned as itself (rather than a command
+    /// with no arguments).
     ///
-    /// Specifically, if `string_literal` is true then:
+    /// Specifically, if `literal` is true then:
     /// `something` -> string
     /// `command arg1 ...` -> command
     /// else:
@@ -182,25 +182,19 @@ mod expression {
     /// `command arg1 ...` -> command
     ///
     /// Returns None if the first argument is a merge expression.
-    fn command(cmd: CommandArgs, string_literal: bool) -> Option<Expr> {
+    fn command(cmd: CommandArgs, literal: bool) -> Option<Expr> {
         cmd.into_source()
             .map(move |(cmd, args)| {
                 if cmd.merge {
                     return None;
                 }
                 let cmd = cmd.unwrap().expr;
-                let is_string = match &*cmd {
-                    Expression::String(_) => true,
-                    _ => false,
-                };
                 let no_args = args.is_empty();
-                Some(
-                    if no_args && (!is_string || (is_string && string_literal)) {
-                        cmd.unwrap()
-                    } else {
-                        Expression::Command(Box::new(cmd), args)
-                    },
-                )
+                Some(if no_args && literal {
+                    cmd.unwrap()
+                } else {
+                    Expression::Command(Box::new(cmd), args)
+                })
             })
             .transpose()
     }
@@ -213,7 +207,7 @@ mod expression {
     /// l |> r -> (l) r, left-associative, low precedence
     /// l <| r -> l (r), right-associative, high precedence
     /// l | r -> r (l), left-associative, low precedence
-    fn command_pipes<'a>(string_literal: bool) -> Parser<'a, Expr> {
+    fn command_pipes<'a>(literal: bool) -> Parser<'a, Expr> {
         fn merge_expr(e: Expr) -> MergeExpr {
             e.source().with(MergeExpression {
                 merge: false,
@@ -301,7 +295,7 @@ mod expression {
             }
         });
 
-        forward_pipes.convert(move |args| command(args, string_literal).ok_or(MERGE_EXPR_ERROR))
+        forward_pipes.convert(move |args| command(args, literal).ok_or(MERGE_EXPR_ERROR))
     }
 
     /// A function expression.
@@ -385,8 +379,8 @@ mod expression {
     }
 
     /// A single expression.
-    pub fn expression<'a>(string_literal: bool) -> Parser<'a, Expr> {
-        call(move || kw_expr() | set() | unset() | command_pipes(string_literal))
+    pub fn expression<'a>(literal: bool) -> Parser<'a, Expr> {
+        call(move || kw_expr() | set() | unset() | command_pipes(literal))
     }
 }
 
@@ -659,6 +653,32 @@ mod test {
                     vec![nomerge(Expression::String("howdy".to_owned()))],
                 ),
             )
+        }
+
+        #[test]
+        fn command_no_args() -> Result {
+            assert(
+                &[OpenParen, String("f".into()), CloseParen],
+                Expression::Command(src(Expression::String("f".into())).into(), vec![]),
+            )?;
+            assert(
+                &[
+                    OpenParen,
+                    String("m".into()),
+                    Colon,
+                    String("f".into()),
+                    CloseParen,
+                ],
+                Expression::Command(
+                    src(Expression::Index(
+                        Some(src(Expression::String("m".into())).into()),
+                        src(Expression::String("f".into())).into(),
+                    ))
+                    .into(),
+                    vec![],
+                ),
+            )?;
+            Ok(())
         }
 
         #[test]
