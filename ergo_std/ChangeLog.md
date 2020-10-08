@@ -1,6 +1,6 @@
 # ergo_std changelog
 
-## 1.0.0-beta.2  -- UNRELEASED
+## 1.0.0-beta.2  -- 2020-10-07
 * Add `fs:read`, `fs:write`, `fs:remove`.
 * Rename `fs:mount` as `fs:unarchive`.
 * Change `path` module to be a real module (rather than a function hack as it

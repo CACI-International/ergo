@@ -1,6 +1,6 @@
 # ergo changelog
 
-## 1.0.0-beta.2  -- UNRELEASED
+## 1.0.0-beta.2  -- 2020-10-07
 * Change script syntax, adding pipe operators and indexing/accessing bindings
   with `:`.
 * Support calling functions without arguments.
