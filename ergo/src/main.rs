@@ -15,6 +15,7 @@ mod constants {
     pub const PROGRAM_NAME: &'static str = env!("CARGO_PKG_NAME");
     pub const LOAD_PATH_BINDING: &'static str = "load-path";
     pub const WORKING_DIRECTORY_BINDING: &'static str = "work-dir";
+    pub const SCRIPT_PATH_BINDING: &'static str = "self-file-path";
     pub const SCRIPT_EXTENSION: &'static str = PROGRAM_NAME;
     pub const SCRIPT_WORKSPACE_NAME: &'static str = concat!("workspace.", env!("CARGO_PKG_NAME"));
     pub const SCRIPT_DIR_NAME: &'static str = concat!("dir.", env!("CARGO_PKG_NAME"));

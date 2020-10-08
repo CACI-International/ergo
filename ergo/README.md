@@ -67,6 +67,7 @@ configuration directory is used.
 Within a script, the following are defined:
 * `work-dir`: this is the directory that contains the currently-executing
   script.
+* `self-file-path`: this is the filename of the currently-executing script.
 * `load-path`: an array of paths (that can be altered within scripts) that are
   used when resolving `ergo` calls to load external scripts. In any given script,
   it will by default contain the `work-dir` directory. In basic-mode, it will

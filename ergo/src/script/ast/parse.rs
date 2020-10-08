@@ -303,7 +303,7 @@ mod expression {
         let tok = tag("fn");
         let end_tok = function_delim();
         let pat = req_space() * pattern::command_pattern() - req_space() - end_tok;
-        let rest = req_space() * expression(true);
+        let rest = space() * expression(true);
         (tok + pat + rest.expect("fn argument")).map(|res| {
             let p = res.into_source();
             p.map(|(pat, e)| {
@@ -317,7 +317,7 @@ mod expression {
     fn match_expr<'a>() -> Parser<'a, Expr> {
         let tok = tag("match");
         let item = pattern::pattern() - space() - sym(Token::Equal) - space() + expression(true);
-        let rest = req_space() * arg() - req_space() + block_syntax(item);
+        let rest = req_space() * arg() - spacenl() + block_syntax(item);
         (tok + rest.expect("match arguments")).map(|res| {
             res.into_source().map(|(_, vs)| {
                 let (val, pats) = vs.unwrap();
@@ -844,6 +844,60 @@ mod test {
                     src(Expression::String("b".into())).into(),
                 ),
             )?;
+            Ok(())
+        }
+
+        #[test]
+        #[ignore = "not yet supported"]
+        fn pipe_keywords() -> Result {
+            assert(
+                &[
+                    String("a".into()),
+                    Whitespace,
+                    PipeLeft,
+                    Whitespace,
+                    String("match".into()),
+                    Whitespace,
+                    String("b".into()),
+                    Whitespace,
+                    OpenCurly,
+                    CloseCurly,
+                ],
+                Expression::Command(
+                    src(Expression::String("a".into())).into(),
+                    vec![nomerge(Expression::Match(
+                        src(Expression::String("b".into())).into(),
+                        vec![],
+                    ))],
+                ),
+            )?;
+
+            assert(
+                &[
+                    String("a".into()),
+                    Whitespace,
+                    PipeLeft,
+                    Whitespace,
+                    String("fn".into()),
+                    Whitespace,
+                    String("b".into()),
+                    Whitespace,
+                    String("->".into()),
+                    Whitespace,
+                    OpenCurly,
+                    CloseCurly,
+                ],
+                Expression::Command(
+                    src(Expression::String("a".into())).into(),
+                    vec![nomerge(Expression::Function(
+                        src(vec![src(ArrayPattern::Item(src(Pattern::Binding(
+                            "b".into(),
+                        ))))]),
+                        src(Expression::Block(vec![])).into(),
+                    ))],
+                ),
+            )?;
+
             Ok(())
         }
 

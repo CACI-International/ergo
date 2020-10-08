@@ -8,8 +8,8 @@
 
 use super::ast::{ArrayPattern, CmdPat, Expression, MapPattern, MergeExpression, Pat, Pattern};
 use crate::constants::{
-    app_dirs, LOAD_PATH_BINDING, SCRIPT_DIR_NAME, SCRIPT_EXTENSION, SCRIPT_PRELUDE_NAME,
-    SCRIPT_WORKSPACE_NAME, WORKING_DIRECTORY_BINDING,
+    app_dirs, LOAD_PATH_BINDING, SCRIPT_DIR_NAME, SCRIPT_EXTENSION, SCRIPT_PATH_BINDING,
+    SCRIPT_PRELUDE_NAME, SCRIPT_WORKSPACE_NAME, WORKING_DIRECTORY_BINDING,
 };
 use abi_stable::{rvec, std_types::RResult};
 use ergo_runtime::source::{FileSource, IntoSource, Source};
@@ -269,27 +269,22 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                 was_workspace = true;
                 source = Source::builtin(());
 
-                // If the current file is a workspace, allow it to load parent workspaces.
-                let loading_workspace = ctx
-                    .loading
-                    .last()
-                    .map(|p| p.clone().into_pathbuf().file_name().unwrap() == SCRIPT_WORKSPACE_NAME)
-                    .unwrap_or(false);
-
-                let mod_path = source_value_as!(
-                    ctx.env_get(WORKING_DIRECTORY_BINDING)
+                // If the current file is a workspace, allow it to load from parent workspaces.
+                let (path_basis, check_for_workspace) = if let Some(v) = ctx.env_get(SCRIPT_PATH_BINDING) {
+                    (v.map_err(|e| e.clone())?.clone(), true)
+                } else {
+                    (ctx.env_get(WORKING_DIRECTORY_BINDING)
                         .expect("working directory unset")
                         .map_err(|e| e.clone())?
-                        .clone(),
-                    PathBuf,
-                    ctx
-                )?
-                .unwrap()
-                .await?;
-                let mod_path = mod_path.as_ref().as_ref();
+                        .clone(), false)
+                };
+                let path_basis = source_value_as!(path_basis, PathBuf, ctx)?.unwrap().await?;
+                let path_basis = path_basis.as_ref().as_ref();
 
-                let mut ancestors = mod_path.ancestors().peekable();
-                if loading_workspace {
+                let within_workspace = check_for_workspace && path_basis.file_name().map(|v| v == SCRIPT_WORKSPACE_NAME).unwrap_or(false);
+
+                let mut ancestors = path_basis.ancestors().peekable();
+                if within_workspace {
                     while let Some(v) = ancestors.peek().and_then(|a| a.file_name()) {
                         if v == SCRIPT_WORKSPACE_NAME {
                             ancestors.next();
@@ -366,13 +361,17 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                                 call_site,
                             );
 
-                            // New scope with working directory set to that of the script, so that
-                            // prelude loading is relative to that directory.
+                            // New scope with working directory/script path set to that of the script, so that
+                            // prelude loading behaves as if it were in the script file itself.
                             let mut env = ScriptEnv::default();
                             env.insert(
                                 WORKING_DIRECTORY_BINDING.into(),
                                 Ok(Source::builtin(PathBuf::from(mod_path.to_owned()).into()))
                                     .into(),
+                            );
+                            env.insert(
+                                SCRIPT_PATH_BINDING.into(),
+                                Ok(Source::builtin(PathBuf::from(p.to_owned()).into())).into()
                             );
                             match fctx.env_scoped(env, load_script).await.0 {
                                 Ok(v) => {
@@ -437,10 +436,14 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                             }
                         }
 
-                        // Add mod path binding last; it should not be overriden.
+                        // Add mod path and script file binding last; they should not be overriden.
                         top_level_env.insert(
                             WORKING_DIRECTORY_BINDING.into(),
                             Ok(Source::builtin(mod_path)).into(),
+                        );
+                        top_level_env.insert(
+                            SCRIPT_PATH_BINDING.into(),
+                            Ok(Source::builtin(PathBuf::from(p.to_owned()).into())).into()
                         );
 
                         let result = if !plugin {
@@ -1270,7 +1273,7 @@ impl Rt<Expression> {
                         lookup(ctx, ind.unwrap())
                     },
                     Some(v) => {
-                        let v = Rt(*v).evaluate(ctx).await?.unwrap();
+                        let (v_source, v) = Rt(*v).evaluate(ctx).await?.take();
 
                         // If a string, first lookup in environment
                         let v = match v.typed::<types::String>() {
@@ -1281,7 +1284,7 @@ impl Rt<Expression> {
                         match_value!(v => {
                             types::Array => |val| {
                                 ind.map_async(|index| async move { match usize::from_str(index.as_ref()) {
-                                    Err(_) => Err(Error::NonIntegerIndex.into()),
+                                    Err(_) => Err(v_source.with(Error::NonIntegerIndex).into()),
                                     Ok(ind) => val.await.map(|v| v.0.get(ind).cloned()
                                         .unwrap_or(().into()))
                                 }
@@ -1293,7 +1296,7 @@ impl Rt<Expression> {
                                             .unwrap_or(().into()))
                                 }).await.transpose_err_with_context("while indexing map")
                             },
-                            => |v| Err(Error::NonIndexableValue(v).into())
+                            => |v| Err(v_source.with(Error::NonIndexableValue(v)).into())
                         })
                     }
                 }
