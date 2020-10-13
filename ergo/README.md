@@ -98,3 +98,8 @@ Within a script, the following are defined:
 * Either deconstruction with `match`.
 * Add value dependency tree print to help debug consistency issues.
 * Support `collection:map` over map values.
+* Delay indexing and matching on arrays/maps.
+  * This will require arrays/maps having metadata about which types they
+    contain.
+  * Maybe also change indexing to not always return a value, and add back in
+    `collection:has` from long ago.
