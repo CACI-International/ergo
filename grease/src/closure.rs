@@ -10,6 +10,49 @@ pub type Args4<A, B, C, D> = tuple::Tuple4<A, B, C, D>;
 
 #[derive(StableAbi)]
 #[repr(C)]
+pub struct ClosureOnce<Args, Ret> {
+    f: extern "C" fn(Erased, Args) -> Ret,
+    data: Erased,
+}
+
+impl<Args, Ret> std::fmt::Debug for ClosureOnce<Args, Ret> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.debug_struct("ClosureOnce")
+            .field("f", &(&self.f as *const _))
+            .field("data", &self.data)
+            .finish()
+    }
+}
+
+impl<Ret> ClosureOnce<(), Ret> {
+    pub fn new<F: FnOnce() -> Ret + Eraseable>(f: F) -> Self {
+        #[allow(improper_ctypes_definitions)]
+        extern "C" fn func<F: FnOnce() -> Ret, Ret>(data: Erased, _: ()) -> Ret {
+            (unsafe { data.to_owned::<F>() })()
+        }
+
+        ClosureOnce {
+            f: func::<F, Ret>,
+            data: Erased::new(f),
+        }
+    }
+
+    pub fn call(self) -> Ret {
+        (self.f)(self.data, ())
+    }
+}
+
+impl<F, Ret> From<F> for ClosureOnce<(), Ret>
+where
+    F: FnOnce() -> Ret + Eraseable,
+{
+    fn from(f: F) -> Self {
+        Self::new(f)
+    }
+}
+
+#[derive(StableAbi)]
+#[repr(C)]
 pub struct Closure<Args, Ret> {
     f: extern "C" fn(&Erased, Args) -> Ret,
     data: Erased,

@@ -6,10 +6,11 @@ edition = "2018"
 
 [dependencies]
 abi_stable = "0.8"
+bytes = "0.5"
 futures = { version = "0.3", features = ["thread-pool"] }
 grease_macro = { path = "../grease_macro" }
 lazy_static = "^1"
 log = "^0.4"
 num_cpus = "^1"
-tokio = { version = "0.2", features = ["rt-threaded","parking_lot"] }
+tokio = { version = "0.2", features = ["blocking","parking_lot","rt-threaded"] }
 uuid = { version = "0.8", features = ["serde", "v5"] }

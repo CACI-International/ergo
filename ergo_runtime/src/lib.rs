@@ -99,6 +99,18 @@ impl std::ops::DerefMut for Runtime {
     }
 }
 
+impl AsRef<Context> for Runtime {
+    fn as_ref(&self) -> &Context {
+        &self.context
+    }
+}
+
+impl AsMut<Context> for Runtime {
+    fn as_mut(&mut self) -> &mut Context {
+        &mut self.context
+    }
+}
+
 /// Script function call context.
 #[derive(StableAbi)]
 #[repr(C)]

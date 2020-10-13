@@ -1,5 +1,11 @@
 # ergo_std changelog
 
+## 1.0.0-beta.3  -- UNRELEASED
+* Improve byte streams to support async io, allowing `io:stdin`, `io:stdout`,
+  and `io:stderr` to be implemented.
+* Change `exec` to produce asynchronous byte streams, allowing interactive
+  processes to be run with concurrent IO.
+
 ## 1.0.0-beta.2  -- 2020-10-07
 * Add `fs:read`, `fs:write`, `fs:remove`.
 * Rename `fs:mount` as `fs:unarchive`.

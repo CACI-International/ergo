@@ -111,8 +111,14 @@ pub trait LogTarget: Send {
 
     /// Indicates that a unique timer for the given id has completed with the given total duration.
     /// If the timer is cancelled, the duration will be None.
-    #[sabi(last_prefix_field)]
     fn timer_complete(&mut self, _id: RSlice<RString>, _duration: ROption<RDuration>) {}
+
+    /// Pause log output.
+    fn pause_logging(&mut self) {}
+
+    /// Resume log output.
+    #[sabi(last_prefix_field)]
+    fn resume_logging(&mut self) {}
 }
 
 pub type Logger = RMutex<LogTarget_TO<'static, RBox<()>>>;
@@ -183,6 +189,10 @@ pub struct Work {
     errored: bool,
 }
 
+pub struct PausedLog {
+    logger: LoggerRef,
+}
+
 /// Tracks a unit of work that is currently occurring.
 ///
 /// When dropped, the duration of work is recorded.
@@ -239,6 +249,14 @@ impl Log {
             l.timer_pending(RSlice::from_slice(w.id.as_ref()));
         }
         w
+    }
+
+    /// Pause logging.
+    pub fn pause(&self) -> PausedLog {
+        self.logger.lock().pause_logging();
+        PausedLog {
+            logger: self.logger.clone(),
+        }
     }
 
     log_level!(debug, Debug);
@@ -304,5 +322,11 @@ impl std::ops::Drop for Work {
 impl std::ops::Drop for RecordingWork<'_> {
     fn drop(&mut self) {
         self.work.duration += self.at.elapsed();
+    }
+}
+
+impl std::ops::Drop for PausedLog {
+    fn drop(&mut self) {
+        self.logger.lock().resume_logging()
     }
 }

@@ -115,6 +115,14 @@ fn run(opts: Opts) -> Result<String, grease::value::Error> {
         fn timer_complete(&mut self, id: RSlice<RString>, duration: ROption<RDuration>) {
             self.with(move |l| l.timer_complete(id, duration))
         }
+
+        fn pause_logging(&mut self) {
+            self.with(move |l| l.pause_logging())
+        }
+
+        fn resume_logging(&mut self) {
+            self.with(move |l| l.resume_logging())
+        }
     }
 
     let working_dir = std::env::current_dir().expect("could not get current directory");

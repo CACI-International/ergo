@@ -15,6 +15,7 @@ pub struct Output {
     threads: Option<ThreadStatus>,
     progress: Progress,
     errors: Errors,
+    paused: Option<Vec<u8>>,
 }
 
 struct ThreadStatus {
@@ -40,11 +41,16 @@ impl Output {
             threads: None,
             progress: Default::default(),
             errors: Errors::new(keep_going),
+            paused: None,
         }
     }
 
     fn update(&mut self) {
         let mut renderer = self.out.renderer();
+        if self.paused.is_some() {
+            return;
+        }
+
         if let Some(ref t) = self.threads {
             renderer += t;
         }
@@ -71,7 +77,12 @@ impl super::Output for Output {
 impl LogTarget for Output {
     fn log(&mut self, entry: LogEntry) {
         if entry.level >= self.log_level {
-            writeln!(self.out, "{}", entry).expect("failed to write to output");
+            if let Some(v) = &mut self.paused {
+                writeln!(v, "{}", entry)
+            } else {
+                writeln!(self.out, "{}", entry)
+            }
+            .expect("failed to write to output");
         }
 
         if let Some(ref mut t) = self.threads {
@@ -101,6 +112,21 @@ impl LogTarget for Output {
         self.progress
             .complete(id, duration.map(|v| v.into()).into());
 
+        self.update();
+    }
+
+    fn pause_logging(&mut self) {
+        self.paused = Some(Default::default());
+        self.update();
+    }
+
+    fn resume_logging(&mut self) {
+        if let Some(bytes) = self.paused.take() {
+            self.out
+                .write_all(&bytes)
+                .expect("failed to write to output");
+            self.out.flush().expect("failed to flush output");
+        }
         self.update();
     }
 }

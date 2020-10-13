@@ -82,7 +82,6 @@ Within a script, the following are defined:
 * Self-documentation. Accessed and printed directly while evaluating scripts
   and/or accessed with a `--doc` command-line argument. Add a way to attach
   documentation (or other metadata?) to arbitrary types in scripts.
-* Allow mutually exclusive use of stdin/stdout/stderr for interactive programs.
 * Display more detailed error information at exit?
 * Add a message/signal handler to exit gracefully.
   * This has been added but child programs still capture the signal, need to
@@ -98,3 +97,4 @@ Within a script, the following are defined:
 * Add work recording to script.
 * Either deconstruction with `match`.
 * Add value dependency tree print to help debug consistency issues.
+* Support `collection:map` over map values.

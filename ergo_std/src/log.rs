@@ -20,15 +20,7 @@ fn logger(log: Log) -> Value {
                     .await
                     .transpose_ok()?;
 
-                let arg = ctx
-                    .traits
-                    .get::<traits::IntoTyped<types::String>>(&arg)
-                    .ok_or(
-                        arg.source()
-                            .with("cannot convert value into string")
-                            .into_grease_error(),
-                    )?
-                    .into_typed(arg.unwrap());
+                let arg = traits::into_sourced::<types::String>(ctx, arg)?.unwrap();
 
                 Ok(ctx.call_site.clone().with(match op.as_ref().as_str() {
                     "sublog" => {

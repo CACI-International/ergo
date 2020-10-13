@@ -1,5 +1,8 @@
 # ergo changelog
 
+## 1.0.0-beta.3  -- UNRELEASED
+* Support interactive subprocesses by suspending logging while they run.
+
 ## 1.0.0-beta.2  -- 2020-10-07
 * Change script syntax, adding pipe operators and indexing/accessing bindings
   with `:`.

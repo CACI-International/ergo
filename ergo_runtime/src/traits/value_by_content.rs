@@ -6,10 +6,10 @@ use abi_stable::{
     StableAbi,
 };
 use grease::{
-    bst::BstMap,
     depends,
+    future::BoxFuture,
     path::PathBuf,
-    runtime::Traits,
+    runtime::{Context, Traits},
     traits::GreaseTrait,
     type_erase::Erased,
     types::GreaseType,
@@ -20,40 +20,57 @@ use grease::{
 #[derive(Clone, GreaseTrait, StableAbi)]
 #[repr(C)]
 pub struct ValueByContent {
-    value_by_content: extern "C" fn(&Traits, Value, &RArc<Erased>) -> RResult<Value, Error>,
+    value_by_content: for<'a> extern "C" fn(
+        &'a Context,
+        Value,
+        &'a RArc<Erased>,
+    ) -> BoxFuture<'a, RResult<Value, Error>>,
 }
 
 impl ValueByContent {
     /// Get the value identified by content.
-    pub unsafe fn value_by_content_unsafe(
+    pub async unsafe fn value_by_content_unsafe(
         &self,
-        traits: &Traits,
+        ctx: &Context,
         v: Value,
         data: &RArc<Erased>,
     ) -> Result<Value, Error> {
-        (self.value_by_content)(traits, v, data).into()
+        (self.value_by_content)(ctx, v, data).await.into()
     }
 
     /// Get the given value by content.
     /// The value _must_ have already been forced (and likewise for nested values).
-    pub fn value_by_content(&self, traits: &Traits, v: Value) -> Result<Value, Error> {
-        unsafe { self.value_by_content_unsafe(traits, v.clone(), &v.forced_value()) }
+    pub async fn value_by_content(&self, ctx: &Context, v: Value) -> Result<Value, Error> {
+        unsafe { self.value_by_content_unsafe(ctx, v.clone(), &v.forced_value()) }.await
     }
 
     /// Implement ValueByContent for the given type.
     pub fn add_impl<T: GreaseType + std::hash::Hash + Sync>(traits: &mut Traits) {
-        extern "C" fn value_by_content<T: std::hash::Hash + Sync>(
-            _: &Traits,
+        extern "C" fn value_by_content<'a, T: std::hash::Hash + Sync>(
+            _: &'a Context,
             v: Value,
-            data: &RArc<Erased>,
-        ) -> RResult<Value, Error> {
-            let deps = depends![unsafe { data.as_ref().as_ref::<T>() }];
-            RResult::ROk(v.set_dependencies(deps))
+            data: &'a RArc<Erased>,
+        ) -> BoxFuture<'a, RResult<Value, Error>> {
+            BoxFuture::new(async move {
+                let deps = depends![unsafe { data.as_ref().as_ref::<T>() }];
+                RResult::ROk(v.set_dependencies(deps))
+            })
         }
 
         traits.add_impl_for_type::<T, ValueByContent>(ValueByContent {
             value_by_content: value_by_content::<T>,
         });
+    }
+
+    /// Create a new ValueByContent implementation with the given function.
+    pub fn new(
+        value_by_content: for<'a> extern "C" fn(
+            &'a Context,
+            Value,
+            &'a RArc<Erased>,
+        ) -> BoxFuture<'a, RResult<Value, Error>>,
+    ) -> Self {
+        ValueByContent { value_by_content }
     }
 }
 
@@ -65,24 +82,35 @@ pub fn traits(traits: &mut Traits) {
 
     // types::Array
     {
-        extern "C" fn value_by_content(
-            traits: &Traits,
+        extern "C" fn value_by_content<'a>(
+            ctx: &'a Context,
             _: Value,
-            data: &RArc<Erased>,
-        ) -> RResult<Value, Error> {
-            let types::Array(vals) = unsafe { data.as_ref().as_ref::<types::Array>() };
-            let vals: Result<RVec<_>, Error> = vals
-                .iter()
-                .map(|v| match traits.get::<ValueByContent>(v) {
-                    Some(t) => Ok(t.value_by_content(traits, v.clone())?),
-                    None => Err(format!(
-                        "ValueByContent not implemented for {}",
-                        super::type_name(traits, v.grease_type().as_ref())
-                    )
-                    .into()),
-                })
-                .collect_result();
-            vals.map(|vals| types::Array(vals).into()).into()
+            data: &'a RArc<Erased>,
+        ) -> BoxFuture<'a, RResult<Value, Error>> {
+            BoxFuture::new(async move {
+                let types::Array(vals) = unsafe { data.as_ref().as_ref::<types::Array>() };
+                let vals: Result<RVec<_>, Error> = vals
+                    .iter()
+                    .map(|v| match ctx.traits.get::<ValueByContent>(v) {
+                        Some(t) => Ok(async move { t.value_by_content(ctx, v.clone()).await }),
+                        None => Err(format!(
+                            "ValueByContent not implemented for {}",
+                            super::type_name(&ctx.traits, v.grease_type().as_ref())
+                        )
+                        .into()),
+                    })
+                    .collect_result();
+                let vals = match vals {
+                    Ok(v) => v,
+                    Err(e) => return RResult::RErr(e),
+                };
+                futures::future::join_all(vals)
+                    .await
+                    .into_iter()
+                    .collect_result()
+                    .map(|v| types::Array(v).into())
+                    .into()
+            })
         }
 
         traits
@@ -91,24 +119,37 @@ pub fn traits(traits: &mut Traits) {
 
     // types::Map
     {
-        extern "C" fn value_by_content(
-            traits: &Traits,
+        extern "C" fn value_by_content<'a>(
+            ctx: &'a Context,
             _: Value,
-            data: &RArc<Erased>,
-        ) -> RResult<Value, Error> {
-            let types::Map(vals) = unsafe { data.as_ref().as_ref::<types::Map>() };
-            let vals: Result<BstMap<_, _>, Error> = vals
-                .iter()
-                .map(|(k, v)| match traits.get::<ValueByContent>(v) {
-                    Some(t) => Ok((k.clone(), t.value_by_content(traits, v.clone())?)),
-                    None => Err(format!(
-                        "ValueByContent not implemented for {}",
-                        super::type_name(traits, &v.grease_type())
-                    )
-                    .into()),
-                })
-                .collect_result();
-            vals.map(|vals| types::Map(vals).into()).into()
+            data: &'a RArc<Erased>,
+        ) -> BoxFuture<'a, RResult<Value, Error>> {
+            BoxFuture::new(async move {
+                let types::Map(vals) = unsafe { data.as_ref().as_ref::<types::Map>() };
+                let vals: Result<Vec<_>, Error> =
+                    vals.iter()
+                        .map(|(k, v)| match ctx.traits.get::<ValueByContent>(v) {
+                            Some(t) => Ok(async move {
+                                Ok((k.clone(), t.value_by_content(ctx, v.clone()).await?))
+                            }),
+                            None => Err(format!(
+                                "ValueByContent not implemented for {}",
+                                super::type_name(&ctx.traits, &v.grease_type())
+                            )
+                            .into()),
+                        })
+                        .collect_result();
+                let vals = match vals {
+                    Ok(v) => v,
+                    Err(e) => return RResult::RErr(e),
+                };
+                futures::future::join_all(vals)
+                    .await
+                    .into_iter()
+                    .collect_result()
+                    .map(|vals| types::Map(vals).into())
+                    .into()
+            })
         }
 
         traits.add_impl_for_type::<types::Map, ValueByContent>(ValueByContent { value_by_content });
@@ -116,22 +157,24 @@ pub fn traits(traits: &mut Traits) {
 
     // types::Either
     {
-        extern "C" fn value_by_content(
-            traits: &Traits,
+        extern "C" fn value_by_content<'a>(
+            ctx: &'a Context,
             _: Value,
-            data: &RArc<Erased>,
-        ) -> RResult<Value, Error> {
-            let e = unsafe { data.as_ref().as_ref::<types::Either>() };
-            let v = e.value();
-            match traits.get::<ValueByContent>(&v) {
-                Some(t) => t.value_by_content(traits, v),
-                None => Err(format!(
-                    "ValueByContent not implemented for {}",
-                    super::type_name(traits, &v.grease_type())
-                )
-                .into()),
-            }
-            .into()
+            data: &'a RArc<Erased>,
+        ) -> BoxFuture<'a, RResult<Value, Error>> {
+            BoxFuture::new(async move {
+                let e = unsafe { data.as_ref().as_ref::<types::Either>() };
+                let v = e.value();
+                match ctx.traits.get::<ValueByContent>(&v) {
+                    Some(t) => t.value_by_content(ctx, v).await,
+                    None => Err(format!(
+                        "ValueByContent not implemented for {}",
+                        super::type_name(&ctx.traits, &v.grease_type())
+                    )
+                    .into()),
+                }
+                .into()
+            })
         }
 
         traits.add_generator_by_trait_for_trait(|_traits, tp| {

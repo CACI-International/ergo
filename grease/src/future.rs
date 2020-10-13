@@ -1,6 +1,14 @@
 //! The ABI-stable futures within values.
 
-use abi_stable::{sabi_trait, sabi_trait::prelude::*, std_types::RBox, StableAbi};
+// Silences warnings on the unsafe methods in sabi_trait traits.
+#![allow(unused_unsafe)]
+
+use abi_stable::{
+    sabi_trait,
+    sabi_trait::prelude::*,
+    std_types::{RBox, RResult, RSliceMut},
+    StableAbi,
+};
 use futures::{future, future::FutureExt};
 use std::pin::Pin;
 use std::task;
@@ -200,7 +208,7 @@ pub struct BoxFuture<'a, T> {
     inner: Future_TO<'a, RBox<()>, T>,
 }
 
-impl<'a, T: StableAbi/* TODO + std::marker::Unpin*/> BoxFuture<'a, T> {
+impl<'a, T: StableAbi /* TODO + std::marker::Unpin*/> BoxFuture<'a, T> {
     /// Create a new boxed future.
     pub fn new<Fut: future::Future<Output = T> + Send + 'a>(f: Fut) -> Self {
         BoxFuture {
@@ -295,5 +303,110 @@ impl<T> future::Future for BoxSharedFuture<T> {
 impl<T> future::FusedFuture for BoxSharedFuture<T> {
     fn is_terminated(&self) -> bool {
         self.inner.is_terminated()
+    }
+}
+
+#[sabi_trait]
+trait BufMut {
+    fn remaining_mut(&self) -> usize;
+
+    unsafe fn advance_mut(&mut self, cnt: usize);
+
+    #[sabi(last_prefix_field)]
+    fn bytes_mut(&mut self) -> RSliceMut<u8>;
+}
+
+#[derive(StableAbi)]
+#[repr(C)]
+struct BufMutWrap<'a>(BufMut_TO<'a, &'a mut ()>);
+
+impl<'a> bytes::BufMut for BufMutWrap<'a> {
+    fn remaining_mut(&self) -> usize {
+        BufMut::remaining_mut(&self.0)
+    }
+
+    unsafe fn advance_mut(&mut self, cnt: usize) {
+        BufMut::advance_mut(&mut self.0, cnt)
+    }
+
+    fn bytes_mut(&mut self) -> &mut [std::mem::MaybeUninit<u8>] {
+        let r: &mut [u8] = BufMut::bytes_mut(&mut self.0).into();
+        unsafe { std::mem::transmute(r) }
+    }
+}
+
+impl<B: bytes::BufMut> BufMut for B {
+    fn remaining_mut(&self) -> usize {
+        bytes::BufMut::remaining_mut(self)
+    }
+
+    unsafe fn advance_mut(&mut self, cnt: usize) {
+        bytes::BufMut::advance_mut(self, cnt)
+    }
+
+    fn bytes_mut(&mut self) -> RSliceMut<u8> {
+        let r: RSliceMut<std::mem::MaybeUninit<u8>> = bytes::BufMut::bytes_mut(self).into();
+        unsafe { std::mem::transmute(r) }
+    }
+}
+
+#[sabi_trait]
+trait AsyncRead: Send {
+    #[sabi(last_prefix_field)]
+    fn poll_read(
+        &mut self,
+        cx: Context,
+        task: &crate::runtime::TaskManager,
+        buf: RSliceMut<u8>,
+    ) -> Poll<RResult<usize, crate::value::Error>>;
+}
+
+#[derive(StableAbi)]
+#[repr(C)]
+pub struct BoxAsyncRead<'a> {
+    inner: AsyncRead_TO<'a, RBox<()>>,
+}
+
+impl<'a> BoxAsyncRead<'a> {
+    pub fn new<R: crate::runtime::io::AsyncRead + Send + 'a>(r: R) -> Self {
+        BoxAsyncRead {
+            inner: AsyncRead_TO::from_value(r, TU_Opaque),
+        }
+    }
+}
+
+impl<R: crate::runtime::io::AsyncRead + Send> AsyncRead for R {
+    fn poll_read(
+        &mut self,
+        cx: Context,
+        task: &crate::runtime::TaskManager,
+        mut buf: RSliceMut<u8>,
+    ) -> Poll<RResult<usize, crate::value::Error>> {
+        let waker = unsafe { task::Waker::from_raw(cx.0.into()) };
+        let mut ctx = task::Context::from_waker(&waker);
+        // Safe to use Pin::new_unchecked because these values will _only_ be within a Box (and
+        // are moved into the box), so we guarantee that it will not be moved out.
+        crate::runtime::io::AsyncRead::poll_read(
+            unsafe { Pin::new_unchecked(self) },
+            &mut ctx,
+            task,
+            buf.as_mut_slice(),
+        )
+        .map(|v| v.into())
+        .into()
+    }
+}
+
+impl<'a> crate::runtime::io::AsyncRead for BoxAsyncRead<'a> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut task::Context,
+        task: &crate::runtime::TaskManager,
+        buf: &mut [u8],
+    ) -> task::Poll<Result<usize, crate::value::Error>> {
+        unsafe { self.map_unchecked_mut(|s| &mut s.inner) }
+            .poll_read(Context(cx.into()), task, buf.into())
+            .into_poll()
+            .map(|r| r.into_result())
     }
 }

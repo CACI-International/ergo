@@ -13,7 +13,7 @@ pub fn function() -> Value {
 
         match ctx.traits.get::<IntoTyped<bool>>(&cond) {
             Some(t) => {
-                let cond = t.into_typed(cond.unwrap());
+                let cond = t.into_typed(ctx, cond.unwrap());
                 let vals = vec![
                     if_false.map(Source::unwrap).unwrap_or(().into_value()),
                     if_true.unwrap(),

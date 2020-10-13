@@ -2,7 +2,10 @@
 
 use ergo_runtime::{ergo_function, source_value_as, traits, types};
 use glob::glob;
-use grease::{bst::BstMap, item_name, make_value, match_value, path::PathBuf, value::Value};
+use grease::{
+    bst::BstMap, item_name, make_value, match_value, path::PathBuf, runtime::io::Blocking,
+    value::Value,
+};
 use serde::{Deserialize, Serialize};
 use sha::sha1::Sha1;
 use std::path::Path;
@@ -29,15 +32,7 @@ fn glob_fn() -> Value {
         ctx.unused_arguments()?;
 
         let pattern_source = pattern.source();
-        let pattern = pattern
-            .map(|v| {
-                ctx.traits
-                    .get::<traits::IntoTyped<types::String>>(&v)
-                    .ok_or("cannot convert glob pattern value into string")
-                    .map(|t| t.into_typed(v))
-            })
-            .transpose_err()
-            .map_err(|e| e.into_grease_error())?;
+        let pattern = traits::into_sourced::<types::String>(ctx, pattern)?.unwrap();
 
         let path = source_value_as!(
             ctx.env_get("work-dir")
@@ -410,7 +405,7 @@ fn read_fn() -> Value {
         make_value!([path] {
             let path = path.await?;
             let path = path.as_ref().as_ref();
-            Ok(types::ByteStream::new(std::fs::File::open(path)?))
+            Ok(types::ByteStream::new(Blocking::new(std::fs::File::open(path)?)))
         })
         .into()
     })
@@ -420,27 +415,19 @@ fn read_fn() -> Value {
 fn write_fn() -> Value {
     ergo_function!(std::fs::read, |ctx| {
         let path = ctx.args.next().ok_or("'path' missing")?;
-        let (datasource, data) = ctx.args.next().ok_or("'data' missing")?.take();
+        let data = ctx.args.next().ok_or("'data' missing")?;
 
         ctx.unused_arguments()?;
 
         let path = source_value_as!(path, PathBuf, ctx)?.unwrap();
-        let data = ctx
-            .traits
-            .get::<traits::IntoTyped<types::ByteStream>>(&data)
-            .ok_or(
-                datasource
-                    .with("cannot convert value into byte stream")
-                    .into_grease_error(),
-            )?
-            .into_typed(data);
+        let data = traits::into_sourced::<types::ByteStream>(ctx, data)?.unwrap();
 
         let task = ctx.task.clone();
 
         make_value!([path,data] {
             let (path, data) = task.join(path,data).await?;
-            let mut f = std::fs::File::create(path.as_ref().as_ref())?;
-            std::io::copy(&mut data.read(), &mut f)?;
+            let mut f = Blocking::new(std::fs::File::create(path.as_ref().as_ref())?);
+            grease::runtime::io::copy(&task, &mut data.read(), &mut f).await?;
             Ok(())
         })
         .into()

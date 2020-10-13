@@ -412,7 +412,7 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                                         None
                                     } else {
                                         ctx.loading.pop();
-                                        return Err(e);
+                                        return Err(source.with("while running 'ergo prelude' to load script").context_for_error(e));
                                     }
                                 }
                             }

@@ -128,9 +128,10 @@ macro_rules! namespace_id {
 /// return EvalResult directly, and should evaluate to a Value.
 #[macro_export]
 macro_rules! ergo_function {
-    ( independent $( $l:ident )::+ , |$ctx:ident| $body:expr ) => {
+    ( independent $( $l:ident )::+ , $( $m:ident ),* |$ctx:ident| $body:expr ) => {
         $crate::types::Function::new(
             move |$ctx| {
+                $( let $m = $m.clone(); )*
                 $crate::future::FutureExt::boxed(
                     async move { Ok($ctx.call_site.clone().with($body)) }
                 )
@@ -139,8 +140,8 @@ macro_rules! ergo_function {
         )
     };
 
-    ( $( $l:ident )::+ , |$ctx:ident| $body:expr ) => {
-        $crate::ergo_function!(independent $( $l )::+, |$ctx| {
+    ( $( $l:ident )::+ , $( $m:ident ),* |$ctx:ident| $body:expr ) => {
+        $crate::ergo_function!(independent $( $l )::+, $( $m ),* |$ctx| {
             let val: ::grease::value::Value = $body;
             let new_deps = ::grease::depends![$crate::namespace_id!($( $l )::+), val.id()];
             val.set_dependencies(new_deps)

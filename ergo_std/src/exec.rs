@@ -1,18 +1,24 @@
 //! Execute (possibly with path-lookup) external programs.
 
-use abi_stable::{StableAbi, std_types::ROption};
+use abi_stable::{std_types::ROption, StableAbi};
+use ergo_runtime::{ergo_function, namespace_id, traits, traits::IntoTyped, types};
 use futures::channel::oneshot::channel;
+use futures::future::FutureExt;
+use futures::sink::SinkExt;
+use futures::stream::StreamExt;
 use grease::{
+    bst::BstMap,
     depends,
     ffi::OsString,
-    bst::BstMap,
-    make_value, match_value,
+    make_value,
     path::PathBuf,
-    runtime::{ItemContent,Traits},
+    runtime::{
+        io::{wrap, Blocking, TokioWrapped},
+        ItemContent, Traits,
+    },
     types::GreaseType,
-    value::{Dependencies, Value},
+    value::{Dependencies, Error, Value},
 };
-use ergo_runtime::{ergo_function, namespace_id, traits, traits::IntoTyped, types};
 use std::process::{Command, Stdio};
 
 /// Strings used for commands and arguments.
@@ -48,14 +54,21 @@ impl std::fmt::Display for ExitStatus {
         write!(f, "exit status: ")?;
         match self.0 {
             ROption::RNone => write!(f, "signal"),
-            ROption::RSome(i) => write!(f, "{}", i)
+            ROption::RSome(i) => write!(f, "{}", i),
         }
     }
 }
 
 impl traits::GreaseStored for ExitStatus {
-    fn put(&self, _ctx: &traits::StoredContext, mut into: ItemContent) -> ergo_runtime::Result<()> {
-        bincode::serialize_into(&mut into, &self.0.clone().into_option()).map_err(|e| e.into())
+    fn put<'a>(
+        &'a self,
+        _ctx: &'a traits::StoredContext,
+        mut into: ItemContent,
+    ) -> futures::future::BoxFuture<'a, ergo_runtime::Result<()>> {
+        async move {
+            bincode::serialize_into(&mut into, &self.0.clone().into_option()).map_err(|e| e.into())
+        }
+        .boxed()
     }
 
     fn get(_ctx: &traits::StoredContext, mut from: ItemContent) -> ergo_runtime::Result<Self> {
@@ -79,36 +92,216 @@ impl From<ExitStatus> for bool {
     }
 }
 
-mod bytestream {
+type PipeBuf = std::io::Cursor<Box<[u8]>>;
+
+struct PipeSend {
+    send: futures::channel::mpsc::UnboundedSender<tokio::io::Result<PipeBuf>>,
+}
+
+type PipeRecv = tokio::io::StreamReader<
+    futures::stream::Fuse<futures::channel::mpsc::UnboundedReceiver<tokio::io::Result<PipeBuf>>>,
+    PipeBuf,
+>;
+
+fn pipe() -> (TokioWrapped<PipeSend>, TokioWrapped<PipeRecv>) {
+    let (send, recv) = futures::channel::mpsc::unbounded::<tokio::io::Result<PipeBuf>>();
+    (
+        wrap(PipeSend { send }),
+        wrap(tokio::io::stream_reader(recv.fuse())),
+    )
+}
+
+impl tokio::io::AsyncWrite for PipeSend {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context,
+        buf: &[u8],
+    ) -> std::task::Poll<tokio::io::Result<usize>> {
+        let len = buf.len();
+        futures::future::Future::poll(
+            std::pin::Pin::new(
+                &mut self
+                    .get_mut()
+                    .send
+                    .send(Ok(std::io::Cursor::new(buf.to_vec().into_boxed_slice()))),
+            ),
+            cx,
+        )
+        .map(move |v| {
+            v.map_err(|_| tokio::io::ErrorKind::BrokenPipe.into())
+                .map(move |()| len)
+        })
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context,
+    ) -> std::task::Poll<tokio::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context,
+    ) -> std::task::Poll<tokio::io::Result<()>> {
+        futures::future::Future::poll(std::pin::Pin::new(&mut self.get_mut().send.close()), cx)
+            .map(|v| v.map_err(|_| tokio::io::ErrorKind::BrokenPipe.into()))
+    }
+}
+
+enum ChannelRead<R> {
+    Waiting(futures::channel::oneshot::Receiver<R>),
+    Read(R),
+}
+
+impl<R: grease::runtime::io::AsyncRead + std::marker::Unpin> ChannelRead<R> {
+    pub fn new(channel: futures::channel::oneshot::Receiver<R>) -> Self {
+        ChannelRead::Waiting(channel)
+    }
+}
+
+impl<R> grease::runtime::io::AsyncRead for ChannelRead<R>
+where
+    R: grease::runtime::io::AsyncRead + std::marker::Unpin,
+{
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context,
+        task: &grease::runtime::TaskManager,
+        buf: &mut [u8],
+    ) -> std::task::Poll<Result<usize, Error>> {
+        let me = &mut *self;
+        use futures::future::Future;
+        use std::task::Poll::*;
+        loop {
+            let new_me = match me {
+                ChannelRead::Waiting(r) => match std::pin::Pin::new(r).poll(cx) {
+                    Pending => return Pending,
+                    Ready(Err(_)) => return Ready(Ok(0)),
+                    Ready(Ok(v)) => ChannelRead::Read(v),
+                },
+                ChannelRead::Read(r) => return std::pin::Pin::new(r).poll_read(cx, task, buf),
+            };
+            *me = new_me;
+        }
+    }
+}
+
+struct ReadWhile<R, Fut> {
+    read: R,
+    read_done: bool,
+    fut: Fut,
+    fut_done: bool,
+}
+
+impl<R, Fut> ReadWhile<R, Fut> {
+    pub fn new(read: R, fut: Fut) -> Self {
+        ReadWhile {
+            read,
+            read_done: false,
+            fut,
+            fut_done: false,
+        }
+    }
+}
+
+impl<T, R, Fut> grease::runtime::io::AsyncRead for ReadWhile<R, Fut>
+where
+    R: grease::runtime::io::AsyncRead + std::marker::Unpin,
+    Fut: futures::future::Future<Output = Result<T, Error>> + std::marker::Unpin,
+{
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context,
+        task: &grease::runtime::TaskManager,
+        buf: &mut [u8],
+    ) -> std::task::Poll<Result<usize, Error>> {
+        use std::task::Poll::*;
+        let result = if !self.read_done {
+            let me = &mut *self;
+            match std::pin::Pin::new(&mut me.read).poll_read(cx, task, buf) {
+                Ready(Err(e)) => return Ready(Err(e)),
+                Ready(Ok(0)) => {
+                    me.read_done = true;
+                    Ready(Ok(0))
+                }
+                otherwise => otherwise,
+            }
+        } else {
+            Pending
+        };
+        if !self.fut_done {
+            let me = &mut *self;
+            match std::pin::Pin::new(&mut me.fut).poll(cx) {
+                Ready(Err(e)) => return Ready(Err(e)),
+                Ready(Ok(_)) => {
+                    me.fut_done = true;
+                }
+                _ => (),
+            }
+        };
+
+        if self.fut_done && self.read_done {
+            Ready(Ok(0))
+        } else if let Ready(Ok(0)) = result {
+            Pending
+        } else {
+            result
+        }
+    }
+}
+
+struct BoundTo<MasterFut, Fut> {
+    master: MasterFut,
+    other: Option<Fut>,
+}
+
+impl<M, Fut> BoundTo<M, Fut> {
+    pub fn new(master: M, other: Fut) -> Self {
+        BoundTo {
+            master,
+            other: Some(other),
+        }
+    }
+}
+
+impl<MasterFut, Fut, MT, FT, E> futures::future::Future for BoundTo<MasterFut, Fut>
+where
+    MasterFut: futures::future::Future<Output = Result<MT, E>> + std::marker::Unpin,
+    Fut: futures::future::Future<Output = Result<FT, E>> + std::marker::Unpin,
+{
+    type Output = MasterFut::Output;
+
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context,
+    ) -> std::task::Poll<Self::Output> {
+        let me = &mut *self;
+        use std::task::Poll::*;
+        if let Some(o) = &mut me.other {
+            match std::pin::Pin::new(o).poll(cx) {
+                Ready(Err(e)) => return Ready(Err(e)),
+                Ready(Ok(_)) => {
+                    me.other = None;
+                }
+                Pending => (),
+            }
+        }
+
+        std::pin::Pin::new(&mut me.master).poll(cx)
+    }
 }
 
 pub fn function() -> Value {
     ergo_function!(independent std::exec, |ctx| {
         let cmd = ctx.args.next().ok_or("no command provided")?;
 
-        let (cmdsource, cmd) = cmd.take();
-
-        let cmd = ctx
-            .traits
-            .get::<IntoTyped<CommandString>>(&cmd)
-            .ok_or(
-                cmdsource
-                    .with("cannot convert value into command string")
-                    .into_grease_error(),
-            )?
-            .into_typed(cmd);
+        let cmd = traits::into_sourced::<CommandString>(ctx, cmd)?.unwrap();
 
         let mut args = Vec::default();
         while let Some(arg) = ctx.args.next() {
             args.push(
-                arg.map(|v| {
-                    ctx.traits
-                        .get::<IntoTyped<CommandString>>(&v)
-                        .ok_or(format!("cannot convert {} into command string", traits::type_name(&ctx.traits, &*v.grease_type())))
-                        .map(|t| t.into_typed(v))
-                })
-                .transpose_err()
-                .map_err(|e| e.into_grease_error())?,
+                traits::into_sourced::<CommandString>(ctx, arg)?.unwrap()
             );
         }
 
@@ -126,14 +319,7 @@ pub fn function() -> Value {
             .args
             .kw("pwd")
             .map(|v| {
-                v.map(|v| {
-                    ctx.traits
-                        .get::<IntoTyped<PathBuf>>(&v)
-                        .ok_or(format!("cannot convert pwd (typed {}) into path", traits::type_name(&ctx.traits, &*v.grease_type())))
-                        .map(|t| t.into_typed(v))
-                })
-                .transpose_err()
-                .map_err(|e| e.into_grease_error())
+                traits::into_sourced::<PathBuf>(ctx, v).map(|v| v.unwrap())
             })
             .transpose()?;
         // TODO consistently set dir?
@@ -142,14 +328,7 @@ pub fn function() -> Value {
             .args
             .kw("stdin")
             .map(|v| {
-                v.map(|v| {
-                    ctx.traits
-                        .get::<IntoTyped<types::ByteStream>>(&v)
-                        .ok_or("cannot convert stdin into byte stream")
-                        .map(|t| t.into_typed(v))
-                })
-                .transpose_err()
-                .map_err(|e| e.into_grease_error())
+                traits::into_sourced::<types::ByteStream>(ctx, v).map(|v| v.unwrap())
             })
             .transpose()?;
 
@@ -168,15 +347,15 @@ pub fn function() -> Value {
         }
         deps += Dependencies::unordered(unordered_deps);
 
-        let task = ctx.task.clone();
-        let traits = ctx.traits.clone();
+        let rt = ctx;
+        let ctx: grease::runtime::Context = rt.as_ref().clone();
         let log = ctx.log.sublog("exec");
 
         // Create channels for outputs
         let (send_stdout, rcv_stdout) = channel();
         let (send_stderr, rcv_stderr) = channel();
         let (send_status, rcv_status) = channel();
-        
+
         let run_command = make_value!([namespace_id!(std::exec::complete), ^deps] {
             let mut vals: Vec<Value> = Vec::new();
             vals.push(cmd.clone().into());
@@ -192,7 +371,7 @@ pub fn function() -> Value {
             if let Some(v) = &stdin {
                 vals.push(v.clone().into());
             }
-            task.join_all(vals).await?;
+            ctx.task.join_all(vals).await?;
 
             let mut command = Command::new(cmd.forced_value().0.as_ref());
             let arg_vals: Vec<_> = args.iter().map(|a| a.forced_value()).collect();
@@ -202,18 +381,9 @@ pub fn function() -> Value {
                 let types::Map(env) = v.forced_value().owned();
                 for (k,v) in env {
                     let k = k.into_string();
-                    match_value!(v => {
-                        () => |_| {
-                            if let Some(v) = std::env::var_os(&k) {
-                                command.env(k, v);
-                            }
-                        },
-                        => |v| {
-                            let t =
-                                traits.get::<IntoTyped<CommandString>>(&v).ok_or(format!("cannot convert env value with key {} into command string", k))?;
-                            command.env(k, t.into_typed(v).await?.0.as_ref());
-                        }
-                    });
+                    let v = traits::into::<CommandString>(&ctx, v)
+                        .map_err(|e| format!("env key {}: {}", k, e))?;
+                    command.env(k, v.await?.0.as_ref());
                 }
             }
             if let Some(v) = dir {
@@ -229,54 +399,93 @@ pub fn function() -> Value {
             log.debug(format!("spawning child process: {:?}", command));
 
             let mut child = command.spawn()?;
-            if let (Some(input),Some(v)) = (&mut child.stdin, &stdin) {
-                std::io::copy(&mut v.forced_value().read(), input)?;
-            }
 
-            //TODO make stdin/stdout/stderr concurrently streamed instead of done all at once
-            let output = child.wait_with_output()?;
+            let stdin = stdin.map(|v| v.forced_value().read());
+            //let mut cstdin = child.stdin.take().map(Blocking::new);
+
+            let input = if let (Some(input),Some(mut v)) = (child.stdin.take(), stdin) {
+                let mut b = Blocking::new(input);
+                let task = ctx.task.clone();
+                async move {
+                    grease::runtime::io::copy(&task, &mut v, &mut b).await
+                }.boxed()
+            } else {
+                futures::future::ok(0).boxed()
+            };
+
+            let (mut out_pipe_send, out_pipe_recv) = pipe();
+            let mut cstdout = Blocking::new(child.stdout.take().unwrap());
+            let output = grease::runtime::io::copy(&ctx.task, &mut cstdout, &mut out_pipe_send);
+            let out_pipe_recv = if !send_stdout.is_canceled() {
+                drop(send_stdout.send(out_pipe_recv));
+                None
+            } else {
+                Some(out_pipe_recv)
+            };
+
+            let (mut err_pipe_send, err_pipe_recv) = pipe();
+            let mut cstderr = Blocking::new(child.stderr.take().unwrap());
+            let error = grease::runtime::io::copy(&ctx.task, &mut cstderr, &mut err_pipe_send);
+            let err_pipe_recv = if !send_stderr.is_canceled() {
+                drop(send_stderr.send(err_pipe_recv));
+                None
+            } else {
+                Some(err_pipe_recv)
+            };
+
+            let exit_status = ctx.task.spawn_blocking(move || {
+                child.wait().map_err(Error::from)
+            }).map(|r| r.and_then(|v| v));
+
+            // Only run stdin while waiting for exit status
+            let exit_status = BoundTo::new(exit_status, input);
+
+            let (exit_status, _, _) = futures::future::try_join3(exit_status, output, error).await?;
 
             macro_rules! fetch_named {
-                ( $channel:ident, $output:expr, $name:expr ) => {
-                    if $channel.is_canceled() {
-                        if let Ok(s) = String::from_utf8($output) {
-                            if s.is_empty() {
-                                "".into()
-                            } else {
-                                format!("\n{}:\n{}", $name, s)
+                ( $output:expr, $name:expr ) => {
+                    if let Some(mut recv_pipe) = $output {
+                        let mut s = String::new();
+                        use grease::runtime::io::AsyncReadExt;
+                        if recv_pipe.read_to_string(&ctx.task, &mut s).await.is_ok() {
+                            if !s.is_empty() {
+                                Some(format!("\n{}:\n{}", $name, s))
                             }
+                            else { None }
                         } else {
-                            "".into()
+                            None
                         }
                     } else {
-                        "".into()
-                    }
+                        None
+                    }.unwrap_or_default()
                 }
             }
-            
+
             if send_status.is_canceled() {
-                if !output.status.success() {
-                    let stdout = fetch_named!(send_stdout, output.stdout, "stdout");
-                    let stderr = fetch_named!(send_stderr, output.stderr, "stderr");
+                if !exit_status.success() {
+                    let stdout = fetch_named!(out_pipe_recv, "stdout");
+                    let stderr = fetch_named!(err_pipe_recv, "stderr");
                     return Err(format!("command returned failure exit status{}{}", stdout, stderr).into());
                 }
             } else {
-                drop(send_status.send(output.status));
+                drop(send_status.send(exit_status));
             }
-            drop(send_stdout.send(output.stdout));
-            drop(send_stderr.send(output.stderr));
             Ok(())
         });
 
         let mut ret_map = BstMap::default();
-        let stdout = make_value!((run_command) [namespace_id!(std::exec::stdout)] { run_command.await?; Ok(types::ByteStream::new(std::io::Cursor::new(rcv_stdout.await?))) });
-        let stderr = make_value!((run_command) [namespace_id!(std::exec::stderr)] { run_command.await?; Ok(types::ByteStream::new(std::io::Cursor::new(rcv_stderr.await?))) });
+        let stdout = make_value!((run_command) [namespace_id!(std::exec::stdout)] {
+            Ok(types::ByteStream::new(ReadWhile::new(ChannelRead::new(rcv_stdout), run_command)))
+        });
+        let stderr = make_value!((run_command) [namespace_id!(std::exec::stderr)] {
+            Ok(types::ByteStream::new(ReadWhile::new(ChannelRead::new(rcv_stderr), run_command)))
+        });
         let exit_status = make_value!((run_command) [namespace_id!(std::exec::exit_status)] { run_command.await?; Ok(ExitStatus::from(rcv_status.await?)) });
-        
-        ret_map.insert("stdout".into(), ctx.imbue_error_context(stdout.into(), "while evaluating stdout of exec command"));
-        ret_map.insert("stderr".into(), ctx.imbue_error_context(stderr.into(), "while evaluating stderr of exec command"));
-        ret_map.insert("exit-status".into(), ctx.imbue_error_context(exit_status.into(), "while evaluating exit_status of exec command"));
-        ret_map.insert("complete".into(), ctx.imbue_error_context(run_command.into(), "while evaluating result of exec command"));
+
+        ret_map.insert("stdout".into(), rt.imbue_error_context(stdout.into(), "while evaluating stdout of exec command"));
+        ret_map.insert("stderr".into(), rt.imbue_error_context(stderr.into(), "while evaluating stderr of exec command"));
+        ret_map.insert("exit-status".into(), rt.imbue_error_context(exit_status.into(), "while evaluating exit_status of exec command"));
+        ret_map.insert("complete".into(), rt.imbue_error_context(run_command.into(), "while evaluating result of exec command"));
 
         types::Map(ret_map).into()
     })

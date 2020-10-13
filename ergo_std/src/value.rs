@@ -27,10 +27,11 @@ fn force_fn() -> Value {
 
         let (source, val) = val.take();
 
+        let grease_ctx = ctx.as_ref();
         match ctx.traits.get::<ValueByContent>(&val) {
             Some(t) => {
                 force_value_nested(&ctx.traits, val.clone()).await?;
-                t.value_by_content(&ctx.traits, val)?
+                t.value_by_content(&grease_ctx, val).await?
             }
             None => return Err(source
                 .with(format!(
@@ -55,10 +56,11 @@ fn cache_fn() -> Value {
         if let Some(_) = ctx.traits.get::<Stored>(&to_cache) {
             let deps = depends![to_cache];
             let traits = ctx.traits.clone();
+            let ctx: grease::runtime::Context = ctx.as_ref().clone();
             Value::new(
                 to_cache.grease_type(),
                 async move {
-                    let err = match read_from_store(&traits, &store, to_cache.id()) {
+                    let err = match read_from_store(&ctx, &store, to_cache.id()) {
                         Ok(val) => {
                             log.debug(format!(
                                 "successfully read cached value for {}",
@@ -76,7 +78,7 @@ fn cache_fn() -> Value {
                     };
                     log.debug(format!("failed to read cache value for {}, (re)caching: {}", to_cache.id(), err));
                     force_value_nested(&traits, to_cache.clone()).await?;
-                    if let Err(e) = write_to_store(&traits, &store, to_cache.clone())
+                    if let Err(e) = write_to_store(&ctx, &store, to_cache.clone()).await
                     {
                         log.warn(format!("failed to cache value for {}: {}", to_cache.id(), e));
                     }

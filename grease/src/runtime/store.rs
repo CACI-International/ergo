@@ -24,7 +24,7 @@ pub struct Item {
 }
 
 #[derive(StableAbi)]
-#[sabi(impl_InterfaceType(Debug, Send, IoRead, IoWrite, IoSeek))]
+#[sabi(impl_InterfaceType(Debug, Send, Sync, IoRead, IoWrite, IoSeek))]
 #[repr(C)]
 struct ItemContentInterface;
 

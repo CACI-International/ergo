@@ -1,5 +1,9 @@
 //! Task manager.
 
+// For generated sabi trait code with Closure<(), ...>.
+#![allow(improper_ctypes_definitions)]
+
+use crate::closure::ClosureOnce;
 use crate::future::{BoxFuture, LocalBoxFuture};
 use crate::type_erase::Erased;
 use crate::value::Error;
@@ -7,7 +11,7 @@ use abi_stable::{
     external_types::{RMutex, RRwLock},
     sabi_trait,
     sabi_trait::prelude::*,
-    std_types::{RArc, RBox, ROption, RVec},
+    std_types::{RArc, RBox, ROption, RResult, RVec},
     StableAbi,
 };
 use futures::future::{abortable, try_join, try_join_all, AbortHandle, Aborted, Future, FutureExt};
@@ -62,6 +66,11 @@ pub type OnError = dyn Fn(bool) + Send + Sync;
 trait ThreadPoolInterface: Clone + Debug + Send + Sync {
     fn spawn_ok(&self, future: BoxFuture<'static, ()>);
 
+    fn spawn_blocking(
+        &self,
+        f: ClosureOnce<(), Erased>,
+    ) -> BoxFuture<'static, RResult<Erased, Error>>;
+
     #[sabi(last_prefix_field)]
     fn block_on<'a>(&self, future: LocalBoxFuture<'a, ()>);
 }
@@ -69,6 +78,18 @@ trait ThreadPoolInterface: Clone + Debug + Send + Sync {
 impl ThreadPoolInterface for std::sync::Arc<tokio_runtime::Runtime> {
     fn spawn_ok(&self, future: BoxFuture<'static, ()>) {
         self.spawn(future);
+    }
+
+    fn spawn_blocking(
+        &self,
+        f: ClosureOnce<(), Erased>,
+    ) -> BoxFuture<'static, RResult<Erased, Error>> {
+        BoxFuture::new(
+            self.as_ref()
+                .handle()
+                .spawn_blocking(move || f.call())
+                .map(|r| r.map_err(|e| e.into()).into()),
+        )
     }
 
     fn block_on<'a>(&self, future: LocalBoxFuture<'a, ()>) {
@@ -220,6 +241,16 @@ impl TaskManager {
             Ok(Err(e)) => Err(e),
             Err(_) => Err(Error::aborted()),
         })
+    }
+
+    pub fn spawn_blocking<F, R>(&self, f: F) -> impl Future<Output = Result<R, Error>> + 'static
+    where
+        F: FnOnce() -> R + Send + Sync + 'static,
+        R: Send + Sync + 'static,
+    {
+        self.pool
+            .spawn_blocking((|| Erased::new(f())).into())
+            .map(|r| r.map(|v| unsafe { v.to_owned::<R>() }).into_result())
     }
 
     /// Join on the results of two futures according to the configured task aggregation strategy.

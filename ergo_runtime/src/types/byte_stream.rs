@@ -2,14 +2,18 @@
 
 use crate::traits;
 use abi_stable::{
-    erased_types::DynTrait,
-    external_types::{RMutex, RRwLock},
-    std_types::{RArc, RBox, ROption, RVec},
+    external_types::RRwLock,
+    sabi_trait,
+    sabi_trait::prelude::*,
+    std_types::{RArc, RBox, ROption, RResult, RVec},
     StableAbi,
 };
+use futures::future::FutureExt;
 use grease::{
-    runtime::{ItemContent, Traits},
+    future::BoxAsyncRead,
+    runtime::{io::AsyncReadExt, Context, ItemContent, Traits},
     types::GreaseType,
+    value::{Error, Value},
 };
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -196,11 +200,6 @@ impl<T> SharedStream<T> {
     }
 }
 
-#[derive(StableAbi)]
-#[sabi(impl_InterfaceType(IoRead, Send))]
-#[repr(C)]
-struct ByteStreamInterface;
-
 const BYTE_STREAM_BLOCK_LIMIT: usize = 2048;
 
 // Easier to use an RVec than try to use a fixed size array.
@@ -209,31 +208,54 @@ const BYTE_STREAM_BLOCK_LIMIT: usize = 2048;
 // can't support arbitrary-sized arrays due to rust generic limitations (const size values).
 type ByteStreamBlock = RVec<u8>;
 
-#[derive(StableAbi)]
-#[repr(C)]
-struct ByteStreamSource {
-    source: RMutex<DynTrait<'static, RBox<()>, ByteStreamInterface>>,
+struct ByteStreamSourceImpl {
+    source: futures::lock::Mutex<Option<BoxAsyncRead<'static>>>,
     stream: SharedStream<ByteStreamBlock>,
 }
 
-impl ByteStreamSource {
-    pub fn need_data(&self) -> std::io::Result<bool> {
-        let mut block = ByteStreamBlock::with_capacity(BYTE_STREAM_BLOCK_LIMIT);
+#[sabi_trait]
+trait ByteStreamSource: Send + Sync {
+    #[sabi(last_prefix_field)]
+    fn need_data<'a>(
+        &'a self,
+        task: &'a grease::runtime::TaskManager,
+    ) -> grease::future::BoxFuture<'a, RResult<bool, Error>>;
+}
+
+impl ByteStreamSourceImpl {
+    pub async fn need_data_impl(&self, task: &grease::runtime::TaskManager) -> Result<bool, Error> {
+        let mut block = Vec::new();
         {
-            use std::io::Read;
-            let mut guard = self.source.lock();
-            std::io::copy(
-                &mut guard.by_ref().take(BYTE_STREAM_BLOCK_LIMIT as u64),
-                &mut block,
-            )?;
+            let mut guard = self.source.lock().await;
+            if let Some(reader) = &mut *guard {
+                block.reserve_exact(BYTE_STREAM_BLOCK_LIMIT);
+                let bytes = grease::runtime::io::copy(
+                    task,
+                    &mut reader.take(BYTE_STREAM_BLOCK_LIMIT as u64).once(),
+                    &mut grease::runtime::io::wrap(&mut block),
+                )
+                .await?;
+                if bytes == 0 {
+                    *guard = None;
+                }
+            }
         }
 
         if block.is_empty() {
             Ok(false)
         } else {
-            self.stream.push(block);
+            self.stream.push(block.into());
             Ok(true)
         }
+    }
+}
+
+impl ByteStreamSource for ByteStreamSourceImpl {
+    fn need_data<'a>(
+        &'a self,
+        task: &'a grease::runtime::TaskManager,
+    ) -> grease::future::BoxFuture<'a, RResult<bool, Error>> {
+        grease::future::BoxFuture::new(async move { self.need_data_impl(task).await.into() })
     }
 }
 
@@ -243,65 +265,53 @@ impl ByteStreamSource {
 #[derive(Clone, GreaseType, StableAbi)]
 #[repr(C)]
 pub struct ByteStream {
-    source: RArc<ByteStreamSource>,
+    source: RArc<ByteStreamSource_TO<'static, RBox<()>>>,
     stream_iter: SharedStreamIter<ByteStreamBlock>,
-}
-
-impl std::hash::Hash for ByteStream {
-    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
-        use std::io::Read;
-        let mut reader = self.read();
-        let mut buf: [u8; BYTE_STREAM_BLOCK_LIMIT] =
-            unsafe { std::mem::MaybeUninit::uninit().assume_init() };
-        loop {
-            match reader.read(&mut buf) {
-                Err(_) | Ok(0) => return,
-                Ok(size) => h.write(&buf[..size]),
-            }
-        }
-    }
 }
 
 impl From<crate::types::String> for ByteStream {
     fn from(s: crate::types::String) -> Self {
-        Self::new(std::io::Cursor::new(s.into_bytes()))
+        Self::new(grease::runtime::io::wrap(std::io::Cursor::new(
+            s.into_bytes(),
+        )))
     }
 }
 
 crate::grease_type_name!(ByteStream);
 
-impl From<ByteStream> for crate::types::String {
-    fn from(bs: ByteStream) -> Self {
-        use std::io::Read;
-        let mut bytes = Vec::new();
-        if let Err(_e) = bs.read().read_to_end(&mut bytes) {
-            // FIXME handle error
-        }
-        match String::from_utf8(bytes) {
-            Ok(s) => s.into(),
-            Err(v) => String::from_utf8_lossy(v.as_bytes()).into_owned().into(),
-        }
-    }
-}
-
 impl traits::GreaseStored for ByteStream {
-    fn put(&self, _ctx: &traits::StoredContext, mut into: ItemContent) -> crate::Result<()> {
-        std::io::copy(&mut self.read(), &mut into)?;
-        Ok(())
+    fn put<'a>(
+        &'a self,
+        ctx: &'a traits::StoredContext,
+        into: ItemContent,
+    ) -> futures::future::BoxFuture<'a, crate::Result<()>> {
+        async move {
+            grease::runtime::io::copy(
+                &ctx.ctx.task,
+                &mut self.read(),
+                &mut grease::runtime::io::Blocking::new(into),
+            )
+            .await?;
+            Ok(())
+        }
+        .boxed()
     }
 
     fn get(_ctx: &traits::StoredContext, from: ItemContent) -> crate::Result<Self> {
-        Ok(ByteStream::new(from))
+        Ok(ByteStream::new(grease::runtime::io::Blocking::new(from)))
     }
 }
 
 impl ByteStream {
-    pub fn new<Src: std::io::Read + Send + 'static>(source: Src) -> Self {
+    pub fn new<Src: grease::runtime::io::AsyncRead + Send + 'static>(source: Src) -> Self {
         let (stream, stream_iter) = SharedStream::new();
-        let source = RArc::new(ByteStreamSource {
-            source: RMutex::new(DynTrait::from_any_value(source, ByteStreamInterface)),
-            stream,
-        });
+        let source = RArc::new(ByteStreamSource_TO::from_value(
+            ByteStreamSourceImpl {
+                source: futures::lock::Mutex::new(Some(BoxAsyncRead::new(source))),
+                stream,
+            },
+            TU_Opaque,
+        ));
         ByteStream {
             source,
             stream_iter,
@@ -325,13 +335,17 @@ impl ByteStream {
 #[derive(Clone, StableAbi)]
 #[repr(C)]
 pub struct ByteStreamReader {
-    source: RArc<ByteStreamSource>,
+    source: RArc<ByteStreamSource_TO<'static, RBox<()>>>,
     stream_iter: SharedStreamIter<ByteStreamBlock>,
     bytes_read: usize,
 }
 
-impl std::io::Read for ByteStreamReader {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+impl ByteStreamReader {
+    async fn read(
+        &mut self,
+        task: &grease::runtime::TaskManager,
+        buf: &mut [u8],
+    ) -> Result<usize, Error> {
         let mut buf_offset = 0;
         let mut oblock = self.stream_iter.current();
 
@@ -350,9 +364,14 @@ impl std::io::Read for ByteStreamReader {
                     oblock = self.stream_iter.next();
                     self.bytes_read = 0;
                 }
+
+                // If we've read some data, return it immediately.
+                if buf_offset > 0 {
+                    break;
+                }
             } else {
                 // Try to read a block from the byte stream source.
-                if !self.source.need_data()? {
+                if !self.source.need_data(task).await.into_result()? {
                     break;
                 } else {
                     oblock = self.stream_iter.current();
@@ -365,11 +384,68 @@ impl std::io::Read for ByteStreamReader {
     }
 }
 
+impl grease::runtime::io::AsyncRead for ByteStreamReader {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context,
+        task: &grease::runtime::TaskManager,
+        buf: &mut [u8],
+    ) -> std::task::Poll<Result<usize, Error>> {
+        let mut fut = self.read(task, buf);
+        std::future::Future::poll(unsafe { std::pin::Pin::new_unchecked(&mut fut) }, cx)
+    }
+}
+
 /// ByteStream traits.
 pub fn traits(traits: &mut Traits) {
-    traits::IntoTyped::<crate::types::String>::add_impl::<ByteStream>(traits);
+    //traits::IntoTyped::<crate::types::String>::add_impl::<ByteStream>(traits);
+    // IntoTyped<String>
+    traits.add_impl_for_type::<ByteStream, traits::IntoTyped<crate::types::String>>(
+        traits::IntoTyped::new(|c, v| {
+            let bs = v.typed::<ByteStream>().unwrap();
+            let task = c.task.clone();
+            grease::make_value!([bs] {
+                let mut bytes = Vec::new();
+                bs.await?.read().read_to_end(&task, &mut bytes).await?;
+
+                Ok(match String::from_utf8(bytes) {
+                    Ok(s) => s.into(),
+                    Err(v) => String::from_utf8_lossy(v.as_bytes()).into_owned().into(),
+                })
+
+            })
+        }),
+    );
     traits::IntoTyped::<ByteStream>::add_impl::<crate::types::String>(traits);
-    traits::ValueByContent::add_impl::<ByteStream>(traits);
+    // ValueByContent
+    {
+        extern "C" fn value_by_content<'a>(
+            ctx: &'a Context,
+            v: Value,
+            data: &'a RArc<grease::type_erase::Erased>,
+        ) -> grease::future::BoxFuture<'a, RResult<Value, Error>> {
+            grease::future::BoxFuture::new(async move {
+                let mut reader = unsafe { data.as_ref().as_ref::<ByteStream>() }.read();
+                let mut buf: [u8; BYTE_STREAM_BLOCK_LIMIT] =
+                    unsafe { std::mem::MaybeUninit::uninit().assume_init() };
+                use grease::hash::HashFn;
+                use std::hash::Hasher;
+                let mut h = HashFn::default();
+                loop {
+                    match reader.read(&ctx.task, &mut buf).await {
+                        Err(e) => return RResult::RErr(e),
+                        Ok(0) => break,
+                        Ok(size) => h.write(&buf[..size]),
+                    }
+                }
+                let deps = grease::depends![h.finish_ext()];
+                RResult::ROk(v.set_dependencies(deps))
+            })
+        }
+        traits.add_impl_for_type::<ByteStream, traits::ValueByContent>(
+            traits::ValueByContent::new(value_by_content),
+        );
+    }
     traits::TypeName::add_impl::<ByteStream>(traits);
     traits::Stored::add_impl::<ByteStream>(traits);
 }

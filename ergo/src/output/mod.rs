@@ -66,4 +66,12 @@ impl LogTarget for OutputInstance {
     fn timer_complete(&mut self, id: RSlice<RString>, duration: ROption<RDuration>) {
         self.inner.timer_complete(id, duration)
     }
+
+    fn pause_logging(&mut self) {
+        self.inner.pause_logging()
+    }
+
+    fn resume_logging(&mut self) {
+        self.inner.resume_logging()
+    }
 }

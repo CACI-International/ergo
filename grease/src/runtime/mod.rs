@@ -3,6 +3,7 @@
 use abi_stable::StableAbi;
 use std::fmt;
 
+pub mod io;
 mod log;
 mod store;
 mod task_manager;

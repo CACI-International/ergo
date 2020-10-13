@@ -169,16 +169,7 @@ fn from_fn() -> Value {
 
         ctx.unused_arguments()?;
 
-        ctx.traits
-            .get::<traits::IntoTyped<types::String>>(&value)
-            .ok_or(
-                value
-                    .source()
-                    .with("cannot convert value into string")
-                    .into_grease_error(),
-            )?
-            .into_typed(value.unwrap())
-            .into()
+        traits::into_sourced::<types::String>(ctx, value)?.unwrap().into()
     })
     .into()
 }
