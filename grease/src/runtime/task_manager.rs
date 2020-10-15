@@ -6,7 +6,7 @@
 use crate::closure::ClosureOnce;
 use crate::future::{BoxFuture, LocalBoxFuture};
 use crate::type_erase::Erased;
-use crate::value::Error;
+use crate::Error;
 use abi_stable::{
     external_types::{RMutex, RRwLock},
     sabi_trait,
@@ -304,7 +304,7 @@ impl TaskManager {
 pub use join::Join;
 
 mod join {
-    use crate::value::Error;
+    use crate::Error;
     use futures::future::{Future, Map, TryFuture, TryJoin};
     use std::fmt::Debug;
 
@@ -397,7 +397,7 @@ mod join {
 pub use join_all::JoinAll;
 
 mod join_all {
-    use crate::value::Error;
+    use crate::Error;
     use futures::future::{Future, Map, TryFuture, TryJoinAll};
     use std::fmt::Debug;
 

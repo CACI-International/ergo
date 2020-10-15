@@ -1,5 +1,6 @@
 //! IO utilities for the runtime.
 
+use crate::Error;
 use futures::future::{BoxFuture, Future, FutureExt};
 use std::cmp;
 use std::pin::Pin;
@@ -12,7 +13,7 @@ pub trait AsyncRead {
         cx: &mut Context,
         task: &super::TaskManager,
         buf: &mut [u8],
-    ) -> Poll<Result<usize, crate::value::Error>>;
+    ) -> Poll<Result<usize, Error>>;
 }
 
 /// Types which can asyncronously write data.
@@ -22,19 +23,19 @@ pub trait AsyncWrite {
         cx: &mut Context,
         task: &super::TaskManager,
         buf: &[u8],
-    ) -> Poll<Result<usize, crate::value::Error>>;
+    ) -> Poll<Result<usize, Error>>;
 
     fn poll_flush(
         self: Pin<&mut Self>,
         cx: &mut Context,
         task: &super::TaskManager,
-    ) -> Poll<Result<(), crate::value::Error>>;
+    ) -> Poll<Result<(), Error>>;
 
     fn poll_shutdown(
         self: Pin<&mut Self>,
         cx: &mut Context,
         task: &super::TaskManager,
-    ) -> Poll<Result<(), crate::value::Error>>;
+    ) -> Poll<Result<(), Error>>;
 }
 
 pub struct Copy<'a, R: ?Sized, W: ?Sized> {
@@ -83,7 +84,7 @@ where
     R: AsyncRead + std::marker::Unpin,
     W: AsyncWrite + std::marker::Unpin,
 {
-    type Output = Result<u64, crate::value::Error>;
+    type Output = Result<u64, Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         loop {
@@ -137,7 +138,7 @@ impl<T: ?Sized + AsyncRead + std::marker::Unpin> AsyncRead for &'_ mut T {
         cx: &mut Context,
         task: &super::TaskManager,
         buf: &mut [u8],
-    ) -> Poll<Result<usize, crate::value::Error>> {
+    ) -> Poll<Result<usize, Error>> {
         Pin::new(&mut **self).poll_read(cx, task, buf)
     }
 }
@@ -156,7 +157,7 @@ impl<T: tokio::io::AsyncRead + std::marker::Unpin> AsyncRead for TokioWrapped<T>
         cx: &mut Context,
         _task: &super::TaskManager,
         buf: &mut [u8],
-    ) -> Poll<Result<usize, crate::value::Error>> {
+    ) -> Poll<Result<usize, Error>> {
         tokio::io::AsyncRead::poll_read(Pin::new(&mut self.0), cx, buf)
             .map(|r| r.map_err(|e| e.into()))
     }
@@ -168,7 +169,7 @@ impl<T: tokio::io::AsyncWrite + std::marker::Unpin> AsyncWrite for TokioWrapped<
         cx: &mut Context,
         _task: &super::TaskManager,
         buf: &[u8],
-    ) -> Poll<Result<usize, crate::value::Error>> {
+    ) -> Poll<Result<usize, Error>> {
         tokio::io::AsyncWrite::poll_write(Pin::new(&mut self.0), cx, buf)
             .map(|r| r.map_err(|e| e.into()))
     }
@@ -177,7 +178,7 @@ impl<T: tokio::io::AsyncWrite + std::marker::Unpin> AsyncWrite for TokioWrapped<
         mut self: Pin<&mut Self>,
         cx: &mut Context,
         _task: &super::TaskManager,
-    ) -> Poll<Result<(), crate::value::Error>> {
+    ) -> Poll<Result<(), Error>> {
         tokio::io::AsyncWrite::poll_flush(Pin::new(&mut self.0), cx)
             .map(|r| r.map_err(|e| e.into()))
     }
@@ -186,7 +187,7 @@ impl<T: tokio::io::AsyncWrite + std::marker::Unpin> AsyncWrite for TokioWrapped<
         mut self: Pin<&mut Self>,
         cx: &mut Context,
         _task: &super::TaskManager,
-    ) -> Poll<Result<(), crate::value::Error>> {
+    ) -> Poll<Result<(), Error>> {
         tokio::io::AsyncWrite::poll_shutdown(Pin::new(&mut self.0), cx)
             .map(|r| r.map_err(|e| e.into()))
     }
@@ -235,7 +236,7 @@ impl<T: AsyncRead> AsyncReadExt for T {}
 pub struct ReadToEnd<'a, T: ?Sized>(&'a mut T, &'a super::TaskManager, &'a mut Vec<u8>);
 
 impl<'a, T: ?Sized + AsyncRead + std::marker::Unpin> Future for ReadToEnd<'a, T> {
-    type Output = Result<usize, crate::value::Error>;
+    type Output = Result<usize, Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let mut buf: [u8; 2048] = [0; 2048];
@@ -253,7 +254,7 @@ impl<'a, T: ?Sized + AsyncRead + std::marker::Unpin> Future for ReadToEnd<'a, T>
 pub struct ReadToString<'a, T: ?Sized>(&'a mut T, &'a super::TaskManager, &'a mut String);
 
 impl<'a, T: ?Sized + AsyncRead + std::marker::Unpin> Future for ReadToString<'a, T> {
-    type Output = Result<usize, crate::value::Error>;
+    type Output = Result<usize, Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let mut buf: [u8; 2048] = [0; 2048];
@@ -277,7 +278,7 @@ impl<T: AsyncRead> AsyncRead for Take<T> {
         cx: &mut Context,
         task: &super::TaskManager,
         buf: &mut [u8],
-    ) -> Poll<Result<usize, crate::value::Error>> {
+    ) -> Poll<Result<usize, Error>> {
         let size = std::cmp::min(buf.len() as u64, self.1);
         // Safe to get reference from Pin because we own the data and won't be moving it.
         let me = unsafe { self.get_unchecked_mut() };
@@ -299,7 +300,7 @@ impl<T: AsyncRead> AsyncRead for Once<T> {
         cx: &mut Context,
         task: &super::TaskManager,
         buf: &mut [u8],
-    ) -> Poll<Result<usize, crate::value::Error>> {
+    ) -> Poll<Result<usize, Error>> {
         // Safe to get reference from Pin because we own the data and won't be moving it.
         let me = unsafe { self.get_unchecked_mut() };
         Poll::Ready(Ok(match &mut me.0 {
@@ -333,7 +334,7 @@ const MAX_BUF: usize = 16 * 1024;
 
 enum State<T> {
     Idle(Option<Buf>),
-    Busy(BoxFuture<'static, Result<(std::io::Result<usize>, Buf, T), crate::value::Error>>),
+    Busy(BoxFuture<'static, Result<(std::io::Result<usize>, Buf, T), Error>>),
 }
 
 impl<T> std::fmt::Debug for State<T> {
@@ -457,7 +458,7 @@ where
         cx: &mut Context<'_>,
         task: &super::TaskManager,
         dst: &mut [u8],
-    ) -> Poll<Result<usize, crate::value::Error>> {
+    ) -> Poll<Result<usize, Error>> {
         loop {
             match self.state {
                 State::Idle(ref mut buf_cell) => {
@@ -515,7 +516,7 @@ where
         cx: &mut Context<'_>,
         task: &super::TaskManager,
         src: &[u8],
-    ) -> Poll<Result<usize, crate::value::Error>> {
+    ) -> Poll<Result<usize, Error>> {
         loop {
             match self.state {
                 State::Idle(ref mut buf_cell) => {
@@ -558,7 +559,7 @@ where
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         task: &super::TaskManager,
-    ) -> Poll<Result<(), crate::value::Error>> {
+    ) -> Poll<Result<(), Error>> {
         loop {
             let need_flush = self.need_flush;
             match self.state {
@@ -600,7 +601,7 @@ where
         self: Pin<&mut Self>,
         _cx: &mut Context<'_>,
         _task: &super::TaskManager,
-    ) -> Poll<Result<(), crate::value::Error>> {
+    ) -> Poll<Result<(), Error>> {
         Poll::Ready(Ok(()))
     }
 }

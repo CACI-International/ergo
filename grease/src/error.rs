@@ -1,11 +1,11 @@
-//! Value errors.
+//! Grease errors.
 //!
 //! The `Error` type can be created from any type supporting `std::error::Error`, which is
 //! convenient with `std::ops::Try`.
 //!
 //! `Error` also supports aggregate errors, and thus supports `FromIterator<Error>`.
 //!
-//! These errors support a thread-local error signal within the grease runtime. When a new error is
+//! These errors integrate with a thread-local error signal within the grease runtime. When a new error is
 //! created, it will call this signal function (if set in the runtime).
 
 use crate::runtime::call_on_error;
@@ -18,7 +18,7 @@ use abi_stable::{
 /// An external error.
 pub type ExternalError = dyn std::error::Error + Send + Sync;
 
-/// Value error type.
+/// Grease error type.
 ///
 /// The type does not implement `Error` itself (so that `From<T: Error>` can be implemented), but
 /// you can get such an error with the `Error::error()` function.
@@ -92,7 +92,7 @@ impl Drop for SingleError {
     }
 }
 
-/// Value errors may be aborted, new errors, or nested sets of errors.
+/// Grease errors may be aborted, new errors, or nested sets of errors.
 #[derive(Clone, Debug, StableAbi)]
 #[repr(u8)]
 enum InnerError {

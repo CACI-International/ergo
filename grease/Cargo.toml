@@ -1,6 +1,6 @@
 [package]
 name = "grease"
-version = "0.3.0"
+version = "0.4.0"
 authors = ["Alex Franchuk <afranchuk@caci.com>"]
 edition = "2018"
 

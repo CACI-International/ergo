@@ -3,6 +3,7 @@
 // Silences warnings on the unsafe methods in sabi_trait traits.
 #![allow(unused_unsafe)]
 
+use crate::Error;
 use abi_stable::{
     sabi_trait,
     sabi_trait::prelude::*,
@@ -358,7 +359,7 @@ trait AsyncRead: Send {
         cx: Context,
         task: &crate::runtime::TaskManager,
         buf: RSliceMut<u8>,
-    ) -> Poll<RResult<usize, crate::value::Error>>;
+    ) -> Poll<RResult<usize, Error>>;
 }
 
 #[derive(StableAbi)]
@@ -381,7 +382,7 @@ impl<R: crate::runtime::io::AsyncRead + Send> AsyncRead for R {
         cx: Context,
         task: &crate::runtime::TaskManager,
         mut buf: RSliceMut<u8>,
-    ) -> Poll<RResult<usize, crate::value::Error>> {
+    ) -> Poll<RResult<usize, Error>> {
         let waker = unsafe { task::Waker::from_raw(cx.0.into()) };
         let mut ctx = task::Context::from_waker(&waker);
         // Safe to use Pin::new_unchecked because these values will _only_ be within a Box (and
@@ -403,7 +404,7 @@ impl<'a> crate::runtime::io::AsyncRead for BoxAsyncRead<'a> {
         cx: &mut task::Context,
         task: &crate::runtime::TaskManager,
         buf: &mut [u8],
-    ) -> task::Poll<Result<usize, crate::value::Error>> {
+    ) -> task::Poll<Result<usize, Error>> {
         unsafe { self.map_unchecked_mut(|s| &mut s.inner) }
             .poll_read(Context(cx.into()), task, buf.into())
             .into_poll()

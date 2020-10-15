@@ -21,11 +21,10 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 pub mod dependency;
-pub mod error;
 
 use crate::depends;
 pub use dependency::*;
-pub use error::*;
+use crate::error::*;
 
 /// The Result yielded by a Value's future.
 pub type Result = std::result::Result<RArc<Erased>, Error>;

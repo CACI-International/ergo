@@ -9,6 +9,7 @@
 
 pub mod bst;
 pub mod closure;
+pub mod error;
 pub mod ffi;
 pub mod future;
 pub mod hash;
@@ -23,6 +24,7 @@ pub mod value;
 
 pub use self::type_erase::{Eraseable, Erased, ErasedTrivial, Trivial};
 pub use self::uuid::Uuid;
+pub use error::Error;
 pub use futures::future::{FutureExt, TryFutureExt};
 
 //pub use self::{runtime::*, uuid::*, value::*, traits::*};
