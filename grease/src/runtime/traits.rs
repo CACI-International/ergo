@@ -9,6 +9,7 @@ use abi_stable::{
     std_types::{RArc, RHashMap, ROption, RVec},
     StableAbi,
 };
+use futures::future::FutureExt;
 
 /// A trait generator which has a fixed type.
 pub type TraitGeneratorByType = extern "C" fn(&Traits, &trt::Trait) -> ROption<Erased>;
@@ -83,12 +84,12 @@ extern "C" fn apply_trait_generator_by_trait(
     (unsafe { std::mem::transmute::<*const (), TraitGeneratorByTrait>(f) })(traits, tp)
 }
 
-extern "C" fn trait_generator_to_erased<Impl: trt::GreaseTrait>(
+extern "C" fn trait_generator_to_erased<Trt: trt::GreaseTrait>(
     f: *const (),
     traits: *const Traits,
     tp: *const Type,
 ) -> ROption<Erased> {
-    (unsafe { std::mem::transmute::<*const (), fn(&Traits, &Type) -> ROption<Impl>>(f) })(
+    (unsafe { std::mem::transmute::<*const (), fn(&Traits, &Type) -> ROption<Trt::Impl>>(f) })(
         unsafe { traits.as_ref() }.unwrap(),
         unsafe { tp.as_ref() }.unwrap(),
     )
@@ -144,6 +145,44 @@ impl Default for Traits {
     }
 }
 
+enum TraitInner<T> {
+    Ref(trt::Ref<T>),
+    Fut(futures::future::BoxFuture<'static, crate::Result<trt::Ref<T>>>),
+}
+
+pub struct Trait<T> {
+    inner: TraitInner<T>,
+}
+
+impl<T> Trait<T> {
+    fn new_ref(r: trt::Ref<T>) -> Self {
+        Trait {
+            inner: TraitInner::Ref(r),
+        }
+    }
+
+    fn new_fut(fut: futures::future::BoxFuture<'static, crate::Result<trt::Ref<T>>>) -> Self {
+        Trait {
+            inner: TraitInner::Fut(fut),
+        }
+    }
+}
+
+impl<T> From<trt::Ref<T>> for Trait<T> {
+    fn from(r: trt::Ref<T>) -> Self {
+        Trait::new_ref(r)
+    }
+}
+
+impl<T: Sync> Trait<T> {
+    pub async fn as_ref(&mut self) -> crate::Result<trt::Ref<T>> {
+        Ok(match &mut self.inner {
+            TraitInner::Ref(r) => r.clone(),
+            TraitInner::Fut(f) => f.await?.clone(),
+        })
+    }
+}
+
 impl Traits {
     /// Create an empty traits runtime.
     pub fn new() -> Self {
@@ -151,17 +190,32 @@ impl Traits {
     }
 
     /// Get a trait for a particular Value's type, if it is implemented.
-    pub fn get<Impl: trt::GreaseTrait>(&self, v: &Value) -> Option<trt::Ref<Impl>> {
-        self.get_type(v.grease_type().as_ref())
+    pub fn get<Trt: trt::GreaseTrait>(&self, v: &Value) -> Option<Trait<Trt::Impl>> {
+        // If the type is available immediately, use it, otherwise make an async trait.
+        match v.grease_type_immediate() {
+            Some(tp) => self.get_type::<Trt>(tp).map(Trait::new_ref),
+            None => {
+                let mut v = v.clone();
+                let traits = self.clone();
+                Some(Trait::new_fut(
+                    async move {
+                        traits
+                            .get_type::<Trt>(v.grease_type().await?)
+                            .ok_or("trait not implemented".into())
+                    }
+                    .boxed(),
+                ))
+            }
+        }
     }
 
-    /// Get a trait for a ValueType, if it is implemented.
-    pub fn get_type<Impl: trt::GreaseTrait>(&self, tp: &Type) -> Option<trt::Ref<Impl>> {
-        self.get_impl(tp, &Impl::grease_trait())
+    /// Get a trait for a Type, if it is implemented.
+    pub fn get_type<Trt: trt::GreaseTrait>(&self, tp: &Type) -> Option<trt::Ref<Trt::Impl>> {
+        self.get_impl(tp, &Trt::grease_trait())
             .map(|r| unsafe { trt::Ref::new(r) })
     }
 
-    /// Get a trait, if implemented, as the raw implementation.
+    /// Get a trait, if implemented, as the erased implementation.
     pub fn get_impl(&self, tp: &Type, trt: &trt::Trait) -> Option<RArc<Erased>> {
         // If we leave this expression in the match expression, it will not drop the read lock until
         // the match expression is closed.
@@ -218,20 +272,20 @@ impl Traits {
     }
 
     /// Add a trait implementation for the given rust type.
-    pub fn add_impl_for_type<Tp, Impl>(&mut self, implementation: Impl)
+    pub fn add_impl_for_type<Tp, Trt>(&mut self, implementation: Trt::Impl)
     where
         Tp: GreaseType,
-        Impl: trt::GreaseTrait,
+        Trt: trt::GreaseTrait,
     {
         self.inner
             .traits
             .write()
-            .insert_for_type::<Tp, Impl>(implementation);
+            .insert_for_type::<Tp, Trt>(implementation);
     }
 
     /// Add a trait implementation for the given type.
-    pub fn add_impl<Impl: trt::GreaseTrait>(&mut self, tp: Type, implementation: Impl) {
-        self.inner.traits.write().insert::<Impl>(tp, implementation);
+    pub fn add_impl<Trt: trt::GreaseTrait>(&mut self, tp: Type, implementation: Trt::Impl) {
+        self.inner.traits.write().insert::<Trt>(tp, implementation);
     }
 
     /// Add a trait generator.
@@ -287,18 +341,18 @@ impl Traits {
     /// Add a trait generator by trait impl.
     ///
     /// Trait generators by trait may provide an implementation of the given trait for many types.
-    pub fn add_generator_by_trait_for_trait<Impl: trt::GreaseTrait>(
+    pub fn add_generator_by_trait_for_trait<Trt: trt::GreaseTrait>(
         &mut self,
-        gen: fn(&Traits, &Type) -> ROption<Impl>,
+        gen: fn(&Traits, &Type) -> ROption<Trt::Impl>,
     ) {
         self.inner
             .generators
             .write()
             .by_trait
-            .entry(Impl::grease_trait())
+            .entry(Trt::grease_trait())
             .or_default()
             .push(InternalTraitGeneratorByTrait(
-                trait_generator_to_erased::<Impl>,
+                trait_generator_to_erased::<Trt>,
                 gen as *const (),
             ));
     }

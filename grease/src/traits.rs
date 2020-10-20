@@ -9,8 +9,6 @@ use abi_stable::{
 };
 use lazy_static::lazy_static;
 
-pub use grease_macro::GreaseTrait;
-
 lazy_static! {
     /// The trait type namespace UUID.
     pub static ref NAMESPACE_TRAIT: Uuid = grease_uuid(b"trait");
@@ -51,9 +49,13 @@ impl Trait {
 }
 
 /// A trait for rust types which represent implementations of grease traits.
-pub trait GreaseTrait: Eraseable + StableAbi {
+pub trait GreaseTrait {
+    type Impl: Eraseable + StableAbi + Sized;
     /// Get the trait descriptor.
     fn grease_trait() -> Trait;
+
+    /// Create the trait from the implementation and context.
+    fn create(trt: crate::runtime::Trait<Self::Impl>, ctx: &crate::runtime::Context) -> Self;
 }
 
 /// ABI-stable key to store (type, trait) tuple.
@@ -85,17 +87,17 @@ impl Traits {
     }
 
     /// Insert the given implementation for the type.
-    pub fn insert<Impl: GreaseTrait>(&mut self, tp: Type, implementation: Impl) {
-        unsafe { self.insert_unchecked(tp, Impl::grease_trait(), Erased::new(implementation)) }
+    pub fn insert<Trt: GreaseTrait>(&mut self, tp: Type, implementation: Trt::Impl) {
+        unsafe { self.insert_unchecked(tp, Trt::grease_trait(), Erased::new(implementation)) }
     }
 
     /// Insert the given impelementation for the rust type.
-    pub fn insert_for_type<Tp, Impl>(&mut self, implementation: Impl)
+    pub fn insert_for_type<Tp, Trt>(&mut self, implementation: Trt::Impl)
     where
         Tp: GreaseType,
-        Impl: GreaseTrait,
+        Trt: GreaseTrait,
     {
-        self.insert(Tp::grease_type(), implementation)
+        self.insert::<Trt>(Tp::grease_type(), implementation)
     }
 
     /// Insert an empty implementation, indicating explicitly that no implementation exists.
@@ -122,7 +124,7 @@ impl Traits {
 
     /// Get a trait implementation for the given type.
     #[allow(dead_code)]
-    pub fn get<Impl: GreaseTrait>(&self, tp: &Type) -> Option<Option<Ref<Impl>>> {
-        unsafe { self.get_unchecked::<Impl>(tp, &Impl::grease_trait()) }
+    pub fn get<Trt: GreaseTrait>(&self, tp: &Type) -> Option<Option<Ref<Trt::Impl>>> {
+        unsafe { self.get_unchecked::<Trt::Impl>(tp, &Trt::grease_trait()) }
     }
 }

@@ -15,7 +15,7 @@ pub use self::log::{
 };
 pub use store::{Item, ItemContent, ItemName, Store};
 pub use task_manager::{thread_id, OnError, TaskManager};
-pub use traits::{TraitGenerator, TraitGeneratorByTrait, TraitGeneratorByType, Traits};
+pub use traits::{Trait, TraitGenerator, TraitGeneratorByTrait, TraitGeneratorByType, Traits};
 
 pub(crate) use task_manager::call_on_error;
 
@@ -133,5 +133,23 @@ impl Context {
     /// Create a ContextBuilder.
     pub fn builder() -> ContextBuilder {
         Default::default()
+    }
+
+    /// Get a grease trait for the given value's type.
+    pub fn get_trait<Trt: crate::traits::GreaseTrait>(
+        &self,
+        v: &crate::value::Value,
+    ) -> Option<Trt> {
+        self.traits.get::<Trt>(v).map(|imp| Trt::create(imp, self))
+    }
+
+    /// Get a grease trait for the given type.
+    pub fn get_trait_for_type<Trt: crate::traits::GreaseTrait>(
+        &self,
+        tp: &crate::types::Type,
+    ) -> Option<Trt> {
+        self.traits
+            .get_type::<Trt>(tp)
+            .map(|imp| Trt::create(imp.into(), self))
     }
 }

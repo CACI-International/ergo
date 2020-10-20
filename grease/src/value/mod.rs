@@ -23,11 +23,11 @@ use std::sync::Arc;
 pub mod dependency;
 
 use crate::depends;
-pub use dependency::*;
 use crate::error::*;
+pub use dependency::*;
 
 /// The Result yielded by a Value's future.
-pub type Result = std::result::Result<RArc<Erased>, Error>;
+pub type Result = crate::Result<RArc<Erased>>;
 
 /// Value identifiers.
 pub type Id = u128;
@@ -37,22 +37,76 @@ pub type Id = u128;
 /// This identifier uniquely describes the associated metadata content.
 pub type MetadataId = u128;
 
+/// Value result used for dynamically-typed Values.
+#[derive(Debug, Clone, StableAbi)]
+#[repr(C)]
+pub struct AnyValue {
+    tp: RArc<Type>,
+    data: RArc<Erased>,
+}
+
+impl GreaseType for AnyValue {
+    fn grease_type() -> Type {
+        Type::named(b"grease::value::AnyValue")
+    }
+}
+
+/// The (type,data) pair within a Value.
+#[derive(Debug, Clone, StableAbi)]
+#[repr(C)]
+enum ValueData {
+    Typed {
+        tp: RArc<Type>,
+        fut: BoxSharedFuture<RResult<RArc<Erased>, Error>>,
+    },
+    Dynamic {
+        fut: BoxSharedFuture<RResult<AnyValue, Error>>,
+    },
+    None,
+}
+
+impl ValueData {
+    pub fn map_err<F, E>(self, f: F) -> ValueData
+    where
+        F: FnOnce(Error) -> E + Send + 'static,
+        E: Into<Error>,
+    {
+        match self {
+            ValueData::Typed { tp, fut } => ValueData::Typed {
+                tp,
+                fut: BoxSharedFuture::new(fut.map(|r| r.map_err(|e| f(e).into()))),
+            },
+            ValueData::Dynamic { fut } => ValueData::Dynamic {
+                fut: BoxSharedFuture::new(fut.map(|r| r.map_err(|e| f(e).into()))),
+            },
+            ValueData::None => ValueData::None,
+        }
+    }
+}
+
+macro_rules! match_value_data {
+    ( $e:expr => { $( $p:pat => $r:expr $(,)? )+ } ) => {
+        match $e {
+            $( $p => $r, )+
+            ValueData::None => panic!("attempted to use empty value")
+        }
+    }
+}
+
 /// A value shared amongst tasks.
 ///
 /// Values have a type, a future data value, metadata, and an id.
 #[derive(Clone, StableAbi)]
 #[repr(C)]
 pub struct Value {
-    tp: RArc<Type>,
-    data: BoxSharedFuture<RResult<RArc<Erased>, Error>>,
-    metadata: BstMap<U128, RArc<Erased>>,
     id: U128,
+    metadata: BstMap<U128, RArc<Erased>>,
+    data: ValueData,
 }
 
 impl std::fmt::Debug for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         f.debug_struct("Value")
-            .field("tp", &self.tp)
             .field("data", &self.data)
             .field(
                 "metadata",
@@ -84,9 +138,12 @@ impl Ord for Value {
 }
 
 /// Calculate the value id for a value given the value type and dependencies.
-pub fn value_id(tp: &Type, deps: &Dependencies) -> Id {
+pub fn value_id(tp: Option<&Type>, deps: &Dependencies) -> Id {
     let mut h = HashFn::default();
-    tp.hash(&mut h);
+    match tp {
+        None => AnyValue::grease_type().hash(&mut h),
+        Some(tp) => tp.hash(&mut h),
+    }
     deps.hash(&mut h);
     h.finish_ext().into()
 }
@@ -99,7 +156,7 @@ impl Value {
         D: Into<Dependencies>,
     {
         let deps = deps.into();
-        let id = value_id(tp.as_ref(), &deps);
+        let id = value_id(Some(tp.as_ref()), &deps);
         Self::with_id(tp, value, id)
     }
 
@@ -111,10 +168,12 @@ impl Value {
         F: Future<Output = std::result::Result<RArc<Erased>, Error>> + Send + 'static,
     {
         Value {
-            tp,
-            data: BoxSharedFuture::new(value.map(RResult::from)),
-            metadata: Default::default(),
             id: id.into(),
+            metadata: Default::default(),
+            data: ValueData::Typed {
+                tp,
+                fut: BoxSharedFuture::new(value.map(RResult::from)),
+            },
         }
     }
 
@@ -126,13 +185,57 @@ impl Value {
         id: u128,
     ) -> Self {
         Value {
-            tp: tp.into(),
-            data: BoxSharedFuture::new(futures::future::ok(RArc::from(data)).map(RResult::from)),
+            id: id.into(),
             metadata: metadata
                 .into_iter()
                 .map(|(k, v)| (k.into(), v.into()))
                 .collect(),
+            data: ValueData::Typed {
+                tp: tp.into(),
+                fut: BoxSharedFuture::new(futures::future::ok(RArc::from(data)).map(RResult::from)),
+            },
+        }
+    }
+
+    /// Create a dynamic-typed value with the future and dependencies.
+    pub fn dyn_new<F, D>(type_and_value: F, deps: D) -> Self
+    where
+        F: Future<Output = std::result::Result<AnyValue, Error>> + Send + 'static,
+        D: Into<Dependencies>,
+    {
+        let deps = deps.into();
+        let id = value_id(None, &deps);
+        Self::dyn_with_id(type_and_value, id)
+    }
+
+    /// Create a dynamic-typed value with the given future and id.
+    ///
+    /// This differs from `new` which derives the id from the dependencies. Prefer `new`.
+    pub fn dyn_with_id<F>(type_and_value: F, id: u128) -> Self
+    where
+        F: Future<Output = std::result::Result<AnyValue, Error>> + Send + 'static,
+    {
+        Value {
             id: id.into(),
+            metadata: Default::default(),
+            data: ValueData::Dynamic {
+                fut: BoxSharedFuture::new(type_and_value.map(RResult::from)),
+            },
+        }
+    }
+
+    /// Convert into a dynamically-typed Value.
+    pub fn into_dyn(self) -> Self {
+        Value {
+            data: match self.data {
+                ValueData::Typed { tp, fut } => ValueData::Dynamic {
+                    fut: BoxSharedFuture::new(
+                        fut.map(move |result| result.map(move |data| AnyValue { tp, data })),
+                    ),
+                },
+                other => other,
+            },
+            ..self
         }
     }
 
@@ -143,8 +246,7 @@ impl Value {
     where
         D: Into<Dependencies>,
     {
-        let deps = deps.into();
-        let id = value_id(self.tp.as_ref(), &deps);
+        let id = self.value_id(deps);
         Value {
             id: id.into(),
             ..self
@@ -154,18 +256,42 @@ impl Value {
     /// Cause an error to occur if this value's future is ever evaluated.
     pub fn unevaluated(self) -> Value {
         Value {
-            data: BoxSharedFuture::new(
-                futures::future::err("unevaluated value".into()).map(RResult::from),
-            ),
+            data: ValueData::None,
             ..self
         }
+    }
+
+    fn value_id<D>(&self, deps: D) -> Id
+    where
+        D: Into<Dependencies>,
+    {
+        value_id(
+            match_value_data! { &self.data => {
+                ValueData::Typed { tp, .. } => Some(tp.as_ref()),
+                ValueData::Dynamic { .. } => None,
+            } },
+            &deps.into(),
+        )
     }
 
     /// Return a value that computes this value, discards the result (on success), and returns the
     /// given value.
     pub fn then(self, v: Value) -> Value {
         let deps = depends![self, v];
-        Self::new(v.grease_type(), self.and_then(move |_| v), deps)
+        let id = v.value_id(deps);
+        Value {
+            id: id.into(),
+            metadata: v.metadata,
+            data: match_value_data!(v.data => {
+                ValueData::Typed { tp, fut } => ValueData::Typed {
+                    tp,
+                    fut: BoxSharedFuture::new(self.and_then(move |_| fut.map(RResult::into_result)).map(RResult::from))
+                }
+                ValueData::Dynamic { fut } => ValueData::Dynamic {
+                    fut: BoxSharedFuture::new(self.and_then(move |_| fut.map(RResult::into_result)).map(RResult::from))
+                }
+            }),
+        }
     }
 
     /// Map the error value, returning an identical value with an altered error.
@@ -175,35 +301,62 @@ impl Value {
         E: Into<Error>,
     {
         Value {
-            data: BoxSharedFuture::new(self.data.map(|r| r.map_err(|e| f(e).into()))),
+            data: self.data.map_err(f),
             ..self
         }
     }
 
     /// Try to convert this Value to a TypedValue.
     ///
-    /// If the conversion fails, the Err result contains the original Value.
-    pub fn typed<T: GreaseType>(self) -> std::result::Result<TypedValue<T>, Value> {
-        if T::matches_grease_type(&*self.grease_type()) {
-            Ok(TypedValue {
-                inner: self,
-                phantom: Default::default(),
+    /// If the conversion fails, the given function is used to get an Error from the type.
+    pub fn typed<T: GreaseType + Send + Sync + 'static, F>(
+        self,
+        f: F,
+    ) -> crate::Result<TypedValue<T>>
+    where
+        F: FnOnce(&Type) -> Error + Send + 'static,
+    {
+        match_value_data!(self.data => {
+            ValueData::Typed { ref tp, .. } => {
+                if &**tp == &T::grease_type() {
+                    Ok(unsafe { TypedValue::from_value(self) })
+                } else {
+                    Err(f(&*tp))
+                }
+            }
+            ValueData::Dynamic { fut } => Ok(unsafe {
+                TypedValue::from_value(Value {
+                    data: ValueData::Typed {
+                        tp: RArc::new(T::grease_type()),
+                        fut: BoxSharedFuture::new(fut.map(move |r| {
+                            r.and_then(move |AnyValue { tp, data }| {
+                                if &*tp == &T::grease_type() {
+                                    RResult::ROk(data)
+                                } else {
+                                    RResult::RErr(f(&*tp))
+                                }
+                            })
+                        })),
+                    },
+                    ..self
+                })
             })
-        } else {
-            Err(self)
-        }
+        })
     }
 
     /// Try to convert this Value by reference to a TypedValue reference.
     ///
-    /// If the conversion fails, a unit Err result is returned.
-    pub fn typed_ref<'a, T: GreaseType>(
-        &'a mut self,
-    ) -> std::result::Result<TypedValueRef<'a, T>, ()> {
-        if *self.grease_type() == T::grease_type() {
-            Ok(TypedValueRef::new(self))
-        } else {
-            Err(())
+    /// This will only return Some if the type is immediately known (i.e. not dynamic).
+    pub fn typed_ref<'a, T: GreaseType>(&'a mut self) -> Option<TypedValueRef<'a, T>> {
+        match &self.data {
+            ValueData::Typed { tp, .. } => {
+                if &**tp == &T::grease_type() {
+                    Some(TypedValueRef::new(self))
+                } else {
+                    None
+                }
+            }
+            _ => None,
         }
     }
 
@@ -216,13 +369,47 @@ impl Value {
     }
 
     /// Get the type of the contained value.
-    pub fn grease_type(&self) -> RArc<Type> {
-        self.tp.clone()
+    ///
+    /// This may force the value to be evaluated if dynamically typed.
+    pub async fn grease_type(&mut self) -> crate::Result<&Type> {
+        match &mut self.data {
+            ValueData::Dynamic { fut } => {
+                fut.await;
+            }
+            _ => (),
+        }
+        self.peek_type().unwrap()
+    }
+
+    /// Get the type of the contained value if immediately available.
+    pub fn grease_type_immediate(&self) -> Option<&Type> {
+        match_value_data!(&self.data => {
+            ValueData::Typed { tp, ..} => Some(&**tp),
+            ValueData::Dynamic { .. } => None
+        })
+    }
+
+    /// Get the type of the contained value, if immediately available.
+    ///
+    /// This may be an error in the case of a dynamically-typed value.
+    pub fn peek_type(&self) -> Option<crate::Result<&Type>> {
+        match_value_data!(&self.data => {
+            ValueData::Typed { tp, .. } => Some(Ok(&**tp)),
+            ValueData::Dynamic { ref fut } => fut.peek().map(|r| match r {
+                RResult::ROk(ref v) => Ok(&*v.tp),
+                RResult::RErr(e) => Err(e.clone()),
+            })
+        })
     }
 
     /// Get the result of the value, if immediately available.
     pub fn peek(&self) -> Option<Result> {
-        self.data.peek().map(|v| RResult::into_result(v.clone()))
+        match_value_data!(&self.data => {
+            ValueData::Typed { fut, .. } => fut.peek().map(|v| RResult::into_result(v.clone())),
+            ValueData::Dynamic { fut } => fut
+                .peek()
+                .map(|v| RResult::into_result(v.clone().map(|v| v.data)))
+        })
     }
 
     /// Get the result of the value, assuming it was forced previously.
@@ -239,31 +426,40 @@ impl Value {
 impl Future for Value {
     type Output = Result;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        Future::poll(unsafe { self.map_unchecked_mut(|s| &mut s.data) }, cx)
-            .map(RResult::into_result)
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        let me = &mut *self;
+        match_value_data!(&mut me.data => {
+            ValueData::Typed { fut, .. } => Future::poll(Pin::new(fut), cx),
+            ValueData::Dynamic { fut } => {
+                Future::poll(Pin::new(fut), cx).map(|v| v.map(|v| v.data))
+            }
+        })
+        .map(RResult::into_result)
     }
 }
 
 impl FusedFuture for Value {
     fn is_terminated(&self) -> bool {
-        self.data.is_terminated()
+        match_value_data!(&self.data => {
+            ValueData::Typed { fut, .. } => fut.is_terminated(),
+            ValueData::Dynamic { fut } => fut.is_terminated(),
+        })
     }
 }
 
-/// Match expression for ValueTypes.
+/// Match expression for Types.
 ///
 /// Matching is based on types, not patterns, and each type must implement GreaseType. The else
 /// case is required.
 ///
-/// The evaluation contex is similar to regular match expressions, in that flow-control statements
+/// The evaluation context is similar to regular match expressions, in that flow-control statements
 /// will pertain to the calling code.
 #[macro_export]
 macro_rules! match_value_type {
-    ( $value:expr => { $( $t:ty => $e:expr $(,)? )+ => $else:expr } ) => {
+    ( $type:expr => { $( $t:ty => $e:expr $(,)? )+ => $else:expr } ) => {
         {
-            use $crate::types::GreaseType;
-            $( if <$t>::matches_grease_type(&$value) { $e } else )+ { $else }
+            let grease__match_value_type__tp: &$crate::types::Type = $type;
+            $( if grease__match_value_type__tp == &<$t as $crate::types::GreaseType>::grease_type() { $e } else )+ { $else }
         }
     }
 }
@@ -275,25 +471,22 @@ macro_rules! match_value_type {
 /// and expressions must all agree on this final type. For each `body`, `name` will be bound to a
 /// TypedValue according to the case type.
 ///
-/// The evaluation context is similar to regular match expressions, in that flow-control statements
-/// will pertain to the calling code.
+/// The macro evaluates to a `impl Future<Output = grease::Result<T>>`, where `T` is the case return
+/// type. Thus, the try operator (`?`) may be used within case expressions.
 #[macro_export]
 macro_rules! match_value {
     ( $value:expr => { $( $t:ty => |$bind:pat| $e:expr $(,)? )+ => |$elsebind:pat| $else:expr } ) => {
-        loop {
-            let mut match_value__val = $value;
-            $( match_value__val = match match_value__val.typed::<$t>() {
-                // Unreachable code avoids warnings when return/panic is used
-                #[allow(unreachable_code)]
-                Ok($bind) => break $e,
-                Err(v) => v
-            };)*
-            {
-                let $elsebind = match_value__val;
-                // Unreachable code avoids warnings when return/panic is used
-                #[allow(unreachable_code)]
-                break $else
-            }
+        async move {
+            $crate::match_value_type!($value.grease_type().await? => {
+                $( $t => Ok({
+                    let $bind = unsafe { $crate::value::TypedValue::from_value($value) };
+                    $e
+                }) ),+
+                => Ok({
+                    let $elsebind = $value;
+                    $else
+                })
+            })
         }
     }
 }
@@ -314,13 +507,12 @@ impl<T: GreaseType + Send + Sync + 'static> TypedValue<T> {
         F: Future<Output = std::result::Result<T, Error>> + Send + 'static,
         D: Into<Dependencies>,
     {
-        TypedValue {
-            inner: Value::new(
+        unsafe {
+            TypedValue::from_value(Value::new(
                 RArc::new(T::grease_type()),
                 value.map_ok(|r| RArc::new(Erased::new(r))),
                 deps,
-            ),
-            phantom: Default::default(),
+            ))
         }
     }
 
@@ -349,6 +541,17 @@ impl<T: GreaseType + Send + Sync + 'static> TypedValue<T> {
         D: Into<Dependencies>,
     {
         Self::ok(futures::future::ready(data), deps)
+    }
+
+    /// Create a typed value from the given value.
+    ///
+    /// ### Safety
+    /// The caller must ensure that the Value has type `T`.
+    pub unsafe fn from_value(v: Value) -> Self {
+        TypedValue {
+            inner: v,
+            phantom: Default::default(),
+        }
     }
 
     /// Create a new TypedValue by consuming and mapping the result of this TypedValue.

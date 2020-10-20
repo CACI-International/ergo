@@ -3,6 +3,41 @@
 use crate::type_erase::{Eraseable, Erased};
 use abi_stable::{std_types::tuple, StableAbi};
 
+/// A function pointer.
+///
+/// The user _must_ ensure `F` is some function pointer type. Otherwise the properties of this
+/// struct do not hold.
+#[derive(Clone, StableAbi)]
+#[repr(C)]
+#[sabi(unsafe_unconstrained(F))]
+pub struct FnPtr<F>(
+    *const (),
+    #[sabi(unsafe_opaque_field)] std::marker::PhantomData<F>,
+);
+
+impl<F> From<&F> for FnPtr<F> {
+    fn from(f: &F) -> Self {
+        FnPtr(unsafe { std::mem::transmute(f) }, Default::default())
+    }
+}
+
+impl<F: Copy> FnPtr<F> {
+    pub fn as_fn(&self) -> &F {
+        unsafe { std::mem::transmute::<*const (), &F>(self.0) }
+    }
+
+    pub unsafe fn from_ptr(p: *const ()) -> Self {
+        FnPtr(p, Default::default())
+    }
+
+    pub fn from_fn(f: *const F) -> Self {
+        FnPtr(f as *const (), Default::default())
+    }
+}
+
+unsafe impl<F> Send for FnPtr<F> {}
+unsafe impl<F> Sync for FnPtr<F> {}
+
 pub type Args1<A> = tuple::Tuple1<A>;
 pub type Args2<A, B> = tuple::Tuple2<A, B>;
 pub type Args3<A, B, C> = tuple::Tuple3<A, B, C>;

@@ -546,6 +546,12 @@ impl<T, Ptr: std::ops::Deref<Target = Erased>> Ref<T, Ptr> {
     }
 }
 
+impl<T, Ptr: Clone> Clone for Ref<T, Ptr> {
+    fn clone(&self) -> Self {
+        Ref(self.0.clone(), Default::default())
+    }
+}
+
 impl<T, Ptr: std::fmt::Debug> std::fmt::Debug for Ref<T, Ptr> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         f.debug_struct("Ref")

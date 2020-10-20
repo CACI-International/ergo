@@ -18,6 +18,12 @@ use abi_stable::{
 /// An external error.
 pub type ExternalError = dyn std::error::Error + Send + Sync;
 
+/// Grease result type, with a grease Error.
+pub type Result<T> = std::result::Result<T, Error>;
+
+/// Grease abi-stable result type, with a grease Error.
+pub type RResult<T> = abi_stable::std_types::RResult<T, Error>;
+
 /// Grease error type.
 ///
 /// The type does not implement `Error` itself (so that `From<T: Error>` can be implemented), but

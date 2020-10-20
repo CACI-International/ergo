@@ -24,10 +24,8 @@ pub mod value;
 
 pub use self::type_erase::{Eraseable, Erased, ErasedTrivial, Trivial};
 pub use self::uuid::Uuid;
-pub use error::Error;
+pub use error::{Error, Result};
 pub use futures::future::{FutureExt, TryFutureExt};
-
-//pub use self::{runtime::*, uuid::*, value::*, traits::*};
 
 /// Create a literal item name.
 ///
@@ -59,3 +57,66 @@ pub use grease_macro::item_name;
 /// All captures in _body_ are moved into the block. _body_ is used to produce the result of
 /// the value, and is in an async context (so `.await` is valid).
 pub use grease_macro::make_value;
+
+/// An attribute macro to convert a typical trait definition into a grease trait.
+///
+/// The trait definition must only contain methods, which all must be async. If self is used, it
+/// must be a borrowing reference.
+///
+/// ```
+/// # #[macro_use] extern crate grease;
+/// #[grease_trait]
+/// pub trait Something {
+///     async fn my_something(&self) -> bool;
+/// }
+/// ```
+pub use grease_macro::grease_trait;
+
+/// A macro which creates a `traits` grease registration function.
+///
+/// Any trait impl items in the block will be registered, otherwise there will be a `traits:
+/// &mut grease::runtime::Traits` in scope.
+///
+/// ```
+/// # #[macro_use] extern crate grease;
+/// use abi_stable::std_types::ROption;
+/// use grease::{
+///     closure::FnPtr,
+///     future::BoxFuture,
+///     runtime::{Context,Traits},
+///     types::{GreaseType,Type}
+/// };
+///
+/// #[grease_trait]
+/// pub trait ToBool {
+///     async fn to_bool(&self) -> bool;
+/// }
+///
+/// grease_traits_fn!{
+///     {
+///         extern "C" fn always_true<'a>(_ctx: &'a Context, _v: &'a grease::Erased)
+///             -> BoxFuture<'a, grease::error::RResult<bool>>
+///         {
+///             BoxFuture::new(async move { grease::error::RResult::ROk(true) })
+///         }
+///         fn to_bool(traits: &Traits, tp: &Type) -> ROption<ToBoolImpl> {
+///             ROption::RSome(ToBoolImpl {
+///                 to_bool: grease::future::BoxSharedFuture::new(async {
+///                         grease::error::RResult::ROk(FnPtr::from_fn(always_true as *const _))
+///                     })
+///             })
+///         }
+///         traits.add_generator_by_trait_for_trait::<ToBool>(to_bool);
+///     }
+///     
+///     impl ToBool for () {
+///         async fn to_bool(&self) -> bool {
+///             false
+///         }
+///     }
+/// }
+/// ```
+pub use grease_macro::grease_traits_fn;
+
+/// Re-export of `abi_stable::StableAbi` for attributes.
+pub use abi_stable::StableAbi;
