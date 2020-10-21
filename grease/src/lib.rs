@@ -26,6 +26,7 @@ pub use self::type_erase::{Eraseable, Erased, ErasedTrivial, Trivial};
 pub use self::uuid::Uuid;
 pub use error::{Error, Result};
 pub use futures::future::{FutureExt, TryFutureExt};
+pub use value::{TypedValue, Value};
 
 /// Create a literal item name.
 ///
@@ -72,10 +73,38 @@ pub use grease_macro::make_value;
 /// ```
 pub use grease_macro::grease_trait;
 
+/// An expression macro to creat a grease trait implementation.
+///
+/// The macro will produce an implemented struct. Within implementations, one may access the
+/// keyword `CONTEXT`, which will be a reference to the `grease::runtime::Context`. One may also
+/// use the try operator (`?`) to return a grease error.
+///
+/// ```
+/// # #[macro_use] extern crate grease;
+/// # #[grease_trait]
+/// # pub trait Something {
+/// #     async fn my_something(&self) -> bool;
+/// # }
+/// fn my_trait_impl() -> SomethingImpl {
+///     grease_trait_impl!{
+///         impl Something for () {
+///             async fn my_something(&self) -> bool {
+///                 CONTEXT.log.debug("hello");
+///                 if false {
+///                     Err("on no!")?
+///                 }
+///                 true
+///             }
+///         }
+///     }
+/// }
+/// ```
+pub use grease_macro::grease_trait_impl;
+
 /// A macro which creates a `traits` grease registration function.
 ///
-/// Any trait impl items in the block will be registered, otherwise there will be a `traits:
-/// &mut grease::runtime::Traits` in scope.
+/// Any trait impl items in the block will be registered (as if made into implementations with
+/// `grease_trait_impl!`), and there will be a `traits: &mut grease::runtime::Traits` in scope.
 ///
 /// ```
 /// # #[macro_use] extern crate grease;
@@ -101,9 +130,7 @@ pub use grease_macro::grease_trait;
 ///         }
 ///         fn to_bool(traits: &Traits, tp: &Type) -> ROption<ToBoolImpl> {
 ///             ROption::RSome(ToBoolImpl {
-///                 to_bool: grease::future::BoxSharedFuture::new(async {
-///                         grease::error::RResult::ROk(FnPtr::from_fn(always_true as *const _))
-///                     })
+///                 to_bool: FnPtr::from_fn(always_true as *const _)
 ///             })
 ///         }
 ///         traits.add_generator_by_trait_for_trait::<ToBool>(to_bool);

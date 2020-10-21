@@ -7,14 +7,13 @@
 use abi_stable::{
     sabi_trait,
     sabi_trait::prelude::*,
-    std_types::{RArc, RBox, RString, RVec},
+    std_types::{RBox, RString, RVec},
     StableAbi,
 };
 use grease::bst::BstMap;
 use grease::depends;
 use grease::future::BoxFuture;
-use grease::type_erase::Erased;
-use grease::types::{GreaseType, Type, TypeParameters};
+use grease::types::GreaseType;
 use grease::value::{Dependencies, TypedValue, Value};
 
 pub(crate) mod byte_stream;
@@ -182,65 +181,5 @@ impl Portable for TypedValue<Function> {
         c.global_env.clear();
         c.env.clear();
         self.map(|v| PortableFunction(v, c))
-    }
-}
-
-/// Script either type, used for conditional results.
-#[derive(Clone, Debug, StableAbi)]
-#[repr(C)]
-pub struct Either(usize, Value);
-
-impl GreaseType for Either {
-    fn grease_type() -> Type {
-        Type::named(b"ergo_runtime::types::Either")
-    }
-
-    /// Ignores the extra type information.
-    fn matches_grease_type(a: &Type) -> bool {
-        Self::grease_type().id == a.id
-    }
-}
-
-impl Either {
-    /// Create a new Either TypedValue.
-    pub fn new(vals: Vec<Value>, index: TypedValue<usize>) -> TypedValue<Self> {
-        let deps = depends![^@vals, index];
-        let types: Vec<_> = vals
-            .iter()
-            .map(|v| v.grease_type().as_ref().clone())
-            .collect();
-        Value::new(
-            RArc::new(Self::full_grease_type(types)),
-            async move {
-                let idx = index.await?;
-                let v = vals.get(*idx).expect("invalid either index");
-                Ok(RArc::new(Erased::new(Either(*idx, v.clone()))))
-            },
-            deps,
-        )
-        .typed::<Self>()
-        .expect("must return an Either type")
-    }
-
-    /// Get the full grease type (with either types).
-    pub fn full_grease_type(types: Vec<Type>) -> Type {
-        let mut tp = Self::grease_type();
-        tp.data = TypeParameters(types).into();
-        tp
-    }
-
-    /// Create an Either with the given resolved index and value.
-    pub fn with_value(index: usize, value: Value) -> Self {
-        Either(index, value)
-    }
-
-    /// The index of the chosen value.
-    pub fn index(&self) -> usize {
-        self.0
-    }
-
-    /// The chosen value.
-    pub fn value(&self) -> Value {
-        self.1.clone()
     }
 }

@@ -6,7 +6,7 @@ use abi_stable::{
     external_types::RMutex,
     sabi_trait,
     sabi_trait::prelude::*,
-    std_types::{RArc, RBox, ROption, RResult, RString, RVec},
+    std_types::{RArc, RBox, ROption, RString, RVec},
     StableAbi,
 };
 use futures::future::{BoxFuture, FutureExt};
@@ -14,7 +14,7 @@ use grease::bst::BstMap;
 use grease::path::PathBuf;
 use grease::runtime::Context;
 use grease::type_erase::{Eraseable, Erased};
-use grease::value::{Error, Value};
+use grease::{Error, Value};
 use std::collections::BTreeMap;
 use std::iter::FromIterator;
 
@@ -30,10 +30,10 @@ pub use source::Source;
 pub use ergo_runtime_macro::plugin_entry;
 
 /// The Result type.
-pub type Result<T> = std::result::Result<T, Error>;
+pub type Result<T> = grease::Result<T>;
 
 /// The ABI-safe RResult type.
-pub type ResultAbi<T> = RResult<T, Error>;
+pub type ResultAbi<T> = grease::error::RResult<T>;
 
 pub trait ResultIterator<T> {
     /// Collect values into a Result, where errors will be aggregated.

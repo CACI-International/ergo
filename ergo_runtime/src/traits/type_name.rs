@@ -1,34 +1,23 @@
 //! The TypeName grease trait and helper utilities.
 
 use crate::types;
-use abi_stable::{
-    std_types::{ROption, RString, RVec},
-    StableAbi,
-};
+use abi_stable::{std_types::RString, StableAbi};
 use grease::path::PathBuf;
-use grease::runtime::Traits;
-use grease::traits::*;
-use grease::types::{GreaseType, Type};
+use grease::types::Type;
+use grease::{grease_trait, grease_trait_impl, grease_traits_fn};
 
-/// A grease trait with a name for a grease type.
-#[derive(Clone, Debug, GreaseTrait, StableAbi)]
-#[repr(C)]
-pub struct TypeName {
-    name: RString,
-}
-
-/// The rust trait for the TypeName grease trait on rust types.
-pub trait GreaseTypeName {
-    /// The grease type name.
-    fn grease_type_name() -> String;
+/// A grease trait describing the name of a type.
+#[grease_trait]
+pub trait TypeName {
+    async fn type_name() -> RString;
 }
 
 /// Get a type name for the given type.
-pub fn type_name(traits: &Traits, tp: &Type) -> String {
-    if let Some(t) = traits.get_type::<TypeName>(tp) {
-        t.name.clone().into()
+pub async fn type_name(ctx: &grease::runtime::Context, tp: &Type) -> grease::Result<String> {
+    if let Some(mut t) = ctx.get_trait_for_type::<TypeName>(tp) {
+        t.type_name().await.map(|s| s.into())
     } else {
-        format!("<{}>", tp.id)
+        Ok(format!("<{}>", tp.id))
     }
 }
 
@@ -37,99 +26,36 @@ pub fn type_name(traits: &Traits, tp: &Type) -> String {
 /// One must still add the trait implementation to the runtime using `impl_type_name`.
 #[macro_export]
 macro_rules! grease_type_name {
-    ( $t:ty, $n:expr ) => {
-        impl $crate::traits::GreaseTypeName for $t {
-            fn grease_type_name() -> String {
+    ( $traits:expr, $t:ty, $n:expr ) => {
+        $traits.add_impl_for_type::<$t, $crate::traits::TypeName>(grease_trait_impl! {
+        impl $crate::traits::TypeName for $t {
+            async fn type_name() -> RString {
                 $n.into()
             }
-        }
+        }});
     };
-    ( $t:ty ) => {
-        $crate::grease_type_name!($t, stringify!($t));
+    ( $traits:expr, $t:ty ) => {
+        $crate::grease_type_name!($traits, $t, stringify!($t));
     };
 }
 
-grease_type_name!((), "unit");
-grease_type_name!(u8);
-grease_type_name!(i8);
-grease_type_name!(u16);
-grease_type_name!(i16);
-grease_type_name!(u32);
-grease_type_name!(i32);
-grease_type_name!(u64);
-grease_type_name!(i64);
-grease_type_name!(u128);
-grease_type_name!(i128);
-grease_type_name!(usize);
-grease_type_name!(isize);
-grease_type_name!(char);
-grease_type_name!(bool);
-grease_type_name!(RString, "String");
-grease_type_name!(PathBuf, "Path");
-grease_type_name!(types::Array, "Array");
-grease_type_name!(types::Map, "Map");
-grease_type_name!(types::Function, "Function");
-grease_type_name!(types::Either, "Either");
-
-impl<T: GreaseTypeName> GreaseTypeName for RVec<T> {
-    fn grease_type_name() -> String {
-        format!("Vec<{}>", T::grease_type_name())
-    }
-}
-
-pub fn traits(traits: &mut Traits) {
-    TypeName::add_impl::<()>(traits);
-    TypeName::add_impl::<u8>(traits);
-    TypeName::add_impl::<i8>(traits);
-    TypeName::add_impl::<u16>(traits);
-    TypeName::add_impl::<i16>(traits);
-    TypeName::add_impl::<u32>(traits);
-    TypeName::add_impl::<i32>(traits);
-    TypeName::add_impl::<u64>(traits);
-    TypeName::add_impl::<i64>(traits);
-    TypeName::add_impl::<usize>(traits);
-    TypeName::add_impl::<isize>(traits);
-    TypeName::add_impl::<char>(traits);
-    TypeName::add_impl::<bool>(traits);
-    TypeName::add_impl::<RString>(traits);
-    TypeName::add_impl::<PathBuf>(traits);
-    TypeName::add_impl::<types::Array>(traits);
-    TypeName::add_impl::<types::Function>(traits);
-    TypeName::add_impl::<types::Map>(traits);
-    traits.add_generator_by_trait_for_trait(|_traits, tp| {
-        if !types::Either::matches_grease_type(tp) {
-            ROption::RNone
-        } else {
-            ROption::RSome(TypeName {
-                name: "Either".into(),
-            })
-        }
-    });
-    traits.add_generator_by_trait_for_trait(|traits, tp| {
-        if tp.id == RVec::<()>::grease_type().id {
-            let inner_type = Type::from(tp.data.clone());
-            traits
-                .get_type::<TypeName>(&inner_type)
-                .map(|tn| TypeName {
-                    name: format!("Vec<{}>", tn.name()).into(),
-                })
-                .into()
-        } else {
-            ROption::RNone
-        }
-    });
-}
-
-impl TypeName {
-    /// Get the type name as a str.
-    pub fn name(&self) -> &str {
-        self.name.as_ref()
-    }
-
-    /// Add the TypeName grease trait implementation for T.
-    pub fn add_impl<T: GreaseTypeName + GreaseType>(traits: &mut Traits) {
-        traits.add_impl_for_type::<T, TypeName>(TypeName {
-            name: T::grease_type_name().into(),
-        });
-    }
+grease_traits_fn! {
+    grease_type_name!(traits, (), "unit");
+    grease_type_name!(traits, u8);
+    grease_type_name!(traits, i8);
+    grease_type_name!(traits, u16);
+    grease_type_name!(traits, i16);
+    grease_type_name!(traits, u32);
+    grease_type_name!(traits, i32);
+    grease_type_name!(traits, u64);
+    grease_type_name!(traits, i64);
+    grease_type_name!(traits, usize);
+    grease_type_name!(traits, isize);
+    grease_type_name!(traits, char);
+    grease_type_name!(traits, bool);
+    grease_type_name!(traits, RString, "String");
+    grease_type_name!(traits, PathBuf, "Path");
+    grease_type_name!(traits, types::Array, "Array");
+    grease_type_name!(traits, types::Map, "Map");
+    grease_type_name!(traits, types::Function, "Function");
 }

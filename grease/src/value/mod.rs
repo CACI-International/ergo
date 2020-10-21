@@ -309,33 +309,37 @@ impl Value {
     /// Try to convert this Value to a TypedValue.
     ///
     /// If the conversion fails, the given function is used to get an Error from the type.
-    pub fn typed<T: GreaseType + Send + Sync + 'static, F>(
+    pub async fn typed<T: GreaseType + Send + Sync + 'static, F, Fut>(
         self,
         f: F,
     ) -> crate::Result<TypedValue<T>>
     where
-        F: FnOnce(&Type) -> Error + Send + 'static,
+        F: FnOnce(&Type) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = Error> + Send,
     {
         match_value_data!(self.data => {
             ValueData::Typed { ref tp, .. } => {
                 if &**tp == &T::grease_type() {
                     Ok(unsafe { TypedValue::from_value(self) })
                 } else {
-                    Err(f(&*tp))
+                    Err(f(&*tp).await)
                 }
             }
             ValueData::Dynamic { fut } => Ok(unsafe {
                 TypedValue::from_value(Value {
                     data: ValueData::Typed {
                         tp: RArc::new(T::grease_type()),
-                        fut: BoxSharedFuture::new(fut.map(move |r| {
-                            r.and_then(move |AnyValue { tp, data }| {
-                                if &*tp == &T::grease_type() {
-                                    RResult::ROk(data)
-                                } else {
-                                    RResult::RErr(f(&*tp))
-                                }
-                            })
+                        fut: BoxSharedFuture::new(fut.then(move |r| async move {
+                            match r {
+                                RResult::ROk(AnyValue {tp, data}) => {
+                                    if &*tp == &T::grease_type() {
+                                        RResult::ROk(data)
+                                    } else {
+                                        RResult::RErr(f(&*tp).await)
+                                    }
+                                },
+                                RResult::RErr(e) => RResult::RErr(e)
+                            }
                         })),
                     },
                     ..self

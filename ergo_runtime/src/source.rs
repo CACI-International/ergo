@@ -7,7 +7,7 @@ use abi_stable::{
     std_types::{RArc, RBox, ROption, RResult, RString},
     StableAbi,
 };
-use grease::value::Dependency;
+use grease::{value::Dependency, Error};
 use std::fmt;
 use std::future::Future;
 use std::io::{BufRead, BufReader, Read};
@@ -361,7 +361,7 @@ impl<T> Source<T> {
 
 impl<T: ToString> Source<T> {
     /// Add extra context to an error.
-    pub fn context_for_error(&self, e: grease::value::Error) -> grease::value::Error {
+    pub fn context_for_error(&self, e: Error) -> Error {
         e.with_context(self.source().with(self.value.to_string()))
     }
 
@@ -375,9 +375,9 @@ impl<T: ToString> Source<T> {
     }
 }
 
-impl<E: Into<grease::value::Error>> Source<E> {
+impl<E: Into<Error>> Source<E> {
     /// Add context to the inner error and return a new error.
-    pub fn inject_context<S: ToString>(self, ctx: S) -> grease::value::Error {
+    pub fn inject_context<S: ToString>(self, ctx: S) -> Error {
         let (src, e) = self.take();
         src.with(ctx).context_for_error(e.into())
     }
@@ -406,20 +406,14 @@ impl<T, E> Source<Result<T, E>> {
     }
 }
 
-impl<T, E: Into<grease::value::Error>> Source<Result<T, E>> {
+impl<T, E: Into<Error>> Source<Result<T, E>> {
     /// Move the source into the Ok/Err result, and inject the given context into the error result.
-    pub fn transpose_with_context<S: ToString>(
-        self,
-        ctx: S,
-    ) -> Result<Source<T>, grease::value::Error> {
+    pub fn transpose_with_context<S: ToString>(self, ctx: S) -> Result<Source<T>, Error> {
         self.transpose().map_err(move |e| e.inject_context(ctx))
     }
 
     /// Move the source into the Err result with the given context.
-    pub fn transpose_err_with_context<S: ToString>(
-        self,
-        ctx: S,
-    ) -> Result<T, grease::value::Error> {
+    pub fn transpose_err_with_context<S: ToString>(self, ctx: S) -> Result<T, Error> {
         self.transpose_err().map_err(move |e| e.inject_context(ctx))
     }
 }
@@ -443,10 +437,10 @@ impl<T: PartialEq> Source<T> {
 
 impl<E> Source<E>
 where
-    E: Into<grease::value::Error>,
+    E: Into<Error>,
 {
-    /// Convert a sourced error into a grease::value::Error.
-    pub fn into_grease_error(self) -> grease::value::Error {
+    /// Convert a sourced error into a grease::Error.
+    pub fn into_grease_error(self) -> Error {
         self.map(|v| v.into().error()).into()
     }
 }

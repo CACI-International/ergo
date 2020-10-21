@@ -194,6 +194,17 @@ impl<T: tokio::io::AsyncWrite + std::marker::Unpin> AsyncWrite for TokioWrapped<
 }
 
 pub trait AsyncReadExt {
+    fn read_exact<'a>(
+        &'a mut self,
+        task: &'a super::TaskManager,
+        buf: &'a mut [u8],
+    ) -> ReadExact<'a, Self>
+    where
+        Self: AsyncRead + std::marker::Unpin,
+    {
+        ReadExact(self, task, buf, 0)
+    }
+
     fn read_to_end<'a>(
         &'a mut self,
         task: &'a super::TaskManager,
@@ -232,6 +243,23 @@ pub trait AsyncReadExt {
 }
 
 impl<T: AsyncRead> AsyncReadExt for T {}
+
+pub struct ReadExact<'a, T: ?Sized>(&'a mut T, &'a super::TaskManager, &'a mut [u8], usize);
+
+impl<'a, T: ?Sized + AsyncRead + std::marker::Unpin> Future for ReadExact<'a, T> {
+    type Output = Result<usize, Error>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        loop {
+            let me = &mut *self;
+            let bytes = ready!(Pin::new(&mut me.0).poll_read(cx, &me.1, &mut me.2[me.3..]))?;
+            if bytes == 0 {
+                return Poll::Ready(Ok(me.3));
+            }
+            me.3 += bytes;
+        }
+    }
+}
 
 pub struct ReadToEnd<'a, T: ?Sized>(&'a mut T, &'a super::TaskManager, &'a mut Vec<u8>);
 

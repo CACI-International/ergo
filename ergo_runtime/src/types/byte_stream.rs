@@ -1,19 +1,19 @@
 //! Byte stream type, supporting on-demand streaming.
 
-use crate::traits;
+use crate::traits as trts;
 use abi_stable::{
     external_types::RRwLock,
     sabi_trait,
     sabi_trait::prelude::*,
-    std_types::{RArc, RBox, ROption, RResult, RVec},
+    std_types::{RArc, RBox, ROption, RResult, RString, RVec},
     StableAbi,
 };
-use futures::future::FutureExt;
 use grease::{
     future::BoxAsyncRead,
-    runtime::{io::AsyncReadExt, Context, ItemContent, Traits},
+    grease_traits_fn, make_value,
+    runtime::{io::AsyncReadExt, ItemContent},
     types::GreaseType,
-    value::{Error, Value},
+    Erased, Error, Value,
 };
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -277,31 +277,6 @@ impl From<crate::types::String> for ByteStream {
     }
 }
 
-crate::grease_type_name!(ByteStream);
-
-impl traits::GreaseStored for ByteStream {
-    fn put<'a>(
-        &'a self,
-        ctx: &'a traits::StoredContext,
-        into: ItemContent,
-    ) -> futures::future::BoxFuture<'a, crate::Result<()>> {
-        async move {
-            grease::runtime::io::copy(
-                &ctx.ctx.task,
-                &mut self.read(),
-                &mut grease::runtime::io::Blocking::new(into),
-            )
-            .await?;
-            Ok(())
-        }
-        .boxed()
-    }
-
-    fn get(_ctx: &traits::StoredContext, from: ItemContent) -> crate::Result<Self> {
-        Ok(ByteStream::new(grease::runtime::io::Blocking::new(from)))
-    }
-}
-
 impl ByteStream {
     pub fn new<Src: grease::runtime::io::AsyncRead + Send + 'static>(source: Src) -> Self {
         let (stream, stream_iter) = SharedStream::new();
@@ -345,7 +320,7 @@ impl ByteStreamReader {
         &mut self,
         task: &grease::runtime::TaskManager,
         buf: &mut [u8],
-    ) -> Result<usize, Error> {
+    ) -> grease::Result<usize> {
         let mut buf_offset = 0;
         let mut oblock = self.stream_iter.current();
 
@@ -396,63 +371,74 @@ impl grease::runtime::io::AsyncRead for ByteStreamReader {
     }
 }
 
-/// ByteStream traits.
-pub fn traits(traits: &mut Traits) {
-    //traits::IntoTyped::<crate::types::String>::add_impl::<ByteStream>(traits);
-    // IntoTyped<String>
-    traits.add_impl_for_type::<ByteStream, traits::IntoTyped<crate::types::String>>(
-        traits::IntoTyped::new(|c, v| {
-            let bs = v.typed::<ByteStream>().unwrap();
-            let task = c.task.clone();
-            grease::make_value!([bs] {
+grease_traits_fn! {
+    impl trts::IntoTyped<crate::types::String> for ByteStream {
+        async fn into_typed(self) -> Value {
+            let v = self;
+            let task = CONTEXT.task.clone();
+            make_value!([v] {
                 let mut bytes = Vec::new();
-                bs.await?.read().read_to_end(&task, &mut bytes).await?;
+                v.await?.read().read_to_end(&task, &mut bytes).await?;
 
-                Ok(match String::from_utf8(bytes) {
-                    Ok(s) => s.into(),
-                    Err(v) => String::from_utf8_lossy(v.as_bytes()).into_owned().into(),
-                })
-
-            })
-        }),
-    );
-    traits::IntoTyped::<ByteStream>::add_impl::<crate::types::String>(traits);
-    // ValueByContent
-    {
-        extern "C" fn value_by_content<'a>(
-            ctx: &'a Context,
-            v: Value,
-            data: &'a RArc<grease::type_erase::Erased>,
-        ) -> grease::future::BoxFuture<'a, RResult<Value, Error>> {
-            grease::future::BoxFuture::new(async move {
-                let mut reader = unsafe { data.as_ref().as_ref::<ByteStream>() }.read();
-                let mut buf: [u8; BYTE_STREAM_BLOCK_LIMIT] =
-                    unsafe { std::mem::MaybeUninit::uninit().assume_init() };
-                use grease::hash::HashFn;
-                use std::hash::Hasher;
-                let mut h = HashFn::default();
-                loop {
-                    match reader.read(&ctx.task, &mut buf).await {
-                        Err(e) => return RResult::RErr(e),
-                        Ok(0) => break,
-                        Ok(size) => h.write(&buf[..size]),
-                    }
-                }
-                let deps = grease::depends![h.finish_ext()];
-                RResult::ROk(v.set_dependencies(deps))
-            })
+                Ok(crate::types::String::from(match String::from_utf8(bytes) {
+                    Ok(s) => s,
+                    Err(v) => String::from_utf8_lossy(v.as_bytes()).into_owned(),
+                }))
+            }).into()
         }
-        traits.add_impl_for_type::<ByteStream, traits::ValueByContent>(
-            traits::ValueByContent::new(value_by_content),
-        );
     }
-    traits::TypeName::add_impl::<ByteStream>(traits);
-    traits::Stored::add_impl::<ByteStream>(traits);
+
+    trts::IntoTyped::<ByteStream>::add_impl::<crate::types::String>(traits);
+
+    impl trts::ValueByContent for ByteStream {
+        async fn value_by_content(self) -> Value {
+            let mut v = self;
+            let data = (&mut v).await?;
+            let mut reader = data.read();
+            let mut buf: [u8; BYTE_STREAM_BLOCK_LIMIT] =
+                unsafe { std::mem::MaybeUninit::uninit().assume_init() };
+            use grease::hash::HashFn;
+            use std::hash::Hasher;
+            let mut h = HashFn::default();
+            loop {
+                let size = reader.read(&CONTEXT.task, &mut buf).await?;
+                if size == 0 {
+                    break
+                } else {
+                    h.write(&buf[..size]);
+                }
+            }
+            let deps = grease::depends![h.finish_ext()];
+            Value::from(v).set_dependencies(deps)
+        }
+    }
+
+    impl trts::TypeName for ByteStream {
+        async fn type_name() -> RString {
+            "ByteStream".into()
+        }
+    }
+
+    impl trts::Stored for ByteStream {
+        async fn put(&self, _stored_ctx: &trts::StoredContext, item: ItemContent) {
+            grease::runtime::io::copy(
+                &CONTEXT.task,
+                &mut self.read(),
+                &mut grease::runtime::io::Blocking::new(item),
+            )
+            .await?;
+        }
+
+        async fn get(_stored_ctx: &trts::StoredContext, item: ItemContent) -> Erased {
+            Erased::new(ByteStream::new(grease::runtime::io::Blocking::new(item)))
+        }
+    }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
+    use grease::runtime::io::Blocking;
 
     #[test]
     fn shared_stream() {
@@ -540,18 +526,18 @@ mod test {
 
     #[test]
     fn byte_stream() {
-        use std::io::Read;
-
         let mut buf: [u8; 10000] = [0; 10000];
         for i in 0..10000 {
             buf[i] = i as u8;
         }
-        let stream = ByteStream::new(std::io::Cursor::new(buf.to_vec()));
+        let stream = ByteStream::new(Blocking::new(std::io::Cursor::new(buf.to_vec())));
         let mut reader1 = stream.read();
         let mut reader2 = reader1.clone();
 
+        let ctx = grease::runtime::Context::builder().build().unwrap();
+
         let mut buf: [u8; 10001] = [0; 10001];
-        match reader1.read(&mut buf) {
+        match ctx.task.block_on(reader1.read_exact(&ctx.task, &mut buf)) {
             Ok(s) => assert!(s == 10000),
             Err(_) => panic!("buffer read failure"),
         }
@@ -559,7 +545,10 @@ mod test {
             assert!(buf[i] == i as u8);
         }
 
-        match reader2.read(&mut buf[..500]) {
+        match ctx
+            .task
+            .block_on(reader2.read_exact(&ctx.task, &mut buf[..500]))
+        {
             Ok(s) => assert!(s == 500),
             Err(_) => panic!("buffer read failure"),
         }
@@ -572,7 +561,10 @@ mod test {
         drop(reader2);
         let mut reader4 = reader3.clone();
 
-        match reader3.read(&mut buf[..500]) {
+        match ctx
+            .task
+            .block_on(reader3.read_exact(&ctx.task, &mut buf[..500]))
+        {
             Ok(s) => assert!(s == 500),
             Err(_) => panic!("buffer read failure"),
         }
@@ -580,7 +572,10 @@ mod test {
             assert!(buf[i] == (i + 500) as u8);
         }
 
-        match reader4.read(&mut buf[..500]) {
+        match ctx
+            .task
+            .block_on(reader4.read_exact(&ctx.task, &mut buf[..500]))
+        {
             Ok(s) => assert!(s == 500),
             Err(_) => panic!("buffer read failure"),
         }
