@@ -309,10 +309,7 @@ impl Value {
     /// Try to convert this Value to a TypedValue.
     ///
     /// If the conversion fails, the given function is used to get an Error from the type.
-    pub async fn typed<T: GreaseType + Send + Sync + 'static, F, Fut>(
-        self,
-        f: F,
-    ) -> crate::Result<TypedValue<T>>
+    pub async fn typed<T: GreaseType, F, Fut>(self, f: F) -> crate::Result<TypedValue<T>>
     where
         F: FnOnce(&Type) -> Fut + Send + 'static,
         Fut: std::future::Future<Output = Error> + Send,
@@ -504,6 +501,19 @@ pub struct TypedValue<T> {
     phantom: std::marker::PhantomData<Arc<T>>,
 }
 
+impl<T: GreaseType> TypedValue<T> {
+    /// Create a typed value from the given value.
+    ///
+    /// ### Safety
+    /// The caller must ensure that the Value has type `T`.
+    pub unsafe fn from_value(v: Value) -> Self {
+        TypedValue {
+            inner: v,
+            phantom: Default::default(),
+        }
+    }
+}
+
 impl<T: GreaseType + Send + Sync + 'static> TypedValue<T> {
     /// Create a typed value from the given future and dependencies.
     pub fn new<F, D>(value: F, deps: D) -> Self
@@ -545,17 +555,6 @@ impl<T: GreaseType + Send + Sync + 'static> TypedValue<T> {
         D: Into<Dependencies>,
     {
         Self::ok(futures::future::ready(data), deps)
-    }
-
-    /// Create a typed value from the given value.
-    ///
-    /// ### Safety
-    /// The caller must ensure that the Value has type `T`.
-    pub unsafe fn from_value(v: Value) -> Self {
-        TypedValue {
-            inner: v,
-            phantom: Default::default(),
-        }
     }
 
     /// Create a new TypedValue by consuming and mapping the result of this TypedValue.

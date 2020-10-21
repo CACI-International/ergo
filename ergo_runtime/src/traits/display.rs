@@ -18,7 +18,7 @@ pub trait Display {
 /// grease trait Display.
 ///
 /// The value (and any internal values) must already be evaluated.
-pub async fn display(ctx: &Context, v: &Value) -> grease::Result<String> {
+pub async fn display(ctx: &Context, v: Value) -> grease::Result<String> {
     match try_display(ctx, v) {
         Ok(v) => v.await,
         Err(v) => v.await,
@@ -29,12 +29,11 @@ pub async fn display(ctx: &Context, v: &Value) -> grease::Result<String> {
 /// string if it is not found.
 pub fn try_display<'a>(
     ctx: &'a Context,
-    v: &Value,
+    mut v: Value,
 ) -> Result<
     impl std::future::Future<Output = grease::Result<String>>,
     impl std::future::Future<Output = grease::Result<String>> + 'a,
 > {
-    let mut v = v.clone();
     if let Some(mut t) = ctx.get_trait::<Display>(&v) {
         Ok(async move { Ok(t.fmt(v).await?.into()) })
     } else {
@@ -85,7 +84,7 @@ grease_traits_fn! {
         async fn fmt(&self) -> RString {
             let mut strs = Vec::new();
             for v in self.0.iter() {
-                strs.push(to_empty(display(CONTEXT, v).await?));
+                strs.push(to_empty(display(CONTEXT, v.clone()).await?));
             }
             strs.join("\n").into()
         }
@@ -95,7 +94,7 @@ grease_traits_fn! {
         async fn fmt(&self) -> RString {
             let mut strs = Vec::new();
             for (k,v) in self.0.iter() {
-                strs.push(format!("{}:\n{}", k, to_empty(display(CONTEXT, v).await?)));
+                strs.push(format!("{}:\n{}", k, to_empty(display(CONTEXT, v.clone()).await?)));
             }
             strs.join("\n\n").into()
         }

@@ -20,10 +20,13 @@ use std::iter::FromIterator;
 
 pub use futures::future;
 
+pub mod context_ext;
 pub mod error;
 pub mod source;
 pub mod traits;
 pub mod types;
+
+pub use context_ext::ContextExt;
 
 pub use source::Source;
 
@@ -99,15 +102,9 @@ impl std::ops::DerefMut for Runtime {
     }
 }
 
-impl AsRef<Context> for Runtime {
-    fn as_ref(&self) -> &Context {
+impl context_ext::AsContext for Runtime {
+    fn as_context(&self) -> &Context {
         &self.context
-    }
-}
-
-impl AsMut<Context> for Runtime {
-    fn as_mut(&mut self) -> &mut Context {
-        &mut self.context
     }
 }
 
@@ -142,6 +139,12 @@ impl std::ops::Deref for FunctionCall<'_> {
 impl std::ops::DerefMut for FunctionCall<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.runtime
+    }
+}
+
+impl context_ext::AsContext for FunctionCall<'_> {
+    fn as_context(&self) -> &Context {
+        self.runtime.as_context()
     }
 }
 
@@ -487,25 +490,3 @@ pub trait ContextEnv: GetEnv {
 }
 
 impl<T: GetEnv> ContextEnv for T {}
-
-#[macro_export]
-macro_rules! source_value_as {
-    ($val:expr , $ty:ty , $ctx:expr) => {
-        match $val.map(|v| v.typed::<$ty>()).transpose() {
-            Ok(v) => Ok(v),
-            Err(e) => {
-                let (source, v) = e.take();
-                Err(source
-                    .with(format!(
-                        "expected {}, found {}",
-                        $crate::traits::type_name(
-                            &$ctx.traits,
-                            &<$ty as grease::types::GreaseType>::grease_type()
-                        ),
-                        $crate::traits::type_name(&$ctx.traits, &*v.grease_type())
-                    ))
-                    .into_grease_error())
-            }
-        }
-    };
-}

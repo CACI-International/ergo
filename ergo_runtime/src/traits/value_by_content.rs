@@ -29,6 +29,21 @@ impl ValueByContent {
     }
 }
 
+pub async fn value_by_content(
+    ctx: &grease::runtime::Context,
+    mut v: Value,
+) -> grease::Result<Value> {
+    if let Some(mut t) = ctx.get_trait::<ValueByContent>(&v) {
+        t.value_by_content(v).await
+    } else {
+        Err(format!(
+            "no value by content trait for {}",
+            super::type_name(ctx, v.grease_type().await?).await?
+        )
+        .into())
+    }
+}
+
 grease_traits_fn! {
     ValueByContent::add_impl::<types::Unit>(traits);
     ValueByContent::add_impl::<types::String>(traits);
