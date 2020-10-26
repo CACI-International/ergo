@@ -24,7 +24,9 @@ impl std::str::FromStr for OutputFormat {
 }
 
 #[derive(Debug, StructOpt)]
-/// So you want to run some tasks?
+/// Effio ergo sum.
+///
+/// Ergo is a runtime and language built for lazy task execution.
 pub struct Opts {
     #[structopt(long = "log", default_value = "warn")]
     /// The log level used for tasks. May be "debug", "info", "warn", or "error".

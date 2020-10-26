@@ -45,6 +45,16 @@ pub struct AnyValue {
     data: RArc<Erased>,
 }
 
+impl AnyValue {
+    /// Create a new AnyValue.
+    ///
+    /// # Safety
+    /// Callers must ensure the type corresponds to the data.
+    pub unsafe fn new(tp: RArc<Type>, data: RArc<Erased>) -> Self {
+        AnyValue { tp, data }
+    }
+}
+
 impl GreaseType for AnyValue {
     fn grease_type() -> Type {
         Type::named(b"grease::value::AnyValue")
@@ -150,7 +160,10 @@ pub fn value_id(tp: Option<&Type>, deps: &Dependencies) -> Id {
 
 impl Value {
     /// Create a value with the given type, future, and dependencies.
-    pub fn new<F, D>(tp: RArc<Type>, value: F, deps: D) -> Self
+    ///
+    /// # Safety
+    /// Callers must ensure the type corresponds to the future's data.
+    pub unsafe fn new<F, D>(tp: RArc<Type>, value: F, deps: D) -> Self
     where
         F: Future<Output = std::result::Result<RArc<Erased>, Error>> + Send + 'static,
         D: Into<Dependencies>,
@@ -163,7 +176,10 @@ impl Value {
     /// Create a value with the given type, future, and id.
     ///
     /// This differs from `new` which derives the id from the dependencies. Prefer `new`.
-    pub fn with_id<F>(tp: RArc<Type>, value: F, id: u128) -> Self
+    ///
+    /// # Safety
+    /// Callers must ensure the type corresponds to the future's data.
+    pub unsafe fn with_id<F>(tp: RArc<Type>, value: F, id: u128) -> Self
     where
         F: Future<Output = std::result::Result<RArc<Erased>, Error>> + Send + 'static,
     {
@@ -178,7 +194,10 @@ impl Value {
     }
 
     /// Create a Value from raw components.
-    pub fn from_raw(
+    ///
+    /// # Safety
+    /// Callers must ensure the type corresponds to the future's data.
+    pub unsafe fn from_raw(
         tp: Arc<Type>,
         data: Arc<Erased>,
         metadata: BTreeMap<u128, Arc<Erased>>,
@@ -229,14 +248,27 @@ impl Value {
         Value {
             data: match self.data {
                 ValueData::Typed { tp, fut } => ValueData::Dynamic {
-                    fut: BoxSharedFuture::new(
-                        fut.map(move |result| result.map(move |data| AnyValue { tp, data })),
-                    ),
+                    fut: BoxSharedFuture::new(fut.map(move |result| {
+                        result.map(move |data| unsafe { AnyValue::new(tp, data) })
+                    })),
                 },
                 other => other,
             },
             ..self
         }
+    }
+
+    /// Create an AnyValue from this value.
+    ///
+    /// Evaluates the value when
+    pub async fn make_any_value(&mut self) -> crate::Result<AnyValue> {
+        match_value_data!(&mut self.data => {
+            ValueData::Dynamic { fut } => fut.await.into_result(),
+            ValueData::Typed { tp, fut } => {
+                let data = fut.await.into_result()?;
+                Ok(unsafe { AnyValue::new(tp.clone(), data) })
+            }
+        })
     }
 
     /// Set dependencies of this value, producing a new value with a new identifier.
@@ -477,17 +509,22 @@ macro_rules! match_value_type {
 #[macro_export]
 macro_rules! match_value {
     ( $value:expr => { $( $t:ty => |$bind:pat| $e:expr $(,)? )+ => |$elsebind:pat| $else:expr } ) => {
-        async move {
-            $crate::match_value_type!($value.grease_type().await? => {
-                $( $t => Ok({
-                    let $bind = unsafe { $crate::value::TypedValue::from_value($value) };
-                    $e
-                }) ),+
-                => Ok({
-                    let $elsebind = $value;
-                    $else
-                })
-            })
+        async {
+            match $value.grease_type().await {
+                Err(e) => return Err(e),
+                Ok(tp) => {
+                    $crate::match_value_type!(tp => {
+                        $( $t => Ok({
+                            let $bind = unsafe { $crate::value::TypedValue::<$t>::from_value($value) };
+                            $e
+                        }) ),+
+                        => Ok({
+                            let $elsebind = $value;
+                            $else
+                        })
+                    })
+                }
+            }
         }
     }
 }

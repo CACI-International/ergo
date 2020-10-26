@@ -3,28 +3,31 @@
 //! The runtime is responsible for evaluating AST expressions, producing values or errors.
 //! Importantly, it tracks source locations for values and errors so that when an error occurs,
 //! useful error information can be provided.
-//!
-//! This module defines grease::Plan for expressions, where the output is as described above.
 
-use super::ast::{ArrayPattern, CmdPat, Expression, MapPattern, MergeExpression, Pat, Pattern};
+use super::ast::{
+    ArrayPattern, CmdPatT, Expr, Expression, MapPattern, MergeExpression, Pat, PatT, Pattern,
+};
 use crate::constants::{
     app_dirs, LOAD_PATH_BINDING, SCRIPT_DIR_NAME, SCRIPT_EXTENSION, SCRIPT_PATH_BINDING,
     SCRIPT_PRELUDE_NAME, SCRIPT_WORKSPACE_NAME, WORKING_DIRECTORY_BINDING,
 };
-use abi_stable::{rvec, std_types::RResult};
+use abi_stable::{
+    rvec,
+    std_types::{RResult, RString},
+};
 use ergo_runtime::source::{FileSource, IntoSource, Source};
-use ergo_runtime::Result as SoResult;
+use ergo_runtime::Result as EResult;
 use ergo_runtime::{
-    source_value_as, types, ContextEnv, EvalResult, FunctionArguments, FunctionCall,
-    ResultIterator, Runtime, ScriptEnv, UncheckedFunctionArguments,
+    types, ContextEnv, ContextExt, EvalResult, FunctionArguments, FunctionCall, ResultIterator,
+    Runtime, ScriptEnv, UncheckedFunctionArguments,
 };
 use futures::future::{BoxFuture, FutureExt};
 use grease::{
     bst::BstMap,
-    depends, match_value,
+    depends, make_value, match_value,
     path::PathBuf,
     types::GreaseType,
-    value::{IntoValue, Value},
+    value::{IntoValue, TypedValue, Value},
 };
 use libloading as dl;
 use log::{debug, trace};
@@ -209,53 +212,55 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
         let mut load_path = None;
         let mut was_workspace = false;
 
+        let to_load: Option<std::path::PathBuf> = match_value!(target.clone().unwrap() => {
+            types::String => |v| Some(<&str>::from(v.await?.as_ref()).into()),
+            PathBuf => |v| Some(v.await?.owned().into()),
+            => |_| None
+        }).await?;
+
         // If target is a string or path, try to find it in the load path
-        let tp = target.grease_type();
-        let to_load = if *tp == types::String::grease_type() || *tp == PathBuf::grease_type() {
-            let target_path: std::path::PathBuf = match_value!(target.clone().unwrap() => {
-                types::String => |v| <&str>::from(v.await?.as_ref()).into(),
-                PathBuf => |v| v.await?.owned().into(),
-                => |_| panic!("unexpected value type")
-            });
+        let to_load = match to_load {
+            Some(target_path) => {
+                load_path = Some(target_path.clone());
 
-            load_path = Some(target_path.to_owned());
+                // Get current load path
+                let loadpath = match ctx.env_get(LOAD_PATH_BINDING) {
+                    Some(v) => {
+                        let v = v.map(|r| r.clone()).map_err(|e| e.clone())?;
+                        let source = v.source();
+                        let arr = ctx.source_value_as::<types::Array>(v.clone());
+                        arr.await?
+                            .unwrap()
+                            .await?
+                            .owned()
+                            .0
+                            .into_iter()
+                            .map(|v| source.clone().with(v))
+                            .collect()
+                    }
+                    None => vec![],
+                };
 
-            // Get current load path
-            let loadpath = match ctx.env_get(LOAD_PATH_BINDING) {
-                Some(v) => {
-                    let v = v.map(|r| r.clone()).map_err(|e| e.clone())?;
-                    let source = v.source();
-                    source_value_as!(v.clone(), types::Array, ctx)?
-                        .unwrap()
-                        .await?
-                        .owned()
-                        .0
-                        .into_iter()
-                        .map(|v| source.clone().with(v))
-                        .collect()
+                // Get paths from load path
+                let mut paths: Vec<std::path::PathBuf> = Vec::new();
+                for path in loadpath {
+                    paths.push({
+                        let p = ctx.source_value_as::<PathBuf>(path);
+                        p.await?
+                            .unwrap()
+                            .await?
+                            .owned()
+                            .into_pathbuf()
+                    });
                 }
-                None => vec![],
-            };
 
-            // Get paths from load path
-            let mut paths: Vec<std::path::PathBuf> = Vec::new();
-            for path in loadpath {
-                paths.push(
-                    source_value_as!(path, PathBuf, ctx)?
-                        .unwrap()
-                        .await?
-                        .owned()
-                        .into_pathbuf(),
-                );
+                // Try to find path match in load paths
+                paths
+                    .iter()
+                    .map(|v| v.as_path())
+                    .find_map(script_path_exists(target_path, true))
             }
-
-            // Try to find path match in load paths
-            paths
-                .iter()
-                .map(|v| v.as_path())
-                .find_map(script_path_exists(target_path, true))
-        } else {
-            None
+            None => None
         };
 
         // Look for workspace if path-based lookup failed
@@ -278,7 +283,8 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                         .map_err(|e| e.clone())?
                         .clone(), false)
                 };
-                let path_basis = source_value_as!(path_basis, PathBuf, ctx)?.unwrap().await?;
+                let path_basis = ctx.source_value_as::<PathBuf>(path_basis);
+                let path_basis = path_basis.await?.unwrap().await?;
                 let path_basis = path_basis.as_ref().as_ref();
 
                 let within_workspace = check_for_workspace && path_basis.file_name().map(|v| v == SCRIPT_WORKSPACE_NAME).unwrap_or(false);
@@ -375,21 +381,21 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                             );
                             match fctx.env_scoped(env, load_script).await.0 {
                                 Ok(v) => {
-                                    let (v_source, v) = v.take();
+                                    let (v_source, mut v) = v.take();
                                     match_value!(v => {
                                         () => |_| None,
                                         types::Map => |v| Some(v_source.with(v).await.transpose_ok()?.map(|v| v.owned().0)),
-                                        => |_| return Err(v_source.with(Error::CannotMerge(
+                                        => |_| Err(v_source.with(Error::CannotMerge(
                                                 "prelude did not evaluate to a map".into(),
-                                            )).into())
-                                    })
+                                            )))?
+                                    }).await?
                                 },
                                 Err(e) => {
                                     fctx.args.clear();
                                     fn has_ignored_error(
                                         e: &(dyn std::error::Error + 'static),
                                     ) -> bool {
-                                        if let Some(e) = grease::value::error::downcast_ref::<Error>(e) {
+                                        if let Some(e) = grease::error::downcast_ref::<Error>(e) {
                                             if let Error::LoadFailed { .. } = e {
                                                 debug!("not loading prelude: load failed");
                                                 true
@@ -397,7 +403,7 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                                                 false
                                             }
                                         }
-                                        else if let Some(_) = grease::value::error::downcast_ref::<Source<ergo_runtime::error::UnexpectedPositionalArguments>>(e) {
+                                        else if let Some(_) = grease::error::downcast_ref::<Source<ergo_runtime::error::UnexpectedPositionalArguments>>(e) {
                                             debug!("not loading prelude: workspace did not accept prelude argument");
                                             true
                                         }
@@ -457,7 +463,7 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                                 extern "C" fn(
                                     &mut Runtime,
                                 )
-                                    -> RResult<Source<Value>, grease::value::Error>,
+                                    -> RResult<Source<Value>, grease::Error>,
                             > = unsafe { lib.get(b"_ergo_plugin") }?;
                             let result = f(ctx);
                             ctx.lifetime(lib);
@@ -477,15 +483,13 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
 
             let loaded_context = source.with(format!("loaded from '{}'", p.display()));
 
-            match loaded.map(|v| v.typed::<types::Function>()).transpose() {
-                Ok(f) => {
-                    let args = std::mem::take(&mut ctx.args);
-                    apply_value(ctx, f.map(|f| f.into()), args.unchecked(), false).await
-                },
-                Err(v) => {
-                    ctx.unused_arguments()?;
-                    Ok(v)
-                }
+            let mut loaded = loaded;
+            if loaded.grease_type().await? == &types::Function::grease_type() {
+                let args = std::mem::take(&mut ctx.args);
+                apply_value(ctx, loaded, args.unchecked(), false).await
+            } else {
+                ctx.unused_arguments()?;
+                Ok(loaded)
             }.map(|v| v.map(|v| loaded_context.imbue_error_context(v)))
         } else {
             Err(Error::LoadFailed {
@@ -539,7 +543,7 @@ pub enum Error {
         load_path: Option<std::path::PathBuf>,
     },
     /// An error occured while evaluating a value.
-    ValueError(grease::value::Error),
+    ValueError(grease::Error),
     /// An error occured while loading a script.
     ScriptLoadError(super::ast::Error),
     /// A generic error message.
@@ -620,8 +624,8 @@ impl From<std::io::Error> for Error {
     }
 }
 
-impl From<grease::value::Error> for Error {
-    fn from(e: grease::value::Error) -> Self {
+impl From<grease::Error> for Error {
+    fn from(e: grease::Error) -> Self {
         Error::ValueError(e)
     }
 }
@@ -660,16 +664,130 @@ impl PatternValues {
     }
 }
 
-pub async fn apply_pattern(
-    ctx: &mut Runtime,
+type PatCompiled = PatT<grease::value::Id>;
+
+/// Get all bindings in a pattern.
+///
+/// The returned tuple contains the binding name and a value appropriate to use as a dependency of
+/// the binding position within the pattern.
+fn pattern_bindings<T>(pat: &PatT<T>) -> Vec<(Source<RString>, grease::value::Dependencies)> {
+    use grease::value::Dependencies;
+    let mut bindings = Vec::new();
+    let mut remaining = vec![(pat, Dependencies::new())];
+    while let Some((pat, deps)) = remaining.pop() {
+        use Pattern::*;
+        let src = pat.source();
+        match pat.as_ref().unwrap() {
+            Any => (),
+            Literal(_) => (),
+            Binding(s) => bindings.push((src.with(s.as_str().into()), deps)),
+            Array(pats) => {
+                let mut i = 0;
+                for p in pats {
+                    match p.as_ref().unwrap() {
+                        ArrayPattern::Item(p) => remaining.push((p, deps.clone() + depends![i])),
+                        ArrayPattern::Rest(p) => remaining.push((p, deps.clone() + depends![i])),
+                    }
+                    i += 1;
+                }
+            }
+            Map(pats) => {
+                for p in pats {
+                    match p.as_ref().unwrap() {
+                        MapPattern::Item(k, p) => remaining.push((p, deps.clone() + depends![k])),
+                        MapPattern::Rest(p) => remaining.push((
+                            p,
+                            deps.clone() + depends![ergo_runtime::namespace_id!(ergo::rest)],
+                        )),
+                    }
+                }
+            }
+        }
+    }
+
+    bindings
+}
+
+fn pattern_is_nested<T>(pat: &PatT<T>) -> bool {
+    use Pattern::*;
+    match &**pat {
+        Array(_) | Map(_) => true,
+        _ => false,
+    }
+}
+
+fn evaluate_array_pattern_literals<'a>(
+    ctx: &'a mut Runtime,
+    pat: Source<ArrayPattern<Expr>>,
+) -> BoxFuture<'a, grease::Result<Source<ArrayPattern<grease::value::Id>>>> {
+    async move {
+        pat.map_async(|p| async {
+            match p {
+                ArrayPattern::Item(p) => evaluate_pattern_literals(ctx, p)
+                    .await
+                    .map(ArrayPattern::Item),
+                ArrayPattern::Rest(p) => evaluate_pattern_literals(ctx, p)
+                    .await
+                    .map(ArrayPattern::Rest),
+            }
+        })
+        .await
+        .transpose_ok()
+    }
+    .boxed()
+}
+
+fn evaluate_pattern_literals<'a>(
+    ctx: &'a mut Runtime,
     pat: Pat,
-    val: Option<Source<Value>>,
-) -> SoResult<ScriptEnv> {
+) -> BoxFuture<'a, grease::Result<PatCompiled>> {
+    async move {
+        use Pattern::*;
+        pat.map_async(|p| async move {
+            Ok(match p {
+                Any => Any,
+                Literal(e) => Literal(Rt(e).evaluate(ctx).await?.id()),
+                Binding(s) => Binding(s),
+                Array(pats) => {
+                    let mut pats_new = Vec::new();
+                    for p in pats {
+                        pats_new.push(evaluate_array_pattern_literals(ctx, p).await?);
+                    }
+                    Array(pats_new)
+                }
+                Map(pats) => {
+                    let mut pats_new = Vec::new();
+                    for p in pats {
+                        pats_new.push(
+                            p.map_async(|p| async {
+                                match p {
+                                    MapPattern::Item(k, p) => evaluate_pattern_literals(ctx, p)
+                                        .await
+                                        .map(move |p| MapPattern::Item(k, p)),
+                                    MapPattern::Rest(p) => evaluate_pattern_literals(ctx, p)
+                                        .await
+                                        .map(MapPattern::Rest),
+                                }
+                            })
+                            .await
+                            .transpose_ok()?,
+                        );
+                    }
+                    Map(pats_new)
+                }
+            })
+        })
+        .await
+        .transpose_ok()
+    }
+    .boxed()
+}
+
+pub async fn apply_pattern(pat: PatCompiled, val: Option<Source<Value>>) -> EResult<ScriptEnv> {
     let mut ret = ScriptEnv::new();
     let mut errs = Vec::new();
 
     _apply_pattern(
-        ctx,
         &mut ret,
         &mut errs,
         pat,
@@ -679,15 +797,14 @@ pub async fn apply_pattern(
     if errs.is_empty() {
         Ok(ret)
     } else {
-        Err(grease::value::Error::aggregate(errs))
+        Err(grease::Error::aggregate(errs))
     }
 }
 
 fn _apply_pattern<'a>(
-    ctx: &'a mut Runtime,
     env: &'a mut ScriptEnv,
-    errs: &'a mut Vec<grease::value::Error>,
-    pat: Pat,
+    errs: &'a mut Vec<grease::Error>,
+    pat: PatCompiled,
     val: Option<Source<PatternValues>>,
 ) -> BoxFuture<'a, ()> {
     async move {
@@ -696,68 +813,59 @@ fn _apply_pattern<'a>(
         let desc = std::mem::discriminant(&pat);
         match pat {
             Any => (),
-            Literal(e) => match (Rt(e).evaluate(ctx).await, val) {
-                (Ok(result), Some(val)) => {
-                    if *result != (*val).literal {
+            Literal(id) => {
+                if let Some(val) = val {
+                    if id != val.literal.id() {
                         errs.push(
-                            result.source().with("value definition").context_for_error(
-                                source
-                                    .with(Error::PatternMismatch((*result).clone()))
-                                    .into(),
-                            ),
+                            source
+                                .with(Error::PatternMismatch(val.unwrap().literal))
+                                .into(),
                         );
                     }
                 }
-                _ => (),
-            },
+            }
             Binding(name) => {
                 env.insert(
                     name.into(),
                     match val {
                         Some(v) => Ok(v.map(|v| v.binding)),
-                        None => Err(grease::value::error::Error::aborted()),
+                        None => Err(grease::Error::aborted()),
                     }
                     .into(),
                 );
             }
             Array(inner) => {
-                let mut orig_val = None;
-                let vals: Vec<Option<Source<PatternValues>>> = {
+                let orig_val = val.clone();
+                let vals: EResult<Vec<Option<Source<PatternValues>>>> = {
                     let val = match val {
                         Some(v) => {
-                            orig_val = Some(v.clone());
-                            let (vsource, v) = v.take();
-                            match v.binding.typed::<types::Array>() {
-                                Ok(v) => match v.await {
+                            let (vsource, mut v) = v.take();
+                            let as_array = match_value!(v.binding => {
+                                types::Array => |v| match v.await {
                                     Ok(v) => {
                                         let vsource = vsource.clone();
-                                        Some(
-                                            v.owned()
-                                                .0
-                                                .into_iter()
-                                                .map(move |v| vsource.clone().with(v)),
-                                        )
+                                        v.owned()
+                                            .0
+                                            .into_iter()
+                                            .map(move |v| vsource.clone().with(v))
                                     }
                                     Err(e) => {
-                                        errs.push(vsource.with(Error::ValueError(e)).into());
-                                        None
+                                        Err(vsource.with(Error::ValueError(e)))?
                                     }
                                 },
-                                Err(o) => {
-                                    let err = source.clone().with(Error::PatternMismatch(o)).into();
-                                    errs.push(
+                                => |v| {
+                                    let err = source.clone().with(Error::PatternMismatch(v)).into();
+                                    Err(
                                         vsource.with("value definition").context_for_error(err),
-                                    );
-                                    None
+                                    )?
                                 }
-                            }
+                            });
+                            as_array.await
                         }
-                        None => None,
+                        None => Err(grease::Error::aborted()),
                     };
-                    match val {
-                        None => std::iter::repeat(None).take(inner.len()).collect(),
-                        Some(v) => v
-                            .enumerate()
+                    val.map(|v| {
+                        v.enumerate()
                             .map(|(i, v)| {
                                 Some(v.map(|v| {
                                     PatternValues::new(
@@ -770,20 +878,28 @@ fn _apply_pattern<'a>(
                                     )
                                 }))
                             })
-                            .collect(),
-                    }
+                            .collect()
+                    })
                 };
 
-                match pattern_array(ctx, &inner, &vals).await {
+                let vals = match vals {
+                    Err(e) => {
+                        errs.push(e);
+                        std::iter::repeat(None).take(inner.len()).collect()
+                    }
+                    Ok(v) => v,
+                };
+
+                match pattern_array(&inner, &vals).await {
                     Ok(mut n_env) => {
                         env.append(&mut n_env);
                     }
                     Err(n_errs) => {
                         errs.push({
-                            let mut err: grease::value::Error = match &orig_val {
+                            let mut err: grease::Error = match &orig_val {
                                 None => source
                                     .clone()
-                                    .with(Error::ValueError("pattern count not be matched".into()))
+                                    .with(Error::ValueError("pattern could not be matched".into()))
                                     .into(),
                                 Some(orig_val) => orig_val
                                     .source()
@@ -807,20 +923,27 @@ fn _apply_pattern<'a>(
                 let mut val = match val {
                     Some(v) => {
                         let orig = v.clone();
-                        let (vsource, v) = v.take();
-                        match v.binding.typed::<types::Map>() {
-                            Ok(v) => match v.await {
+                        let (vsource, mut v) = v.take();
+                        let as_map = match_value!(v.binding => {
+                            types::Map => |v| match v.await {
                                 Ok(v) => Some((orig, v.owned().0)),
                                 Err(e) => {
                                     errs.push(vsource.with(Error::ValueError(e)).into());
                                     None
                                 }
                             },
-                            Err(o) => {
-                                let err = source.clone().with(Error::PatternMismatch(o)).into();
+                            => |v| {
+                                let err = source.clone().with(Error::PatternMismatch(v)).into();
                                 errs.push(vsource.with("value definition").context_for_error(err));
                                 None
                             }
+                        });
+                        match as_map.await {
+                            Err(e) => {
+                                errs.push(e);
+                                None
+                            }
+                            Ok(v) => v,
                         }
                     }
                     None => None,
@@ -870,7 +993,7 @@ fn _apply_pattern<'a>(
                                 },
                                 None => None,
                             };
-                            _apply_pattern(ctx, env, errs, pat, result).await;
+                            _apply_pattern(env, errs, pat, result).await;
                         }
                         MapPattern::Rest(pat) => {
                             if let Some((src, _)) = rest_pattern.replace((isource.clone(), pat)) {
@@ -885,7 +1008,6 @@ fn _apply_pattern<'a>(
                 // Match rest pattern with remaining values
                 if let Some((src, rest)) = rest_pattern {
                     _apply_pattern(
-                        ctx,
                         env,
                         errs,
                         rest,
@@ -913,23 +1035,21 @@ fn _apply_pattern<'a>(
     .boxed()
 }
 
-fn is_fixed_point(pat: &Pattern) -> bool {
-    use Pattern::*;
+fn is_fixed_point<T>(pat: &Pattern<T>) -> bool {
     match pat {
-        Any | Binding(_) => false,
+        Pattern::Any | Pattern::Binding(_) => false,
         _ => true,
     }
 }
 
 async fn pattern_array(
-    ctx: &mut Runtime,
-    pats: &[Source<ArrayPattern>],
+    pats: &[Source<ArrayPattern<grease::value::Id>>],
     vals: &[Option<Source<PatternValues>>],
-) -> Result<ScriptEnv, Vec<grease::value::Error>> {
+) -> Result<ScriptEnv, Vec<grease::Error>> {
     let mut ret = ScriptEnv::new();
     let mut errs = Vec::new();
 
-    _pattern_array(ctx, &mut ret, &mut errs, pats, vals).await;
+    _pattern_array(&mut ret, &mut errs, pats, vals).await;
     if errs.is_empty() {
         Ok(ret)
     } else {
@@ -938,10 +1058,9 @@ async fn pattern_array(
 }
 
 fn _pattern_array<'a>(
-    ctx: &'a mut Runtime,
     env: &'a mut ScriptEnv,
-    errs: &'a mut Vec<grease::value::Error>,
-    pats: &'a [Source<ArrayPattern>],
+    errs: &'a mut Vec<grease::Error>,
+    pats: &'a [Source<ArrayPattern<grease::value::Id>>],
     vals: &'a [Option<Source<PatternValues>>],
 ) -> BoxFuture<'a, ()> {
     async move {
@@ -968,7 +1087,7 @@ fn _pattern_array<'a>(
                 ArrayPattern::Item(p) => {
                     if let Some(v) = vals.get(vali) {
                         vali += 1;
-                        _apply_pattern(ctx, env, errs, p.clone(), v.clone()).await;
+                        _apply_pattern(env, errs, p.clone(), v.clone()).await;
                     } else {
                         errs.push(
                             psource
@@ -980,9 +1099,8 @@ fn _pattern_array<'a>(
                 }
                 ArrayPattern::Rest(p) => {
                     let rest_end =
-                        pattern_array_rest(ctx, env, errs, &pats[pati..], &vals[vali..]).await;
+                        pattern_array_rest(env, errs, &pats[pati..], &vals[vali..]).await;
                     _apply_pattern(
-                        ctx,
                         env,
                         errs,
                         p.clone(),
@@ -1011,10 +1129,9 @@ fn _pattern_array<'a>(
 }
 
 fn pattern_array_rest<'a>(
-    ctx: &'a mut Runtime,
     env: &'a mut ScriptEnv,
-    errs: &'a mut Vec<grease::value::Error>,
-    pats: &'a [Source<ArrayPattern>],
+    errs: &'a mut Vec<grease::Error>,
+    pats: &'a [Source<ArrayPattern<grease::value::Id>>],
     vals: &'a [Option<Source<PatternValues>>],
 ) -> BoxFuture<'a, Option<Vec<Source<PatternValues>>>> {
     async move {
@@ -1030,7 +1147,7 @@ fn pattern_array_rest<'a>(
                     // If we have a fixed point pattern, try to match at different locations
                     let mut vali = 0;
                     while vali < vals.len() {
-                        match pattern_array(ctx, &pats, &vals[vali..]).await {
+                        match pattern_array(&pats, &vals[vali..]).await {
                             Ok(mut n_env) => {
                                 env.append(&mut n_env);
                                 return vals[..vali].into_iter().cloned().collect();
@@ -1049,7 +1166,7 @@ fn pattern_array_rest<'a>(
                     None
                 } else {
                     // Go forward to try to find a fixed point
-                    match pattern_array_rest(ctx, env, errs, &pats[1..], &vals[..]).await {
+                    match pattern_array_rest(env, errs, &pats[1..], &vals[..]).await {
                         None => None,
                         Some(values) => {
                             if values.is_empty() {
@@ -1073,7 +1190,7 @@ fn pattern_array_rest<'a>(
                                         val = Some(v);
                                     }
                                 }
-                                _apply_pattern(ctx, env, errs, p.clone(), Some(val.unwrap())).await;
+                                _apply_pattern(env, errs, p.clone(), Some(val.unwrap())).await;
                                 Some(ret)
                             }
                         }
@@ -1090,10 +1207,9 @@ fn pattern_array_rest<'a>(
 }
 
 pub async fn apply_command_pattern(
-    ctx: &mut Runtime,
-    pat: CmdPat,
+    pat: CmdPatT<grease::value::Id>,
     mut args: FunctionArguments,
-) -> Result<ScriptEnv, Vec<grease::value::Error>> {
+) -> Result<ScriptEnv, Vec<grease::Error>> {
     let pat = pat.unwrap();
     let kw = std::mem::take(&mut args.non_positional);
     let vals: Vec<_> = args.map(|v| Some(v.map(PatternValues::singular))).collect();
@@ -1117,7 +1233,7 @@ pub async fn apply_command_pattern(
     // If more than one non-positional pattern, error
     if non_pos_args.len() > 1 {
         let vals = non_pos_args.get(1..).unwrap();
-        let mut err: grease::value::Error = non_pos_args
+        let mut err: grease::Error = non_pos_args
             .as_slice()
             .into_source()
             .with(Error::PatternCommandTooManyNonPositional)
@@ -1133,7 +1249,6 @@ pub async fn apply_command_pattern(
         // Get non-positional pattern bindings
         let non_pos_bindings = if let Some(non_pos_arg) = non_pos_args.into_iter().next() {
             apply_pattern(
-                ctx,
                 non_pos_arg,
                 Some(kw.into_source().map(|kw| {
                     types::Map(kw.into_iter().map(|(k, v)| (k, v.unwrap())).collect()).into_value()
@@ -1153,7 +1268,7 @@ pub async fn apply_command_pattern(
         };
         let non_pos_bindings = non_pos_bindings.map_err(|e| vec![e]);
         // Merge with positional pattern bindings, if applicable
-        let pos_bindings = pattern_array(ctx, &pos_args, &vals).await;
+        let pos_bindings = pattern_array(&pos_args, &vals).await;
         match (non_pos_bindings, pos_bindings) {
             (Ok(mut a), Ok(mut b)) => {
                 a.append(&mut b);
@@ -1180,10 +1295,10 @@ pub fn apply_value(
     async move {
         let v_source = v.source();
 
-        v.map_async(|v| async {
-            let v = if env_lookup {
-                match v.typed::<types::String>() {
-                    Ok(val) => {
+        v.map_async(|mut v| async {
+            let mut v = if env_lookup {
+                match_value!(v => {
+                    types::String => |val| {
                         let s = val.await?.owned();
                         trace!("looking up '{}' in environment", s);
                         // Lookup string in environment, and apply result to remaining arguments
@@ -1197,9 +1312,10 @@ pub fn apply_value(
                                 return Err(Error::MissingBinding(s.into_string()).into());
                             }
                         }
-                    }
-                    Err(v) => v,
-                }
+                    },
+                    => |v| v
+                })
+                .await?
             } else {
                 v
             };
@@ -1219,6 +1335,7 @@ pub fn apply_value(
                     Err(Error::NonCallableExpression(v).into())
                 }
             })
+            .await?
         })
         .await
         .map(|v| v.map_err(|e| e.error()))
@@ -1244,7 +1361,7 @@ impl<T> std::ops::DerefMut for Rt<T> {
 }
 
 impl Rt<Expression> {
-    pub fn evaluate<'a>(self, ctx: &'a mut Runtime) -> BoxFuture<'a, SoResult<Value>> {
+    pub fn evaluate<'a>(self, ctx: &'a mut Runtime) -> BoxFuture<'a, EResult<Value>> {
         async move {
         use Expression::*;
         match self.0 {
@@ -1252,7 +1369,9 @@ impl Rt<Expression> {
             Expression::String(s) => Ok(types::String::from(s).into_value().into()),
             Index(v,ind) => {
                 // ind should evaluate to a string
-                let ind = source_value_as!(Rt(*ind).evaluate(ctx).await?, types::String, ctx)?.await.transpose_ok()?;
+                let ind = Rt(*ind).evaluate(ctx).await?;
+                // TODO do not eagerly evaluate index target?
+                let ind = ctx.source_value_as::<types::String>(ind).await?.await.transpose_ok()?;
 
                 let lookup = |ctx: &mut Runtime, v: grease::value::Ref<types::String>| {
                     let s = v.as_ref();
@@ -1273,31 +1392,36 @@ impl Rt<Expression> {
                         lookup(ctx, ind.unwrap())
                     },
                     Some(v) => {
-                        let (v_source, v) = Rt(*v).evaluate(ctx).await?.take();
+                        let (v_source, mut v) = Rt(*v).evaluate(ctx).await?.take();
 
                         // If a string, first lookup in environment
-                        let v = match v.typed::<types::String>() {
-                            Err(v) => v,
-                            Ok(s) => lookup(ctx, s.await?)?
-                        };
+                        // TODO do not eagerly evaluate index source?
+                        let mut v = match_value!(v => {
+                            types::String => |s| lookup(ctx, s.await?)?,
+                            => |v| v
+                        }).await?;
 
-                        match_value!(v => {
-                            types::Array => |val| {
-                                ind.map_async(|index| async move { match usize::from_str(index.as_ref()) {
-                                    Err(_) => Err(v_source.with(Error::NonIntegerIndex).into()),
-                                    Ok(ind) => val.await.map(|v| v.0.get(ind).cloned()
-                                        .unwrap_or(().into()))
-                                }
-                                }).await.transpose_err_with_context("while indexing array")
-                            },
-                            types::Map => |val| {
-                                ind.map_async(|index| async move {
-                                        val.await.map(|v| v.0.get(index.as_ref()).cloned()
+                        let deps = depends![v, ind.as_ref().unwrap().as_ref()];
+
+                        Ok(Value::dyn_new(async move {
+                            match_value!(v => {
+                                types::Array => |val| {
+                                    ind.map_async(|index| async move { match usize::from_str(index.as_ref()) {
+                                        Err(_) => Err(v_source.with(Error::NonIntegerIndex).into()),
+                                        Ok(ind) => val.await.map(|v| v.0.get(ind).cloned()
                                             .unwrap_or(().into()))
-                                }).await.transpose_err_with_context("while indexing map")
-                            },
-                            => |v| Err(v_source.with(Error::NonIndexableValue(v)).into())
-                        })
+                                    }
+                                    }).await.transpose_err_with_context("while indexing array")
+                                },
+                                types::Map => |val| {
+                                    ind.map_async(|index| async move {
+                                            val.await.map(|v| v.0.get(index.as_ref()).cloned()
+                                                .unwrap_or(().into()))
+                                    }).await.transpose_err_with_context("while indexing map")
+                                },
+                                => |v| Err(v_source.with(Error::NonIndexableValue(v)).into())
+                            }).await.and_then(|r| r)?.make_any_value().await
+                        }, deps))
                     }
                 }
             },
@@ -1309,46 +1433,98 @@ impl Rt<Expression> {
                     }
                     results.collect_result::<Vec<_>>()?
                 };
-                let mut vals = Vec::new();
-                let mut errs = Vec::new();
-                for v in all_vals {
-                    let (_merge_source, (merge, val)) = v.take();
-                    if merge {
-                        let (val_source, val) = val.take();
-                        match val.typed::<types::Array>() {
-                            Ok(val) => vals.extend(val.await?.owned().0),
-                            Err(_) => {
-                                errs.push(
-                                    val_source
-                                        .with(Error::CannotMerge("non-array value".into()))
-                                        .into(),
-                                );
-                            }
+
+                enum ArrayVal {
+                    Single(Value),
+                    Merge(TypedValue<types::Array>)
+                }
+
+                impl From<&ArrayVal> for grease::value::Dependency {
+                    fn from(av: &ArrayVal) -> Self {
+                        match av {
+                            ArrayVal::Single(v) => grease::value::Dependency::Value(v.clone()),
+                            ArrayVal::Merge(v) => grease::value::Dependency::Value(v.clone().into()),
                         }
-                    } else {
-                        vals.push(val.unwrap());
                     }
                 }
 
-                if errs.is_empty() {
-                    Ok(types::Array(vals.into()).into_value())
+                let mut vals = Vec::new();
+                let mut errs = Vec::new();
+                let mut has_merge = false;
+                for v in all_vals {
+                    let (_merge_source, (merge, val)) = v.take();
+                    if merge {
+                        match ctx.source_value_as::<types::Array>(val).await {
+                            Err(e) => errs.push(e),
+                            Ok(val) => {
+                                has_merge = true;
+                                vals.push(ArrayVal::Merge(val.unwrap()))
+                            }
+                        }
+                    } else {
+                        vals.push(ArrayVal::Single(val.unwrap()));
+                    }
+                }
+
+                if !errs.is_empty() {
+                    Err(grease::Error::aggregate(errs))
+                } else if !has_merge {
+                    Ok(types::Array(vals.into_iter()
+                            .map(|v| match v { ArrayVal::Single(v) => v, _ => panic!("array logic error") })
+                            .collect()).into_value())
                 } else {
-                    Err(grease::value::Error::aggregate(errs))
+                    Ok(make_value!([depends![^@vals]] {
+                        let mut ret = Vec::new();
+                        let mut errs = Vec::new();
+                        for v in vals {
+                            match v {
+                                ArrayVal::Single(v) => ret.push(v),
+                                ArrayVal::Merge(v) => match v.await {
+                                    Err(e) => errs.push(e),
+                                    Ok(v) => ret.extend(v.owned().0),
+                                }
+                            }
+                        }
+
+                        if !errs.is_empty() {
+                            Err(grease::Error::aggregate(errs))
+                        } else {
+                            Ok(types::Array(ret.into()))
+                        }
+                    }).into())
                 }
             }
             Set(pat, e) => {
+                let e_source = e.source();
                 let data = Rt(*e).evaluate(ctx).await;
-                let (ok_ret, data) = match data {
-                    Err(e) => (Err(e.clone()), None),
+                let (ret, v) = match data {
+                    Err(e) => (Err(e), None),
                     Ok(v) => (Ok(ScriptEnvIntoMap.into_value().into()), Some(v)),
                 };
-                match apply_pattern(ctx, *pat, data).await {
-                    Ok(env) => {
-                        ctx.env_extend(env);
-                        ok_ret.into()
-                    }
-                    Err(e) => Err(e),
+                let pat_compiled = evaluate_pattern_literals(ctx, *pat).await?;
+                if pattern_is_nested(&pat_compiled) {
+                    // Nested patterns should have all bindings evaluated later to avoid
+                    // immediately evaluating any values to check for array/map.
+                    let bindings = pattern_bindings(&pat_compiled);
+                    let v = v.unwrap_or(e_source.with(make_value!({ let ret: Result<(),_> = Err(grease::Error::aborted()); ret }).into()));
+                    let deps = depends![pat_compiled, *v];
+                    let pat_result = apply_pattern(pat_compiled, Some(v)).shared();
+                    ctx.env_extend(bindings.into_iter().map(|(name, d)| {
+                        let (source, n) = name.clone().take();
+                        let pat_result = pat_result.clone();
+                        let deps = deps.clone() + d;
+                        (name.unwrap(), RResult::ROk(source.with(Value::dyn_new(async move {
+                            let bindings = pat_result.await?;
+                            bindings.get(n.as_str()).expect("internal pattern matching assertion failed")
+                                .clone()
+                                .into_result()?
+                                .make_any_value().await
+                        }, deps))))
+                    }));
+                } else {
+                    ctx.env_extend(apply_pattern(pat_compiled, v).await?);
                 }
+                ret
             }
             Unset(var) => {
                 ctx.env_remove(var.as_str());
@@ -1369,7 +1545,7 @@ impl Rt<Expression> {
                 for a in args {
                     let (_merge_source, (merge, val)) = a.take();
                     if merge {
-                        let (val_source, val) = val.take();
+                        let (val_source, mut val) = val.take();
                         match_value!(val => {
                             types::Array => |val| {
                                 vals.extend(val.await?.owned().0.into_iter().map(|v| val_source.clone().with(v)));
@@ -1382,14 +1558,14 @@ impl Rt<Expression> {
                                     val_source.with(Error::CannotMerge("non-array/map value".into())).into(),
                                 );
                             }
-                        });
+                        }).await?;
                     } else {
                         vals.push(val);
                     }
                 }
 
                 if !errs.is_empty() {
-                    return Err(grease::value::Error::aggregate(errs));
+                    return Err(grease::Error::aggregate(errs));
                 }
 
                 apply_value(
@@ -1411,6 +1587,15 @@ impl Rt<Expression> {
                         env_deps += depends![**v];
                     }
                 }
+
+                // Pre-compile patterns
+                let (pat_source, pat) = pat.take();
+                let mut pats = Vec::new();
+                for p in pat {
+                    pats.push(evaluate_array_pattern_literals(ctx, p).await?);
+                }
+                let pat = pat_source.with(pats);
+
                 let deps = depends![^env_deps, pat, e];
                 Ok(types::Function::new(move |ctx| {
                     let e = e.clone();
@@ -1422,7 +1607,7 @@ impl Rt<Expression> {
                         ctx.substituting_env(rvec![env.clone()], |ctx| {
                             async move {
                                 let args = std::mem::take(&mut ctx.args);
-                                match apply_command_pattern(ctx, pat.clone(), args).await {
+                                match apply_command_pattern(pat.clone(), args).await {
                                     Ok(bindings) => {
                                         ctx.env_scoped(bindings, |ctx| {
                                             Rt(e.as_ref().clone()).evaluate(ctx).boxed()
@@ -1430,10 +1615,10 @@ impl Rt<Expression> {
                                         .await
                                         .0
                                     }
-                                    Err(errs) => Err(grease::value::Error::from(
+                                    Err(errs) => Err(grease::Error::from(
                                         src.with(Error::ArgumentMismatch),
                                     )
-                                    .with_context(grease::value::Error::aggregate(errs))),
+                                    .with_context(grease::Error::aggregate(errs))),
                                 }
                             }
                             .boxed()
@@ -1447,17 +1632,30 @@ impl Rt<Expression> {
             Match(val, pats) => {
                 let val = Rt(*val).evaluate(ctx).await?;
 
-                for (p, e) in pats {
-                    if let Ok(env) = apply_pattern(ctx, p, Some(val.clone())).await {
-                        return ctx
-                            .env_scoped(env, |ctx| Rt(e).evaluate(ctx).boxed())
-                            .await
-                            .0
-                            .map(Source::unwrap); // TODO: don't do this
-                    }
+                // Pre-compile patterns
+                let mut ps = Vec::new();
+                for (p,e) in pats {
+                    ps.push((evaluate_pattern_literals(ctx, p).await?,e));
                 }
+                let pats = ps;
 
-                Err(val.source().with(Error::MatchFailed(val.unwrap())).into())
+                let deps = depends![*val, pats];
+                // TODO pre-compile expressions in match and functions
+                let mut ctx = ctx.clone();
+                Ok(Value::dyn_new(async move {
+                    for (p, e) in pats {
+                        if let Ok(bindings) = apply_pattern(p, Some(val.clone())).await {
+                            return ctx
+                                .env_scoped(bindings, |ctx| Rt(e).evaluate(ctx).boxed())
+                                .await
+                                .0
+                                .map(Source::unwrap)?
+                                .make_any_value().await;
+                        }
+                    }
+
+                    Err(val.source().with(Error::MatchFailed(val.unwrap())).into())
+                }, deps))
             }
         }
     }.boxed()
@@ -1482,7 +1680,7 @@ impl Rt<Source<Expression>> {
 }
 
 impl Rt<Source<MergeExpression>> {
-    pub async fn evaluate(self, ctx: &mut Runtime) -> SoResult<Source<(bool, Source<Value>)>> {
+    pub async fn evaluate(self, ctx: &mut Runtime) -> EResult<Source<(bool, Source<Value>)>> {
         let (source, val) = self.0.take();
         let merge = val.merge;
         Rt(val.expr)
@@ -1509,25 +1707,16 @@ impl Rt<Source<Vec<Source<MergeExpression>>>> {
                                 Ok(merge) => {
                                     let (merge_source, (merge, val)) = merge.take();
                                     if merge {
-                                        let (val_source, val) = val.take();
-                                        match val.typed::<types::Map>() {
-                                            Ok(val) => match val.await {
-                                                Ok(val) => {
-                                                    for (k, v) in val.owned().0 {
-                                                        ctx.env_insert(
-                                                            k.into(),
-                                                            Ok(val_source.clone().with(v)),
-                                                        );
-                                                    }
-                                                    Ok(merge_source
-                                                        .with(ScriptEnvIntoMap.into_value()))
-                                                }
-                                                Err(e) => Err(val_source.with(e.error()).into()),
-                                            },
-                                            Err(_) => Err(val_source
-                                                .with(Error::CannotMerge("non-map value".into()))
-                                                .into()),
+                                        // TODO make block map merge non-eagerly evaluated
+                                        let (val_source, val) =
+                                            ctx.source_value_as::<types::Map>(val).await?.take();
+                                        for (k, v) in val.await?.owned().0 {
+                                            ctx.env_insert(
+                                                k.into(),
+                                                Ok(val_source.clone().with(v)),
+                                            );
                                         }
+                                        Ok(merge_source.with(ScriptEnvIntoMap.into_value()))
                                     } else {
                                         Ok(val)
                                     }
@@ -1552,13 +1741,16 @@ impl Rt<Source<Vec<Source<MergeExpression>>>> {
                 .collect_result::<BstMap<_, _>>();
 
             // Return result based on final value.
-            val.and_then(|val| {
-                let (source, val) = val.take();
-                match val.typed::<ScriptEnvIntoMap>() {
-                    Ok(_) => env_map.map(|ret| self_source.with(types::Map(ret).into_value())),
-                    Err(v) => Ok(source.with(v)),
+            match val {
+                Err(e) => Err(e),
+                Ok(val) => {
+                    let (source, mut val) = val.take();
+                    match_value!(val => {
+                        ScriptEnvIntoMap => |_| env_map.map(|ret| self_source.with(types::Map(ret).into_value())),
+                        => |v| Ok(source.with(v))
+                    }).await.and_then(|r| r)
                 }
-            })
+            }
         }
         .boxed()
     }

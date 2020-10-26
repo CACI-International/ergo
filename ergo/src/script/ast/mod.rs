@@ -23,25 +23,30 @@ pub enum Expression {
 
 /// A parsed pattern.
 #[derive(Clone, Debug, Hash, PartialEq)]
-pub enum Pattern {
+pub enum Pattern<Lit> {
     Any,
-    Literal(Expr),
+    Literal(Lit),
     Binding(String),
-    Array(Vec<Source<ArrayPattern>>),
-    Map(Vec<Source<MapPattern>>),
+    Array(Vec<Source<ArrayPattern<Lit>>>),
+    Map(Vec<Source<MapPattern<Lit>>>),
 }
 
 #[derive(Clone, Debug, Hash, PartialEq)]
-pub enum ArrayPattern {
-    Item(Pat),
-    Rest(Pat),
+pub enum ArrayPattern<Lit> {
+    Item(PatT<Lit>),
+    Rest(PatT<Lit>),
 }
 
 #[derive(Clone, Debug, Hash, PartialEq)]
-pub enum MapPattern {
-    Item(String, Pat),
-    Rest(Pat),
+pub enum MapPattern<Lit> {
+    Item(String, PatT<Lit>),
+    Rest(PatT<Lit>),
 }
+
+pub type PatT<Lit> = Source<Pattern<Lit>>;
+
+/// Parsed patterns with source information.
+pub type Pat = PatT<Expr>;
 
 /// A parsed merge expression.
 ///
@@ -59,13 +64,12 @@ pub type Expr = Source<Expression>;
 /// A merge expression with source information.
 pub type MergeExpr = Source<MergeExpression>;
 
-/// Patterns with source information.
-pub type Pat = Source<Pattern>;
+pub type CmdPatT<Lit> = Source<Vec<Source<ArrayPattern<Lit>>>>;
 
 /// A parsed command pattern.
 ///
 /// This is of primary use in function definitions.
-pub type CmdPat = Source<Vec<Source<ArrayPattern>>>;
+pub type CmdPat = CmdPatT<Expr>;
 
 /// Multiple expressions.
 ///

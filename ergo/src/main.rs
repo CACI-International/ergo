@@ -1,5 +1,5 @@
 use abi_stable::std_types::{RDuration, ROption, RSlice, RString, RVec};
-use ergo_runtime::{source::Source, traits, ScriptEnv};
+use ergo_runtime::{source::Source, ContextExt, ScriptEnv};
 use grease::runtime::*;
 use simplelog::WriteLogger;
 use std::io::Write;
@@ -82,7 +82,7 @@ impl AppErr for bool {
     }
 }
 
-fn run(opts: Opts) -> Result<String, grease::value::Error> {
+fn run(opts: Opts) -> Result<String, grease::Error> {
     let mut output =
         output(opts.format, !opts.stop).app_err("could not create output from requested format");
     output.set_log_level(opts.log_level);
@@ -203,18 +203,19 @@ fn run(opts: Opts) -> Result<String, grease::value::Error> {
         .block_on(loaded.evaluate(&mut ctx))
         .app_err_result("errors(s) while executing script")?;
 
-    let traits = ctx.traits.clone();
-
-    // Drop context, which removes any unneeded values that may be held.
+    // Reduce context to grease context, which removes any unneeded values that may be held.
     //
     // This is *important* as some values (like those returned by exec) behave differently if their
     // peers still exist or not.
+    let grease_ctx: grease::runtime::Context = (*ctx).clone();
     drop(ctx);
 
     script_output
         .map(|v| {
-            task.block_on(traits::force_value_nested(&traits, v.clone()))?;
-            Ok(traits::display(&traits, &v).to_string())
+            grease_ctx.task.block_on(async {
+                grease_ctx.force_value_nested(v.clone()).await?;
+                grease_ctx.display(v).await
+            })
         })
         .unwrap()
 }

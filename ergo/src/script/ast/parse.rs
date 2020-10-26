@@ -71,7 +71,7 @@ mod pattern {
     }
 
     /// An array item pattern.
-    fn array_item<'a>() -> Parser<'a, Source<ArrayPattern>> {
+    fn array_item<'a>() -> Parser<'a, Source<ArrayPattern<Expr>>> {
         !function_delim()
             * (sym(Token::Caret).opt() + pattern()).map(|(c, p)| match c {
                 Some(c) => (c, p).into_source().map(|(_, p)| ArrayPattern::Rest(p)),

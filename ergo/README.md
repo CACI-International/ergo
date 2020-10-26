@@ -103,3 +103,5 @@ Within a script, the following are defined:
     contain.
   * Maybe also change indexing to not always return a value, and add back in
     `collection:has` from long ago.
+* Issue a warning when a string literal has the same name as something in the
+  environment.

@@ -45,7 +45,7 @@ pub trait ContextExt: AsContext {
     fn source_value_as<T: GreaseType + 'static>(
         &self,
         v: Source<Value>,
-    ) -> BoxFuture<Result<Source<TypedValue<T>>>> {
+    ) -> BoxFuture<'static, Result<Source<TypedValue<T>>>> {
         let (source, v) = v.take();
         let s = source.clone();
         let ctx = self.as_context().clone();
