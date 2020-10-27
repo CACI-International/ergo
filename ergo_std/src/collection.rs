@@ -3,12 +3,13 @@
 use abi_stable::std_types::RVec;
 use ergo_runtime::{ergo_function, types, ContextExt, FunctionArguments};
 use futures::future::{ok, FutureExt, TryFutureExt};
-use grease::{bst::BstMap, depends, make_value, value::Value};
+use grease::{bst::BstMap, depends, make_value, match_value, value::Value};
 
 pub fn module() -> Value {
     let mut map = BstMap::default();
     map.insert("entries".into(), entries_fn());
     map.insert("fold".into(), fold_fn());
+    map.insert("has".into(), has_fn());
     map.insert("map".into(), map_fn());
     types::Map(map).into()
 }
@@ -105,6 +106,36 @@ fn entries_fn() -> Value {
             }
 
             Ok(types::Array(vals))
+        })
+        .into()
+    })
+    .into()
+}
+
+fn has_fn() -> Value {
+    ergo_function!(std::collection::has, |ctx| {
+        let mut value = ctx.args.next().ok_or("value not provided")?.unwrap();
+        let index = ctx.args.next().ok_or("index not provided")?;
+
+        ctx.unused_arguments()?;
+
+        let index = ctx.source_value_as::<types::String>(index);
+        let index = index.await?.unwrap();
+
+        make_value!([value, index] {
+            let index = index.await?;
+
+            match_value!(value => {
+                types::Array => |val| {
+                    use std::str::FromStr;
+                    let i = usize::from_str(index.as_ref())?;
+                    i < val.await?.0.len()
+                }
+                types::Map => |val| {
+                    val.await?.0.get(index.as_ref()).is_some()
+                }
+                => |_| Err("non-indexable value")?
+            }).await
         })
         .into()
     })

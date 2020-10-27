@@ -510,6 +510,8 @@ pub enum Error {
     InvalidIndex,
     /// No binding with the given name is available in the current environment.
     MissingBinding(String),
+    /// No index with the given name exists within the value.
+    MissingIndex(String),
     /// An integer index (for arrays) was expected.
     NonIntegerIndex,
     /// A type that cannot be indexed was used in an index expression.
@@ -556,6 +558,7 @@ impl fmt::Display for Error {
         match self {
             InvalidIndex => write!(f, "type is not an array or map; cannot index"),
             MissingBinding(s) => write!(f, "'{}' is not available in the current environment", s),
+            MissingIndex(s) => write!(f, "'{}' index does not exist", s),
             NonIntegerIndex => write!(f, "positive integer index expected"),
             NonIndexableValue(_v) => write!(f, "value cannot be indexed"),
             NonCallableExpression(_v) => write!(f, "cannot pass arguments to non-callable value"),
@@ -1373,7 +1376,7 @@ impl Rt<Expression> {
                 // TODO do not eagerly evaluate index target?
                 let ind = ctx.source_value_as::<types::String>(ind).await?.await.transpose_ok()?;
 
-                let lookup = |ctx: &mut Runtime, v: grease::value::Ref<types::String>| {
+                fn lookup(ctx: &mut Runtime, v: grease::value::Ref<types::String>) -> EResult<Value> {
                     let s = v.as_ref();
                     trace!("looking up '{}' in environment", s);
                     match ctx.env_get(s) {
@@ -1394,29 +1397,28 @@ impl Rt<Expression> {
                     Some(v) => {
                         let (v_source, mut v) = Rt(*v).evaluate(ctx).await?.take();
 
-                        // If a string, first lookup in environment
-                        // TODO do not eagerly evaluate index source?
-                        let mut v = match_value!(v => {
-                            types::String => |s| lookup(ctx, s.await?)?,
-                            => |v| v
-                        }).await?;
-
                         let deps = depends![v, ind.as_ref().unwrap().as_ref()];
 
+                        let mut ctx = ctx.clone();
+
                         Ok(Value::dyn_new(async move {
+                            // If a string, first lookup in environment
+                            let mut v = match_value!(v => {
+                                types::String => |s| lookup(&mut ctx, s.await?)?,
+                                => |v| v
+                            }).await?;
+
                             match_value!(v => {
                                 types::Array => |val| {
                                     ind.map_async(|index| async move { match usize::from_str(index.as_ref()) {
                                         Err(_) => Err(v_source.with(Error::NonIntegerIndex).into()),
-                                        Ok(ind) => val.await.map(|v| v.0.get(ind).cloned()
-                                            .unwrap_or(().into()))
+                                        Ok(ind) => val.await.and_then(|v| v.0.get(ind).cloned().ok_or_else(|| Error::MissingIndex(ind.to_string()).into()))
                                     }
                                     }).await.transpose_err_with_context("while indexing array")
                                 },
                                 types::Map => |val| {
                                     ind.map_async(|index| async move {
-                                            val.await.map(|v| v.0.get(index.as_ref()).cloned()
-                                                .unwrap_or(().into()))
+                                            val.await.and_then(|v| v.0.get(index.as_ref()).cloned().ok_or_else(|| Error::MissingIndex(index.as_ref().to_string()).into()))
                                     }).await.transpose_err_with_context("while indexing map")
                                 },
                                 => |v| Err(v_source.with(Error::NonIndexableValue(v)).into())

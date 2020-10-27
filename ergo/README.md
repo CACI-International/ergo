@@ -94,8 +94,6 @@ Within a script, the following are defined:
 * Add work recording to script.
 * Add value dependency tree print to help debug consistency issues.
 * Support `collection:map` over map values.
-* Change indexing to not always return a value, and add back in `collection:has`
-  from long ago.
 * Issue a warning when a string literal has the same name as something in the
   environment.
 * Change `path:new` to have identity based on source file and occurrence/seed
