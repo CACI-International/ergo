@@ -1,6 +1,6 @@
 //! Network module.
 
-use ergo_runtime::{ergo_function, source_value_as, traits, types};
+use ergo_runtime::{context_ext::AsContext, ergo_function, types, ContextExt};
 use grease::{bst::BstMap, depends, make_value, path::PathBuf, value::Value};
 use reqwest::{
     blocking::Client,
@@ -18,12 +18,17 @@ fn download_fn() -> Value {
         let url = ctx.args.next().ok_or("no url provided")?;
         let path = ctx.args.next().ok_or("no path provided")?;
 
-        let url = source_value_as!(url, types::String, ctx)?.unwrap();
-        let path = source_value_as!(path, PathBuf, ctx)?.unwrap();
+        let url = ctx.source_value_as::<types::String>(url);
+        let url = url.await?.unwrap();
+        let path = ctx.source_value_as::<PathBuf>(path);
+        let path = path.await?.unwrap();
 
         let headers = match ctx.args.kw("headers") {
             None => None,
-            Some(v) => Some(source_value_as!(v, types::Map, ctx)?),
+            Some(v) => Some({
+                let v = ctx.source_value_as::<types::Map>(v);
+                v.await?
+            }),
         };
 
         ctx.unused_arguments()?;
@@ -33,7 +38,7 @@ fn download_fn() -> Value {
             deps += depends![**v];
         }
 
-        let rctx = ctx.clone();
+        let rctx: grease::runtime::Context = ctx.as_context().clone();
 
         make_value!([^deps] {
             let (url,path) = rctx.task.join(url, path).await?;
@@ -41,9 +46,9 @@ fn download_fn() -> Value {
             let mut http_headers = HeaderMap::new();
             if let Some(headers) = headers {
                 let (headers_source, headers) = headers.take();
-                traits::force_value_nested(&rctx.traits, headers.clone().into()).await?;
+                rctx.force_value_nested(headers.clone().into()).await?;
                 for (k,v) in headers.forced_value().0.iter() {
-                    let v = source_value_as!(headers_source.clone().with(v.clone()), types::String, rctx)?.unwrap().await?;
+                    let v = rctx.source_value_as::<types::String>(headers_source.clone().with(v.clone())).await?.unwrap().await?;
                     http_headers.insert(HeaderName::from_bytes(k.as_bytes())?,
                         HeaderValue::from_str(v.as_ref())?);
                 }

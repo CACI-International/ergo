@@ -1,6 +1,6 @@
 //! ABI-stable closures.
 
-use crate::type_erase::{Eraseable, Erased};
+use crate::type_erase::{Eraseable, Erased, ErasedTrivial};
 use abi_stable::{std_types::tuple, StableAbi};
 
 /// A function pointer.
@@ -11,27 +11,17 @@ use abi_stable::{std_types::tuple, StableAbi};
 #[repr(C)]
 #[sabi(unsafe_unconstrained(F))]
 pub struct FnPtr<F>(
-    *const (),
+    ErasedTrivial,
     #[sabi(unsafe_opaque_field)] std::marker::PhantomData<F>,
 );
 
-impl<F> From<&F> for FnPtr<F> {
-    fn from(f: &F) -> Self {
-        FnPtr(unsafe { std::mem::transmute(f) }, Default::default())
+impl<F: Eraseable + Copy> FnPtr<F> {
+    pub fn new(f: F) -> Self {
+        FnPtr(ErasedTrivial::new(f), Default::default())
     }
-}
 
-impl<F: Copy> FnPtr<F> {
     pub fn as_fn(&self) -> &F {
-        unsafe { std::mem::transmute::<*const (), &F>(self.0) }
-    }
-
-    pub unsafe fn from_ptr(p: *const ()) -> Self {
-        FnPtr(p, Default::default())
-    }
-
-    pub fn from_fn(f: *const F) -> Self {
-        FnPtr(f as *const (), Default::default())
+        unsafe { self.0.as_ref::<F>() }
     }
 }
 
@@ -244,7 +234,7 @@ where
 
 #[cfg(test)]
 mod test {
-    use super::Closure;
+    use super::{Closure, FnPtr};
 
     #[test]
     fn no_args() {
@@ -275,5 +265,15 @@ mod test {
         let c = Closure::from(|a, b, c, d| if d { a * b } else { c });
         assert_eq!(c.call(40, 2, 14, true), 80);
         assert_eq!(c.call(40, 2, 14, false), 14);
+    }
+
+    #[test]
+    fn fn_ptr() {
+        extern "C" fn my_func(v: u8) -> u8 {
+            v + 2
+        }
+
+        let ptr: FnPtr<extern "C" fn(u8) -> u8> = FnPtr::new(my_func);
+        assert_eq!((ptr.as_fn())(40), 42);
     }
 }

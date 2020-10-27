@@ -1,7 +1,10 @@
 //! If function.
 
-use ergo_runtime::{ergo_function, source::Source, traits::IntoTyped, types};
-use grease::value::{IntoValue, Value};
+use ergo_runtime::{ergo_function, source::Source, ContextExt};
+use grease::{
+    depends,
+    value::{IntoValue, Value},
+};
 
 pub fn function() -> Value {
     ergo_function!(independent std::if, |ctx| {
@@ -11,22 +14,34 @@ pub fn function() -> Value {
 
         ctx.unused_arguments()?;
 
-        match ctx.traits.get::<IntoTyped<bool>>(&cond) {
-            Some(t) => {
-                let cond = t.into_typed(ctx, cond.unwrap());
-                let vals = vec![
-                    if_false.map(Source::unwrap).unwrap_or(().into_value()),
-                    if_true.unwrap(),
-                ];
+        let to_sourced = ctx.into_sourced::<bool>(cond);
+        let cond = to_sourced.await?.unwrap();
 
-                types::Either::new(vals, cond.map(|v| v.owned().into())).into()
-            }
-            None => {
-                // Immediately evaluate to true type
-                // This case should technically never happen because IntoTyped<bool> has a blanket
-                // implementation for all types.
-                if_true.unwrap()
-            }
+        let mut if_true = if_true.unwrap();
+        let mut if_false = if_false.map(Source::unwrap).unwrap_or(().into_value());
+
+        let deps = depends![cond, if_true, if_false];
+        // If types are immediately available and match, produce a value with the given type.
+        match (if_true.grease_type_immediate(), if_false.grease_type_immediate()) {
+            (Some(a), Some(b)) if a == b =>
+                unsafe {
+                    Value::new(abi_stable::std_types::RArc::new(a.clone()), async move {
+                        let c = cond.await?;
+                        if *c.as_ref() {
+                            if_true.await
+                        } else {
+                            if_false.await
+                        }
+                    }, deps)
+                }
+            _ => Value::dyn_new(async move {
+                    let c = cond.await?;
+                    if *c.as_ref() {
+                        if_true.make_any_value().await
+                    } else {
+                        if_false.make_any_value().await
+                    }
+                }, deps)
         }
     })
     .into()

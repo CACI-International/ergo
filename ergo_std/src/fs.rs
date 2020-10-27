@@ -1,6 +1,6 @@
 //! Filesystem runtime functions.
 
-use ergo_runtime::{ergo_function, source_value_as, traits, types};
+use ergo_runtime::{ergo_function, types, ContextExt};
 use glob::glob;
 use grease::{
     bst::BstMap, item_name, make_value, match_value, path::PathBuf, runtime::io::Blocking,
@@ -32,21 +32,20 @@ fn glob_fn() -> Value {
         ctx.unused_arguments()?;
 
         let pattern_source = pattern.source();
-        let pattern = traits::into_sourced::<types::String>(ctx, pattern)?.unwrap();
+        let pattern = ctx.into_sourced::<types::String>(pattern);
+        let pattern = pattern.await?.unwrap();
 
-        let path = source_value_as!(
+        let path = ctx.source_value_as::<PathBuf>(
             ctx.env_get("work-dir")
                 .ok_or(
                     ctx.call_site
                         .clone()
                         .with("work-dir not set")
-                        .into_grease_error()
+                        .into_grease_error(),
                 )?
                 .map(|v| v.clone())?,
-            PathBuf,
-            ctx
-        )?
-        .unwrap();
+        );
+        let path = path.await?.unwrap();
 
         let task = ctx.task.clone();
 
@@ -111,15 +110,11 @@ fn copy_fn() -> Value {
 
         ctx.unused_arguments()?;
 
-        let from = from.map(|v| v.typed::<PathBuf>()
-            .map_err(|_| "'from' argument must be a path"))
-            .transpose_err()
-            .map_err(|e| e.into_grease_error())?;
+        let from = ctx.source_value_as::<PathBuf>(from);
+        let from = from.await?.unwrap();
 
-        let to = to.map(|v| v.typed::<PathBuf>()
-            .map_err(|_| "'to' argument must be a path"))
-            .transpose_err()
-            .map_err(|e| e.into_grease_error())?;
+        let to = ctx.source_value_as::<PathBuf>(to);
+        let to = to.await?.unwrap();
 
         let log = ctx.log.sublog("fs::copy");
         let task = ctx.task.clone();
@@ -141,13 +136,8 @@ fn exists_fn() -> Value {
 
         ctx.unused_arguments()?;
 
-        let path = path
-            .map(|v| {
-                v.typed::<PathBuf>()
-                    .map_err(|_| "'path' argument must be a path")
-            })
-            .transpose_err()
-            .map_err(|e| e.into_grease_error())?;
+        let path = ctx.source_value_as::<PathBuf>(path);
+        let path = path.await?.unwrap();
 
         make_value!((path) {
             Ok(path.await?.as_ref().as_ref().exists())
@@ -163,13 +153,8 @@ fn create_dir_fn() -> Value {
 
         ctx.unused_arguments()?;
 
-        let path = path
-            .map(|v| {
-                v.typed::<PathBuf>()
-                    .map_err(|_| "'path' argument must be a path")
-            })
-            .transpose_err()
-            .map_err(|e| e.into_grease_error())?;
+        let path = ctx.source_value_as::<PathBuf>(path);
+        let path = path.await?.unwrap();
 
         make_value!([path] {
             Ok(std::fs::create_dir_all(path.await?.as_ref().as_ref())?)
@@ -195,8 +180,10 @@ fn unarchive_fn() -> Value {
 
         ctx.unused_arguments()?;
 
-        let (from_source, from) = source_value_as!(from, PathBuf, ctx)?.take();
-        let to = source_value_as!(to, PathBuf, ctx)?.unwrap();
+        let from = ctx.source_value_as::<PathBuf>(from);
+        let (from_source, from) = from.await?.take();
+        let to = ctx.source_value_as::<PathBuf>(to);
+        let to = to.await?.unwrap();
 
         let task = ctx.task.clone();
         make_value!([from, to] {
@@ -280,8 +267,10 @@ fn sha1_fn() -> Value {
 
         ctx.unused_arguments()?;
 
-        let path = source_value_as!(path, PathBuf, ctx)?.unwrap();
-        let sum = source_value_as!(sum, types::String, ctx)?.unwrap();
+        let path = ctx.source_value_as::<PathBuf>(path);
+        let path = path.await?.unwrap();
+        let sum = ctx.source_value_as::<types::String>(sum);
+        let sum = sum.await?.unwrap();
 
         let task = ctx.task.clone();
         make_value!([path, sum] {
@@ -305,17 +294,17 @@ fn track_fn() -> Value {
         ctx.unused_arguments()?;
 
         let path = path
-            .map_async(|p| async {
+            .map_async(|mut p|
                 match_value!(p => {
                     types::String => |v| {
-                        v.await.map(|v| v.owned().to_string().into())
+                        v.await?.owned().to_string().into()
                     },
                     PathBuf => |v| {
-                        v.await.map(|v| v.owned().into_pathbuf())
+                        v.await?.owned().into_pathbuf()
                     },
-                    => |_| Err("track argument must be a string or path".into())
+                    => |_| Err("track argument must be a string or path")?
                 })
-            })
+            )
             .await
             .transpose_err()
             .map_err(|e| e.into_grease_error())?;
@@ -376,7 +365,8 @@ fn remove_fn() -> Value {
 
         ctx.unused_arguments()?;
 
-        let path = source_value_as!(path, PathBuf, ctx)?.unwrap();
+        let path = ctx.source_value_as::<PathBuf>(path);
+        let path = path.await?.unwrap();
 
         make_value!([path] {
             let path = path.await?;
@@ -400,7 +390,8 @@ fn read_fn() -> Value {
 
         ctx.unused_arguments()?;
 
-        let path = source_value_as!(path, PathBuf, ctx)?.unwrap();
+        let path = ctx.source_value_as::<PathBuf>(path);
+        let path = path.await?.unwrap();
 
         make_value!([path] {
             let path = path.await?;
@@ -419,8 +410,11 @@ fn write_fn() -> Value {
 
         ctx.unused_arguments()?;
 
-        let path = source_value_as!(path, PathBuf, ctx)?.unwrap();
-        let data = traits::into_sourced::<types::ByteStream>(ctx, data)?.unwrap();
+        let path = ctx.source_value_as::<PathBuf>(path);
+        let path = path.await?.unwrap();
+
+        let data = ctx.into_sourced::<types::ByteStream>(data);
+        let data = data.await?.unwrap();
 
         let task = ctx.task.clone();
 

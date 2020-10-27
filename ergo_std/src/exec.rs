@@ -1,7 +1,10 @@
 //! Execute (possibly with path-lookup) external programs.
 
 use abi_stable::{std_types::ROption, StableAbi};
-use ergo_runtime::{ergo_function, namespace_id, traits, traits::IntoTyped, types};
+use ergo_runtime::{
+    context_ext::AsContext, ergo_function, namespace_id, traits, traits::IntoTyped, types,
+    ContextExt,
+};
 use futures::channel::oneshot::channel;
 use futures::future::FutureExt;
 use futures::sink::SinkExt;
@@ -14,10 +17,11 @@ use grease::{
     path::PathBuf,
     runtime::{
         io::{wrap, Blocking, TokioWrapped},
-        ItemContent, Traits,
+        ItemContent,
     },
     types::GreaseType,
-    value::{Dependencies, Error, Value},
+    value::{Dependencies, Value},
+    Error,
 };
 use std::process::{Command, Stdio};
 
@@ -58,27 +62,6 @@ impl std::fmt::Display for ExitStatus {
         }
     }
 }
-
-impl traits::GreaseStored for ExitStatus {
-    fn put<'a>(
-        &'a self,
-        _ctx: &'a traits::StoredContext,
-        mut into: ItemContent,
-    ) -> futures::future::BoxFuture<'a, ergo_runtime::Result<()>> {
-        async move {
-            bincode::serialize_into(&mut into, &self.0.clone().into_option()).map_err(|e| e.into())
-        }
-        .boxed()
-    }
-
-    fn get(_ctx: &traits::StoredContext, mut from: ItemContent) -> ergo_runtime::Result<Self> {
-        let p: Option<i32> = bincode::deserialize_from(&mut from)?;
-        Ok(ExitStatus(p.into()))
-    }
-}
-
-ergo_runtime::grease_display_basic!(ExitStatus);
-ergo_runtime::grease_type_name!(ExitStatus);
 
 impl From<std::process::ExitStatus> for ExitStatus {
     fn from(s: std::process::ExitStatus) -> Self {
@@ -296,41 +279,43 @@ pub fn function() -> Value {
     ergo_function!(independent std::exec, |ctx| {
         let cmd = ctx.args.next().ok_or("no command provided")?;
 
-        let cmd = traits::into_sourced::<CommandString>(ctx, cmd)?.unwrap();
+        let cmd = ctx.into_sourced::<CommandString>(cmd);
+        let cmd = cmd.await?.unwrap();
 
         let mut args = Vec::default();
         while let Some(arg) = ctx.args.next() {
             args.push(
-                traits::into_sourced::<CommandString>(ctx, arg)?.unwrap()
+                {
+                    let arg = ctx.into_sourced::<CommandString>(arg);
+                    arg.await?.unwrap()
+                }
             );
         }
 
-        let env = ctx
-            .args
-            .kw("env")
-            .map(|v| {
-                v.map(|v| v.typed::<types::Map>().map_err(|_| "env must be a map"))
-                    .transpose_err()
-                    .map_err(|e| e.into_grease_error())
-            })
-            .transpose()?;
+        let env = match ctx.args.kw("env") {
+            Some(v) => {
+                let env = ctx.source_value_as::<types::Map>(v);
+                Some(env.await?.unwrap())
+            }
+            None => None
+        };
 
-        let dir = ctx
-            .args
-            .kw("pwd")
-            .map(|v| {
-                traits::into_sourced::<PathBuf>(ctx, v).map(|v| v.unwrap())
-            })
-            .transpose()?;
-        // TODO consistently set dir?
+        let dir = match ctx.args.kw("pwd") {
+            Some(v) => {
+                let pwd = ctx.into_sourced::<PathBuf>(v);
+                Some(pwd.await?.unwrap())
+            }
+            // TODO set dir if not specified?
+            None => None
+        };
 
-        let stdin = ctx
-            .args
-            .kw("stdin")
-            .map(|v| {
-                traits::into_sourced::<types::ByteStream>(ctx, v).map(|v| v.unwrap())
-            })
-            .transpose()?;
+        let stdin = match ctx.args.kw("stdin") {
+            Some(v) => {
+                let stdin = ctx.into_sourced::<types::ByteStream>(v);
+                Some(stdin.await?.unwrap())
+            }
+            None => None
+        };
 
         ctx.unused_arguments()?;
 
@@ -348,7 +333,7 @@ pub fn function() -> Value {
         deps += Dependencies::unordered(unordered_deps);
 
         let rt = ctx;
-        let ctx: grease::runtime::Context = rt.as_ref().clone();
+        let ctx: grease::runtime::Context = rt.as_context().clone();
         let log = ctx.log.sublog("exec");
 
         // Create channels for outputs
@@ -381,7 +366,7 @@ pub fn function() -> Value {
                 let types::Map(env) = v.forced_value().owned();
                 for (k,v) in env {
                     let k = k.into_string();
-                    let v = traits::into::<CommandString>(&ctx, v)
+                    let v = ctx.into_typed::<CommandString>(v).await
                         .map_err(|e| format!("env key {}: {}", k, e))?;
                     command.env(k, v.await?.0.as_ref());
                 }
@@ -492,16 +477,25 @@ pub fn function() -> Value {
     .into()
 }
 
-/// Traits for CommandString, ExitStatus, and ByteStream types.
-pub fn traits(traits: &mut Traits) {
+grease::grease_traits_fn! {
     // CommandString traits
     IntoTyped::<CommandString>::add_impl::<types::String>(traits);
     IntoTyped::<CommandString>::add_impl::<PathBuf>(traits);
 
     // ExitStatus traits
     IntoTyped::<bool>::add_impl::<ExitStatus>(traits);
+    ergo_runtime::grease_display_basic!(traits, ExitStatus);
+    ergo_runtime::grease_type_name!(traits, ExitStatus);
     traits::ValueByContent::add_impl::<ExitStatus>(traits);
-    traits::Display::add_impl::<ExitStatus>(traits);
-    traits::TypeName::add_impl::<ExitStatus>(traits);
-    traits::Stored::add_impl::<ExitStatus>(traits);
+
+    impl traits::Stored for ExitStatus {
+        async fn put(&self, _ctx: &traits::StoredContext, mut into: ItemContent) {
+            bincode::serialize_into(&mut into, &self.0.clone().into_option())?
+        }
+
+        async fn get(_ctx: &traits::StoredContext, mut from: ItemContent) -> grease::type_erase::Erased {
+            let p: Option<i32> = bincode::deserialize_from(&mut from)?;
+            grease::type_erase::Erased::new(ExitStatus(p.into()))
+        }
+    }
 }

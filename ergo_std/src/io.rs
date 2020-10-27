@@ -1,5 +1,5 @@
 /// I/O utilities.
-use ergo_runtime::{ergo_function, traits, types};
+use ergo_runtime::{ergo_function, types, ContextExt};
 use futures::lock::{Mutex, MutexGuard};
 use grease::runtime::io;
 use grease::{bst::BstMap, make_value, value::Value};
@@ -32,7 +32,7 @@ impl<'a> io::AsyncRead for Stdin<'a> {
         cx: &mut std::task::Context,
         task: &grease::runtime::TaskManager,
         buf: &mut [u8],
-    ) -> std::task::Poll<Result<usize, grease::value::Error>> {
+    ) -> std::task::Poll<grease::Result<usize>> {
         io::AsyncRead::poll_read(
             unsafe { self.map_unchecked_mut(|v| &mut v.inner) },
             cx,
@@ -67,7 +67,8 @@ fn stdout_fn() -> Value {
 
         ctx.unused_arguments()?;
 
-        let data = traits::into_sourced::<types::ByteStream>(ctx, data)?.unwrap();
+        let data = ctx.into_sourced::<types::ByteStream>(data);
+        let data = data.await?.unwrap();
 
         let log = ctx.log.clone();
         let task = ctx.task.clone();
@@ -91,7 +92,8 @@ fn stderr_fn() -> Value {
 
         ctx.unused_arguments()?;
 
-        let data = traits::into_sourced::<types::ByteStream>(ctx, data)?.unwrap();
+        let data = ctx.into_sourced::<types::ByteStream>(data);
+        let data = data.await?.unwrap();
 
         let task = ctx.task.clone();
 

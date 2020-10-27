@@ -136,11 +136,19 @@ impl Context {
     }
 
     /// Get a grease trait for the given value's type.
-    pub fn get_trait<Trt: crate::traits::GreaseTrait>(
+    pub async fn get_trait<Trt: crate::traits::GreaseTrait, F, Fut>(
         &self,
         v: &crate::value::Value,
-    ) -> Option<Trt> {
-        self.traits.get::<Trt>(v).map(|imp| Trt::create(imp, self))
+        on_error: F,
+    ) -> crate::Result<Trt>
+    where
+        F: FnOnce(&crate::types::Type) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = crate::Error> + Send,
+    {
+        self.traits
+            .get::<Trt, F, Fut>(v, on_error)
+            .await
+            .map(|imp| Trt::create(imp, self))
     }
 
     /// Get a grease trait for the given type.

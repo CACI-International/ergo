@@ -1,12 +1,7 @@
 //! Value-related intrinsics.
 
-use ergo_runtime::{
-    ergo_function,
-    traits::{
-        force_value_nested, read_from_store, type_name, write_to_store, Stored, ValueByContent,
-    },
-    types,
-};
+use abi_stable::std_types::RArc;
+use ergo_runtime::{context_ext::AsContext, ergo_function, types, ContextExt};
 use futures::future::FutureExt;
 use grease::{bst::BstMap, depends, item_name, value::Value};
 
@@ -26,47 +21,35 @@ fn force_fn() -> Value {
         ctx.unused_arguments()?;
 
         let (source, val) = val.take();
-
-        let grease_ctx = ctx.as_ref();
-        match ctx.traits.get::<ValueByContent>(&val) {
-            Some(t) => {
-                force_value_nested(&ctx.traits, val.clone()).await?;
-                t.value_by_content(&grease_ctx, val).await?
-            }
-            None => return Err(source
-                .with(format!(
-                    "ValueByContent not implemented for {}",
-                    type_name(&ctx.traits, &val.grease_type())
-                ))
-                .into_grease_error()),
-        }
+        let val = ctx.value_by_content(val);
+        val.await.map_err(move |e| source.with(e).into_grease_error())?
     })
     .into()
 }
 
 fn cache_fn() -> Value {
     ergo_function!(independent std::value::cache, |ctx| {
-        let to_cache = ctx.args.next().ok_or("no argument to cache")?.unwrap();
+        let mut to_cache = ctx.args.next().ok_or("no argument to cache")?.unwrap();
 
         ctx.unused_arguments()?;
 
         let store = ctx.store.item(item_name!("cache"));
         let log = ctx.log.sublog("cache");
 
-        if let Some(_) = ctx.traits.get::<Stored>(&to_cache) {
-            let deps = depends![to_cache];
-            let traits = ctx.traits.clone();
-            let ctx: grease::runtime::Context = ctx.as_ref().clone();
-            Value::new(
-                to_cache.grease_type(),
-                async move {
-                    let err = match read_from_store(&ctx, &store, to_cache.id()) {
+        let ctx = ctx.as_context().clone();
+
+        let id = to_cache.id();
+
+        match to_cache.grease_type_immediate() {
+            Some(tp) => unsafe {
+                Value::with_id(RArc::new(tp.clone()), async move {
+                    let err = match ctx.read_from_store(&store, id).await {
                         Ok(val) => {
                             log.debug(format!(
                                 "successfully read cached value for {}",
-                                to_cache.id()
+                                id
                             ));
-                            if val.grease_type() != to_cache.grease_type() {
+                            if val.grease_type_immediate() != to_cache.grease_type_immediate() {
                                 "cached value had different value type".into()
                             } else {
                                 return Ok(val
@@ -76,20 +59,39 @@ fn cache_fn() -> Value {
                         }
                         Err(e) => e,
                     };
-                    log.debug(format!("failed to read cache value for {}, (re)caching: {}", to_cache.id(), err));
-                    force_value_nested(&traits, to_cache.clone()).await?;
-                    if let Err(e) = write_to_store(&ctx, &store, to_cache.clone()).await
+                    log.debug(format!("failed to read cache value for {}, (re)caching: {}", id, err));
+                    ctx.force_value_nested(to_cache.clone()).await?;
+                    if let Err(e) = ctx.write_to_store(&store, to_cache.clone()).await
                     {
-                        log.warn(format!("failed to cache value for {}: {}", to_cache.id(), e));
+                        log.warn(format!("failed to cache value for {}: {}", id, e));
                     }
                     Ok(to_cache
                         .await
                         .expect("error should have been caught previously"))
-                },
-                deps,
-            )
-        } else {
-            return Err("no stored trait implemented for value".into())
+                }, id)
+            },
+            None => Value::dyn_with_id(async move {
+                let err = match ctx.read_from_store(&store, id).await {
+                    Ok(mut val) => {
+                        log.debug(format!(
+                            "successfully read cached value for {}",
+                            id
+                        ));
+                        return Ok(val.make_any_value().await.expect("value should have success value from cache"));
+                    }
+                    Err(e) => e,
+                };
+                log.debug(format!("failed to read cache value for {}, (re)caching: {}", id, err));
+                ctx.force_value_nested(to_cache.clone()).await?;
+                if let Err(e) = ctx.write_to_store(&store, to_cache.clone()).await
+                {
+                    log.warn(format!("failed to cache value for {}: {}", id, e));
+                }
+                Ok(to_cache
+                    .make_any_value()
+                    .await
+                    .expect("error should have been caught previously"))
+            }, id)
         }
     })
     .into()
@@ -120,15 +122,17 @@ fn debug_fn() -> Value {
 
                 ctx.unused_arguments()?;
 
+                let name = match val.grease_type_immediate() {
+                    Some(tp) => {
+                        let tp = ctx.type_name(tp);
+                        tp.await?
+                    }
+                    None => "<dynamic>".into(),
+                };
+
                 ctx.log.debug(
                     val.as_ref()
-                        .map(|v| {
-                            format!(
-                                "type: {}, id: {}",
-                                type_name(&ctx.traits, &*v.grease_type()),
-                                v.id()
-                            )
-                        })
+                        .map(|v| format!("type: {}, id: {}", name, v.id()))
                         .to_string(),
                 );
 

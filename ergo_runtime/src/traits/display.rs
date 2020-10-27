@@ -6,7 +6,7 @@ use abi_stable::{std_types::RString, StableAbi};
 use grease::path::PathBuf;
 use grease::runtime::Context;
 use grease::value::Value;
-use grease::{grease_trait, grease_trait_impl, grease_traits_fn};
+use grease::{grease_trait, grease_traits_fn};
 
 /// The Display grease trait.
 #[grease_trait]
@@ -19,39 +19,31 @@ pub trait Display {
 ///
 /// The value (and any internal values) must already be evaluated.
 pub async fn display(ctx: &Context, v: Value) -> grease::Result<String> {
-    match try_display(ctx, v) {
-        Ok(v) => v.await,
-        Err(v) => v.await,
-    }
-}
-
-/// Like `display`, but check for the grease Display trait immediately and return a suitable error
-/// string if it is not found.
-pub fn try_display<'a>(
-    ctx: &'a Context,
-    mut v: Value,
-) -> Result<
-    impl std::future::Future<Output = grease::Result<String>>,
-    impl std::future::Future<Output = grease::Result<String>> + 'a,
-> {
-    if let Some(mut t) = ctx.get_trait::<Display>(&v) {
-        Ok(async move { Ok(t.fmt(v).await?.into()) })
-    } else {
-        Err(async move {
-            Ok(format!(
-                "<cannot display values of type {}>",
-                type_name(ctx, v.grease_type().await?).await?
-            ))
+    let t_ctx = ctx.clone();
+    let trt = ctx
+        .get_trait::<Display, _, _>(&v, move |t| {
+            let ctx = t_ctx.clone();
+            let t = t.clone();
+            async move {
+                type_name(&ctx, &t)
+                    .await
+                    .map(|name| format!("<cannot display values of type {}>", name).into())
+                    .unwrap_or_else(|e| e)
+            }
         })
+        .await;
+    match trt {
+        Err(e) => Err(e),
+        Ok(mut t) => Ok(t.fmt(v).await?.into()),
     }
 }
 
 #[macro_export]
 macro_rules! grease_display_basic {
     ( $traits:expr, $t:ty ) => {
-        $traits.add_impl_for_type::<$t, $crate::traits::Display>(grease_trait_impl! {
+        $traits.add_impl_for_type::<$t, $crate::traits::Display>(grease::grease_trait_impl! {
             impl $crate::traits::Display for $t {
-                async fn fmt(&self) -> RString {
+                async fn fmt(&self) -> abi_stable::std_types::RString {
                     self.to_string().into()
                 }
             }

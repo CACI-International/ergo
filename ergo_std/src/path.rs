@@ -1,6 +1,6 @@
 //! Path operations module.
 
-use ergo_runtime::{ergo_function, source_value_as, types};
+use ergo_runtime::{ergo_function, types, ContextExt};
 use grease::{
     bst::BstMap,
     depends, item_name, make_value, match_value,
@@ -57,13 +57,14 @@ fn join_fn() -> Value {
 
         while let Some(sv) = ctx.args.next() {
             args.push(
-                sv.map(|v| {
+                sv.map_async(|mut v| {
                     match_value!(v => {
-                        types::String => |s| Ok(JoinComponent::String(s)),
-                        PathBuf => |s| Ok(JoinComponent::Path(s)),
-                        => |_| Err("all arguments must be strings or paths")
+                        types::String => |s| JoinComponent::String(s),
+                        PathBuf => |s| JoinComponent::Path(s),
+                        => |_| Err("all arguments must be strings or paths")?
                     })
                 })
+                .await
                 .transpose_err()
                 .map_err(|e| e.into_grease_error())?,
             );
@@ -102,13 +103,8 @@ fn split_fn() -> Value {
 
         ctx.unused_arguments()?;
 
-        let to_split = to_split
-            .map(|v| {
-                v.typed::<PathBuf>()
-                    .map_err(|_| "can only split path types")
-            })
-            .transpose_err()
-            .map_err(|e| e.into_grease_error())?;
+        let to_split = ctx.source_value_as::<PathBuf>(to_split);
+        let to_split = to_split.await?.unwrap();
 
         make_value!([to_split] {
                 let mut vals: Vec<Value> = Vec::new();
@@ -132,7 +128,8 @@ fn parent_fn() -> Value {
 
         ctx.unused_arguments()?;
 
-        let path = source_value_as!(path, PathBuf, ctx)?.unwrap();
+        let path = ctx.source_value_as::<PathBuf>(path);
+        let path = path.await?.unwrap();
 
         make_value!([path] {
             let path = path.await?;
@@ -148,14 +145,11 @@ fn relative_fn() -> Value {
 
         ctx.unused_arguments()?;
 
-        let base = base
-            .map(|v| v.typed::<PathBuf>().map_err(|_| "base must be a path"))
-            .transpose_err()
-            .map_err(|e| e.into_grease_error())?;
-        let path = path
-            .map(|v| v.typed::<PathBuf>().map_err(|_| "not a path"))
-            .transpose_err()
-            .map_err(|e| e.into_grease_error())?;
+        let base = ctx.source_value_as::<PathBuf>(base);
+        let base = base.await?.unwrap();
+
+        let path = ctx.source_value_as::<PathBuf>(path);
+        let path = path.await?.unwrap();
 
         let task = ctx.task.clone();
         make_value!([base, path] {

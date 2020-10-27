@@ -4,7 +4,7 @@ use crate::types;
 use abi_stable::{std_types::RString, StableAbi};
 use grease::path::PathBuf;
 use grease::types::Type;
-use grease::{grease_trait, grease_trait_impl, grease_traits_fn};
+use grease::{grease_trait, grease_traits_fn};
 
 /// A grease trait describing the name of a type.
 #[grease_trait]
@@ -27,9 +27,9 @@ pub async fn type_name(ctx: &grease::runtime::Context, tp: &Type) -> grease::Res
 #[macro_export]
 macro_rules! grease_type_name {
     ( $traits:expr, $t:ty, $n:expr ) => {
-        $traits.add_impl_for_type::<$t, $crate::traits::TypeName>(grease_trait_impl! {
+        $traits.add_impl_for_type::<$t, $crate::traits::TypeName>(grease::grease_trait_impl! {
         impl $crate::traits::TypeName for $t {
-            async fn type_name() -> RString {
+            async fn type_name() -> abi_stable::std_types::RString {
                 $n.into()
             }
         }});

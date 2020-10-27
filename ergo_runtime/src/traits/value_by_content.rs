@@ -1,6 +1,6 @@
 //! The ValueByContent grease trait.
 
-use crate::{types, ResultIterator};
+use crate::types;
 use abi_stable::StableAbi;
 use grease::{
     depends, grease_trait, grease_trait_impl, grease_traits_fn, path::PathBuf, runtime::Traits,
@@ -29,19 +29,23 @@ impl ValueByContent {
     }
 }
 
-pub async fn value_by_content(
-    ctx: &grease::runtime::Context,
-    mut v: Value,
-) -> grease::Result<Value> {
-    if let Some(mut t) = ctx.get_trait::<ValueByContent>(&v) {
-        t.value_by_content(v).await
-    } else {
-        Err(format!(
-            "no value by content trait for {}",
-            super::type_name(ctx, v.grease_type().await?).await?
-        )
-        .into())
-    }
+pub async fn value_by_content(ctx: &grease::runtime::Context, v: Value) -> grease::Result<Value> {
+    let t_ctx = ctx.clone();
+    let mut t = ctx
+        .get_trait::<ValueByContent, _, _>(&v, move |t| {
+            let t = t.clone();
+            let ctx = t_ctx.clone();
+            async move {
+                let name = match super::type_name(&ctx, &t).await {
+                    Err(e) => return e,
+                    Ok(v) => v,
+                };
+                format!("no value by content trait for {}", name).into()
+            }
+        })
+        .await?;
+
+    t.value_by_content(v).await
 }
 
 grease_traits_fn! {
@@ -57,23 +61,15 @@ grease_traits_fn! {
             let mut inner_vals = Vec::new();
             let mut errs: Vec<Error> = Vec::new();
             for v in vals.iter() {
-                match CONTEXT.get_trait::<ValueByContent>(v) {
-                    Some(mut t) => inner_vals.push(async move { Ok(t.value_by_content(v.clone()).await?) }),
-                    None => errs.push(format!(
-                        "ValueByContent not implemented for {}",
-                        super::type_name(CONTEXT, v.clone().grease_type().await?).await?
-                    )
-                    .into()),
+                match super::value_by_content(CONTEXT, v.clone()).await {
+                    Ok(v) => inner_vals.push(v),
+                    Err(e) => errs.push(e)
                 }
             }
             if !errs.is_empty() {
                 Err(errs.into_iter().collect::<Error>())?
             }
-            futures::future::join_all(inner_vals)
-                .await
-                .into_iter()
-                .collect_result()
-                .map(|v| types::Array(v).into())?
+            types::Array(inner_vals.into()).into()
         }
     }
 
@@ -84,25 +80,15 @@ grease_traits_fn! {
             let mut inner_vals = Vec::new();
             let mut errs: Vec<Error> = Vec::new();
             for (k,v) in vals.iter() {
-                match CONTEXT.get_trait::<ValueByContent>(v) {
-                    Some(mut t) => inner_vals.push(async move {
-                        Ok((k.clone(), t.value_by_content(v.clone()).await?))
-                    }),
-                    None => errs.push(format!(
-                        "ValueByContent not implemented for {}",
-                        super::type_name(CONTEXT, v.clone().grease_type().await?).await?
-                    )
-                    .into()),
+                match super::value_by_content(CONTEXT, v.clone()).await {
+                    Ok(v) => inner_vals.push((k.clone(), v)),
+                    Err(e) => errs.push(e)
                 }
             }
             if !errs.is_empty() {
                 Err(errs.into_iter().collect::<Error>())?
             }
-            futures::future::join_all(inner_vals)
-                .await
-                .into_iter()
-                .collect_result()
-                .map(|vals| types::Map(vals).into())?
+            types::Map(inner_vals.into_iter().collect()).into()
         }
     }
 }

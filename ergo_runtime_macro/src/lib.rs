@@ -18,7 +18,7 @@ pub fn plugin_entry(_attr: TokenStream, item: TokenStream) -> TokenStream {
         #[abi_stable::sabi_extern_fn]
         #[no_mangle]
         pub fn _ergo_plugin(ctx: &mut ::ergo_runtime::Runtime)
-            -> abi_stable::std_types::RResult<::ergo_runtime::source::Source<::grease::value::Value>, ::grease::value::Error>
+            -> abi_stable::std_types::RResult<::ergo_runtime::source::Source<::grease::value::Value>, ::grease::Error>
         {
             #fn_name(ctx).into()
         }

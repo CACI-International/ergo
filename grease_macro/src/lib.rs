@@ -668,7 +668,7 @@ fn do_grease_trait_impl(
 
     let func_sets = funcs.iter().map(|(name, _, _, _, _)| {
         quote_spanned! { name.span() =>
-            #name: ::grease::closure::FnPtr::from_fn(#name #type_generics as *const _)
+            #name: ::grease::closure::FnPtr::new(#name #type_generics)
         }
     });
 

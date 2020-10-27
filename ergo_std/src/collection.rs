@@ -1,7 +1,7 @@
 //! Functions over collections.
 
 use abi_stable::std_types::RVec;
-use ergo_runtime::{ergo_function, source_value_as, types, FunctionArguments};
+use ergo_runtime::{ergo_function, types, ContextExt, FunctionArguments};
 use futures::future::{ok, FutureExt, TryFutureExt};
 use grease::{bst::BstMap, depends, make_value, value::Value};
 
@@ -21,25 +21,17 @@ fn fold_fn() -> Value {
 
         ctx.unused_arguments()?;
 
-        let func = func
-            .map(|f| {
-                f.typed::<types::Function>()
-                    .map_err(|_| "expected a function")
-            })
-            .transpose()
-            .map_err(|e| e.into_grease_error())?;
+        let func = ctx.source_value_as::<types::Function>(func);
+        let func = func.await?;
 
-        let vals = vals
-            .map(|v| v.typed::<types::Array>().map_err(|_| "expected an array"))
-            .transpose()
-            .map_err(|e| e.into_grease_error())?;
+        let vals = ctx.source_value_as::<types::Array>(vals);
+        let vals = vals.await?;
 
         let deps = depends![*func, *orig, *vals];
 
         let task = ctx.task.clone();
         let func = func.map(|v| types::Portable::portable(v, ctx));
-        Value::new(
-            orig.grease_type(),
+        Value::dyn_new(
             async move {
                 let (func_source, func) = func.take();
                 let (vals_source, vals) = vals.take();
@@ -57,7 +49,7 @@ fn fold_fn() -> Value {
                     .boxed()
                 });
 
-                val.await?.await.unwrap()
+                val.await?.make_any_value().await
             },
             deps,
         )
@@ -72,19 +64,11 @@ fn map_fn() -> Value {
 
         ctx.unused_arguments()?;
 
-        let func = func
-            .map(|f| {
-                f.typed::<types::Function>()
-                    .map_err(|_| "expected a function")
-            })
-            .transpose()
-            .map_err(|e| e.into_grease_error())?;
+        let func = ctx.source_value_as::<types::Function>(func);
+        let func = func.await?;
 
-        let arr = arr
-            .map(|v| v.typed::<types::Array>()
-                .map_err(|_| "expected an array"))
-            .transpose()
-            .map_err(|e| e.into_grease_error())?;
+        let arr = ctx.source_value_as::<types::Array>(arr);
+        let arr = arr.await?;
 
         let task = ctx.task.clone();
         let func = func.map(|v| types::Portable::portable(v, ctx));
@@ -107,7 +91,8 @@ fn entries_fn() -> Value {
 
         ctx.unused_arguments()?;
 
-        let map = source_value_as!(value, types::Map, ctx)?.unwrap();
+        let map = ctx.source_value_as::<types::Map>(value);
+        let map = map.await?.unwrap();
 
         make_value!([map] {
             let mut vals = RVec::new();

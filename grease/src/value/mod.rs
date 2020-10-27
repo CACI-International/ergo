@@ -76,6 +76,49 @@ enum ValueData {
 }
 
 impl ValueData {
+    pub fn map_data<F, Fut>(self, f: F) -> Self
+    where
+        F: FnOnce(futures::future::BoxFuture<'static, crate::Result<InnerData>>) -> Fut
+            + Send
+            + 'static,
+        Fut: Future<Output = crate::Result<InnerData>> + Send + 'static,
+    {
+        match self {
+            ValueData::Typed { tp, fut } => ValueData::Typed {
+                tp,
+                fut: {
+                    let rfut =
+                        fut.map(|r| r.into_result().map(|d| InnerData(InnerDataInner::Typed(d))));
+                    BoxSharedFuture::new(
+                        f(rfut.boxed())
+                            .map_ok(|InnerData(d)| match d {
+                                InnerDataInner::Typed(d) => d,
+                                _ => panic!("value inner data logic error"),
+                            })
+                            .map(|v| v.into()),
+                    )
+                },
+            },
+            ValueData::Dynamic { fut } => ValueData::Dynamic {
+                fut: {
+                    let rfut = fut.map(|r| {
+                        r.into_result()
+                            .map(|d| InnerData(InnerDataInner::Dynamic(d)))
+                    });
+                    BoxSharedFuture::new(
+                        f(rfut.boxed())
+                            .map_ok(|InnerData(d)| match d {
+                                InnerDataInner::Dynamic(d) => d,
+                                _ => panic!("value inner data logic error"),
+                            })
+                            .map(|v| v.into()),
+                    )
+                },
+            },
+            ValueData::None => ValueData::None,
+        }
+    }
+
     pub fn map_err<F, E>(self, f: F) -> ValueData
     where
         F: FnOnce(Error) -> E + Send + 'static,
@@ -93,6 +136,13 @@ impl ValueData {
         }
     }
 }
+
+enum InnerDataInner {
+    Typed(RArc<Erased>),
+    Dynamic(AnyValue),
+}
+
+pub struct InnerData(InnerDataInner);
 
 macro_rules! match_value_data {
     ( $e:expr => { $( $p:pat => $r:expr $(,)? )+ } ) => {
@@ -263,9 +313,9 @@ impl Value {
     /// Evaluates the value when
     pub async fn make_any_value(&mut self) -> crate::Result<AnyValue> {
         match_value_data!(&mut self.data => {
-            ValueData::Dynamic { fut } => fut.await.into_result(),
+            ValueData::Dynamic { fut } => fut.clone().await.into_result(),
             ValueData::Typed { tp, fut } => {
-                let data = fut.await.into_result()?;
+                let data = fut.clone().await.into_result()?;
                 Ok(unsafe { AnyValue::new(tp.clone(), data) })
             }
         })
@@ -326,6 +376,22 @@ impl Value {
         }
     }
 
+    /// Map the data of this value, retaining the value type and identity.
+    ///
+    /// This is useful to inserting side-effects into the value execution.
+    pub fn map_data<F, Fut>(self, f: F) -> Self
+    where
+        F: FnOnce(futures::future::BoxFuture<'static, crate::Result<InnerData>>) -> Fut
+            + Send
+            + 'static,
+        Fut: Future<Output = crate::Result<InnerData>> + Send + 'static,
+    {
+        Value {
+            data: self.data.map_data(f),
+            ..self
+        }
+    }
+
     /// Map the error value, returning an identical value with an altered error.
     pub fn map_err<F, E>(self, f: F) -> Value
     where
@@ -341,7 +407,7 @@ impl Value {
     /// Try to convert this Value to a TypedValue.
     ///
     /// If the conversion fails, the given function is used to get an Error from the type.
-    pub async fn typed<T: GreaseType, F, Fut>(self, f: F) -> crate::Result<TypedValue<T>>
+    pub async fn typed<T: GreaseType, F, Fut>(self, on_error: F) -> crate::Result<TypedValue<T>>
     where
         F: FnOnce(&Type) -> Fut + Send + 'static,
         Fut: std::future::Future<Output = Error> + Send,
@@ -351,7 +417,7 @@ impl Value {
                 if &**tp == &T::grease_type() {
                     Ok(unsafe { TypedValue::from_value(self) })
                 } else {
-                    Err(f(&*tp).await)
+                    Err(on_error(&*tp).await)
                 }
             }
             ValueData::Dynamic { fut } => Ok(unsafe {
@@ -364,7 +430,7 @@ impl Value {
                                     if &*tp == &T::grease_type() {
                                         RResult::ROk(data)
                                     } else {
-                                        RResult::RErr(f(&*tp).await)
+                                        RResult::RErr(on_error(&*tp).await)
                                     }
                                 },
                                 RResult::RErr(e) => RResult::RErr(e)
@@ -407,7 +473,7 @@ impl Value {
     pub async fn grease_type(&mut self) -> crate::Result<&Type> {
         match &mut self.data {
             ValueData::Dynamic { fut } => {
-                fut.await;
+                fut.clone().await;
             }
             _ => (),
         }

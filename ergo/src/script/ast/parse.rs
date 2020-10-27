@@ -506,7 +506,7 @@ mod test {
         use super::pattern::*;
         use super::*;
 
-        fn assert(s: &[Token], expected: Pattern) -> Result {
+        fn assert(s: &[Token], expected: Pattern<Expr>) -> Result {
             assert_parse(s, |_| pattern(), expected)
         }
 

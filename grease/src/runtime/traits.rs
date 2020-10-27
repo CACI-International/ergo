@@ -190,18 +190,31 @@ impl Traits {
     }
 
     /// Get a trait for a particular Value's type, if it is implemented.
-    pub fn get<Trt: trt::GreaseTrait>(&self, v: &Value) -> Option<Trait<Trt::Impl>> {
+    pub async fn get<Trt: trt::GreaseTrait, F, Fut>(
+        &self,
+        v: &Value,
+        on_error: F,
+    ) -> crate::Result<Trait<Trt::Impl>>
+    where
+        F: FnOnce(&Type) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = crate::Error> + Send,
+    {
         // If the type is available immediately, use it, otherwise make an async trait.
         match v.grease_type_immediate() {
-            Some(tp) => self.get_type::<Trt>(tp).map(Trait::new_ref),
+            Some(tp) => match self.get_type::<Trt>(tp).map(Trait::new_ref) {
+                Some(trt) => Ok(trt),
+                None => Err(on_error(tp).await),
+            },
             None => {
                 let mut v = v.clone();
                 let traits = self.clone();
-                Some(Trait::new_fut(
+                Ok(Trait::new_fut(
                     async move {
-                        traits
-                            .get_type::<Trt>(v.grease_type().await?)
-                            .ok_or("trait not implemented".into())
+                        let tp = v.grease_type().await?;
+                        match traits.get_type::<Trt>(tp) {
+                            Some(trt) => Ok(trt),
+                            None => Err(on_error(tp).await),
+                        }
                     }
                     .boxed(),
                 ))

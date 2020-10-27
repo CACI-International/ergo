@@ -113,7 +113,8 @@ pub use grease_macro::grease_trait_impl;
 ///     closure::FnPtr,
 ///     future::BoxFuture,
 ///     runtime::{Context,Traits},
-///     types::{GreaseType,Type}
+///     types::{GreaseType,Type},
+///     grease_trait, grease_traits_fn
 /// };
 ///
 /// #[grease_trait]
@@ -128,12 +129,11 @@ pub use grease_macro::grease_trait_impl;
 ///         {
 ///             BoxFuture::new(async move { grease::error::RResult::ROk(true) })
 ///         }
-///         fn to_bool(traits: &Traits, tp: &Type) -> ROption<ToBoolImpl> {
+///         traits.add_generator_by_trait_for_trait::<ToBool>(|_traits,_type| {
 ///             ROption::RSome(ToBoolImpl {
-///                 to_bool: FnPtr::from_fn(always_true as *const _)
+///                 to_bool: FnPtr::new(always_true)
 ///             })
-///         }
-///         traits.add_generator_by_trait_for_trait::<ToBool>(to_bool);
+///         });
 ///     }
 ///     
 ///     impl ToBool for () {

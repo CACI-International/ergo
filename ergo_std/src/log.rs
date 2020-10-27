@@ -1,6 +1,6 @@
 //! Logging functions.
 
-use ergo_runtime::{namespace_id, source_value_as, traits, types, Runtime};
+use ergo_runtime::{namespace_id, types, ContextExt, Runtime};
 use futures::future::FutureExt;
 use grease::{depends, make_value, runtime::Log, value::Value};
 
@@ -16,11 +16,11 @@ fn logger(log: Log) -> Value {
                 let op = ctx.args.next().ok_or("no command given")?;
                 let arg = ctx.args.next().ok_or("no argument given")?;
 
-                let op = source_value_as!(op, types::String, ctx)?
-                    .await
-                    .transpose_ok()?;
+                let op = ctx.source_value_as::<types::String>(op);
+                let op = op.await?.await.transpose_ok()?;
 
-                let arg = traits::into_sourced::<types::String>(ctx, arg)?.unwrap();
+                let arg = ctx.into_sourced::<types::String>(arg);
+                let arg = arg.await?.unwrap();
 
                 Ok(ctx.call_site.clone().with(match op.as_ref().as_str() {
                     "sublog" => {

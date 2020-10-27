@@ -1,6 +1,6 @@
 //! String manipulation functions.
 
-use ergo_runtime::{ergo_function, source_value_as, traits, types};
+use ergo_runtime::{context_ext::AsContext, ergo_function, types, ContextExt};
 use grease::{bst::BstMap, make_value, value::Value};
 use std::fmt::Write;
 
@@ -64,8 +64,8 @@ fn format_fn() -> Value {
         let format_str = ctx.args.next().ok_or("no format string provided")?;
         let source = format_str.source();
         let format_str = {
-            let s = source_value_as!(format_str, types::String, ctx)?;
-            s.await.unwrap()?
+            let s = ctx.source_value_as::<types::String>(format_str);
+            s.await?.await.unwrap()?
         };
 
         let pos_args: Vec<_> = ctx.args.by_ref().collect();
@@ -115,15 +115,8 @@ fn format_fn() -> Value {
                                 return Err(format!("format string argument '{}' not found", disp).into());
                             },
                             Some(v) => {
-                                match traits::try_display(&ctx.traits, &v) {
-                                    Ok(_) => {
-                                        fragments.push_value(v.as_ref().unwrap().clone());
-                                        arg = None;
-                                    },
-                                    Err(e) => {
-                                        return Err(v.source().with(e).into_grease_error());
-                                    }
-                                }
+                                fragments.push_value(v.as_ref().unwrap().clone());
+                                arg = None;
                             }
                         }
                     }
@@ -139,21 +132,20 @@ fn format_fn() -> Value {
         if arg.is_some() {
             return Err("'{' without matching '}'".into())
         } else {
-            let traits = ctx.traits.clone();
-            let task = ctx.task.clone();
+            let ctx = ctx.as_context().clone();
             let deps = grease::depends![^@fragments];
             make_value!([^deps] {
                 let values: Vec<_> = fragments.into_iter().filter_map(|v| match v { StringFragment::Value(v) => Some(v), _ => None })
-                    .map(|v| traits::force_value_nested(&traits, v.clone()))
+                    .map(|v| ctx.force_value_nested(v.clone()))
                     .collect();
-                task.join_all(values).await?;
+                ctx.task.join_all(values).await?;
 
                 let mut result = types::String::new();
                 for f in fragments.into_iter() {
                     match f {
                         StringFragment::Literal(s) => result.push_str(&s),
                         StringFragment::Value(v) => {
-                            write!(result, "{}", traits::display(&traits, &v))?;
+                            write!(result, "{}", ctx.display(v.clone()).await?)?;
                         }
                     }
                 }
@@ -169,7 +161,8 @@ fn from_fn() -> Value {
 
         ctx.unused_arguments()?;
 
-        traits::into_sourced::<types::String>(ctx, value)?.unwrap().into()
+        let v = ctx.into_sourced::<types::String>(value);
+        v.await?.unwrap().into()
     })
     .into()
 }
@@ -181,8 +174,10 @@ fn split_fn() -> Value {
 
         ctx.unused_arguments()?;
 
-        let pat = source_value_as!(pat, types::String, ctx)?.unwrap();
-        let s = source_value_as!(s, types::String, ctx)?.unwrap();
+        let pat = ctx.source_value_as::<types::String>(pat);
+        let pat = pat.await?.unwrap();
+        let s = ctx.source_value_as::<types::String>(s);
+        let s = s.await?.unwrap();
 
         let task = ctx.task.clone();
         make_value!([s, pat] {
@@ -201,7 +196,8 @@ fn trim_fn() -> Value {
 
         ctx.unused_arguments()?;
 
-        let s = source_value_as!(s, types::String, ctx)?.unwrap();
+        let s = ctx.source_value_as::<types::String>(s);
+        let s = s.await?.unwrap();
 
         make_value!([s] {
             let s = s.await?;

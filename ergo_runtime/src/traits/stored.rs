@@ -144,20 +144,27 @@ pub async fn read_from_store(ctx: &Context, store_item: &Item, id: u128) -> Resu
 ///
 /// The value must already be forced (using `force_value_nested`).
 pub async fn write_to_store(ctx: &Context, store_item: &Item, mut v: Value) -> Result<()> {
-    if let Some(mut s) = ctx.get_trait::<Stored>(&v) {
-        let item = store_item.value(&v);
-        let mut content = item.write()?;
+    let t_ctx = ctx.clone();
+    let mut s = ctx
+        .get_trait::<Stored, _, _>(&v, move |t| {
+            let t = t.clone();
+            let ctx = t_ctx.clone();
+            async move {
+                let name = match type_name(&ctx, &t).await {
+                    Err(e) => return e,
+                    Ok(v) => v,
+                };
+                format!("no stored trait for {}", name).into()
+            }
+        })
+        .await?;
 
-        let tp: ErasedTrivial = v.grease_type().await?.clone().into();
-        tp.serialize(&mut content)?;
+    let item = store_item.value(&v);
+    let mut content = item.write()?;
 
-        let stored_ctx = StoredContext::new(store_item.clone());
-        s.put(v, &stored_ctx, content).await
-    } else {
-        Err(format!(
-            "no stored trait for {}",
-            type_name(ctx, v.grease_type().await?).await?
-        )
-        .into())
-    }
+    let tp: ErasedTrivial = v.grease_type().await?.clone().into();
+    tp.serialize(&mut content)?;
+
+    let stored_ctx = StoredContext::new(store_item.clone());
+    s.put(v, &stored_ctx, content).await
 }

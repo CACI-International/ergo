@@ -301,8 +301,8 @@ mod test {
 
         #[test]
         fn array_mismatch() -> Result<(), String> {
-            script_fail("[a,b] = [1,2,3]")?;
-            script_fail("[a,b,c] = [1,2]")?;
+            script_fail("[a,b] = [1,2,3]; :a")?;
+            script_fail("[a,b,c] = [1,2]; :a")?;
             Ok(())
         }
 
@@ -328,8 +328,8 @@ mod test {
 
         #[test]
         fn array_undecidable() -> Result<(), String> {
-            script_fail("[^_,^_] = [1,2,3]")?;
-            script_fail("[^_,a,^_] = [1,2,3]")?;
+            script_fail("match [1,2,3] { [^_,^_] = doh }")?;
+            script_fail("[^_,a,^_] = [1,2,3]; :a")?;
             Ok(())
         }
 
@@ -376,8 +376,8 @@ mod test {
 
         #[test]
         fn map_mismatch() -> Result<(), String> {
-            script_fail("{a,b,c} = {a=1,b=2}")?;
-            script_fail("{a,^keys,^keys2} = {a=1}")?;
+            script_fail("{a,b,c} = {a=1,b=2}; :a")?;
+            script_fail("{a,^keys,^keys2} = {a=1}; :a")?;
             Ok(())
         }
     }
@@ -416,12 +416,19 @@ mod test {
     fn val_match(v: Value, expected: ScriptResult) -> BoxFuture<'static, Result<(), String>> {
         async move {
             match expected {
-                SRUnit => v
-                    .typed::<types::Unit>()
-                    .map(|_| ())
-                    .expect_ok("expected unit"),
+                SRUnit => {
+                    v.typed::<types::Unit, _, _>(|_| async { panic!("expected unit") })
+                        .await
+                        .map_err(|e| e.to_string())?
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    Ok(())
+                }
                 SRString(s) => {
-                    let string = v.typed::<types::String>().expect_ok("expected string")?;
+                    let string = v
+                        .typed::<types::String, _, _>(|_| async { panic!("expected string") })
+                        .await
+                        .map_err(|e| e.to_string())?;
                     let string = string.await.map_err(|e| e.to_string())?;
                     let got = string.as_ref().as_str();
                     if got == s {
@@ -434,7 +441,10 @@ mod test {
                     }
                 }
                 SRArray(expected_arr) => {
-                    let arr = v.typed::<types::Array>().expect_ok("expected array")?;
+                    let arr = v
+                        .typed::<types::Array, _, _>(|_| async { panic!("expected array") })
+                        .await
+                        .map_err(|e| e.to_string())?;
                     let arr = arr.await.map_err(|e| e.to_string())?;
                     let types::Array(varr) = arr.owned();
                     if varr.len() != expected_arr.len() {
@@ -447,7 +457,10 @@ mod test {
                     }
                 }
                 SRMap(entries) => {
-                    let map = v.typed::<types::Map>().expect_ok("expected map")?;
+                    let map = v
+                        .typed::<types::Map, _, _>(|_| async { panic!("expected map") })
+                        .await
+                        .map_err(|e| e.to_string())?;
                     let map = map.await.map_err(|e| e.to_string())?;
                     let types::Map(mut m) = map.owned();
                     if m.len() != entries.len() {

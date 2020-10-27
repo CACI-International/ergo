@@ -86,22 +86,17 @@ Within a script, the following are defined:
 * Add a message/signal handler to exit gracefully.
   * This has been added but child programs still capture the signal, need to
     change the process group to prevent this.
-* Revisit pattern literal matching.
-  * This could use some sort of equality test on the value _data_, rather
-    than comparing value identifiers.
 * Persist command timing information for better estimates.
 * Allow setting map keys from values rather than string constants?
 * Reduce function captures to the bare minimum.
 * Allow functions to get call-site variables? Convenient for things like
   `work-dir`.
 * Add work recording to script.
-* Either deconstruction with `match`.
 * Add value dependency tree print to help debug consistency issues.
 * Support `collection:map` over map values.
-* Delay indexing and matching on arrays/maps.
-  * This will require arrays/maps having metadata about which types they
-    contain.
-  * Maybe also change indexing to not always return a value, and add back in
-    `collection:has` from long ago.
+* Change indexing to not always return a value, and add back in `collection:has`
+  from long ago.
 * Issue a warning when a string literal has the same name as something in the
   environment.
+* Change `path:new` to have identity based on source file and occurrence/seed
+  value.

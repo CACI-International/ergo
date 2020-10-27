@@ -58,37 +58,45 @@ pub async fn into_sourced<T: GreaseType + StableAbi + Send + Sync + 'static>(
 /// Convert the given value into another type.
 pub async fn into<T: GreaseType + StableAbi + Send + Sync + 'static>(
     ctx: &Context,
-    mut v: Value,
+    v: Value,
 ) -> grease::Result<TypedValue<T>> {
-    match ctx.get_trait::<IntoTyped<T>>(&v) {
-        None => Err(format!(
-            "cannot convert {} into {}",
-            type_name(ctx, v.grease_type().await?).await?,
-            type_name(ctx, &T::grease_type()).await?
-        )
-        .into()),
-        Some(mut t) => {
+    let t_ctx = ctx.clone();
+    let mut t = ctx
+        .get_trait::<IntoTyped<T>, _, _>(&v, move |t| {
+            let t = t.clone();
+            let ctx = t_ctx.clone();
+            async move {
+                let from_t = match type_name(&ctx, &t).await {
+                    Err(e) => return e,
+                    Ok(v) => v,
+                };
+                let to_t = match type_name(&ctx, &T::grease_type()).await {
+                    Err(e) => return e,
+                    Ok(v) => v,
+                };
+                format!("cannot convert {} into {}", from_t, to_t).into()
+            }
+        })
+        .await?;
+    let ctx = ctx.clone();
+    t.into_typed(v)
+        .await?
+        .typed::<T, _, _>(move |t| {
             let ctx = ctx.clone();
-            t.into_typed(v)
-                .await?
-                .typed::<T, _, _>(move |t| {
-                    let ctx = ctx.clone();
-                    let t = t.clone();
-                    async move {
-                        let into_t = match type_name(&ctx, &T::grease_type()).await {
-                            Ok(v) => v,
-                            Err(e) => return e,
-                        };
-                        let from_t = match type_name(&ctx, &t).await {
-                            Ok(v) => v,
-                            Err(e) => return e,
-                        };
-                        format!("bad IntoTyped<{}> implementation, got {}", into_t, from_t).into()
-                    }
-                })
-                .await
-        }
-    }
+            let t = t.clone();
+            async move {
+                let into_t = match type_name(&ctx, &T::grease_type()).await {
+                    Ok(v) => v,
+                    Err(e) => return e,
+                };
+                let from_t = match type_name(&ctx, &t).await {
+                    Ok(v) => v,
+                    Err(e) => return e,
+                };
+                format!("bad IntoTyped<{}> implementation, got {}", into_t, from_t).into()
+            }
+        })
+        .await
 }
 
 grease_traits_fn! {
@@ -105,7 +113,7 @@ grease_traits_fn! {
                 let TypeParameters(trait_types) = trt.data.clone().into();
                 if tp == &trait_types[0] {
                     return ROption::RSome(Erased::new(IntoTypedImpl::<()> {
-                        into_typed: FnPtr::from_fn(id_f as _),
+                        into_typed: FnPtr::new(id_f),
                         _phantom0: Default::default(),
                     }));
                 }
@@ -125,23 +133,18 @@ grease_traits_fn! {
         }
         traits.add_generator_by_trait_for_trait::<IntoTyped<bool>>(|_traits, _type| {
             ROption::RSome(IntoTypedImpl::<bool> {
-                into_typed: FnPtr::from_fn(to_bool as _),
+                into_typed: FnPtr::new(to_bool),
                 _phantom0: Default::default(),
             })
         });
     }
 
+
     // () -> bool (false)
-    {
-        traits.add_impl_for_type::<(), IntoTyped<bool>>(
-            grease_trait_impl! {
-                impl IntoTyped<bool> for () {
-                    async fn into_typed(self) -> Value {
-                        Value::from(self).then(false.into_value())
-                    }
-                }
-            }
-        );
+    impl IntoTyped<bool> for () {
+        async fn into_typed(self) -> Value {
+            Value::from(self).then(false.into_value())
+        }
     }
 
     // Path -> String

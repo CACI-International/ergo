@@ -28,7 +28,7 @@ pub trait ContextExt: AsContext {
         crate::traits::display(self.as_context(), v).boxed()
     }
 
-    fn into<'a, T: GreaseType + StableAbi + Send + Sync + 'static>(
+    fn into_typed<'a, T: GreaseType + StableAbi + Send + Sync + 'static>(
         &'a self,
         v: Value,
     ) -> BoxFuture<'a, Result<TypedValue<T>>> {
