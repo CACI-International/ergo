@@ -82,7 +82,7 @@ impl AppErr for bool {
     }
 }
 
-fn run(opts: Opts) -> Result<String, grease::Error> {
+fn run(opts: Opts) -> Result<String, String> {
     let mut output =
         output(opts.format, !opts.stop).app_err("could not create output from requested format");
     output.set_log_level(opts.log_level);
@@ -203,21 +203,24 @@ fn run(opts: Opts) -> Result<String, grease::Error> {
         .block_on(loaded.evaluate(&mut ctx))
         .app_err_result("errors(s) while executing script")?;
 
-    // Reduce context to grease context, which removes any unneeded values that may be held.
+    // Clear context, which removes any unneeded values that may be held.
     //
     // This is *important* as some values (like those returned by exec) behave differently if their
     // peers still exist or not.
-    let grease_ctx: grease::runtime::Context = (*ctx).clone();
-    drop(ctx);
+    ctx.clear_env();
+
+    // We *must* keep the context around because it holds onto plugins, which may have functions referenced in values.
+    // Likewise, our return from this function is "flattened" to strings to ensure any references to plugins are used when the plugins are still loaded.
 
     script_output
         .map(|v| {
-            grease_ctx.task.block_on(async {
-                grease_ctx.force_value_nested(v.clone()).await?;
-                grease_ctx.display(v).await
+            ctx.task.block_on(async {
+                ctx.force_value_nested(v.clone()).await?;
+                ctx.display(v).await
             })
         })
         .unwrap()
+        .map_err(|e: grease::Error| e.to_string())
 }
 
 fn main() {
@@ -244,6 +247,6 @@ fn main() {
     // Run and check for error
     match run(opts) {
         Ok(s) => writeln!(std::io::stdout(), "{}", s).expect("writing output failed"),
-        Err(e) => err_exit(&e.to_string()),
+        Err(e) => err_exit(&e),
     }
 }

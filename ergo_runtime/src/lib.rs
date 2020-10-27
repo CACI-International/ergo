@@ -243,6 +243,12 @@ impl Runtime {
     pub fn lifetime<T: Eraseable>(&mut self, v: T) {
         self.lifetime.lock().push(Erased::new(v));
     }
+
+    /// Clear the environment of all values.
+    pub fn clear_env(&mut self) {
+        self.global_env.clear();
+        self.env.clear();
+    }
 }
 
 impl FunctionCall<'_> {

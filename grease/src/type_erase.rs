@@ -322,6 +322,9 @@ impl ErasedTrivial {
     ///
     /// Unsafe because callers must ensure the data is a T.
     pub unsafe fn as_ref<T>(&self) -> &T {
+        debug_assert!(self.size() == std::mem::size_of::<T>());
+        debug_assert!(self.align() == std::mem::align_of::<T>());
+
         if self.is_box() {
             let b: &Box<T> = self.data.as_ref();
             b.as_ref()
@@ -334,6 +337,9 @@ impl ErasedTrivial {
     ///
     /// Unsafe because callers must ensure the data is a [T].
     pub unsafe fn as_slice<T>(&self) -> &[T] {
+        debug_assert!(self.size() % std::mem::size_of::<T>() == 0);
+        debug_assert!(self.align() == std::mem::align_of::<T>());
+
         let ptr = if self.is_box() {
             *self.data.as_ref::<*const T>()
         } else {
@@ -353,6 +359,9 @@ impl ErasedTrivial {
     ///
     /// Unsafe because callers must ensure the data is a T.
     pub unsafe fn to_owned<T>(mut self) -> T {
+        debug_assert!(self.size() == std::mem::size_of::<T>());
+        debug_assert!(self.align() == std::mem::align_of::<T>());
+
         if self.is_box() {
             let v = self.data.as_value::<Box<T>>();
             self.clear();
@@ -368,6 +377,9 @@ impl ErasedTrivial {
     ///
     /// Unsafe because callers must ensure the data is a [T].
     pub unsafe fn to_boxed_slice<T>(mut self) -> Box<[T]> {
+        debug_assert!(self.size() % std::mem::size_of::<T>() == 0);
+        debug_assert!(self.align() == std::mem::align_of::<T>());
+
         let ptr = if self.is_box() {
             self.data.as_value::<*mut T>()
         } else {
