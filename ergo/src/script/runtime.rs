@@ -1364,15 +1364,24 @@ impl<T> std::ops::DerefMut for Rt<T> {
 }
 
 impl Rt<Expression> {
-    pub fn evaluate<'a>(self, ctx: &'a mut Runtime) -> BoxFuture<'a, EResult<Value>> {
+    pub fn evaluate<'a>(
+        self,
+        ctx: &'a mut Runtime,
+        non_index: Option<Source<()>>,
+    ) -> BoxFuture<'a, EResult<Value>> {
         async move {
         use Expression::*;
         match self.0 {
             Empty => Ok(().into_value().into()),
-            Expression::String(s) => Ok(types::String::from(s).into_value().into()),
+            Expression::String(s) => {
+                if let (Some(src), Some(_)) = (non_index, ctx.env_get(s.as_str())) {
+                    ctx.log.warn(format!("{}", src.with("string literal is in the environment; did you mean to index?")));
+                }
+                Ok(types::String::from(s).into_value().into())
+            },
             Index(v,ind) => {
                 // ind should evaluate to a string
-                let ind = Rt(*ind).evaluate(ctx).await?;
+                let ind = Rt(*ind).evaluate_ext(ctx, v.is_none()).await?;
                 // TODO do not eagerly evaluate index target?
                 let ind = ctx.source_value_as::<types::String>(ind).await?.await.transpose_ok()?;
 
@@ -1395,7 +1404,7 @@ impl Rt<Expression> {
                         lookup(ctx, ind.unwrap())
                     },
                     Some(v) => {
-                        let (v_source, mut v) = Rt(*v).evaluate(ctx).await?.take();
+                        let (v_source, mut v) = Rt(*v).evaluate_ext(ctx, true).await?.take();
 
                         let deps = depends![v, ind.as_ref().unwrap().as_ref()];
 
@@ -1533,7 +1542,7 @@ impl Rt<Expression> {
                 Ok(ScriptEnvIntoMap.into_value().into())
             }
             Command(cmd, args) => {
-                let f = Rt(*cmd).evaluate(ctx).await?;
+                let f = Rt(*cmd).evaluate_ext(ctx, true).await?;
                 let args = {
                     let mut results = Vec::new();
                     for arg in args.iter() {
@@ -1666,17 +1675,24 @@ impl Rt<Expression> {
 
 impl Rt<Source<Expression>> {
     pub async fn evaluate(self, ctx: &mut Runtime) -> EvalResult {
+        self.evaluate_ext(ctx, false).await
+    }
+
+    pub async fn evaluate_ext(self, ctx: &mut Runtime, is_index: bool) -> EvalResult {
         let (source, expr) = self.0.take();
         if let Expression::Block(es) = expr {
             Rt(source.with(es)).evaluate(ctx).await
         } else {
-            Rt(expr).evaluate(ctx).await.map(|v| {
-                source.clone().with(
-                    source
-                        .with("while evaluating value returned by this expression")
-                        .imbue_error_context(v),
-                )
-            })
+            Rt(expr)
+                .evaluate(ctx, if is_index { None } else { Some(source.clone()) })
+                .await
+                .map(|v| {
+                    source.clone().with(
+                        source
+                            .with("while evaluating value returned by this expression")
+                            .imbue_error_context(v),
+                    )
+                })
         }
     }
 }
