@@ -101,20 +101,22 @@ grease_traits_fn! {
 
     impl Stored for types::Map {
         async fn put(&self, stored_ctx: &StoredContext, item: ItemContent) {
-            let mut ids: BTreeMap<String, u128> = BTreeMap::new();
+            let mut ids: BTreeMap<u128, u128> = BTreeMap::new();
             for (k, v) in self.0.iter() {
+                let k = k.clone();
                 let v = v.clone();
-                ids.insert(k.clone().into(), v.id());
+                ids.insert(k.id(), v.id());
+                stored_ctx.write_to_store(CONTEXT, k).await?;
                 stored_ctx.write_to_store(CONTEXT, v).await?;
             }
             bincode::serialize_into(item, &ids)?
         }
 
         async fn get(stored_ctx: &StoredContext, item: ItemContent) -> Erased {
-            let ids: BTreeMap<String, u128> = bincode::deserialize_from(item)?;
+            let ids: BTreeMap<u128, u128> = bincode::deserialize_from(item)?;
             let mut vals = BstMap::new();
-            for (k, id) in ids {
-                vals.insert(k.into(), stored_ctx.read_from_store(CONTEXT, id).await?);
+            for (k_id, v_id) in ids {
+                vals.insert(stored_ctx.read_from_store(CONTEXT, k_id).await?, stored_ctx.read_from_store(CONTEXT, v_id).await?);
             }
             Erased::new(types::Map(vals))
         }

@@ -41,11 +41,11 @@ impl From<Array> for TypedValue<Array> {
 /// Script map type.
 #[derive(Clone, Debug, GreaseType, PartialEq, StableAbi)]
 #[repr(C)]
-pub struct Map(pub BstMap<RString, Value>);
+pub struct Map(pub BstMap<Value, Value>);
 
 impl From<Map> for TypedValue<Map> {
     fn from(v: Map) -> Self {
-        let deps: grease::value::Dependencies = v.0.iter().map(|(a, v)| depends![*a, *v]).sum();
+        let deps: grease::value::Dependencies = v.0.iter().map(|(k, v)| depends![*k, *v]).sum();
         Self::constant_deps(v, deps)
     }
 }

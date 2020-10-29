@@ -2,13 +2,13 @@
 
 use ergo_runtime::{ergo_function, types, ContextExt, FunctionArguments};
 use futures::future::TryFutureExt;
-use grease::{bst::BstMap, depends, make_value, value::Value};
+use grease::{depends, make_value, value::Value};
 
 pub fn module() -> Value {
-    let mut map = BstMap::new();
-    map.insert("catch".into(), catch_fn());
-    map.insert("throw".into(), throw_fn());
-    types::Map(map).into()
+    crate::grease_string_map! {
+        "catch" = catch_fn(),
+        "throw" = throw_fn()
+    }
 }
 
 fn throw_fn() -> Value {

@@ -86,9 +86,9 @@ grease_traits_fn! {
         async fn fmt(&self) -> RString {
             let mut strs = Vec::new();
             for (k,v) in self.0.iter() {
-                strs.push(format!("{}:\n{}", k, to_empty(display(CONTEXT, v.clone()).await?)));
+                strs.push(format!("{} -> {}", to_empty(display(CONTEXT, k.clone()).await?), to_empty(display(CONTEXT, v.clone()).await?)));
             }
-            strs.join("\n\n").into()
+            strs.join("\n").into()
         }
     }
 

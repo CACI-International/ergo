@@ -194,7 +194,7 @@ fn run(opts: Opts) -> Result<String, String> {
     let mut env: ScriptEnv = Default::default();
     add_load_path(&mut env, &work_dir);
     env.insert(
-        constants::WORKING_DIRECTORY_BINDING.into(),
+        ergo_runtime::types::String::from(constants::WORKING_DIRECTORY_BINDING).into(),
         Ok(Source::builtin(work_dir)).into(),
     );
     loaded.top_level_env(env);

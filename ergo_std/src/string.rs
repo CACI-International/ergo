@@ -1,16 +1,16 @@
 //! String manipulation functions.
 
 use ergo_runtime::{context_ext::AsContext, ergo_function, types, ContextExt};
-use grease::{bst::BstMap, make_value, value::Value};
+use grease::{make_value, value::Value};
 use std::fmt::Write;
 
 pub fn module() -> Value {
-    let mut map = BstMap::default();
-    map.insert("format".into(), format_fn());
-    map.insert("from".into(), from_fn());
-    map.insert("split".into(), split_fn());
-    map.insert("trim".into(), trim_fn());
-    types::Map(map).into()
+    crate::grease_string_map! {
+        "format" = format_fn(),
+        "from" = from_fn(),
+        "split" = split_fn(),
+        "trim" = trim_fn()
+    }
 }
 
 #[derive(Debug)]
@@ -108,7 +108,7 @@ fn format_fn() -> Value {
                         } else if let Ok(i) = v.parse::<usize>() {
                             (pos_args.get(i),v)
                         } else {
-                            (kw_args.get(v.as_str()),v)
+                            (kw_args.get(&crate::grease_string(v.as_str())),v)
                         };
                         match val {
                             None => {

@@ -2,14 +2,14 @@
 use ergo_runtime::{ergo_function, types, ContextExt};
 use futures::lock::{Mutex, MutexGuard};
 use grease::runtime::io;
-use grease::{bst::BstMap, make_value, value::Value};
+use grease::{make_value, value::Value};
 
 pub fn module() -> Value {
-    let mut map = BstMap::default();
-    map.insert("stdin".into(), stdin_fn());
-    map.insert("stdout".into(), stdout_fn());
-    map.insert("stderr".into(), stderr_fn());
-    types::Map(map).into()
+    crate::grease_string_map! {
+        "stdin" = stdin_fn(),
+        "stdout" = stdout_fn(),
+        "stderr" = stderr_fn()
+    }
 }
 
 struct Stdin<'a> {

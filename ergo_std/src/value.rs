@@ -3,15 +3,15 @@
 use abi_stable::std_types::RArc;
 use ergo_runtime::{context_ext::AsContext, ergo_function, types, ContextExt};
 use futures::future::FutureExt;
-use grease::{bst::BstMap, depends, item_name, value::Value};
+use grease::{depends, item_name, value::Value};
 
 pub fn module() -> Value {
-    let mut map = BstMap::default();
-    map.insert("cache".into(), cache_fn());
-    map.insert("debug".into(), debug_fn());
-    map.insert("force".into(), force_fn());
-    map.insert("variable".into(), variable_fn());
-    types::Map(map).into()
+    crate::grease_string_map! {
+        "cache" = cache_fn(),
+        "debug" = debug_fn(),
+        "force" = force_fn(),
+        "variable" = variable_fn()
+    }
 }
 
 fn force_fn() -> Value {

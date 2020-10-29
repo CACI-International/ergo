@@ -1,6 +1,5 @@
-use ergo_runtime::{plugin_entry, source::Source, types, EvalResult, Runtime};
-/// Ergo standard module plugin.
-use grease::bst::BstMap;
+///! Ergo standard module plugin.
+use ergo_runtime::{plugin_entry, source::Source, EvalResult, Runtime};
 
 mod collection;
 mod env;
@@ -20,28 +19,42 @@ mod value;
 
 pub use exec::ExitStatus;
 
+fn grease_string(s: &str) -> grease::value::Value {
+    ergo_runtime::types::String::from(s).into()
+}
+
+#[macro_export]
+macro_rules! grease_string_map {
+    ( $( $s:literal = $v:expr ),* ) => {
+        {
+            let mut m: grease::bst::BstMap<grease::value::Value,grease::value::Value> = Default::default();
+            $( m.insert(crate::grease_string($s), $v); )*
+            grease::value::Value::from(ergo_runtime::types::Map(m))
+        }
+    };
+}
+
 #[plugin_entry]
 fn entry(ctx: &mut Runtime) -> EvalResult {
     // Add trait implementations
     exec::traits(&mut ctx.traits);
 
-    let mut m = BstMap::default();
-    m.insert("collection".into(), collection::module());
-    m.insert("env".into(), env::module());
-    m.insert("error".into(), error::module());
-    m.insert("exec".into(), exec::function());
-    m.insert("fs".into(), fs::module());
-    m.insert("if".into(), if_::function());
-    m.insert("io".into(), io::module());
-    m.insert("log".into(), log::function(ctx));
-    m.insert("net".into(), net::module());
-    m.insert("net".into(), net::module());
-    m.insert("path".into(), path::module());
-    m.insert("seq".into(), seq::function());
-    m.insert("string".into(), string::module());
-    m.insert("task".into(), task::function());
-    m.insert("value".into(), value::module());
-    Ok(Source::builtin(types::Map(m).into()))
+    Ok(Source::builtin(grease_string_map! {
+        "collection" = collection::module(),
+        "env" = env::module(),
+        "error" = error::module(),
+        "exec" = exec::function(),
+        "fs" = fs::module(),
+        "if" = if_::function(),
+        "io" = io::module(),
+        "log" = log::function(ctx),
+        "net" = net::module(),
+        "path" = path::module(),
+        "seq" = seq::function(),
+        "string" = string::module(),
+        "task" = task::function(),
+        "value" = value::module()
+    }))
 }
 
 #[cfg(test)]

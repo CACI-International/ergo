@@ -2,15 +2,11 @@
 
 /// The error returned when a function does not accept a specific non-positional argument.
 #[derive(Debug)]
-pub struct UnexpectedNonPositionalArgument(pub String);
+pub struct UnexpectedNonPositionalArgument;
 
 impl std::fmt::Display for UnexpectedNonPositionalArgument {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(
-            f,
-            "the function does not accept a non-positional argument with key '{}'",
-            self.0
-        )
+        write!(f, "extraneous non-positional argument")
     }
 }
 

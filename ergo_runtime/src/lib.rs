@@ -6,7 +6,7 @@ use abi_stable::{
     external_types::RMutex,
     sabi_trait,
     sabi_trait::prelude::*,
-    std_types::{RArc, RBox, ROption, RString, RVec},
+    std_types::{RArc, RBox, ROption, RVec},
     StableAbi,
 };
 use futures::future::{BoxFuture, FutureExt};
@@ -71,7 +71,7 @@ pub type EvalResult = Result<Source<Value>>;
 pub type EvalResultAbi = ResultAbi<Source<Value>>;
 
 /// Script environment bindings.
-pub type ScriptEnv = BstMap<RString, EvalResultAbi>;
+pub type ScriptEnv = BstMap<Value, EvalResultAbi>;
 
 #[derive(Clone, StableAbi)]
 #[repr(C)]
@@ -165,7 +165,7 @@ pub trait PeekIter: Debug + Send {
 #[repr(C)]
 pub struct UncheckedFunctionArguments {
     pub positional: PeekIter_TO<'static, RBox<()>, Source<Value>>,
-    pub non_positional: BstMap<RString, Source<Value>>,
+    pub non_positional: BstMap<Source<Value>, Source<Value>>,
 }
 
 /// Function call arguments.
@@ -198,12 +198,12 @@ impl Runtime {
     }
 
     /// Insert a binding into the current scoped environment.
-    pub fn env_insert<T: Into<EvalResult>>(&mut self, k: String, v: T) {
+    pub fn env_insert<T: Into<EvalResult>>(&mut self, k: Value, v: T) {
         self.env_current().insert(k.into(), v.into().into());
     }
 
     /// Extend the current scoped environment.
-    pub fn env_extend<T: IntoIterator<Item = (RString, EvalResultAbi)>>(&mut self, v: T) {
+    pub fn env_extend<T: IntoIterator<Item = (Value, EvalResultAbi)>>(&mut self, v: T) {
         self.env_current()
             .extend(v.into_iter().map(|(k, v)| (k, v.into())));
     }
@@ -211,7 +211,7 @@ impl Runtime {
     /// Remove a binding from the current scoped environment.
     pub fn env_remove<Q: ?Sized>(&mut self, k: &Q) -> Option<EvalResult>
     where
-        RString: std::borrow::Borrow<Q>,
+        Value: std::borrow::Borrow<Q>,
         Q: Ord,
     {
         self.env_current().remove(k).map(|v| v.into())
@@ -220,7 +220,7 @@ impl Runtime {
     /// Get a binding from the current environment.
     pub fn env_get<Q: ?Sized>(&self, k: &Q) -> Option<std::result::Result<&Source<Value>, &Error>>
     where
-        RString: std::borrow::Borrow<Q>,
+        Value: std::borrow::Borrow<Q>,
         Q: Ord,
     {
         self.env
@@ -260,7 +260,8 @@ impl FunctionCall<'_> {
             Ok(())
         } else {
             Err(Error::aggregate(kw.into_iter().map(|(k, v)| {
-                v.with(error::UnexpectedNonPositionalArgument(k.into()))
+                crate::source::IntoSource::into_source((k.source(), v.source()))
+                    .with(error::UnexpectedNonPositionalArgument)
                     .into()
             })))
         }
@@ -338,14 +339,11 @@ impl<T> ExactSizeIterator for PeekIter_TO<'_, RBox<()>, T> {
 impl UncheckedFunctionArguments {
     fn new(
         positional: Vec<Source<Value>>,
-        non_positional: BTreeMap<String, Source<Value>>,
+        non_positional: BTreeMap<Source<Value>, Source<Value>>,
     ) -> Self {
         UncheckedFunctionArguments {
             positional: PeekIter_TO::from_value(positional.into_iter().peekable(), TU_Opaque),
-            non_positional: non_positional
-                .into_iter()
-                .map(|(k, v)| (k.into(), v))
-                .collect(),
+            non_positional: non_positional.into_iter().collect(),
         }
     }
 
@@ -358,6 +356,10 @@ impl UncheckedFunctionArguments {
     }
 
     pub fn kw(&mut self, key: &str) -> Option<Source<Value>> {
+        self.kw_value(&crate::types::String::from(key).into())
+    }
+
+    pub fn kw_value(&mut self, key: &Value) -> Option<Source<Value>> {
         self.non_positional.remove(key)
     }
 
@@ -392,7 +394,7 @@ impl Iterator for UncheckedFunctionArguments {
 impl FunctionArguments {
     pub fn new(
         positional: Vec<Source<Value>>,
-        non_positional: BTreeMap<String, Source<Value>>,
+        non_positional: BTreeMap<Source<Value>, Source<Value>>,
     ) -> Self {
         FunctionArguments {
             inner: UncheckedFunctionArguments::new(positional, non_positional),

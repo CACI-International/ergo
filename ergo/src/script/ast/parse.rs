@@ -30,7 +30,7 @@ mod pattern {
     pub fn pattern<'a>() -> Parser<'a, Pat> {
         call(|| {
             let any = tag("_").map(|s| s.with(Pattern::Any));
-            let binding = word().map(|s| s.map(Pattern::Binding));
+            let binding = bind_key().map(|e| e.source().with(Pattern::Binding(e)));
 
             map() | array() | literal() | any | binding
         })
@@ -39,6 +39,10 @@ mod pattern {
     /// A command pattern.
     pub fn command_pattern<'a>() -> Parser<'a, CmdPat> {
         list(array_item(), req_space()).map(|args| args.into_source())
+    }
+
+    pub fn bind_key<'a>() -> Parser<'a, Expr> {
+        expression::arg_no_eq()
     }
 
     /// A literal pattern.
@@ -54,16 +58,17 @@ mod pattern {
 
     /// A map pattern.
     fn map<'a>() -> Parser<'a, Pat> {
-        let bind_map_item = (word() + (space() * sym(Token::Equal) * space() * pattern()).opt())
-            .map(|(name, binding)| match binding {
-                Some(pat) => (name.source(), pat.source())
-                    .into_source()
-                    .with(MapPattern::Item(name.unwrap(), pat)),
-                None => {
-                    let src = name.source();
-                    name.map(|n| MapPattern::Item(n.clone(), src.with(Pattern::Binding(n))))
-                }
-            });
+        let bind_map_item = (bind_key()
+            + (space() * sym(Token::Equal) * space() * pattern()).opt())
+        .map(|(key, binding)| match binding {
+            Some(pat) => (key.source(), pat.source())
+                .into_source()
+                .with(MapPattern::Item(key, pat)),
+            None => key.source().with(MapPattern::Item(
+                key.clone(),
+                key.source().with(Pattern::Binding(key)),
+            )),
+        });
         let rest_map_item = (sym(Token::Caret) + pattern())
             .map(|e| e.into_source().map(|(_, p)| MapPattern::Rest(p)));
         let map_item = rest_map_item | bind_map_item;
@@ -71,7 +76,7 @@ mod pattern {
     }
 
     /// An array item pattern.
-    fn array_item<'a>() -> Parser<'a, Source<ArrayPattern<Expr>>> {
+    fn array_item<'a>() -> Parser<'a, Source<ArrayPattern<Expr, Expr>>> {
         !function_delim()
             * (sym(Token::Caret).opt() + pattern()).map(|(c, p)| match c {
                 Some(c) => (c, p).into_source().map(|(_, p)| ArrayPattern::Rest(p)),
@@ -96,13 +101,14 @@ mod expression {
 
     /// An unset expression.
     fn unset<'a>() -> Parser<'a, Expr> {
-        (word() - space() - sym(Token::Equal).discard()).map(|e| e.map(Expression::Unset))
+        (pattern::bind_key() - space() - sym(Token::Equal).discard())
+            .map(|e| e.source().with(Expression::Unset(e.into())))
     }
 
     /// A nested expression.
     ///
     /// Expressions may be nested with parentheses or indexing.
-    fn nested<'a>() -> Parser<'a, Expr> {
+    fn nested<'a>(eq_allowed: bool) -> Parser<'a, Expr> {
         let paren_expr = (sym(Token::OpenParen) - spacenl() + expression(false) - spacenl()
             + sym(Token::CloseParen))
         .map(|res| res.into_source().map(|(e, _)| e.unwrap().1.unwrap()));
@@ -110,17 +116,18 @@ mod expression {
             .map(|res| res.into_source().with(Expression::Empty));
         let empty_index = sym(Token::Colon).map(|res: Source<_>| res.with(Expression::Empty));
 
-        paren_expr | empty_parens | index(false) | empty_index
+        paren_expr | empty_parens | index(false, eq_allowed) | empty_index
     }
 
     /// An index expression.
     ///
     /// Prior determines whether to try to parse a previous argument value. If true, this may
     /// return a non-index expression (the prior if an index expression is not found).
-    fn index<'a>(prior: bool) -> Parser<'a, Expr> {
-        let ind = (sym(Token::Colon) + arg_no_index()).map(|res| res.into_source().map(|v| v.1));
+    fn index<'a>(prior: bool, eq_allowed: bool) -> Parser<'a, Expr> {
+        let ind = (sym(Token::Colon) + arg_no_index(eq_allowed))
+            .map(|res| res.into_source().map(|v| v.1));
         if prior {
-            (arg_no_index() + ind.repeat(0..)).map(|(p, i)| {
+            (arg_no_index(eq_allowed) + ind.repeat(0..)).map(|(p, i)| {
                 i.into_iter().fold(p, |acc, v| {
                     v.map(|v| Expression::Index(Some(acc.into()), v.into()))
                 })
@@ -132,11 +139,21 @@ mod expression {
 
     /// An expression in argument position (words are interpreted as strings rather than as commands).
     pub fn arg<'a>() -> Parser<'a, Expr> {
-        call(|| index(true))
+        call(|| index(true, true))
     }
 
-    fn arg_no_index<'a>() -> Parser<'a, Expr> {
-        call(|| nested() | eqword().map(|s| s.map(Expression::String)) | array() | block())
+    /// Same as `arg`, but not allowing = in strings.
+    pub fn arg_no_eq<'a>() -> Parser<'a, Expr> {
+        call(|| index(true, false))
+    }
+
+    fn arg_no_index<'a>(eq_allowed: bool) -> Parser<'a, Expr> {
+        call(move || {
+            nested(eq_allowed)
+                | (if eq_allowed { eqword() } else { word() }).map(|s| s.map(Expression::String))
+                | array()
+                | block()
+        })
     }
 
     struct CommandArgs {
@@ -203,6 +220,8 @@ mod expression {
     ///
     /// The pipe operators are syntax sugar for nested expressions (and sometimes the order of
     /// expressions, too).
+    ///
+    /// See documentation of `command` for interpretation of `literal`.
     ///
     /// l |> r -> (l) r, left-associative, low precedence
     /// l <| r -> l (r), right-associative, high precedence
@@ -341,16 +360,16 @@ mod expression {
         let item = expression(true).map(|e| {
             let (source, e) = e.take();
             source.clone().with(match e {
-                Expression::String(s) => Expression::Set(
-                    source.clone().with(Pattern::Binding(s.clone())).into(),
-                    source
-                        .clone()
-                        .with(Expression::Index(
-                            None,
-                            source.with(Expression::String(s)).into(),
-                        ))
-                        .into(),
-                ),
+                Expression::String(s) => {
+                    let s = source.clone().with(Expression::String(s));
+                    Expression::Set(
+                        source.clone().with(Pattern::Binding(s.clone())).into(),
+                        source
+                            .clone()
+                            .with(Expression::Index(None, s.into()))
+                            .into(),
+                    )
+                }
                 other => other,
             })
         });
@@ -506,7 +525,7 @@ mod test {
         use super::pattern::*;
         use super::*;
 
-        fn assert(s: &[Token], expected: Pattern<Expr>) -> Result {
+        fn assert(s: &[Token], expected: Pattern<Expr, Expr>) -> Result {
             assert_parse(s, |_| pattern(), expected)
         }
 
@@ -515,17 +534,29 @@ mod test {
             assert(&[String("_".into())], Pattern::Any)
         }
 
+        fn str_expr(s: &str) -> Expr {
+            src(Expression::String(s.into()))
+        }
+
         #[test]
         fn literal() -> Result {
             assert(
                 &[Equal, String("howdy".into())],
-                Pattern::Literal(src(Expression::String("howdy".into()))),
+                Pattern::Literal(str_expr("howdy")),
             )
         }
 
         #[test]
         fn binding() -> Result {
-            assert(&[String("a".into())], Pattern::Binding("a".into()))
+            assert(&[String("a".into())], Pattern::Binding(str_expr("a")))
+        }
+
+        #[test]
+        fn binding_ref() -> Result {
+            assert(
+                &[Colon, String("a".into())],
+                Pattern::Binding(src(Expression::Index(None, str_expr("a").into()))),
+            )
         }
 
         #[test]
@@ -542,9 +573,9 @@ mod test {
                     CloseBracket,
                 ],
                 Pattern::Array(vec![
-                    src(ArrayPattern::Item(src(Pattern::Binding("a".into())))),
-                    src(ArrayPattern::Item(src(Pattern::Binding("b".into())))),
-                    src(ArrayPattern::Rest(src(Pattern::Binding("rest".into())))),
+                    src(ArrayPattern::Item(src(Pattern::Binding(str_expr("a"))))),
+                    src(ArrayPattern::Item(src(Pattern::Binding(str_expr("b"))))),
+                    src(ArrayPattern::Rest(src(Pattern::Binding(str_expr("rest"))))),
                 ]),
             )
         }
@@ -567,14 +598,14 @@ mod test {
                 ],
                 Pattern::Map(vec![
                     src(MapPattern::Item(
-                        "a".into(),
-                        src(Pattern::Binding("a".into())),
+                        str_expr("a"),
+                        src(Pattern::Binding(str_expr("a"))),
                     )),
                     src(MapPattern::Item(
-                        "b".into(),
-                        src(Pattern::Literal(src(Expression::String("c".into())))),
+                        str_expr("b"),
+                        src(Pattern::Literal(str_expr("c"))),
                     )),
-                    src(MapPattern::Rest(src(Pattern::Binding("rest".into())))),
+                    src(MapPattern::Rest(src(Pattern::Binding(str_expr("rest"))))),
                 ]),
             )
         }
@@ -597,10 +628,10 @@ mod test {
                 |_| command_pattern(),
                 src(vec![
                     src(ArrayPattern::Rest(src(Pattern::Map(vec![src(
-                        MapPattern::Rest(src(Pattern::Binding("keys".into()))),
+                        MapPattern::Rest(src(Pattern::Binding(str_expr("keys")))),
                     )])))),
-                    src(ArrayPattern::Item(src(Pattern::Binding("a".into())))),
-                    src(ArrayPattern::Rest(src(Pattern::Binding("rest".into())))),
+                    src(ArrayPattern::Item(src(Pattern::Binding(str_expr("a"))))),
+                    src(ArrayPattern::Rest(src(Pattern::Binding(str_expr("rest"))))),
                 ]),
             )
         }
@@ -625,7 +656,7 @@ mod test {
         }
 
         fn pat(s: &str) -> Box<Pat> {
-            src(Pattern::Binding(s.into())).into()
+            src(Pattern::Binding(src(Expression::String(s.into())))).into()
         }
 
         fn assert(s: &[Token], expected: Expression) -> Result {
@@ -890,9 +921,7 @@ mod test {
                 Expression::Command(
                     src(Expression::String("a".into())).into(),
                     vec![nomerge(Expression::Function(
-                        src(vec![src(ArrayPattern::Item(src(Pattern::Binding(
-                            "b".into(),
-                        ))))]),
+                        src(vec![src(ArrayPattern::Item(*pat("b")))]),
                         src(Expression::Block(vec![])).into(),
                     ))],
                 ),
@@ -1023,15 +1052,48 @@ mod test {
                 &[String("a".to_owned()), Equal, String("a".to_owned())],
                 Expression::Set(pat("a"), src(Expression::String("a".into())).into()),
             )?;
+            assert(
+                &[Colon, String("a".to_owned()), Equal, String("a".to_owned())],
+                Expression::Set(
+                    src(Pattern::Binding(src(Expression::Index(
+                        None,
+                        src(Expression::String("a".into())).into(),
+                    ))))
+                    .into(),
+                    src(Expression::String("a".into())).into(),
+                ),
+            )?;
+            assert(
+                &[Colon, String("a".into()), Equal, String("b".into())],
+                Expression::Set(
+                    src(Pattern::Binding(src(Expression::Index(
+                        None,
+                        src(Expression::String("a".into())).into(),
+                    ))))
+                    .into(),
+                    src(Expression::String("b".into())).into(),
+                ),
+            )?;
             Ok(())
         }
 
         #[test]
         fn unset() -> Result {
             assert(
-                &[String("a".to_owned()), Equal],
-                Expression::Unset("a".to_owned()),
-            )
+                &[String("a".into()), Equal],
+                Expression::Unset(src(Expression::String("a".into())).into()),
+            )?;
+            assert(
+                &[Colon, String("a".into()), Equal],
+                Expression::Unset(
+                    src(Expression::Index(
+                        None,
+                        src(Expression::String("a".into())).into(),
+                    ))
+                    .into(),
+                ),
+            )?;
+            Ok(())
         }
 
         #[test]

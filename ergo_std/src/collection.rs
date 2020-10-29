@@ -3,15 +3,15 @@
 use abi_stable::std_types::RVec;
 use ergo_runtime::{ergo_function, types, ContextExt, FunctionArguments};
 use futures::future::{ok, FutureExt, TryFutureExt};
-use grease::{bst::BstMap, depends, make_value, match_value, value::Value};
+use grease::{depends, make_value, match_value, value::Value};
 
 pub fn module() -> Value {
-    let mut map = BstMap::default();
-    map.insert("entries".into(), entries_fn());
-    map.insert("fold".into(), fold_fn());
-    map.insert("has".into(), has_fn());
-    map.insert("map".into(), map_fn());
-    types::Map(map).into()
+    crate::grease_string_map! {
+        "entries" = entries_fn(),
+        "fold" = fold_fn(),
+        "has" = has_fn(),
+        "map" = map_fn()
+    }
 }
 
 fn fold_fn() -> Value {
@@ -98,11 +98,10 @@ fn entries_fn() -> Value {
         make_value!([map] {
             let mut vals = RVec::new();
             for (k,v) in map.await?.owned().0 {
-                let mut entry = BstMap::new();
-                entry.insert("key".into(), types::String::from(k).into());
-                entry.insert("value".into(), v);
-
-                vals.push(types::Map(entry).into());
+                vals.push(crate::grease_string_map! {
+                    "key" = k,
+                    "value" = v
+                });
             }
 
             Ok(types::Array(vals))
@@ -119,20 +118,20 @@ fn has_fn() -> Value {
 
         ctx.unused_arguments()?;
 
-        let index = ctx.source_value_as::<types::String>(index);
-        let index = index.await?.unwrap();
+        use ergo_runtime::context_ext::AsContext;
+        let ctx: grease::runtime::Context = ctx.as_context().clone();
 
-        make_value!([value, index] {
-            let index = index.await?;
-
+        make_value!([value, *index] {
             match_value!(value => {
                 types::Array => |val| {
+                    let index = ctx.source_value_as::<types::String>(index);
+                    let index = index.await?.unwrap().await?;
                     use std::str::FromStr;
                     let i = usize::from_str(index.as_ref())?;
                     i < val.await?.0.len()
                 }
                 types::Map => |val| {
-                    val.await?.0.get(index.as_ref()).is_some()
+                    val.await?.0.get(&index).is_some()
                 }
                 => |_| Err("non-indexable value")?
             }).await

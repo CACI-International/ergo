@@ -24,7 +24,12 @@ pub fn script_context(
 ) -> Result<Runtime, grease::runtime::BuilderError> {
     let mut global_env = ScriptEnv::default();
     {
-        let mut insert = |k: &str, v| global_env.insert(k.into(), Ok(Source::builtin(v)).into());
+        let mut insert = |k: &str, v| {
+            global_env.insert(
+                ergo_runtime::types::String::from(k).into(),
+                Ok(Source::builtin(v)).into(),
+            )
+        };
 
         // Add initial environment functions
         let env = vec![(PROGRAM_NAME, base::load())];
@@ -111,6 +116,27 @@ mod test {
                 ("b", SRString("2")),
                 ("c", SRString("3")),
             ]),
+        )
+    }
+
+    #[test]
+    fn block_set_ref() -> Result<(), String> {
+        script_eval_to("a = b\n{:a = 1}", SRMap(&[("b", SRString("1"))]))
+    }
+
+    #[test]
+    fn block_set_dedup() -> Result<(), String> {
+        script_eval_to(
+            "a = something\nb = something\n{:a = ();:b = ()}",
+            SRMap(&[("something", SRUnit)]),
+        )
+    }
+
+    #[test]
+    fn block_set_arbitrary() -> Result<(), String> {
+        script_eval_to(
+            "a = b; :a = c; arr = [:b,1]; :arr = d; ::arr = e; map = {k=v}; :map = f",
+            SRAny,
         )
     }
 
@@ -467,7 +493,9 @@ mod test {
                         Err("map length mismatch".into())
                     } else {
                         for (k, e) in entries.iter() {
-                            let v = m.remove(*k).ok_or("missing expected key")?;
+                            let v = m
+                                .remove(&types::String::from(*k).into())
+                                .ok_or("missing expected key")?;
                             val_match(v, e.clone()).await?;
                         }
                         Ok(())

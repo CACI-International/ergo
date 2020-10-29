@@ -1,16 +1,17 @@
 //! Network module.
 
 use ergo_runtime::{context_ext::AsContext, ergo_function, types, ContextExt};
-use grease::{bst::BstMap, depends, make_value, path::PathBuf, value::Value};
+use grease::{depends, make_value, path::PathBuf, value::Value};
 use reqwest::{
     blocking::Client,
     header::{HeaderMap, HeaderName, HeaderValue},
 };
+use std::convert::TryFrom;
 
 pub fn module() -> Value {
-    let mut map = BstMap::new();
-    map.insert("download".into(), download_fn());
-    types::Map(map).into()
+    crate::grease_string_map! {
+        "download" = download_fn()
+    }
 }
 
 fn download_fn() -> Value {
@@ -48,9 +49,10 @@ fn download_fn() -> Value {
                 let (headers_source, headers) = headers.take();
                 rctx.force_value_nested(headers.clone().into()).await?;
                 for (k,v) in headers.forced_value().0.iter() {
+                    let k = rctx.source_value_as::<types::String>(headers_source.clone().with(k.clone())).await?.unwrap().await?;
                     let v = rctx.source_value_as::<types::String>(headers_source.clone().with(v.clone())).await?.unwrap().await?;
-                    http_headers.insert(HeaderName::from_bytes(k.as_bytes())?,
-                        HeaderValue::from_str(v.as_ref())?);
+                    http_headers.insert(HeaderName::try_from(k.as_ref().as_str())?,
+                        HeaderValue::try_from(v.as_ref().as_str())?);
                 }
             }
 

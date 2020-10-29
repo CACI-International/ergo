@@ -3,26 +3,25 @@
 use ergo_runtime::{ergo_function, types, ContextExt};
 use glob::glob;
 use grease::{
-    bst::BstMap, item_name, make_value, match_value, path::PathBuf, runtime::io::Blocking,
-    value::Value,
+    item_name, make_value, match_value, path::PathBuf, runtime::io::Blocking, value::Value,
 };
 use serde::{Deserialize, Serialize};
 use sha::sha1::Sha1;
 use std::path::Path;
 
 pub fn module() -> Value {
-    let mut map = BstMap::new();
-    map.insert("copy".into(), copy_fn());
-    map.insert("create-dir".into(), create_dir_fn());
-    map.insert("exists".into(), exists_fn());
-    map.insert("glob".into(), glob_fn());
-    map.insert("read".into(), read_fn());
-    map.insert("remove".into(), remove_fn());
-    map.insert("sha1".into(), sha1_fn());
-    map.insert("track".into(), track_fn());
-    map.insert("unarchive".into(), unarchive_fn());
-    map.insert("write".into(), write_fn());
-    types::Map(map).into()
+    crate::grease_string_map! {
+        "copy" = copy_fn(),
+        "create-dir" = create_dir_fn(),
+        "exists" = exists_fn(),
+        "glob" = glob_fn(),
+        "read" = read_fn(),
+        "remove" = remove_fn(),
+        "sha1" = sha1_fn(),
+        "track" = track_fn(),
+        "unarchive" = unarchive_fn(),
+        "write" = write_fn()
+    }
 }
 
 fn glob_fn() -> Value {
@@ -36,7 +35,7 @@ fn glob_fn() -> Value {
         let pattern = pattern.await?.unwrap();
 
         let path = ctx.source_value_as::<PathBuf>(
-            ctx.env_get("work-dir")
+            ctx.env_get(&crate::grease_string("work-dir"))
                 .ok_or(
                     ctx.call_site
                         .clone()

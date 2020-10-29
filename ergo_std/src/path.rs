@@ -2,7 +2,6 @@
 
 use ergo_runtime::{ergo_function, types, ContextExt};
 use grease::{
-    bst::BstMap,
     depends, item_name, make_value, match_value,
     path::PathBuf,
     runtime::ItemName,
@@ -10,13 +9,13 @@ use grease::{
 };
 
 pub fn module() -> Value {
-    let mut map = BstMap::new();
-    map.insert("new".into(), new_fn());
-    map.insert("join".into(), join_fn());
-    map.insert("parent".into(), parent_fn());
-    map.insert("relative".into(), relative_fn());
-    map.insert("split".into(), split_fn());
-    types::Map(map).into()
+    crate::grease_string_map! {
+        "new" = new_fn(),
+        "join" = join_fn(),
+        "parent" = parent_fn(),
+        "relative" = relative_fn(),
+        "split" = split_fn()
+    }
 }
 
 fn new_fn() -> Value {

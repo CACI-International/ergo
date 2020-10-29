@@ -1,15 +1,15 @@
 //! Environment variable functions.
 
 use ergo_runtime::{ergo_function, types, ContextExt};
-use grease::{bst::BstMap, make_value, path::PathBuf, value::Value};
+use grease::{make_value, path::PathBuf, value::Value};
 
 pub fn module() -> Value {
-    let mut map = BstMap::default();
-    map.insert("get".into(), get_fn());
-    map.insert("home".into(), home_path());
-    map.insert("path-search".into(), path_search_fn());
-    map.insert("current-dir".into(), current_dir_path());
-    types::Map(map).into()
+    crate::grease_string_map! {
+        "get" = get_fn(),
+        "home" = home_path(),
+        "path-search" = path_search_fn(),
+        "current-dir" = current_dir_path()
+    }
 }
 
 pub fn get_fn() -> Value {

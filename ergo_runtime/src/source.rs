@@ -471,6 +471,18 @@ impl<T: Ord> Ord for Source<T> {
     }
 }
 
+impl<T> std::borrow::Borrow<T> for Source<T> {
+    fn borrow(&self) -> &T {
+        &self.value
+    }
+}
+
+impl<T> std::borrow::BorrowMut<T> for Source<T> {
+    fn borrow_mut(&mut self) -> &mut T {
+        &mut self.value
+    }
+}
+
 impl<T> std::ops::Deref for Source<T> {
     type Target = T;
 

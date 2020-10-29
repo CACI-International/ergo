@@ -10,7 +10,6 @@ use futures::future::FutureExt;
 use futures::sink::SinkExt;
 use futures::stream::StreamExt;
 use grease::{
-    bst::BstMap,
     depends,
     ffi::OsString,
     make_value,
@@ -295,7 +294,7 @@ pub fn function() -> Value {
         let env = match ctx.args.kw("env") {
             Some(v) => {
                 let env = ctx.source_value_as::<types::Map>(v);
-                Some(env.await?.unwrap())
+                Some(env.await?)
             }
             None => None
         };
@@ -322,7 +321,7 @@ pub fn function() -> Value {
         let mut deps = depends![cmd, ^@args];
         let mut unordered_deps = Vec::new();
         if let Some(v) = &env {
-            unordered_deps.push(v.into());
+            unordered_deps.push((&**v).into());
         }
         if let Some(v) = &dir {
             unordered_deps.push(v.into());
@@ -348,7 +347,7 @@ pub fn function() -> Value {
                 vals.push(v.clone().into());
             }
             if let Some(v) = &env {
-                vals.push(v.clone().into());
+                vals.push((**v).clone().into());
             }
             if let Some(v) = &dir {
                 vals.push(v.clone().into());
@@ -363,9 +362,11 @@ pub fn function() -> Value {
             command.args(arg_vals.iter().map(|v| v.0.as_ref()));
             command.env_clear();
             if let Some(v) = env {
+                let (source, v) = v.take();
                 let types::Map(env) = v.forced_value().owned();
                 for (k,v) in env {
-                    let k = k.into_string();
+                    let k = ctx.source_value_as::<types::String>(source.clone().with(k));
+                    let k = k.await?.unwrap().await?.owned().into_string();
                     let v = ctx.into_typed::<CommandString>(v).await
                         .map_err(|e| format!("env key {}: {}", k, e))?;
                     command.env(k, v.await?.0.as_ref());
@@ -458,7 +459,6 @@ pub fn function() -> Value {
             Ok(())
         });
 
-        let mut ret_map = BstMap::default();
         let stdout = make_value!((run_command) [namespace_id!(std::exec::stdout)] {
             Ok(types::ByteStream::new(ReadWhile::new(ChannelRead::new(rcv_stdout), run_command)))
         });
@@ -467,12 +467,12 @@ pub fn function() -> Value {
         });
         let exit_status = make_value!((run_command) [namespace_id!(std::exec::exit_status)] { run_command.await?; Ok(ExitStatus::from(rcv_status.await?)) });
 
-        ret_map.insert("stdout".into(), rt.imbue_error_context(stdout.into(), "while evaluating stdout of exec command"));
-        ret_map.insert("stderr".into(), rt.imbue_error_context(stderr.into(), "while evaluating stderr of exec command"));
-        ret_map.insert("exit-status".into(), rt.imbue_error_context(exit_status.into(), "while evaluating exit_status of exec command"));
-        ret_map.insert("complete".into(), rt.imbue_error_context(run_command.into(), "while evaluating result of exec command"));
-
-        types::Map(ret_map).into()
+        crate::grease_string_map! {
+            "stdout" = rt.imbue_error_context(stdout.into(), "while evaluating stdout of exec command"),
+            "stderr" = rt.imbue_error_context(stderr.into(), "while evaluating stderr of exec command"),
+            "exit-status" = rt.imbue_error_context(exit_status.into(), "while evaluating exit_status of exec command"),
+            "complete" = rt.imbue_error_context(run_command.into(), "while evaluating result of exec command")
+        }
     })
     .into()
 }
