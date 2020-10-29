@@ -96,3 +96,14 @@ Within a script, the following are defined:
 * Change `path:new` to have identity based on source file and occurrence/seed
   value.
 * Deduplicate values based on identity.
+* Separate command-line interactions with workspace.ergo from fallback behavior
+  (like that which accesses `prelude`), accessing a specific key rather than
+  simply the final value?
+  * Generally translating `ergo [args...]` on the command-line to `ergo
+    [path-to-resolved-workspace.ergo-if-necessary] command [args...]`.
+  * Only for workspace.ergo?
+  * Should fallback behavior (from scripts in child directories) be behind a
+    specific key too?
+* Change script parsing such that `a:b` is sugar for `(a b)` (`:a` remains a
+  special parsed expression), and change map/array indexing back to being by
+  application (but not with implicit nested application as it was previously)?
