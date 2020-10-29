@@ -5,6 +5,15 @@
   and `io:stderr` to be implemented.
 * Change `exec` to produce asynchronous byte streams, allowing interactive
   processes to be run with concurrent IO.
+* Update `if`, `collection:fold`, and `error:catch` to produce dynamically-typed
+  values. This fixes a critical soundness bug that previously existed in
+  `collection:fold`, assuming the returned value was the same type as the base
+  value without checking it.
+* Add `collection:has` to check whether a map/array has a given index, which
+  complements indexing being changed to error when an index is missing.
+  * This is only possible now that index expressions aren't evaluated
+    immediately, such that `if` with an index operation will not evaluate until
+    after the condition is first checked.
 
 ## 1.0.0-beta.2  -- 2020-10-07
 * Add `fs:read`, `fs:write`, `fs:remove`.
