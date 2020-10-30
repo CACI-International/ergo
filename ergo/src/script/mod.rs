@@ -151,9 +151,9 @@ mod test {
     #[test]
     fn index() -> Result<(), String> {
         script_eval_to("[a,b]:0", SRString("a"))?;
-        script_fail("[a,b]:2")?;
+        script_result_fail("[a,b]:2")?;
         script_eval_to("{alpha=one,beta=two}:beta", SRString("two"))?;
-        script_fail("{alpha=one,beta=two}:omega")?;
+        script_result_fail("{alpha=one,beta=two}:omega")?;
         script_eval_to("{alpha=[a,{key=b}]}:alpha:1:key", SRString("b"))?;
         Ok(())
     }
@@ -193,7 +193,7 @@ mod test {
 
     #[test]
     fn match_failure() -> Result<(), String> {
-        script_fail("match {a=[1,2]} { {b} = :b, [a,b] = :b }")
+        script_result_fail("match {a=[1,2]} { {b} = :b, [a,b] = :b }")
     }
 
     mod merge {
@@ -327,8 +327,8 @@ mod test {
 
         #[test]
         fn array_mismatch() -> Result<(), String> {
-            script_fail("[a,b] = [1,2,3]; :a")?;
-            script_fail("[a,b,c] = [1,2]; :a")?;
+            script_result_fail("[a,b] = [1,2,3]; :a")?;
+            script_result_fail("[a,b,c] = [1,2]; :a")?;
             Ok(())
         }
 
@@ -354,8 +354,8 @@ mod test {
 
         #[test]
         fn array_undecidable() -> Result<(), String> {
-            script_fail("match [1,2,3] { [^_,^_] = doh }")?;
-            script_fail("[^_,a,^_] = [1,2,3]; :a")?;
+            script_result_fail("match [1,2,3] { [^_,^_] = doh }")?;
+            script_result_fail("[^_,a,^_] = [1,2,3]; :a")?;
             Ok(())
         }
 
@@ -402,8 +402,8 @@ mod test {
 
         #[test]
         fn map_mismatch() -> Result<(), String> {
-            script_fail("{a,b,c} = {a=1,b=2}; :a")?;
-            script_fail("{a,^keys,^keys2} = {a=1}; :a")?;
+            script_result_fail("{a,b,c} = {a=1,b=2}; :a")?;
+            script_result_fail("{a,^keys,^keys2} = {a=1}; :a")?;
             Ok(())
         }
     }

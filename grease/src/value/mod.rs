@@ -639,7 +639,7 @@ impl<T: GreaseType + Send + Sync + 'static> TypedValue<T> {
         F: Future<Output = T> + Send + 'static,
         D: Into<Dependencies>,
     {
-        Self::new(value.map(|v| Ok(v)), deps)
+        Self::new(value.map(Ok), deps)
     }
 
     /// Create a constant value.
@@ -657,6 +657,9 @@ impl<T: GreaseType + Send + Sync + 'static> TypedValue<T> {
         T: Send + 'static,
         D: Into<Dependencies>,
     {
+        // TODO: "prime the pump"
+        // We know this future doesn't depend on anything (and will not fail), so the resulting
+        // Value should allow peeking immediately.
         Self::ok(futures::future::ready(data), deps)
     }
 

@@ -124,7 +124,7 @@ pub use grease_macro::grease_trait_impl;
 ///
 /// grease_traits_fn!{
 ///     {
-///         extern "C" fn always_true<'a>(_ctx: &'a Context, _v: &'a grease::Erased)
+///         extern "C" fn always_true<'a>(_ctx: &'a Context, _tp: &'a Type, _v: &'a grease::Erased)
 ///             -> BoxFuture<'a, grease::error::RResult<bool>>
 ///         {
 ///             BoxFuture::new(async move { grease::error::RResult::ROk(true) })

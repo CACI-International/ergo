@@ -780,7 +780,7 @@ fn compile_pattern<'a>(
         pat.map_async(|p| async move {
             Ok(match p {
                 Any => Any,
-                Literal(e) => Literal(Rt(e).evaluate(ctx).await?.id()),
+                Literal(e) => Literal(Rt(e).evaluate_ext(ctx, true).await?.id()),
                 Binding(e) => Binding(Rt(e).evaluate_ext(ctx, true).await),
                 Array(pats) => {
                     let mut pats_new = Vec::new();
@@ -1631,7 +1631,7 @@ impl Rt<Expression> {
                     true,
                 )
                 .await
-                .map(Source::unwrap) // TODO: don't do this
+                .map(Source::unwrap) // TODO: use the source?
             }
             Block(_) => panic!("Block expression must be evaluated at a higher level"),
             Function(pat, e) => {
@@ -1829,10 +1829,12 @@ impl Rt<Source<Vec<Source<MergeExpression>>>> {
                 Err(e) => Err(e),
                 Ok(val) => {
                     let (source, val) = val.take();
-                    match_value!(val => {
-                        ScriptEnvIntoMap => |_| env_map.map(|ret| self_source.with(types::Map(ret).into_value())),
-                        => |v| Ok(source.with(v))
-                    }).await.and_then(|r| r)
+                    match val.grease_type_immediate() {
+                        Some(tp) if tp == &ScriptEnvIntoMap::grease_type() => {
+                            env_map.map(|ret| self_source.with(types::Map(ret).into_value()))
+                        }
+                        _ => Ok(source.with(val)),
+                    }
                 }
             }
         }
