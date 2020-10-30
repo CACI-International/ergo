@@ -259,6 +259,12 @@ impl Log {
         }
     }
 
+    /// Indicate that a stream of logging is complete.
+    pub fn end_stream(&self) {
+        let mut l = self.logger.lock();
+        l.dropped(self.context.clone());
+    }
+
     log_level!(debug, Debug);
     log_level!(info, Info);
     log_level!(warn, Warn);
@@ -270,13 +276,6 @@ impl fmt::Debug for Log {
         f.debug_struct("Log")
             .field("context", &self.context)
             .finish()
-    }
-}
-
-impl std::ops::Drop for Log {
-    fn drop(&mut self) {
-        let mut l = self.logger.lock();
-        l.dropped(self.context.clone());
     }
 }
 

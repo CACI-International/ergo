@@ -21,6 +21,7 @@ pub fn function() -> Value {
                 log.info(s.clone());
                 let ret = inner.await;
                 log.info(format!("{}: complete{}", s, if ret.is_err() { " (failed)" } else { "" }));
+                log.end_stream();
                 ret
             })
             .await
