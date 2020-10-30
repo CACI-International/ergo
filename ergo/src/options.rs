@@ -46,6 +46,10 @@ pub struct Opts {
     /// is used.
     pub storage: std::path::PathBuf,
 
+    #[structopt(short, long)]
+    /// Check for common syntax mistakes without executing the final value.
+    pub lint: bool,
+
     #[structopt(short = "S", long)]
     /// Whether to stop immediately when an error occurs.
     pub stop: bool,

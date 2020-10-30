@@ -1745,7 +1745,7 @@ impl Rt<Source<Expression>> {
             Rt(expr)
                 .evaluate(
                     ctx,
-                    if ignore_string_env_match {
+                    if !ctx.lint || ignore_string_env_match {
                         None
                     } else {
                         Some(source.clone())

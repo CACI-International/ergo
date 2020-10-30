@@ -162,6 +162,8 @@ fn run(opts: Opts) -> Result<String, String> {
         .expect("failed to create script context")
     };
 
+    ctx.lint = opts.lint;
+
     // Set thread ids in the logger, as reported by the task manager.
     {
         let mut l = orig_logger.lock();
@@ -211,6 +213,10 @@ fn run(opts: Opts) -> Result<String, String> {
 
     // We *must* keep the context around because it holds onto plugins, which may have functions referenced in values.
     // Likewise, our return from this function is "flattened" to strings to ensure any references to plugins are used when the plugins are still loaded.
+
+    if opts.lint {
+        return Ok(Default::default());
+    }
 
     script_output
         .map(|v| {

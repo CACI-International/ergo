@@ -85,6 +85,7 @@ pub struct Runtime {
     env: RVec<ScriptEnv>,
     pub loading: RVec<PathBuf>,
     pub load_cache: RArc<RMutex<BstMap<PathBuf, EvalResultAbi>>>,
+    pub lint: bool,
     lifetime: RArc<RMutex<RVec<Erased>>>,
 }
 
@@ -186,6 +187,7 @@ impl Runtime {
             env: Default::default(),
             loading: Default::default(),
             load_cache: RArc::new(RMutex::new(Default::default())),
+            lint: false,
             lifetime: RArc::new(RMutex::new(Default::default())),
         }
     }
