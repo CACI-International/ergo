@@ -29,7 +29,7 @@ fn force_fn() -> Value {
 
 fn cache_fn() -> Value {
     ergo_function!(independent std::value::cache, |ctx| {
-        let mut to_cache = ctx.args.next().ok_or("no argument to cache")?.unwrap();
+        let to_cache = ctx.args.next().ok_or("no argument to cache")?.unwrap();
 
         ctx.unused_arguments()?;
 
@@ -72,7 +72,7 @@ fn cache_fn() -> Value {
             },
             None => Value::dyn_with_id(async move {
                 let err = match ctx.read_from_store(&store, id).await {
-                    Ok(mut val) => {
+                    Ok(val) => {
                         log.debug(format!(
                             "successfully read cached value for {}",
                             id

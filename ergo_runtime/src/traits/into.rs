@@ -73,24 +73,31 @@ pub async fn into<T: GreaseType + StableAbi + Send + Sync + 'static>(
         })
         .await?;
     let ctx = ctx.clone();
-    t.into_typed(v)
-        .await?
-        .typed::<T, _, _>(move |t| {
-            let ctx = ctx.clone();
-            let t = t.clone();
-            async move {
-                let into_t = match type_name(&ctx, &T::grease_type()).await {
-                    Ok(v) => v,
-                    Err(e) => return e,
-                };
-                let from_t = match type_name(&ctx, &t).await {
-                    Ok(v) => v,
-                    Err(e) => return e,
-                };
-                format!("bad IntoTyped<{}> implementation, got {}", into_t, from_t).into()
-            }
-        })
-        .await
+    let deps = depends![v];
+    let val = Value::dyn_new(
+        async move {
+            let v = t.into_typed(v).await?;
+            v.make_any_value().await
+        },
+        deps,
+    );
+
+    val.typed::<T, _, _>(move |t| {
+        let ctx = ctx.clone();
+        let t = t.clone();
+        async move {
+            let into_t = match type_name(&ctx, &T::grease_type()).await {
+                Ok(v) => v,
+                Err(e) => return e,
+            };
+            let from_t = match type_name(&ctx, &t).await {
+                Ok(v) => v,
+                Err(e) => return e,
+            };
+            format!("bad IntoTyped<{}> implementation, got {}", into_t, from_t).into()
+        }
+    })
+    .await
 }
 
 grease_traits_fn! {

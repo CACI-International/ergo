@@ -17,8 +17,8 @@ pub fn function() -> Value {
         let to_sourced = ctx.into_sourced::<bool>(cond);
         let cond = to_sourced.await?.unwrap();
 
-        let mut if_true = if_true.unwrap();
-        let mut if_false = if_false.map(Source::unwrap).unwrap_or(().into_value());
+        let if_true = if_true.unwrap();
+        let if_false = if_false.map(Source::unwrap).unwrap_or(().into_value());
 
         let deps = depends![cond, if_true, if_false];
         // If types are immediately available and match, produce a value with the given type.

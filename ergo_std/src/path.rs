@@ -54,17 +54,29 @@ fn join_fn() -> Value {
     ergo_function!(std::path::join, |ctx| {
         let mut args = Vec::new();
 
+        let mut deps = depends![];
+
         while let Some(sv) = ctx.args.next() {
+            deps += depends![*sv];
             args.push(
-                sv.map_async(|v| {
-                    match_value!(v => {
+                sv.map_async(|v| async move {
+                    match_value!(peek v => {
                         types::String => |s| JoinComponent::String(s),
                         PathBuf => |s| JoinComponent::Path(s),
                         => |_| Err("all arguments must be strings or paths")?
                     })
+                    .await
                 })
                 .await
-                .transpose_err()
+                .transpose()
+                // Change Source<impl Future<Result>> to impl Future<Result>
+                .map(|source_fut| {
+                    futures::future::FutureExt::map(source_fut, |source_res| {
+                        source_res
+                            .transpose_err()
+                            .map_err(|e| e.into_grease_error())
+                    })
+                })
                 .map_err(|e| e.into_grease_error())?,
             );
         }
@@ -79,10 +91,11 @@ fn join_fn() -> Value {
                 .into_grease_error());
         }
 
-        let deps = depends![^@args];
+        let task = ctx.task.clone();
 
         make_value!([^deps] {
             let mut path = std::path::PathBuf::new();
+            let args = task.join_all(args).await?;
             for a in args {
                 match a {
                     JoinComponent::String(s) => path.push(s.await?.as_ref().as_str()),

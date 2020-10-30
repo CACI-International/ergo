@@ -33,7 +33,7 @@ fn throw_fn() -> Value {
 fn catch_fn() -> Value {
     ergo_function!(std::error::catch, |ctx| {
         let handler = ctx.args.next().ok_or("no handler provided")?;
-        let (value_source, mut value) = ctx.args.next().ok_or("no value provided")?.take();
+        let (value_source, value) = ctx.args.next().ok_or("no value provided")?.take();
 
         ctx.unused_arguments()?;
 

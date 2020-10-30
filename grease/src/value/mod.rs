@@ -311,8 +311,8 @@ impl Value {
     /// Create an AnyValue from this value.
     ///
     /// Evaluates the value when
-    pub async fn make_any_value(&mut self) -> crate::Result<AnyValue> {
-        match_value_data!(&mut self.data => {
+    pub async fn make_any_value(&self) -> crate::Result<AnyValue> {
+        match_value_data!(&self.data => {
             ValueData::Dynamic { fut } => fut.clone().await.into_result(),
             ValueData::Typed { tp, fut } => {
                 let data = fut.clone().await.into_result()?;
@@ -501,6 +501,30 @@ impl Value {
         })
     }
 
+    /// Call a function on the type of this value.
+    ///
+    /// If the type is immediately available, the function is called immediately and any error will
+    /// be eagerly returned, otherwise it is delayed in the returned future until the future is
+    /// executed.
+    pub async fn with_type<F, Fut, R>(
+        &self,
+        f: F,
+    ) -> crate::Result<futures::future::BoxFuture<'static, crate::Result<R>>>
+    where
+        F: FnOnce(&Type) -> Fut + Send + 'static,
+        Fut: Future<Output = crate::Result<R>> + Send + 'static,
+        R: Send + 'static,
+    {
+        match self.peek_type() {
+            Some(Err(e)) => Err(e),
+            Some(Ok(t)) => f(t).await.map(|r| futures::future::ok(r).boxed()),
+            None => {
+                let this = self.clone();
+                Ok(async move { this.grease_type().and_then(f).await }.boxed())
+            }
+        }
+    }
+
     /// Get the result of the value, if immediately available.
     pub fn peek(&self) -> Option<Result> {
         match_value_data!(&self.data => {
@@ -572,6 +596,10 @@ macro_rules! match_value_type {
 ///
 /// The macro evaluates to a `impl Future<Output = grease::Result<T>>`, where `T` is the case return
 /// type. Thus, the try operator (`?`) may be used within case expressions.
+///
+/// If `peek` is prepended, the macro evaluates to a `impl Future<Output = grease::Result<impl
+/// Future<Output = grease::Result<T>>>>`, evaluating the match in the outer future if the type is
+/// available synchronously.
 #[macro_export]
 macro_rules! match_value {
     ( $value:expr => { $( $t:ty => |$bind:pat| $e:expr $(,)? )+ => |$elsebind:pat| $else:expr } ) => {
@@ -592,7 +620,27 @@ macro_rules! match_value {
                 }
             }
         }
-    }
+    };
+    ( peek $value:expr => { $( $t:ty => |$bind:pat| $e:expr $(,)? )+ => |$elsebind:pat| $else:expr } ) => {
+        {
+            let match_value__value = $value.clone();
+            $value.with_type(move |tp| {
+                let tp = tp.clone();
+                async move {
+                    $crate::match_value_type!(&tp => {
+                        $( $t => Ok({
+                            let $bind = unsafe { $crate::value::TypedValue::<$t>::from_value(match_value__value) };
+                            $e
+                        }) ),+
+                        => Ok({
+                            let $elsebind = match_value__value;
+                            $else
+                        })
+                    })
+                }
+            })
+        }
+    };
 }
 
 /// A reference to a TypedValue result.
