@@ -14,22 +14,20 @@ pub trait Display {
     async fn fmt(&self) -> RString;
 }
 
-/// Return a type that implements `std::fmt::Display`, that will display the given value using the
-/// grease trait Display.
-///
-/// The value (and any internal values) must already be evaluated.
+/// Return a string representing the display of the given value.
 pub async fn display(ctx: &Context, v: Value) -> grease::Result<String> {
-    let t_ctx = ctx.clone();
     let trt = ctx
-        .get_trait::<Display, _, _>(&v, move |t| {
-            let ctx = t_ctx.clone();
-            let t = t.clone();
-            async move {
-                type_name(&ctx, &t)
-                    .await
-                    .map(|name| format!("<cannot display values of type {}>", name).into())
-                    .unwrap_or_else(|e| e)
-            }
+        .get_trait::<Display, _, _>(&v, |_| async {
+            Ok(grease::grease_trait_impl! {
+                impl Display for _ {
+                    async fn fmt(&self) -> RString {
+                        type_name(CONTEXT, SELF_TYPE)
+                            .await
+                            .map(|name| format!("<cannot display values of type {}>", name))?
+                            .into()
+                    }
+                }
+            })
         })
         .await;
     match trt {

@@ -19,10 +19,9 @@ impl ValueByContent {
         traits.add_impl_for_type::<T, ValueByContent>(grease_trait_impl! {
             impl<T: GreaseType + Send + Sync + std::hash::Hash + 'static> ValueByContent for T {
                 async fn value_by_content(self) -> Value {
-                    let mut v = self;
-                    let data = (&mut v).await?;
+                    let data = self.clone().await?;
                     let deps = depends![data.as_ref()];
-                    Value::from(v).set_dependencies(deps)
+                    Value::from(self).set_dependencies(deps)
                 }
             }
         });
@@ -36,11 +35,8 @@ pub async fn value_by_content(ctx: &grease::runtime::Context, v: Value) -> greas
             let t = t.clone();
             let ctx = t_ctx.clone();
             async move {
-                let name = match super::type_name(&ctx, &t).await {
-                    Err(e) => return e,
-                    Ok(v) => v,
-                };
-                format!("no value by content trait for {}", name).into()
+                let name = super::type_name(&ctx, &t).await?;
+                Err(format!("no value by content trait for {}", name).into())
             }
         })
         .await?;

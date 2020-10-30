@@ -56,7 +56,7 @@ fn join_fn() -> Value {
 
         while let Some(sv) = ctx.args.next() {
             args.push(
-                sv.map_async(|mut v| {
+                sv.map_async(|v| {
                     match_value!(v => {
                         types::String => |s| JoinComponent::String(s),
                         PathBuf => |s| JoinComponent::Path(s),

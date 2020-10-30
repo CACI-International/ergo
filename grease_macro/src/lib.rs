@@ -310,6 +310,7 @@ fn grease_trait_definition(trt: ItemTrait) -> TokenStream {
     let fields = funcs.iter().map(|(ident, rcvr, args, ret)| {
         let mut fn_args = Vec::new();
         if rcvr == &ReceiverType::Reference {
+            fn_args.push(quote! { &'a ::grease::types::Type });
             fn_args.push(quote! { &'a ::grease::type_erase::Erased });
         } else if rcvr == &ReceiverType::Owned {
             fn_args.push(quote! { ::grease::value::Value });
@@ -402,16 +403,16 @@ fn grease_trait_definition(trt: ItemTrait) -> TokenStream {
 
     let ref_struct_impl_methods = funcs.iter().map(|(ident, rcvr, args, ret)| {
         let v = if rcvr != &ReceiverType::None {
-            quote! { grease_trait_self_value: ::grease::value::Value, }
+            quote! { mut grease_trait_self_value: ::grease::value::Value, }
         } else {
             quote! {}
         };
         let arg_names = args.iter().map(|(name, _)| name);
         let args = args.iter().map(|(name, ty)| quote! { #name: #ty });
         let call_v = if rcvr == &ReceiverType::Reference {
-            quote! { grease_trait_self_value.await?.as_ref(), }
+            quote! { grease_trait_self_value.grease_type().await?, grease_trait_self_value.clone().await?.as_ref(), }
         } else if rcvr == &ReceiverType::Owned {
-            quote! { grease_trait_self_value }
+            quote! { grease_trait_self_value, }
         } else {
             quote! {}
         };
@@ -597,6 +598,12 @@ fn do_grease_trait_impl(
 
     let (impl_generics, _, where_clause) = generics.split_for_impl();
 
+    let untyped = if let syn::Type::Infer(_) = &ty {
+        true
+    } else {
+        false
+    };
+
     let impl_ty = ty.clone();
     let func_defs = funcs.iter().map(|(name, rcvr, args, ret, block)| {
         let mut fn_args = Vec::new();
@@ -626,18 +633,28 @@ fn do_grease_trait_impl(
         if rcvr == &ReceiverType::Reference {
             fn_args.insert(
                 0,
+                quote! { SELF_TYPE: &'a ::grease::types::Type }
+            );
+            fn_args.insert(
+                1,
                 quote! { grease_trait__erased: &'a ::grease::type_erase::Erased },
             );
-            self_bind =
-                Some(quote! { let grease_trait__self = unsafe { grease_trait__erased.as_ref::<#ty>() }; });
+            self_bind = Some(if untyped {
+                quote! { let grease_trait__self = grease_trait__erased; }
+            } else {
+                quote! { let grease_trait__self = unsafe { grease_trait__erased.as_ref::<#ty>() }; }
+            });
             block_tokens = replace_self(block_tokens);
         } else if rcvr == &ReceiverType::Owned {
             fn_args.insert(
                 0,
                 quote! { grease_trait__erased: ::grease::value::Value },
             );
-            self_bind =
-                Some(quote! { let grease_trait__self = grease_trait__erased.typed::<#ty,_,_>(|_| async move { panic!("incorrect type") }).await.unwrap(); });
+            self_bind = Some(if untyped {
+                quote! { let grease_trait__self = grease_trait__erased; }
+            } else {
+                quote! { let grease_trait__self = grease_trait__erased.typed::<#ty,_,_>(|_| async move { panic!("incorrect type") }).await.unwrap(); }
+            });
             block_tokens = replace_self(block_tokens);
         }
 

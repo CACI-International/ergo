@@ -470,8 +470,8 @@ impl Value {
     /// Get the type of the contained value.
     ///
     /// This may force the value to be evaluated if dynamically typed.
-    pub async fn grease_type(&mut self) -> crate::Result<&Type> {
-        match &mut self.data {
+    pub async fn grease_type(&self) -> crate::Result<&Type> {
+        match &self.data {
             ValueData::Dynamic { fut } => {
                 fut.clone().await;
             }

@@ -66,15 +66,9 @@ pub async fn into<T: GreaseType + StableAbi + Send + Sync + 'static>(
             let t = t.clone();
             let ctx = t_ctx.clone();
             async move {
-                let from_t = match type_name(&ctx, &t).await {
-                    Err(e) => return e,
-                    Ok(v) => v,
-                };
-                let to_t = match type_name(&ctx, &T::grease_type()).await {
-                    Err(e) => return e,
-                    Ok(v) => v,
-                };
-                format!("cannot convert {} into {}", from_t, to_t).into()
+                let from_t = type_name(&ctx, &t).await?;
+                let to_t = type_name(&ctx, &T::grease_type()).await?;
+                Err(format!("cannot convert {} into {}", from_t, to_t).into())
             }
         })
         .await?;

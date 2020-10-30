@@ -145,18 +145,15 @@ pub async fn read_from_store(ctx: &Context, store_item: &Item, id: u128) -> Resu
 /// Write a value to the store.
 ///
 /// The value must already be forced (using `force_value_nested`).
-pub async fn write_to_store(ctx: &Context, store_item: &Item, mut v: Value) -> Result<()> {
+pub async fn write_to_store(ctx: &Context, store_item: &Item, v: Value) -> Result<()> {
     let t_ctx = ctx.clone();
     let mut s = ctx
         .get_trait::<Stored, _, _>(&v, move |t| {
             let t = t.clone();
             let ctx = t_ctx.clone();
             async move {
-                let name = match type_name(&ctx, &t).await {
-                    Err(e) => return e,
-                    Ok(v) => v,
-                };
-                format!("no stored trait for {}", name).into()
+                let name = type_name(&ctx, &t).await?;
+                Err(format!("no stored trait for {}", name).into())
             }
         })
         .await?;

@@ -293,7 +293,7 @@ fn track_fn() -> Value {
         ctx.unused_arguments()?;
 
         let path = path
-            .map_async(|mut p|
+            .map_async(|p|
                 match_value!(p => {
                     types::String => |v| {
                         v.await?.owned().to_string().into()

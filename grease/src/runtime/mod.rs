@@ -139,14 +139,14 @@ impl Context {
     pub async fn get_trait<Trt: crate::traits::GreaseTrait, F, Fut>(
         &self,
         v: &crate::value::Value,
-        on_error: F,
+        otherwise: F,
     ) -> crate::Result<Trt>
     where
         F: FnOnce(&crate::types::Type) -> Fut + Send + 'static,
-        Fut: std::future::Future<Output = crate::Error> + Send,
+        Fut: std::future::Future<Output = crate::Result<Trt::Impl>> + Send,
     {
         self.traits
-            .get::<Trt, F, Fut>(v, on_error)
+            .get::<Trt, F, Fut>(v, otherwise)
             .await
             .map(|imp| Trt::create(imp, self))
     }

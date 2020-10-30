@@ -378,7 +378,7 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                             );
                             match fctx.env_scoped(env, load_script).await.0 {
                                 Ok(v) => {
-                                    let (v_source, mut v) = v.take();
+                                    let (v_source, v) = v.take();
                                     match_value!(v => {
                                         () => |_| None,
                                         types::Map => |v| Some(v_source.with(v).await.transpose_ok()?.map(|v| v.owned().0)),
@@ -480,7 +480,6 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
 
             let loaded_context = source.with(format!("loaded from '{}'", p.display()));
 
-            let mut loaded = loaded;
             if loaded.grease_type().await? == &types::Function::grease_type() {
                 let args = std::mem::take(&mut ctx.args);
                 apply_value(ctx, loaded, args.unchecked(), false).await
@@ -782,7 +781,7 @@ fn compile_pattern<'a>(
             Ok(match p {
                 Any => Any,
                 Literal(e) => Literal(Rt(e).evaluate(ctx).await?.id()),
-                Binding(e) => Binding(Rt(e).evaluate(ctx).await),
+                Binding(e) => Binding(Rt(e).evaluate_ext(ctx, true).await),
                 Array(pats) => {
                     let mut pats_new = Vec::new();
                     for p in pats {
@@ -879,7 +878,7 @@ fn _apply_pattern<'a>(
                 let vals: EResult<Vec<Option<Source<PatternValues>>>> = {
                     let val = match val {
                         Some(v) => {
-                            let (vsource, mut v) = v.take();
+                            let (vsource, v) = v.take();
                             let as_array = match_value!(v.binding => {
                                 types::Array => |v| match v.await {
                                     Ok(v) => {
@@ -963,7 +962,7 @@ fn _apply_pattern<'a>(
                 let mut val = match val {
                     Some(v) => {
                         let orig = v.clone();
-                        let (vsource, mut v) = v.take();
+                        let (vsource, v) = v.take();
                         let as_map = match_value!(v.binding => {
                             types::Map => |v| match v.await {
                                 Ok(v) => Some((orig, v.owned().0)),
@@ -1344,8 +1343,8 @@ pub fn apply_value(
     async move {
         let v_source = v.source();
 
-        v.map_async(|mut v| async {
-            let mut v = if env_lookup {
+        v.map_async(|v| async {
+            let v = if env_lookup {
                 match_value!(v => {
                     types::String => |k| {
                         let k: Value = k.into();
@@ -1413,7 +1412,7 @@ impl Rt<Expression> {
     pub fn evaluate<'a>(
         self,
         ctx: &'a mut Runtime,
-        non_index: Option<Source<()>>,
+        string_env_match: Option<Source<()>>,
     ) -> BoxFuture<'a, EResult<Value>> {
         async move {
         use Expression::*;
@@ -1421,13 +1420,13 @@ impl Rt<Expression> {
             Empty => Ok(().into_value().into()),
             Expression::String(s) => {
                 let s: Value = types::String::from(s).into();
-                if let (Some(src), Some(_)) = (non_index, ctx.env_get(&s)) {
+                if let (Some(src), Some(_)) = (string_env_match, ctx.env_get(&s)) {
                     ctx.log.warn(format!("{}", src.with("string literal is in the environment; did you mean to index?")));
                 }
                 Ok(s)
             },
             Index(v,ind) => {
-                let ind = Rt(*ind).evaluate_ext(ctx, v.is_none()).await?;
+                let ind = Rt(*ind).evaluate_ext(ctx, true).await?;
 
                 fn lookup(ctx: &Runtime, k: Value) -> EResult<Value> {
                     trace!("looking up '{}' in environment", k.id());
@@ -1444,10 +1443,11 @@ impl Rt<Expression> {
                 match v {
                     None => {
                         // Lookup in environment
-                        lookup(ctx, ind.unwrap())
+                        let (ind_source, ind) = ind.take();
+                        lookup(ctx, ind).map_err(|e| ind_source.with(e).into_grease_error())
                     },
                     Some(v) => {
-                        let (v_source, mut v) = Rt(*v).evaluate_ext(ctx, true).await?.take();
+                        let (v_source, v) = Rt(*v).evaluate_ext(ctx, true).await?.take();
 
                         let deps = depends![v, *ind];
 
@@ -1455,8 +1455,8 @@ impl Rt<Expression> {
 
                         Ok(Value::dyn_new(async move {
                             // If a string, first lookup in environment
-                            let mut v = match_value!(v => {
-                                types::String => |s| lookup(&ctx, s.into())?,
+                            let v = match_value!(v => {
+                                types::String => |s| lookup(&ctx, s.into()).map_err(|e| v_source.clone().with(e).into_grease_error())?,
                                 => |v| v
                             }).await?;
 
@@ -1601,7 +1601,7 @@ impl Rt<Expression> {
                 for a in args {
                     let (_merge_source, (merge, val)) = a.take();
                     if merge {
-                        let (val_source, mut val) = val.take();
+                        let (val_source, val) = val.take();
                         match_value!(val => {
                             types::Array => |val| {
                                 vals.extend(val.await?.owned().0.into_iter().map(|v| val_source.clone().with(v)));
@@ -1733,13 +1733,24 @@ impl Rt<Source<Expression>> {
         self.evaluate_ext(ctx, false).await
     }
 
-    pub async fn evaluate_ext(self, ctx: &mut Runtime, is_index: bool) -> EvalResult {
+    pub async fn evaluate_ext(
+        self,
+        ctx: &mut Runtime,
+        ignore_string_env_match: bool,
+    ) -> EvalResult {
         let (source, expr) = self.0.take();
         if let Expression::Block(es) = expr {
             Rt(source.with(es)).evaluate(ctx).await
         } else {
             Rt(expr)
-                .evaluate(ctx, if is_index { None } else { Some(source.clone()) })
+                .evaluate(
+                    ctx,
+                    if ignore_string_env_match {
+                        None
+                    } else {
+                        Some(source.clone())
+                    },
+                )
                 .await
                 .map(|v| {
                     source.clone().with(
@@ -1817,7 +1828,7 @@ impl Rt<Source<Vec<Source<MergeExpression>>>> {
             match val {
                 Err(e) => Err(e),
                 Ok(val) => {
-                    let (source, mut val) = val.take();
+                    let (source, val) = val.take();
                     match_value!(val => {
                         ScriptEnvIntoMap => |_| env_map.map(|ret| self_source.with(types::Map(ret).into_value())),
                         => |v| Ok(source.with(v))

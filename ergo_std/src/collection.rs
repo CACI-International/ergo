@@ -113,7 +113,7 @@ fn entries_fn() -> Value {
 
 fn has_fn() -> Value {
     ergo_function!(std::collection::has, |ctx| {
-        let mut value = ctx.args.next().ok_or("value not provided")?.unwrap();
+        let value = ctx.args.next().ok_or("value not provided")?.unwrap();
         let index = ctx.args.next().ok_or("index not provided")?;
 
         ctx.unused_arguments()?;

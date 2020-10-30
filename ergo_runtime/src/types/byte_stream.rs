@@ -392,8 +392,7 @@ grease_traits_fn! {
 
     impl trts::ValueByContent for ByteStream {
         async fn value_by_content(self) -> Value {
-            let mut v = self;
-            let data = (&mut v).await?;
+            let data = self.clone().await?;
             let mut reader = data.read();
             let mut buf: [u8; BYTE_STREAM_BLOCK_LIMIT] =
                 unsafe { std::mem::MaybeUninit::uninit().assume_init() };
@@ -409,7 +408,7 @@ grease_traits_fn! {
                 }
             }
             let deps = grease::depends![h.finish_ext()];
-            Value::from(v).set_dependencies(deps)
+            Value::from(self).set_dependencies(deps)
         }
     }
 

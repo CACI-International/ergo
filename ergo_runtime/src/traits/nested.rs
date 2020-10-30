@@ -28,42 +28,6 @@ grease_traits_fn! {
     }
 }
 
-#[derive(Debug)]
-struct NoNested;
-
-impl std::fmt::Display for NoNested {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "no nested value")
-    }
-}
-
-impl std::error::Error for NoNested {}
-
-impl NoNested {
-    pub fn handle<T: Default>(r: grease::Result<T>) -> grease::Result<T> {
-        match r {
-            Ok(v) => Ok(v),
-            Err(e) => {
-                if Self::within(e.error_ref()) {
-                    Ok(Default::default())
-                } else {
-                    Err(e)
-                }
-            }
-        }
-    }
-
-    fn within(e: &(dyn std::error::Error + 'static)) -> bool {
-        match grease::error::downcast_ref::<NoNested>(e) {
-            Some(_) => true,
-            None => match e.source() {
-                Some(e) => Self::within(e),
-                None => false,
-            },
-        }
-    }
-}
-
 fn add_value<'a>(
     values: &mut FuturesUnordered<BoxFuture<'a, grease::Result<RVec<Value>>>>,
     ctx: &'a Context,
@@ -72,12 +36,20 @@ fn add_value<'a>(
     values.push(
         async move {
             let nested = ctx
-                .get_trait::<Nested, _, _>(&v, |_| async { NoNested.into() })
+                .get_trait::<Nested, _, _>(&v, |_| async {
+                    Ok(grease::grease_trait_impl! {
+                        impl Nested for _ {
+                            async fn nested(&self) -> RVec<Value> {
+                                Default::default()
+                            }
+                        }
+                    })
+                })
                 .await;
-            NoNested::handle(match nested {
+            match nested {
                 Ok(mut n) => n.nested(v).await,
                 Err(e) => Err(e),
-            })
+            }
         }
         .boxed(),
     );

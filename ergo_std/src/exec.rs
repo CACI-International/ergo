@@ -54,7 +54,6 @@ impl ExitStatus {
 
 impl std::fmt::Display for ExitStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "exit status: ")?;
         match self.0 {
             ROption::RNone => write!(f, "signal"),
             ROption::RSome(i) => write!(f, "{}", i),
@@ -387,7 +386,6 @@ pub fn function() -> Value {
             let mut child = command.spawn()?;
 
             let stdin = stdin.map(|v| v.forced_value().read());
-            //let mut cstdin = child.stdin.take().map(Blocking::new);
 
             let input = if let (Some(input),Some(mut v)) = (child.stdin.take(), stdin) {
                 let mut b = Blocking::new(input);
@@ -427,6 +425,11 @@ pub fn function() -> Value {
             let exit_status = BoundTo::new(exit_status, input);
 
             let (exit_status, _, _) = futures::future::try_join3(exit_status, output, error).await?;
+
+            // These pipes should be dropped here so that, if an error occurred, the recv pipes
+            // terminate correctly if gathering stdout/stderr.
+            drop(out_pipe_send);
+            drop(err_pipe_send);
 
             macro_rules! fetch_named {
                 ( $output:expr, $name:expr ) => {
@@ -481,6 +484,7 @@ grease::grease_traits_fn! {
     // CommandString traits
     IntoTyped::<CommandString>::add_impl::<types::String>(traits);
     IntoTyped::<CommandString>::add_impl::<PathBuf>(traits);
+    ergo_runtime::grease_type_name!(traits, CommandString);
 
     // ExitStatus traits
     IntoTyped::<bool>::add_impl::<ExitStatus>(traits);
