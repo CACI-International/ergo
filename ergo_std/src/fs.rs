@@ -3,7 +3,8 @@
 use ergo_runtime::{ergo_function, types, ContextExt};
 use glob::glob;
 use grease::{
-    item_name, make_value, match_value, path::PathBuf, runtime::io::Blocking, value::Value,
+    item_name, make_value, match_value, path::PathBuf, runtime::io::Blocking, types::GreaseType,
+    value::Value,
 };
 use serde::{Deserialize, Serialize};
 use sha::sha1::Sha1;
@@ -311,39 +312,35 @@ fn track_fn() -> Value {
         let store = ctx.store.item(item_name!("track"));
 
         // TODO inefficient to load and store every time
-        let mut info = if store.exists() {
-            let content = store.read()?;
-            bincode::deserialize_from(content).map_err(|e| e.to_string())?
-        } else {
-            TrackInfo::new()
-        };
+        let loaded_info = ctx.shared_state(move || LoadedTrackInfo::new(store))?;
+        let guard = loaded_info.info.read().map_err(|_| "poisoned")?;
 
         let meta = std::fs::metadata(&path)?;
         let mod_time = meta.modified()?;
 
-        let calc_hash = match info.get(&path) {
+        let calc_hash = match guard.get(&path) {
             Some(data) => data.modification_time < mod_time,
             None => true,
         };
 
-        if calc_hash {
+        let hash = if calc_hash {
             let f = std::fs::File::open(&path)?;
             let hash = grease::hash::hash_read(f)?;
-            info.insert(
+            drop(guard);
+            let mut guard = loaded_info.info.write().map_err(|_| "poisoned")?;
+            guard.insert(
                 path.clone(),
                 FileData {
                     modification_time: mod_time,
                     content_hash: hash,
                 },
             );
-        }
-
-        let hash = info.get(&path).unwrap().content_hash;
-
-        {
-            let content = store.write()?;
-            bincode::serialize_into(content, &info).map_err(|e| e.to_string())?;
-        }
+            hash
+        } else {
+            let hash = guard.get(&path).unwrap().content_hash;
+            drop(guard);
+            hash
+        };
 
         make_value!((path) [hash] Ok(PathBuf::from(path))).into()
     })
@@ -357,6 +354,46 @@ struct FileData {
 }
 
 type TrackInfo = std::collections::HashMap<std::path::PathBuf, FileData>;
+
+#[derive(GreaseType)]
+struct LoadedTrackInfo {
+    pub info: std::sync::RwLock<TrackInfo>,
+    item: grease::runtime::Item,
+}
+
+impl LoadedTrackInfo {
+    pub fn new(item: grease::runtime::Item) -> grease::Result<Self> {
+        let info = if item.exists() {
+            let content = item.read()?;
+            bincode::deserialize_from(content).map_err(|e| e.to_string())?
+        } else {
+            TrackInfo::new()
+        };
+        Ok(LoadedTrackInfo {
+            info: std::sync::RwLock::new(info),
+            item,
+        })
+    }
+}
+
+impl std::ops::Drop for LoadedTrackInfo {
+    fn drop(&mut self) {
+        if let Ok(info) = std::mem::take(&mut self.info).into_inner() {
+            let content = match self.item.write() {
+                Err(e) => {
+                    eprintln!("could not open fs::track info for writing: {}", e);
+                    return;
+                }
+                Ok(v) => v,
+            };
+            if let Err(e) = bincode::serialize_into(content, &info) {
+                eprintln!("error while serializing fs::track info: {}", e);
+            }
+        } else {
+            eprintln!("poisoned lock guard in fs::track info; not storing");
+        }
+    }
+}
 
 fn remove_fn() -> Value {
     ergo_function!(std::fs::remove, |ctx| {

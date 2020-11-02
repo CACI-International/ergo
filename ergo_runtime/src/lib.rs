@@ -6,14 +6,14 @@ use abi_stable::{
     external_types::RMutex,
     sabi_trait,
     sabi_trait::prelude::*,
-    std_types::{RArc, RBox, ROption, RVec},
+    std_types::{RArc, RBox, RHashMap, ROption, RVec},
     StableAbi,
 };
 use futures::future::{BoxFuture, FutureExt};
 use grease::bst::BstMap;
 use grease::path::PathBuf;
 use grease::runtime::Context;
-use grease::type_erase::{Eraseable, Erased};
+use grease::type_erase::{Eraseable, Erased, Ref};
 use grease::{Error, Value};
 use std::collections::BTreeMap;
 use std::iter::FromIterator;
@@ -87,6 +87,7 @@ pub struct Runtime {
     pub load_cache: RArc<RMutex<BstMap<PathBuf, EvalResultAbi>>>,
     pub lint: bool,
     lifetime: RArc<RMutex<RVec<Erased>>>,
+    keyed_lifetime: RArc<RMutex<RHashMap<grease::types::Type, RArc<Erased>>>>,
 }
 
 impl std::ops::Deref for Runtime {
@@ -189,6 +190,7 @@ impl Runtime {
             load_cache: RArc::new(RMutex::new(Default::default())),
             lint: false,
             lifetime: RArc::new(RMutex::new(Default::default())),
+            keyed_lifetime: RArc::new(RMutex::new(Default::default())),
         }
     }
 
@@ -244,6 +246,30 @@ impl Runtime {
     /// Store a value for the duration of the runtime's lifetime.
     pub fn lifetime<T: Eraseable>(&mut self, v: T) {
         self.lifetime.lock().push(Erased::new(v));
+    }
+
+    /// Load or create and load a value in the runtime.
+    ///
+    /// The passed closure is called when the value has not yet been loaded.
+    pub fn shared_state<T: Eraseable + grease::types::GreaseType, F>(
+        &mut self,
+        missing: F,
+    ) -> grease::Result<Ref<T, RArc<Erased>>>
+    where
+        F: FnOnce() -> grease::Result<T>,
+    {
+        let mut guard = self.keyed_lifetime.lock();
+        if !guard.contains_key(&T::grease_type()) {
+            guard.insert(T::grease_type(), RArc::new(Erased::new(missing()?)));
+        }
+        Ok(unsafe {
+            Ref::new(
+                guard
+                    .get(&T::grease_type())
+                    .expect("type must have been inserted")
+                    .clone(),
+            )
+        })
     }
 
     /// Clear the environment of all values.
