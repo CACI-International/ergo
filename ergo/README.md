@@ -16,43 +16,45 @@ used to estimate future performance.
 ```sh
 #!/usr/bin/env ergo
 
-run_with_path = fn ^{^kwargs} ^args -> (exec ^$kwargs ^{env = {PATH = $}} ^$args) complete
+^(ergo std)
+
+run_with_path = fn ^{^kwargs} ^args -> exec ^:kwargs ^{env = {PATH = env:get PATH}} ^:args |>:complete
 
 # Get influxdb-cxx
 influx = {
   checkout = seq ^[
-      dir = path new
-      exec git clone https://github.com/awegrzyn/influxdb-cxx.git $dir
-      $dir
+      dir = (path:new)
+      exec git clone https://github.com/awegrzyn/influxdb-cxx.git :dir |>:complete
+      :dir
   ]
-  include = (path join $checkout include)
+  include = path:join :checkout include
   builddir = seq ^[
-      dir = path new
-      run_with_path cmake -DCMAKE_BUILD_TYPE=Release -S $checkout -B $dir
-      $dir
+      dir = (path:new)
+      run_with_path cmake -DCMAKE_BUILD_TYPE=Release -S :checkout -B :dir
+      :dir
   ]
-  lib = cache seq ^[
-      run_with_path ^{ pwd = $builddir } make InfluxDB
-      path join $builddir lib libInfluxDB.so
+  lib = value:cache <| seq ^[
+      run_with_path ^{ pwd = :builddir } make InfluxDB
+      path:join :builddir lib libInfluxDB.so
   ]
 
-  { include, lib, libpath = path join $builddir lib }
+  { include, lib, libpath = path:join :builddir lib }
 }
 
 # Create test program
-test = cache seq ^[
-    out = path new
-    run_with_path c++ -std=c++17 -o $out -I (influx include) (track main.cpp) (influx lib)
-    $out
+test = value:cache <| seq ^[
+    out = (path:new)
+    run_with_path c++ -std=c++17 -o :out -I influx:include (fs:track main.cpp) influx:lib
+    :out
 ]
 
-test-dist = path join $work-dir influx-test
+test-dist = path:join :work-dir influx-test
 
 # Create output map
 {
-  dist = fs copy $test $test-dist
-  clean = exec rm -f $test-dist
-  test = exec ^{env = {LD_LIBRARY_PATH = influx libpath}} $test
+  dist = fs:copy :test :test-dist
+  clean = exec rm -f :test-dist |>:complete
+  test = exec ^{env = {LD_LIBRARY_PATH = influx:libpath}} :test
 }
 ```
 
