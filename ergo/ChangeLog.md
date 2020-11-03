@@ -8,7 +8,8 @@
 * Change indexing to require the indexed value to exist (rather than returning a
   unit value).
 * Add a warning when a string literal is used which matches a key in the
-  environment.
+  environment. This is only enabled with the `--lint` flag, and when this flag
+  is present no evaluation of the final value is done.
 * Change maps to be keyed based on values rather than string literals (a
   superset of prior functionality).
 
