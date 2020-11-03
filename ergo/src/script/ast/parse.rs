@@ -114,26 +114,26 @@ mod expression {
         .map(|res| res.into_source().map(|(e, _)| e.unwrap().1.unwrap()));
         let empty_parens = (sym(Token::OpenParen) + sym(Token::CloseParen))
             .map(|res| res.into_source().with(Expression::Empty));
-        let empty_index = sym(Token::Colon).map(|res: Source<_>| res.with(Expression::Empty));
 
-        paren_expr | empty_parens | index(false, eq_allowed) | empty_index
+        paren_expr | empty_parens | index(false, eq_allowed)
     }
 
-    /// An index expression.
+    /// An index expression (get or command), delineated by a colon.
     ///
-    /// Prior determines whether to try to parse a previous argument value. If true, this may
-    /// return a non-index expression (the prior if an index expression is not found).
-    fn index<'a>(prior: bool, eq_allowed: bool) -> Parser<'a, Expr> {
+    /// `cmd` determines whether to try to parse a previous argument value. If true, this may
+    /// return an arbitrary expression (if a colon is not found) or a command expression. If false,
+    /// it must return a get expression.
+    fn index<'a>(cmd: bool, eq_allowed: bool) -> Parser<'a, Expr> {
         let ind = (sym(Token::Colon) + arg_no_index(eq_allowed))
             .map(|res| res.into_source().map(|v| v.1));
-        if prior {
+        if cmd {
             (arg_no_index(eq_allowed) + ind.repeat(0..)).map(|(p, i)| {
                 i.into_iter().fold(p, |acc, v| {
-                    v.map(|v| Expression::Index(Some(acc.into()), v.into()))
+                    v.map(|v| Expression::Command(acc.into(), vec![merge_expr(v)]))
                 })
             })
         } else {
-            ind.map(|v| v.map(|v| Expression::Index(None, v.into())))
+            ind.map(|v| v.map(|v| Expression::Get(v.into())))
         }
     }
 
@@ -216,6 +216,14 @@ mod expression {
             .transpose()
     }
 
+    /// Create a merge expression from the given expression (with merge flag unset).
+    fn merge_expr(e: Expr) -> MergeExpr {
+        e.source().with(MergeExpression {
+            merge: false,
+            expr: e,
+        })
+    }
+
     /// A command which may contain pipe operators.
     ///
     /// The pipe operators are syntax sugar for nested expressions (and sometimes the order of
@@ -227,13 +235,6 @@ mod expression {
     /// l <| r -> l (r), right-associative, high precedence
     /// l | r -> r (l), left-associative, low precedence
     fn command_pipes<'a>(literal: bool) -> Parser<'a, Expr> {
-        fn merge_expr(e: Expr) -> MergeExpr {
-            e.source().with(MergeExpression {
-                merge: false,
-                expr: e,
-            })
-        }
-
         const MERGE_EXPR_ERROR: &'static str = "cannot begin a command with a merge expression";
 
         fn backward_pipes<'a>() -> Parser<'a, CommandArgs> {
@@ -280,18 +281,27 @@ mod expression {
                                     ref mut expr,
                                 } = &mut *v.cmd
                                 {
-                                    let mut expr: &mut Expr = expr;
-                                    loop {
-                                        if let Expression::Index(ref mut a, _) = &mut **expr {
-                                            if let Some(v) = a {
-                                                expr = &mut *v;
-                                            } else {
-                                                *a = Some(cmd.into());
-                                                break Ok(v.cmd);
+                                    fn replace_get(cmd: Expr, expr: &mut Expr) -> Result<(), Expr> {
+                                        let e = match &mut **expr {
+                                            Expression::Command(ref mut a, ps) if ps.len() == 1 => {
+                                                return replace_get(cmd, a)
                                             }
-                                        } else {
-                                            break Err((v.cmd, cmd));
-                                        }
+                                            Expression::Get(e) => (**e).clone(),
+                                            _ => return Err(cmd),
+                                        };
+                                        let src = (cmd.source(), e.source()).into_source().source();
+                                        *expr = src
+                                            .with(Expression::Command(
+                                                cmd.into(),
+                                                vec![merge_expr(e)],
+                                            ))
+                                            .into();
+                                        Ok(())
+                                    };
+
+                                    match replace_get(cmd, expr) {
+                                        Ok(()) => Ok(v.cmd),
+                                        Err(cmd) => Err((v.cmd, cmd)),
                                     }
                                 } else {
                                     Err((v.cmd, cmd))
@@ -364,10 +374,7 @@ mod expression {
                     let s = source.clone().with(Expression::String(s));
                     Expression::Set(
                         source.clone().with(Pattern::Binding(s.clone())).into(),
-                        source
-                            .clone()
-                            .with(Expression::Index(None, s.into()))
-                            .into(),
+                        source.clone().with(Expression::Get(s.into())).into(),
                     )
                 }
                 other => other,
@@ -555,7 +562,7 @@ mod test {
         fn binding_ref() -> Result {
             assert(
                 &[Colon, String("a".into())],
-                Pattern::Binding(src(Expression::Index(None, str_expr("a").into()))),
+                Pattern::Binding(src(Expression::Get(str_expr("a").into()))),
             )
         }
 
@@ -701,9 +708,9 @@ mod test {
                     CloseParen,
                 ],
                 Expression::Command(
-                    src(Expression::Index(
-                        Some(src(Expression::String("m".into())).into()),
-                        src(Expression::String("f".into())).into(),
+                    src(Expression::Command(
+                        src(Expression::String("m".into())).into(),
+                        vec![nomerge(Expression::String("f".into()))],
                     ))
                     .into(),
                     vec![],
@@ -861,8 +868,7 @@ mod test {
                 ],
                 Expression::Command(
                     src(Expression::String("a".into())).into(),
-                    vec![nomerge(Expression::Index(
-                        None,
+                    vec![nomerge(Expression::Get(
                         src(Expression::String("b".into())).into(),
                     ))],
                 ),
@@ -870,9 +876,9 @@ mod test {
 
             assert(
                 &[String("a".into()), PipeRight, Colon, String("b".into())],
-                Expression::Index(
-                    Some(src(Expression::String("a".into())).into()),
-                    src(Expression::String("b".into())).into(),
+                Expression::Command(
+                    src(Expression::String("a".into())).into(),
+                    vec![nomerge(Expression::String("b".into()))],
                 ),
             )?;
             Ok(())
@@ -935,7 +941,7 @@ mod test {
             assert_parse(
                 &[Colon, String("howdy".to_owned())],
                 |_| arg(),
-                Expression::Index(None, Box::new(src(Expression::String("howdy".to_owned())))),
+                Expression::Get(Box::new(src(Expression::String("howdy".to_owned())))),
             )?;
             assert_parse(
                 &[
@@ -985,10 +991,7 @@ mod test {
                         src(Expression::String("a".into())).into(),
                         vec![],
                     )),
-                    nomerge(Expression::Index(
-                        None,
-                        src(Expression::String("b".into())).into(),
-                    )),
+                    nomerge(Expression::Get(src(Expression::String("b".into())).into())),
                 ]),
             )?;
             Ok(())
@@ -996,7 +999,6 @@ mod test {
 
         #[test]
         fn empty() -> Result {
-            assert(&[Colon], Expression::Empty)?;
             assert(&[OpenParen, CloseParen], Expression::Empty)?;
             Ok(())
         }
@@ -1055,8 +1057,7 @@ mod test {
             assert(
                 &[Colon, String("a".to_owned()), Equal, String("a".to_owned())],
                 Expression::Set(
-                    src(Pattern::Binding(src(Expression::Index(
-                        None,
+                    src(Pattern::Binding(src(Expression::Get(
                         src(Expression::String("a".into())).into(),
                     ))))
                     .into(),
@@ -1066,8 +1067,7 @@ mod test {
             assert(
                 &[Colon, String("a".into()), Equal, String("b".into())],
                 Expression::Set(
-                    src(Pattern::Binding(src(Expression::Index(
-                        None,
+                    src(Pattern::Binding(src(Expression::Get(
                         src(Expression::String("a".into())).into(),
                     ))))
                     .into(),
@@ -1086,11 +1086,7 @@ mod test {
             assert(
                 &[Colon, String("a".into()), Equal],
                 Expression::Unset(
-                    src(Expression::Index(
-                        None,
-                        src(Expression::String("a".into())).into(),
-                    ))
-                    .into(),
+                    src(Expression::Get(src(Expression::String("a".into())).into())).into(),
                 ),
             )?;
             Ok(())
@@ -1105,7 +1101,8 @@ mod test {
                     String("a".to_owned()),
                     Newline,
                     Whitespace,
-                    Colon,
+                    OpenParen,
+                    CloseParen,
                     Whitespace,
                     Newline,
                     String("c".to_owned()),
@@ -1121,11 +1118,7 @@ mod test {
                 Expression::Block(vec![
                     nomerge(Expression::Set(
                         pat("a"),
-                        src(Expression::Index(
-                            None,
-                            src(Expression::String("a".into())).into(),
-                        ))
-                        .into(),
+                        src(Expression::Get(src(Expression::String("a".into())).into())).into(),
                     )),
                     nomerge(Expression::Empty),
                     nomerge(Expression::Set(
@@ -1171,15 +1164,13 @@ mod test {
                     Colon,
                     String("0".into()),
                 ],
-                Expression::Index(
-                    Some(
-                        src(Expression::Array(vec![
-                            nomerge(Expression::String("a".into())).into(),
-                            nomerge(Expression::String("b".into())).into(),
-                        ]))
-                        .into(),
-                    ),
-                    src(Expression::String("0".into())).into(),
+                Expression::Command(
+                    src(Expression::Array(vec![
+                        nomerge(Expression::String("a".into())).into(),
+                        nomerge(Expression::String("b".into())).into(),
+                    ]))
+                    .into(),
+                    vec![nomerge(Expression::String("0".into()))],
                 ),
             )
         }
@@ -1194,15 +1185,13 @@ mod test {
                     Colon,
                     String("c".into()),
                 ],
-                Expression::Index(
-                    Some(
-                        src(Expression::Index(
-                            Some(src(Expression::String("a".into())).into()),
-                            src(Expression::String("b".into())).into(),
-                        ))
-                        .into(),
-                    ),
-                    src(Expression::String("c".into())).into(),
+                Expression::Command(
+                    src(Expression::Command(
+                        src(Expression::String("a".into())).into(),
+                        vec![nomerge(Expression::String("b".into()))],
+                    ))
+                    .into(),
+                    vec![nomerge(Expression::String("c".into()))],
                 ),
             )
         }

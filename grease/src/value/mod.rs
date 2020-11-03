@@ -243,11 +243,11 @@ impl Value {
         }
     }
 
-    /// Create a Value from raw components.
+    /// Create an immediately-available Value from raw components.
     ///
     /// # Safety
-    /// Callers must ensure the type corresponds to the future's data.
-    pub unsafe fn from_raw(
+    /// Callers must ensure the type corresponds to the data.
+    pub unsafe fn ready(
         tp: Arc<Type>,
         data: Arc<Erased>,
         metadata: BTreeMap<u128, Arc<Erased>>,
@@ -261,7 +261,7 @@ impl Value {
                 .collect(),
             data: ValueData::Typed {
                 tp: tp.into(),
-                fut: BoxSharedFuture::new(futures::future::ok(RArc::from(data)).map(RResult::from)),
+                fut: BoxSharedFuture::ready(RResult::ROk(RArc::from(data))),
             },
         }
     }
@@ -525,6 +525,34 @@ impl Value {
         }
     }
 
+    /// Return a new value based on the type of this one.
+    ///
+    /// If the type is immediately available, the function will be called immediately.
+    pub async fn type_and_then_value<F, Fut, D>(self, f: F, deps: D) -> crate::Result<Value>
+    where
+        F: FnOnce(Type, Value) -> Fut + Send + 'static,
+        Fut: Future<Output = crate::Result<Value>> + Send + 'static,
+        D: Into<Dependencies>,
+    {
+        match self.peek_type() {
+            Some(Err(e)) => Err(e),
+            Some(Ok(t)) => f(t.clone(), self).await,
+            None => {
+                let v = self;
+                let deps = depends![v, ^deps.into()];
+                Ok(Value::dyn_new(
+                    async move {
+                        f(v.grease_type().await?.clone(), v)
+                            .await?
+                            .make_any_value()
+                            .await
+                    },
+                    deps,
+                ))
+            }
+        }
+    }
+
     /// Get the result of the value, if immediately available.
     pub fn peek(&self) -> Option<Result> {
         match_value_data!(&self.data => {
@@ -533,6 +561,29 @@ impl Value {
                 .peek()
                 .map(|v| RResult::into_result(v.clone().map(|v| v.data)))
         })
+    }
+
+    /// Return a value based on the data of this one.
+    ///
+    /// If the data is immediately available, the function will be called immediately.
+    pub async fn and_then_value<F, Fut, D>(self, f: F, deps: D) -> crate::Result<Value>
+    where
+        F: FnOnce(Value) -> Fut + Send + 'static,
+        Fut: Future<Output = crate::Result<Value>> + Send + 'static,
+        D: Into<Dependencies>,
+    {
+        match self.peek() {
+            Some(Err(e)) => Err(e),
+            Some(Ok(_)) => f(self).await,
+            None => {
+                let v = self;
+                let deps = depends![v, ^deps.into()];
+                Ok(Value::dyn_new(
+                    async move { f(v).await?.make_any_value().await },
+                    deps,
+                ))
+            }
+        }
     }
 
     /// Get the result of the value, assuming it was forced previously.
@@ -584,7 +635,7 @@ macro_rules! match_value_type {
             let grease__match_value_type__tp: &$crate::types::Type = $type;
             $( if grease__match_value_type__tp == &<$t as $crate::types::GreaseType>::grease_type() { $e } else )+ { $else }
         }
-    }
+    };
 }
 
 /// Match expression for Values.
@@ -600,46 +651,41 @@ macro_rules! match_value_type {
 /// If `peek` is prepended, the macro evaluates to a `impl Future<Output = grease::Result<impl
 /// Future<Output = grease::Result<T>>>>`, evaluating the match in the outer future if the type is
 /// available synchronously.
+///
+/// If the macro is called with the form `match_value!([val], typed [type] => ...)`, the branches
+/// are executed immediately and the value is returned without a future or result wrapper.
 #[macro_export]
 macro_rules! match_value {
-    ( $value:expr => { $( $t:ty => |$bind:pat| $e:expr $(,)? )+ => |$elsebind:pat| $else:expr } ) => {
+    ( $value:expr => $branches:tt ) => {
         async {
             match $value.grease_type().await {
                 Err(e) => return Err(e),
-                Ok(tp) => {
-                    $crate::match_value_type!(tp => {
-                        $( $t => Ok({
-                            let $bind = unsafe { $crate::value::TypedValue::<$t>::from_value($value) };
-                            $e
-                        }) ),+
-                        => Ok({
-                            let $elsebind = $value;
-                            $else
-                        })
-                    })
-                }
+                Ok(tp) => Ok($crate::match_value!($value, typed tp => $branches))
             }
         }
     };
-    ( peek $value:expr => { $( $t:ty => |$bind:pat| $e:expr $(,)? )+ => |$elsebind:pat| $else:expr } ) => {
+    ( peek $value:expr => $branches:tt ) => {
         {
             let match_value__value = $value.clone();
             $value.with_type(move |tp| {
                 let tp = tp.clone();
                 async move {
-                    $crate::match_value_type!(&tp => {
-                        $( $t => Ok({
-                            let $bind = unsafe { $crate::value::TypedValue::<$t>::from_value(match_value__value) };
-                            $e
-                        }) ),+
-                        => Ok({
-                            let $elsebind = match_value__value;
-                            $else
-                        })
-                    })
+                    Ok($crate::match_value!(match_value__value, typed &tp => $branches))
                 }
             })
         }
+    };
+    ( $value:expr , typed $ty:expr => { $( $t:ty => |$bind:pat| $e:expr $(,)? )+ => |$elsebind:pat| $else:expr } ) => {
+        $crate::match_value_type!($ty => {
+            $( $t => {
+                let $bind = unsafe { $crate::value::TypedValue::<$t>::from_value($value) };
+                $e
+            } ),+
+            => {
+                let $elsebind = $value;
+                $else
+            }
+        })
     };
 }
 
@@ -705,10 +751,15 @@ impl<T: GreaseType + Send + Sync + 'static> TypedValue<T> {
         T: Send + 'static,
         D: Into<Dependencies>,
     {
-        // TODO: "prime the pump"
-        // We know this future doesn't depend on anything (and will not fail), so the resulting
-        // Value should allow peeking immediately.
-        Self::ok(futures::future::ready(data), deps)
+        let id = value_id(Some(&T::grease_type()), &deps.into());
+        unsafe {
+            TypedValue::from_value(Value::ready(
+                std::sync::Arc::new(T::grease_type()),
+                std::sync::Arc::new(Erased::new(data)),
+                Default::default(),
+                id,
+            ))
+        }
     }
 
     /// Create a new TypedValue by consuming and mapping the result of this TypedValue.

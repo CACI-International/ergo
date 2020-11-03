@@ -91,7 +91,7 @@ mod test {
 
     #[test]
     fn unit() -> Result<(), String> {
-        script_eval_to(":", SRUnit)
+        script_eval_to("()", SRUnit)
     }
 
     #[test]
@@ -153,7 +153,7 @@ mod test {
         script_eval_to("[a,b]:0", SRString("a"))?;
         script_result_fail("[a,b]:2")?;
         script_eval_to("{alpha=one,beta=two}:beta", SRString("two"))?;
-        script_result_fail("{alpha=one,beta=two}:omega")?;
+        script_fail("{alpha=one,beta=two}:omega")?;
         script_eval_to("{alpha=[a,{key=b}]}:alpha:1:key", SRString("b"))?;
         Ok(())
     }

@@ -4,9 +4,7 @@
 
 use abi_stable::{
     external_types::RMutex,
-    sabi_trait,
-    sabi_trait::prelude::*,
-    std_types::{RArc, RBox, RHashMap, ROption, RVec},
+    std_types::{RArc, RHashMap, RVec},
     StableAbi,
 };
 use futures::future::{BoxFuture, FutureExt};
@@ -150,23 +148,12 @@ impl context_ext::AsContext for FunctionCall<'_> {
     }
 }
 
-#[sabi_trait]
-pub trait PeekIter: Debug + Send {
-    type Item;
-
-    fn next(&mut self) -> ROption<Self::Item>;
-
-    fn peek(&mut self) -> ROption<&Self::Item>;
-
-    #[sabi(last_prefix_field)]
-    fn len(&self) -> usize;
-}
-
 /// Function call arguments interface.
 #[derive(Debug, StableAbi)]
 #[repr(C)]
 pub struct UncheckedFunctionArguments {
-    pub positional: PeekIter_TO<'static, RBox<()>, Source<Value>>,
+    /// Positional arguments in this vec are in reverse order; use Iterator to access them.
+    pub positional: RVec<Source<Value>>,
     pub non_positional: BstMap<Source<Value>, Source<Value>>,
 }
 
@@ -326,51 +313,13 @@ impl FunctionCall<'_> {
     }
 }
 
-impl<I> PeekIter for std::iter::Peekable<I>
-where
-    I: Iterator + std::fmt::Debug + Send + ExactSizeIterator,
-    I::Item: std::fmt::Debug + Send,
-{
-    type Item = I::Item;
-
-    fn next(&mut self) -> ROption<Self::Item> {
-        Iterator::next(self).into()
-    }
-
-    fn peek(&mut self) -> ROption<&Self::Item> {
-        std::iter::Peekable::peek(self).into()
-    }
-
-    fn len(&self) -> usize {
-        ExactSizeIterator::len(self)
-    }
-}
-
-impl<T> Iterator for PeekIter_TO<'_, RBox<()>, T> {
-    type Item = T;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        PeekIter::next(self).into()
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        (0, Some(PeekIter::len(self)))
-    }
-}
-
-impl<T> ExactSizeIterator for PeekIter_TO<'_, RBox<()>, T> {
-    fn len(&self) -> usize {
-        PeekIter::len(self)
-    }
-}
-
 impl UncheckedFunctionArguments {
     fn new(
         positional: Vec<Source<Value>>,
         non_positional: BTreeMap<Source<Value>, Source<Value>>,
     ) -> Self {
         UncheckedFunctionArguments {
-            positional: PeekIter_TO::from_value(positional.into_iter().peekable(), TU_Opaque),
+            positional: positional.into_iter().rev().collect(),
             non_positional: non_positional.into_iter().collect(),
         }
     }
@@ -392,11 +341,11 @@ impl UncheckedFunctionArguments {
     }
 
     pub fn peek(&mut self) -> Option<&Source<Value>> {
-        self.positional.peek().into()
+        self.positional.last()
     }
 
     pub fn clear(&mut self) {
-        while self.positional.next().is_some() {}
+        self.positional.clear();
         self.non_positional.clear()
     }
 }
@@ -411,7 +360,7 @@ impl Iterator for UncheckedFunctionArguments {
     type Item = Source<Value>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.positional.next().into()
+        self.positional.pop()
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {

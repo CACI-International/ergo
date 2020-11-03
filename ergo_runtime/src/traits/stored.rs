@@ -132,11 +132,7 @@ pub async fn read_from_store(ctx: &Context, store_item: &Item, id: u128) -> Resu
         let stored_ctx = StoredContext::new(store_item.clone());
         let data = s.get(&stored_ctx, content).await?;
         // TODO revisit metadata
-        Ok(
-            unsafe {
-                Value::from_raw(tp.into(), std::sync::Arc::new(data), Default::default(), id)
-            },
-        )
+        Ok(unsafe { Value::ready(tp.into(), std::sync::Arc::new(data), Default::default(), id) })
     } else {
         Err(format!("no stored trait for {}", type_name(ctx, &tp).await?).into())
     }

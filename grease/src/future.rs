@@ -149,7 +149,7 @@ trait Future: Send {
 }
 
 #[sabi_trait]
-trait SharedFuture: Clone + Debug + Send + Sync {
+trait SharedFuture: Clone + Send + Sync {
     type Output;
 
     fn poll(&mut self, cx: Context) -> Poll<Self::Output>;
@@ -247,10 +247,18 @@ impl<T> future::Future for BoxFuture<'_, T> {
 ///
 /// These futures resolve to a shared value, and thus are cloneable and support peeking at the
 /// value.
-#[derive(Clone, Debug, StableAbi)]
+#[derive(Clone, StableAbi)]
 #[repr(C)]
 pub struct BoxSharedFuture<T> {
     inner: SharedFuture_TO<'static, RBox<()>, T>,
+}
+
+impl<T> std::fmt::Debug for BoxSharedFuture<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.debug_struct("BoxSharedFuture")
+            .field("inner_ready", &self.inner.peek().is_some())
+            .finish()
+    }
 }
 
 impl<T: StableAbi + Clone + Send + Sync> BoxSharedFuture<T> {
@@ -258,6 +266,16 @@ impl<T: StableAbi + Clone + Send + Sync> BoxSharedFuture<T> {
     pub fn new<Fut: future::Future<Output = T> + Send + 'static>(f: Fut) -> Self {
         BoxSharedFuture {
             inner: SharedFuture_TO::from_value(f.shared(), TU_Opaque),
+        }
+    }
+
+    /// Create a new boxed shared future that is immediately ready.
+    pub fn ready(v: T) -> Self
+    where
+        T: 'static,
+    {
+        BoxSharedFuture {
+            inner: SharedFuture_TO::from_value(Ready(Some(v)), TU_Opaque),
         }
     }
 }
@@ -288,6 +306,28 @@ where
 
     fn peek(&self) -> Option<&Self::Output> {
         self.peek()
+    }
+}
+
+#[derive(Clone)]
+struct Ready<T>(Option<T>);
+
+impl<T> SharedFuture for Ready<T>
+where
+    T: Clone + Send + Sync,
+{
+    type Output = T;
+
+    fn poll(&mut self, _cx: Context) -> Poll<Self::Output> {
+        Poll::Ready(self.0.take().expect("ready future polled more than once"))
+    }
+
+    fn is_terminated(&self) -> bool {
+        self.0.is_none()
+    }
+
+    fn peek(&self) -> Option<&Self::Output> {
+        self.0.as_ref()
     }
 }
 

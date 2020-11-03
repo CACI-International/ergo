@@ -106,6 +106,3 @@ Within a script, the following are defined:
   * Only for workspace.ergo?
   * Should fallback behavior (from scripts in child directories) be behind a
     specific key too?
-* Change script parsing such that `a:b` is sugar for `(a b)` (`:a` remains a
-  special parsed expression), and change map/array indexing back to being by
-  application (but not with implicit nested application as it was previously)?

@@ -1331,6 +1331,22 @@ pub async fn apply_command_pattern(
     }
 }
 
+fn lookup(ctx: &Runtime, k: Value) -> EResult<Value> {
+    trace!("looking up '{}' in environment", k.id());
+    match ctx.env_get(&k) {
+        None => Err(Error::MissingBinding(k).into()),
+        Some(value) => {
+            let value = value?;
+            trace!(
+                "found match in environment for '{}': {}",
+                k.id(),
+                value.id()
+            );
+            Ok(value.clone().unwrap())
+        }
+    }
+}
+
 /// Apply the value to the given arguments.
 ///
 /// If `env_lookup` is true and `v` is a `String`, it will be looked up in the environment.
@@ -1343,51 +1359,88 @@ pub fn apply_value(
     async move {
         let v_source = v.source();
 
+        let vctx = ctx.clone();
+
         v.map_async(|v| async {
             let v = if env_lookup {
-                match_value!(v => {
-                    types::String => |k| {
-                        let k: Value = k.into();
-                        trace!("looking up '{}' in environment", k.id());
-                        // Lookup string in environment, and apply result to remaining arguments
-                        match ctx.env_get(&k) {
-                            Some(value) => {
-                                let value = value?;
-                                trace!("found match in environment for '{}': {}", k.id(), value.id());
-                                value.clone().unwrap()
-                            }
-                            None => {
-                                return Err(Error::MissingBinding(k).into());
-                            }
-                        }
+                v.type_and_then_value(
+                    move |tp, v| async move {
+                        match_value!(v, typed &tp => {
+                            // Lookup string in environment, and apply result to remaining arguments
+                            types::String => |k| lookup(&vctx, k.into()),
+                            => |v| Ok(v)
+                        })
                     },
-                    => |v| v
-                })
+                    depends![{ergo_runtime::namespace_id!(ergo::env_string_get)}],
+                )
                 .await?
             } else {
                 v
             };
 
-            match_value!(v => {
-                types::Function => |val| {
-                    let f = val.await?;
-                    let f = f.as_ref();
-                    let mut fcallctx = FunctionCall::new(ctx, args.into(), v_source);
-                    let ret = f.call(&mut fcallctx).await;
-                    if ret.is_err() {
-                        fcallctx.args.clear();
+            dbg!(&v);
+
+            let mut ctx = ctx.clone();
+
+            let mut deps = depends![{ergo_runtime::namespace_id!(ergo::apply)}];
+            for v in args.positional.iter().rev() {
+                deps += depends![**v];
+            }
+
+            v.type_and_then_value(move |tp, v| async move {
+                match_value!(v, typed &tp => {
+                    // Always force function evaluation immediately
+                    // TODO this shouldn't be necessary if eager futures are implemented throughout
+                    // the code
+                    types::Function => |val| {
+                        let mut fcallctx = FunctionCall::new(&mut ctx, args.into(), v_source);
+                        let f = val.await?;
+                        let f = f.as_ref();
+                        let ret = f.call(&mut fcallctx).await;
+                        if ret.is_err() {
+                            fcallctx.args.clear();
+                        }
+                        // TODO is it appropriate to lose this source info?
+                        ret.map(Source::unwrap)
                     }
-                    ret
-                },
-                => |v| {
-                    Err(Error::NonCallableExpression(v).into())
-                }
-            })
-            .await?
+                    => |v| {
+                        // Eagerly evaluate array/map
+                        v.and_then_value(move |v| async move {
+                            match_value!(v => {
+                                types::Array => |val| {
+                                    let mut fcallctx = FunctionCall::new(&mut ctx, args.into(), v_source);
+                                    let ind = fcallctx.args.next().ok_or("no index provided")?;
+                                    fcallctx.unused_arguments()?;
+
+                                    let ind = fcallctx.source_value_as::<types::String>(ind).await?.await.transpose_ok()?;
+                                    ind.map_async(|index| async move { match usize::from_str(index.as_ref()) {
+                                        Err(_) => Err(fcallctx.call_site.with(Error::NonIntegerIndex).into()),
+                                        Ok(ind) => val.await.and_then(|v| v.0.get(ind).cloned().ok_or_else(|| Error::MissingArrayIndex(ind).into()))
+                                    }
+                                    }).await.transpose_err_with_context("while indexing array")?
+                                },
+                                types::Map => |val| {
+                                    let mut fcallctx = FunctionCall::new(&mut ctx, args.into(), v_source);
+                                    let ind = fcallctx.args.next().ok_or("no key provided")?;
+                                    fcallctx.unused_arguments()?;
+
+                                    ind.map_async(|index| async move {
+                                            val.await.and_then(|v| v.0.get(&index).cloned().ok_or_else(|| Error::MissingMapIndex(index).into()))
+                                    }).await.transpose_err_with_context("while indexing map")?
+                                },
+                                => |v| {
+                                    Err(Error::NonCallableExpression(v))?
+                                }
+                            }).await
+                        }, depends![]).await
+                    }
+                })
+            }, deps)
+            .await
         })
         .await
         .map(|v| v.map_err(|e| e.error()))
-        .transpose_err_with_context("while applying function")
+        .transpose_with_context("while getting value")
     }
     .boxed()
 }
@@ -1415,6 +1468,7 @@ impl Rt<Expression> {
         string_env_match: Option<Source<()>>,
     ) -> BoxFuture<'a, EResult<Value>> {
         async move {
+
         use Expression::*;
         match self.0 {
             Empty => Ok(().into_value().into()),
@@ -1424,61 +1478,6 @@ impl Rt<Expression> {
                     ctx.log.warn(format!("{}", src.with("string literal is in the environment; did you mean to index?")));
                 }
                 Ok(s)
-            },
-            Index(v,ind) => {
-                let ind = Rt(*ind).evaluate_ext(ctx, true).await?;
-
-                fn lookup(ctx: &Runtime, k: Value) -> EResult<Value> {
-                    trace!("looking up '{}' in environment", k.id());
-                    match ctx.env_get(&k) {
-                        None => Err(Error::MissingBinding(k).into()),
-                        Some(value) => {
-                            let value = value?;
-                            trace!("found match in environment for '{}': {}", k.id(), value.id());
-                            Ok(value.clone().unwrap())
-                        }
-                    }
-                };
-
-                match v {
-                    None => {
-                        // Lookup in environment
-                        let (ind_source, ind) = ind.take();
-                        lookup(ctx, ind).map_err(|e| ind_source.with(e).into_grease_error())
-                    },
-                    Some(v) => {
-                        let (v_source, v) = Rt(*v).evaluate_ext(ctx, true).await?.take();
-
-                        let deps = depends![v, *ind];
-
-                        let ctx = ctx.clone();
-
-                        Ok(Value::dyn_new(async move {
-                            // If a string, first lookup in environment
-                            let v = match_value!(v => {
-                                types::String => |s| lookup(&ctx, s.into()).map_err(|e| v_source.clone().with(e).into_grease_error())?,
-                                => |v| v
-                            }).await?;
-
-                            match_value!(v => {
-                                types::Array => |val| {
-                                    let ind = ctx.source_value_as::<types::String>(ind).await?.await.transpose_ok()?;
-                                    ind.map_async(|index| async move { match usize::from_str(index.as_ref()) {
-                                        Err(_) => Err(v_source.with(Error::NonIntegerIndex).into()),
-                                        Ok(ind) => val.await.and_then(|v| v.0.get(ind).cloned().ok_or_else(|| Error::MissingArrayIndex(ind).into()))
-                                    }
-                                    }).await.transpose_err_with_context("while indexing array")
-                                },
-                                types::Map => |val| {
-                                    ind.map_async(|index| async move {
-                                            val.await.and_then(|v| v.0.get(&index).cloned().ok_or_else(|| Error::MissingMapIndex(index).into()))
-                                    }).await.transpose_err_with_context("while indexing map")
-                                },
-                                => |v| Err(v_source.with(Error::NonIndexableValue(v)).into())
-                            }).await.and_then(|r| r)?.make_any_value().await
-                        }, deps))
-                    }
-                }
             },
             Array(es) => {
                 let all_vals = {
@@ -1585,6 +1584,13 @@ impl Rt<Expression> {
                 let var = Rt(*var).evaluate(ctx).await?;
                 ctx.env_remove(&var);
                 Ok(ScriptEnvIntoMap.into_value().into())
+            }
+            Get(var) => {
+                let var = Rt(*var).evaluate_ext(ctx, true).await?;
+
+                // Lookup in environment
+                let (var_source, var) = var.take();
+                lookup(ctx, var).map_err(|e| var_source.with(e).into_grease_error())
             }
             Command(cmd, args) => {
                 let f = Rt(*cmd).evaluate_ext(ctx, true).await?;
