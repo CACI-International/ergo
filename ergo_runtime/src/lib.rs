@@ -368,6 +368,26 @@ impl Iterator for UncheckedFunctionArguments {
     }
 }
 
+impl From<&UncheckedFunctionArguments> for grease::value::Dependencies {
+    fn from(args: &UncheckedFunctionArguments) -> Self {
+        Self::ordered(
+            args.positional
+                .iter()
+                .map(|v| grease::value::Dependency::from(&**v))
+                .chain(
+                    args.non_positional
+                        .iter()
+                        .map(|(k, _)| grease::value::Dependency::from(&**k)),
+                )
+                .chain(
+                    args.non_positional
+                        .iter()
+                        .map(|(_, v)| grease::value::Dependency::from(&**v)),
+                ),
+        )
+    }
+}
+
 impl FunctionArguments {
     pub fn new(
         positional: Vec<Source<Value>>,

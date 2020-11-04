@@ -5,7 +5,7 @@
 
 use super::type_erase::Erased;
 use crate::bst::{BstMap, BstSet};
-use crate::future::BoxSharedFuture;
+use crate::future::{eager::Eager, BoxSharedFuture};
 use crate::hash::HashFn;
 use crate::types::*;
 use crate::u128::U128;
@@ -13,7 +13,7 @@ use abi_stable::{
     std_types::{RArc, RResult},
     StableAbi,
 };
-use futures::future::{FusedFuture, Future, FutureExt, TryFutureExt};
+use futures::future::{Future, FutureExt, TryFutureExt};
 use futures::task::{Context, Poll};
 use std::collections::BTreeMap;
 use std::hash::Hash;
@@ -78,7 +78,9 @@ enum ValueData {
 impl ValueData {
     pub fn map_data<F, Fut>(self, f: F) -> Self
     where
-        F: FnOnce(futures::future::BoxFuture<'static, crate::Result<InnerData>>) -> Fut
+        F: FnOnce(
+                Eager<futures::future::BoxFuture<'static, crate::Result<InnerData>>>,
+            ) -> Eager<Fut>
             + Send
             + 'static,
         Fut: Future<Output = crate::Result<InnerData>> + Send + 'static,
@@ -87,9 +89,10 @@ impl ValueData {
             ValueData::Typed { tp, fut } => ValueData::Typed {
                 tp,
                 fut: {
-                    let rfut =
-                        fut.map(|r| r.into_result().map(|d| InnerData(InnerDataInner::Typed(d))));
-                    BoxSharedFuture::new(
+                    let rfut = fut
+                        .into_eager()
+                        .map(|r| r.into_result().map(|d| InnerData(InnerDataInner::Typed(d))));
+                    BoxSharedFuture::from_eager(
                         f(rfut.boxed())
                             .map_ok(|InnerData(d)| match d {
                                 InnerDataInner::Typed(d) => d,
@@ -101,11 +104,11 @@ impl ValueData {
             },
             ValueData::Dynamic { fut } => ValueData::Dynamic {
                 fut: {
-                    let rfut = fut.map(|r| {
+                    let rfut = fut.into_eager().map(|r| {
                         r.into_result()
                             .map(|d| InnerData(InnerDataInner::Dynamic(d)))
                     });
-                    BoxSharedFuture::new(
+                    BoxSharedFuture::from_eager(
                         f(rfut.boxed())
                             .map_ok(|InnerData(d)| match d {
                                 InnerDataInner::Dynamic(d) => d,
@@ -127,10 +130,14 @@ impl ValueData {
         match self {
             ValueData::Typed { tp, fut } => ValueData::Typed {
                 tp,
-                fut: BoxSharedFuture::new(fut.map(|r| r.map_err(|e| f(e).into()))),
+                fut: BoxSharedFuture::from_eager(
+                    fut.into_eager().map(|r| r.map_err(|e| f(e).into())),
+                ),
             },
             ValueData::Dynamic { fut } => ValueData::Dynamic {
-                fut: BoxSharedFuture::new(fut.map(|r| r.map_err(|e| f(e).into()))),
+                fut: BoxSharedFuture::from_eager(
+                    fut.into_eager().map(|r| r.map_err(|e| f(e).into())),
+                ),
             },
             ValueData::None => ValueData::None,
         }
@@ -279,7 +286,7 @@ impl Value {
 
     /// Create a dynamic-typed value with the given future and id.
     ///
-    /// This differs from `new` which derives the id from the dependencies. Prefer `new`.
+    /// This differs from `dyn_new` which derives the id from the dependencies. Prefer `dyn_new`.
     pub fn dyn_with_id<F>(type_and_value: F, id: u128) -> Self
     where
         F: Future<Output = std::result::Result<AnyValue, Error>> + Send + 'static,
@@ -298,7 +305,7 @@ impl Value {
         Value {
             data: match self.data {
                 ValueData::Typed { tp, fut } => ValueData::Dynamic {
-                    fut: BoxSharedFuture::new(fut.map(move |result| {
+                    fut: BoxSharedFuture::from_eager(fut.into_eager().map(move |result| {
                         result.map(move |data| unsafe { AnyValue::new(tp, data) })
                     })),
                 },
@@ -367,10 +374,14 @@ impl Value {
             data: match_value_data!(v.data => {
                 ValueData::Typed { tp, fut } => ValueData::Typed {
                     tp,
-                    fut: BoxSharedFuture::new(self.and_then(move |_| fut.map(RResult::into_result)).map(RResult::from))
+                    fut: BoxSharedFuture::from_eager(self.into_eager().and_then_eager(move |_|
+                                fut.into_eager().map(RResult::into_result).into_future()
+                            ).map(RResult::from))
                 }
                 ValueData::Dynamic { fut } => ValueData::Dynamic {
-                    fut: BoxSharedFuture::new(self.and_then(move |_| fut.map(RResult::into_result)).map(RResult::from))
+                    fut: BoxSharedFuture::from_eager(self.into_eager().and_then_eager(move |_|
+                                 fut.into_eager().map(RResult::into_result).into_future()
+                            ).map(RResult::from))
                 }
             }),
         }
@@ -381,7 +392,9 @@ impl Value {
     /// This is useful to inserting side-effects into the value execution.
     pub fn map_data<F, Fut>(self, f: F) -> Self
     where
-        F: FnOnce(futures::future::BoxFuture<'static, crate::Result<InnerData>>) -> Fut
+        F: FnOnce(
+                Eager<futures::future::BoxFuture<'static, crate::Result<InnerData>>>,
+            ) -> Eager<Fut>
             + Send
             + 'static,
         Fut: Future<Output = crate::Result<InnerData>> + Send + 'static,
@@ -424,7 +437,7 @@ impl Value {
                 TypedValue::from_value(Value {
                     data: ValueData::Typed {
                         tp: RArc::new(T::grease_type()),
-                        fut: BoxSharedFuture::new(fut.then(move |r| async move {
+                        fut: BoxSharedFuture::from_eager(fut.into_eager().then(move |r| async move {
                             match r {
                                 RResult::ROk(AnyValue {tp, data}) => {
                                     if &*tp == &T::grease_type() {
@@ -435,7 +448,7 @@ impl Value {
                                 },
                                 RResult::RErr(e) => RResult::RErr(e)
                             }
-                        })),
+                        }).await),
                     },
                     ..self
                 })
@@ -595,6 +608,17 @@ impl Value {
             .expect("value should have been forced")
             .expect("error should have been handled when value was previously forced")
     }
+
+    /// Get an Eager version of this Value's future.
+    pub fn into_eager(self) -> Eager<futures::future::BoxFuture<'static, Result>> {
+        match_value_data!(self.data => {
+            ValueData::Typed { fut, .. } => fut.into_eager().map(RResult::into_result).boxed(),
+            ValueData::Dynamic { fut } => fut
+                .into_eager()
+                .map(|r| r.into_result().map(|r| r.data))
+                .boxed(),
+        })
+    }
 }
 
 impl Future for Value {
@@ -609,15 +633,6 @@ impl Future for Value {
             }
         })
         .map(RResult::into_result)
-    }
-}
-
-impl FusedFuture for Value {
-    fn is_terminated(&self) -> bool {
-        match_value_data!(&self.data => {
-            ValueData::Typed { fut, .. } => fut.is_terminated(),
-            ValueData::Dynamic { fut } => fut.is_terminated(),
-        })
     }
 }
 

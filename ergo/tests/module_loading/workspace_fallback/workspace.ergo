@@ -1,6 +1,5 @@
-fn a ^args -> {
-    match :a {
-        =prelude = {}
+command = fn cmd ^args -> {
+    match :cmd {
         =return = args:0
     }
 }

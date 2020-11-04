@@ -20,6 +20,7 @@ mod constants {
     pub const SCRIPT_WORKSPACE_NAME: &'static str = concat!("workspace.", env!("CARGO_PKG_NAME"));
     pub const SCRIPT_DIR_NAME: &'static str = concat!("dir.", env!("CARGO_PKG_NAME"));
     pub const SCRIPT_PRELUDE_NAME: &'static str = "prelude";
+    pub const SCRIPT_WORKSPACE_FALLBACK_NAME: &'static str = "command";
 
     use directories;
     pub fn app_dirs() -> Option<directories::ProjectDirs> {

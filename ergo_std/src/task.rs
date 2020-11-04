@@ -1,6 +1,7 @@
 //! Concurrent task creation.
 
 use ergo_runtime::{ergo_function, types, ContextExt};
+use grease::future::eager::Eager;
 use grease::value::Value;
 
 pub fn function() -> Value {
@@ -15,17 +16,17 @@ pub fn function() -> Value {
 
         let task = ctx.task.clone();
         let log = ctx.log.sublog("task");
-        val.map_data(|inner| async move {
+        val.map_data(|inner| Eager::Pending(async move {
             task.spawn(async move {
                 let s = desc.await?;
                 log.info(s.clone());
-                let ret = inner.await;
+                let ret = inner.into_future().await;
                 log.info(format!("{}: complete{}", s, if ret.is_err() { " (failed)" } else { "" }));
                 log.end_stream();
                 ret
             })
             .await
-        })
+        }))
     })
     .into()
 }

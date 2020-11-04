@@ -1,5 +1,1 @@
-fn a -> {
-    match :a {
-        =prelude = { value = prelude_load }
-    }
-}
+prelude = { value = prelude_load }

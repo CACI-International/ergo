@@ -14,6 +14,8 @@ use futures::{future, future::FutureExt};
 use std::pin::Pin;
 use std::task;
 
+pub mod eager;
+
 #[derive(Debug, StableAbi)]
 #[repr(C)]
 struct RawWakerVTable {
@@ -154,8 +156,6 @@ trait SharedFuture: Clone + Send + Sync {
 
     fn poll(&mut self, cx: Context) -> Poll<Self::Output>;
 
-    fn is_terminated(&self) -> bool;
-
     #[sabi(last_prefix_field)]
     fn peek(&self) -> Option<&Self::Output>;
 }
@@ -269,6 +269,17 @@ impl<T: StableAbi + Clone + Send + Sync> BoxSharedFuture<T> {
         }
     }
 
+    /// Create a new boxed shared future from an Eager.
+    pub fn from_eager<Fut>(f: eager::Eager<Fut>) -> Self
+    where
+        Fut: future::Future<Output = T> + Send + 'static,
+        T: Send + Sync + Clone + std::marker::Unpin,
+    {
+        BoxSharedFuture {
+            inner: SharedFuture_TO::from_value(f.shared().into_future(), TU_Opaque),
+        }
+    }
+
     /// Create a new boxed shared future that is immediately ready.
     pub fn ready(v: T) -> Self
     where
@@ -287,6 +298,16 @@ impl<T> BoxSharedFuture<T> {
     }
 }
 
+impl<T: Clone> BoxSharedFuture<T> {
+    /// Convert the boxed shared future into an Eager.
+    pub fn into_eager(self) -> eager::Eager<Self> {
+        match self.peek() {
+            Some(v) => eager::Eager::Ready(v.clone()),
+            None => eager::Eager::Pending(self),
+        }
+    }
+}
+
 impl<Fut> SharedFuture for future::Shared<Fut>
 where
     Fut: future::Future + Send,
@@ -300,12 +321,33 @@ where
         future::Future::poll(Pin::new(self), &mut ctx).into()
     }
 
-    fn is_terminated(&self) -> bool {
-        future::FusedFuture::is_terminated(self)
+    fn peek(&self) -> Option<&Self::Output> {
+        self.peek()
+    }
+}
+
+impl<Fut> SharedFuture for eager::IntoFuture<futures::future::Shared<Fut>>
+where
+    Fut: future::Future + Send,
+    <Fut as future::Future>::Output: Clone + Send + Sync + std::marker::Unpin,
+{
+    type Output = Fut::Output;
+
+    fn poll(&mut self, cx: Context) -> Poll<Self::Output> {
+        let waker = unsafe { task::Waker::from_raw(cx.0.into()) };
+        let mut ctx = task::Context::from_waker(&waker);
+        future::Future::poll(Pin::new(self), &mut ctx).into()
     }
 
     fn peek(&self) -> Option<&Self::Output> {
-        self.peek()
+        if let Some(i) = &self.0 {
+            match i {
+                eager::Eager::Ready(v) => Some(v),
+                eager::Eager::Pending(v) => v.peek(),
+            }
+        } else {
+            None
+        }
     }
 }
 
@@ -322,10 +364,6 @@ where
         Poll::Ready(self.0.take().expect("ready future polled more than once"))
     }
 
-    fn is_terminated(&self) -> bool {
-        self.0.is_none()
-    }
-
     fn peek(&self) -> Option<&Self::Output> {
         self.0.as_ref()
     }
@@ -338,12 +376,6 @@ impl<T> future::Future for BoxSharedFuture<T> {
         unsafe { self.map_unchecked_mut(|s| &mut s.inner) }
             .poll(Context(cx.into()))
             .into()
-    }
-}
-
-impl<T> future::FusedFuture for BoxSharedFuture<T> {
-    fn is_terminated(&self) -> bool {
-        self.inner.is_terminated()
     }
 }
 

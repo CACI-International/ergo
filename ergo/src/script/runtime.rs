@@ -9,7 +9,8 @@ use super::ast::{
 };
 use crate::constants::{
     app_dirs, LOAD_PATH_BINDING, SCRIPT_DIR_NAME, SCRIPT_EXTENSION, SCRIPT_PATH_BINDING,
-    SCRIPT_PRELUDE_NAME, SCRIPT_WORKSPACE_NAME, WORKING_DIRECTORY_BINDING,
+    SCRIPT_PRELUDE_NAME, SCRIPT_WORKSPACE_FALLBACK_NAME, SCRIPT_WORKSPACE_NAME,
+    WORKING_DIRECTORY_BINDING,
 };
 use abi_stable::{rvec, std_types::RResult};
 use ergo_runtime::source::{FileSource, IntoSource, Source};
@@ -355,69 +356,66 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                         // Load the prelude. The prelude may not exist (without error), however if it does
                         // exist it must evaluate to a map.
                         let prelude = if load_prelude {
-                            let call_site = ctx.call_site.clone();
-                            let mut fctx = FunctionCall::new(
-                                ctx,
-                                FunctionArguments::positional(vec![Source::builtin(
-                                    types::String::from(SCRIPT_PRELUDE_NAME.to_owned()).into(),
-                                )]),
-                                call_site,
-                            );
+                            // Find ancestor workspace, if any, and use it to get the prelude.
+                            if let Some(p) = mod_path.ancestors().find_map(script_path_exists(SCRIPT_WORKSPACE_NAME, false)) {
+                                // If ancestor workspace is already being loaded, do not load the prelude.
+                                if ctx.loading.iter().any(|o| o.as_ref() == p) {
+                                    None
+                                } else {
+                                    let call_site = ctx.call_site.clone();
+                                    let mut fctx = FunctionCall::new(
+                                        ctx,
+                                        FunctionArguments::positional(vec![
+                                            Source::builtin(PathBuf::from(p.to_owned()).into()),
+                                        ]),
+                                        call_site,
+                                    );
 
-                            // New scope with working directory/script path set to that of the script, so that
-                            // prelude loading behaves as if it were in the script file itself.
-                            let mut env = ScriptEnv::default();
-                            env.insert(
-                                types::String::from(WORKING_DIRECTORY_BINDING).into(),
-                                Ok(Source::builtin(PathBuf::from(mod_path.to_owned()).into()))
-                                    .into(),
-                            );
-                            env.insert(
-                                types::String::from(SCRIPT_PATH_BINDING).into(),
-                                Ok(Source::builtin(PathBuf::from(p.to_owned()).into())).into()
-                            );
-                            match fctx.env_scoped(env, load_script).await.0 {
-                                Ok(v) => {
-                                    let (v_source, v) = v.take();
-                                    match_value!(v => {
-                                        () => |_| None,
-                                        types::Map => |v| Some(v_source.with(v).await.transpose_ok()?.map(|v| v.owned().0)),
-                                        => |_| Err(v_source.with(Error::CannotMerge(
-                                                "prelude did not evaluate to a map".into(),
-                                            )))?
-                                    }).await?
-                                },
-                                Err(e) => {
-                                    fctx.args.clear();
-                                    fn has_ignored_error(
-                                        e: &(dyn std::error::Error + 'static),
-                                    ) -> bool {
-                                        if let Some(e) = grease::error::downcast_ref::<Error>(e) {
-                                            if let Error::LoadFailed { .. } = e {
-                                                debug!("not loading prelude: load failed");
-                                                true
-                                            } else {
-                                                false
-                                            }
+                                    // New scope with working directory/script path set to that of the script, so that
+                                    // prelude loading behaves as if it were in the script file itself.
+                                    let mut env = ScriptEnv::default();
+                                    env.insert(
+                                        types::String::from(WORKING_DIRECTORY_BINDING).into(),
+                                        Ok(Source::builtin(PathBuf::from(mod_path.to_owned()).into()))
+                                            .into(),
+                                    );
+                                    env.insert(
+                                        types::String::from(SCRIPT_PATH_BINDING).into(),
+                                        Ok(Source::builtin(PathBuf::from(p.to_owned()).into())).into()
+                                    );
+
+                                    // Load workspace
+                                    let ws = match fctx.env_scoped(env, load_script).await.0 {
+                                        Ok(ws) => ws,
+                                        Err(e) => {
+                                                ctx.loading.pop();
+                                                return Err(source.with("while running 'ergo [workspace] prelude' to load script").context_for_error(e));
                                         }
-                                        else if let Some(_) = grease::error::downcast_ref::<Source<ergo_runtime::error::UnexpectedPositionalArguments>>(e) {
+                                    };
+
+                                    // Try to access prelude, but allow failures
+                                    match apply_value(ctx, ws, FunctionArguments::new(
+                                            vec![Source::builtin(types::String::from(SCRIPT_PRELUDE_NAME).into())],
+                                            Default::default()
+                                        ).unchecked(), false).await {
+                                        Ok(v) => {
+                                            // Prelude must be a map.
+                                            let (v_source, v) = v.take();
+                                            match_value!(v => {
+                                                types::Map => |v| Some(v_source.with(v).await.transpose_ok()?.map(|v| v.owned().0)),
+                                                => |_| Err(v_source.with(Error::CannotMerge(
+                                                        "prelude did not evaluate to a map".into(),
+                                                    )))?
+                                            }).await?
+                                        }
+                                        Err(_) => {
                                             debug!("not loading prelude: workspace did not accept prelude argument");
-                                            true
+                                            None
                                         }
-                                        else {
-                                            e
-                                            .source()
-                                            .map(has_ignored_error)
-                                            .unwrap_or(false)
-                                        }
-                                    }
-                                    if has_ignored_error(e.error_ref()) {
-                                        None
-                                    } else {
-                                        ctx.loading.pop();
-                                        return Err(source.with("while running 'ergo prelude' to load script").context_for_error(e));
                                     }
                                 }
+                            } else {
+                                None
                             }
                         } else {
                             None
@@ -480,8 +478,22 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
 
             let loaded_context = source.with(format!("loaded from '{}'", p.display()));
 
-            if loaded.grease_type().await? == &types::Function::grease_type() {
+            // If resolved to an ancestor workspace, run arguments on
+            // the result of `[loaded] command`.
+            let loaded = if was_workspace {
+                apply_value(ctx, loaded, FunctionArguments::new(
+                        vec![Source::builtin(types::String::from(SCRIPT_WORKSPACE_FALLBACK_NAME).into())],
+                        Default::default()
+                        ).unchecked(), false).await?
+            } else {
+                loaded
+            };
+
+            // If there are remaining arguments or the file was direct-loaded and the value is a function,
+            // apply them immediately.
+            if !ctx.args.is_empty() || (!was_workspace && loaded.grease_type().await? == &types::Function::grease_type()) {
                 let args = std::mem::take(&mut ctx.args);
+
                 apply_value(ctx, loaded, args.unchecked(), false).await
             } else {
                 ctx.unused_arguments()?;
@@ -1378,20 +1390,13 @@ pub fn apply_value(
                 v
             };
 
-            dbg!(&v);
-
             let mut ctx = ctx.clone();
 
-            let mut deps = depends![{ergo_runtime::namespace_id!(ergo::apply)}];
-            for v in args.positional.iter().rev() {
-                deps += depends![**v];
-            }
+            let deps = depends![{ergo_runtime::namespace_id!(ergo::apply)}, ^&args];
 
-            v.type_and_then_value(move |tp, v| async move {
-                match_value!(v, typed &tp => {
-                    // Always force function evaluation immediately
-                    // TODO this shouldn't be necessary if eager futures are implemented throughout
-                    // the code
+            // Eagerly evaluate application
+            v.and_then_value(move |v| async move {
+                match_value!(v => {
                     types::Function => |val| {
                         let mut fcallctx = FunctionCall::new(&mut ctx, args.into(), v_source);
                         let f = val.await?;
@@ -1401,46 +1406,39 @@ pub fn apply_value(
                             fcallctx.args.clear();
                         }
                         // TODO is it appropriate to lose this source info?
-                        ret.map(Source::unwrap)
+                        ret.map(Source::unwrap)?
                     }
+                    types::Array => |val| {
+                        let mut fcallctx = FunctionCall::new(&mut ctx, args.into(), v_source);
+                        let ind = fcallctx.args.next().ok_or("no index provided")?;
+                        fcallctx.unused_arguments()?;
+
+                        let ind = fcallctx.source_value_as::<types::String>(ind).await?.await.transpose_ok()?;
+                        ind.map_async(|index| async move { match usize::from_str(index.as_ref()) {
+                            Err(_) => Err(fcallctx.call_site.with(Error::NonIntegerIndex).into()),
+                            Ok(ind) => val.await.and_then(|v| v.0.get(ind).cloned().ok_or_else(|| Error::MissingArrayIndex(ind).into()))
+                        }
+                        }).await.transpose_err_with_context("while indexing array")?
+                    },
+                    types::Map => |val| {
+                        let mut fcallctx = FunctionCall::new(&mut ctx, args.into(), v_source);
+                        let ind = fcallctx.args.next().ok_or("no key provided")?;
+                        fcallctx.unused_arguments()?;
+
+                        ind.map_async(|index| async move {
+                                val.await.and_then(|v| v.0.get(&index).cloned().ok_or_else(|| Error::MissingMapIndex(index).into()))
+                        }).await.transpose_err_with_context("while indexing map")?
+                    },
                     => |v| {
-                        // Eagerly evaluate array/map
-                        v.and_then_value(move |v| async move {
-                            match_value!(v => {
-                                types::Array => |val| {
-                                    let mut fcallctx = FunctionCall::new(&mut ctx, args.into(), v_source);
-                                    let ind = fcallctx.args.next().ok_or("no index provided")?;
-                                    fcallctx.unused_arguments()?;
-
-                                    let ind = fcallctx.source_value_as::<types::String>(ind).await?.await.transpose_ok()?;
-                                    ind.map_async(|index| async move { match usize::from_str(index.as_ref()) {
-                                        Err(_) => Err(fcallctx.call_site.with(Error::NonIntegerIndex).into()),
-                                        Ok(ind) => val.await.and_then(|v| v.0.get(ind).cloned().ok_or_else(|| Error::MissingArrayIndex(ind).into()))
-                                    }
-                                    }).await.transpose_err_with_context("while indexing array")?
-                                },
-                                types::Map => |val| {
-                                    let mut fcallctx = FunctionCall::new(&mut ctx, args.into(), v_source);
-                                    let ind = fcallctx.args.next().ok_or("no key provided")?;
-                                    fcallctx.unused_arguments()?;
-
-                                    ind.map_async(|index| async move {
-                                            val.await.and_then(|v| v.0.get(&index).cloned().ok_or_else(|| Error::MissingMapIndex(index).into()))
-                                    }).await.transpose_err_with_context("while indexing map")?
-                                },
-                                => |v| {
-                                    Err(Error::NonCallableExpression(v))?
-                                }
-                            }).await
-                        }, depends![]).await
+                        Err(Error::NonCallableExpression(v))?
                     }
-                })
+                }).await
             }, deps)
             .await
         })
         .await
         .map(|v| v.map_err(|e| e.error()))
-        .transpose_with_context("while getting value")
+        .transpose_with_context("while applying value")
     }
     .boxed()
 }

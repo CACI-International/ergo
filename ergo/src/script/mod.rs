@@ -151,7 +151,7 @@ mod test {
     #[test]
     fn index() -> Result<(), String> {
         script_eval_to("[a,b]:0", SRString("a"))?;
-        script_result_fail("[a,b]:2")?;
+        script_fail("[a,b]:2")?;
         script_eval_to("{alpha=one,beta=two}:beta", SRString("two"))?;
         script_fail("{alpha=one,beta=two}:omega")?;
         script_eval_to("{alpha=[a,{key=b}]}:alpha:1:key", SRString("b"))?;
