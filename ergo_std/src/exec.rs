@@ -391,7 +391,7 @@ pub fn function() -> Value {
                 let mut b = Blocking::new(input);
                 let task = ctx.task.clone();
                 async move {
-                    grease::runtime::io::copy(&task, &mut v, &mut b).await
+                    grease::runtime::io::copy_interactive(&task, &mut v, &mut b).await
                 }.boxed()
             } else {
                 futures::future::ok(0).boxed()
@@ -399,7 +399,7 @@ pub fn function() -> Value {
 
             let (mut out_pipe_send, out_pipe_recv) = pipe();
             let mut cstdout = Blocking::new(child.stdout.take().unwrap());
-            let output = grease::runtime::io::copy(&ctx.task, &mut cstdout, &mut out_pipe_send);
+            let output = grease::runtime::io::copy_interactive(&ctx.task, &mut cstdout, &mut out_pipe_send);
             let out_pipe_recv = if !send_stdout.is_canceled() {
                 drop(send_stdout.send(out_pipe_recv));
                 None
@@ -409,7 +409,7 @@ pub fn function() -> Value {
 
             let (mut err_pipe_send, err_pipe_recv) = pipe();
             let mut cstderr = Blocking::new(child.stderr.take().unwrap());
-            let error = grease::runtime::io::copy(&ctx.task, &mut cstderr, &mut err_pipe_send);
+            let error = grease::runtime::io::copy_interactive(&ctx.task, &mut cstderr, &mut err_pipe_send);
             let err_pipe_recv = if !send_stderr.is_canceled() {
                 drop(send_stderr.send(err_pipe_recv));
                 None

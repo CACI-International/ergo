@@ -47,6 +47,8 @@ pub struct Copy<'a, R: ?Sized, W: ?Sized> {
     amt: u64,
     buf: Box<[u8]>,
     task: &'a super::TaskManager,
+    immediate_flush: bool,
+    need_flush: bool,
 }
 
 pub fn copy<'a, R, W>(
@@ -67,6 +69,31 @@ where
         cap: 0,
         buf: vec![0; 2048].into_boxed_slice(),
         task,
+        immediate_flush: false,
+        need_flush: false,
+    }
+}
+
+pub fn copy_interactive<'a, R, W>(
+    task: &'a super::TaskManager,
+    reader: &'a mut R,
+    writer: &'a mut W,
+) -> Copy<'a, R, W>
+where
+    R: ?Sized + AsyncRead + std::marker::Unpin,
+    W: ?Sized + AsyncWrite + std::marker::Unpin,
+{
+    Copy {
+        reader,
+        read_done: false,
+        writer,
+        amt: 0,
+        pos: 0,
+        cap: 0,
+        buf: vec![0; 2048].into_boxed_slice(),
+        task,
+        immediate_flush: true,
+        need_flush: false,
     }
 }
 
@@ -88,6 +115,13 @@ where
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         loop {
+            // If we need to flush, do it first.
+            if self.need_flush {
+                let me = &mut *self;
+                ready!(Pin::new(&mut *me.writer).poll_flush(cx, &me.task))?;
+                me.need_flush = false;
+            }
+
             // If our buffer is empty, then we need to read some data to
             // continue.
             if self.pos == self.cap && !self.read_done {
@@ -116,6 +150,10 @@ where
                     )
                     .into()));
                 } else {
+                    if self.immediate_flush {
+                        let me = &mut *self;
+                        me.need_flush = true;
+                    }
                     self.pos += i;
                     self.amt += i as u64;
                 }

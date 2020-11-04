@@ -77,7 +77,7 @@ fn stdout_fn() -> Value {
             let data = data.await?;
             let _guard = STDOUT_MUTEX.lock().await;
             let paused = log.pause();
-            io::copy(&task, &mut data.read(), &mut io::Blocking::new(std::io::stdout())).await?;
+            io::copy_interactive(&task, &mut data.read(), &mut io::Blocking::new(std::io::stdout())).await?;
             drop(paused);
             Ok(())
         })
@@ -99,7 +99,7 @@ fn stderr_fn() -> Value {
 
         make_value!([data] {
             let data = data.await?;
-            io::copy(&task, &mut data.read(), &mut io::Blocking::new(std::io::stderr())).await?;
+            io::copy_interactive(&task, &mut data.read(), &mut io::Blocking::new(std::io::stderr())).await?;
             Ok(())
         })
         .into()
