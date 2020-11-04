@@ -4,6 +4,8 @@
 * Support interactive subprocesses by suspending logging while they run.
 * Support dynamically-typed values, and change indexing, array merging, match
   expressions, and set expressions to lazily perform their actions.
+  * When values _are_ constants or derived from constants, they are still
+    eagerly evaluated.
 * Fix a critical soundness bug around plugin unloading that was causing crashes.
 * Change indexing to require the indexed value to exist (rather than returning a
   unit value).
@@ -12,6 +14,14 @@
   is present no evaluation of the final value is done.
 * Change maps to be keyed based on values rather than string literals (a
   superset of prior functionality).
+* Change workspace interactions:
+  * `prelude` is now loaded directly as if the ancestor workspace was specified.
+    This is a subtle difference, but differentiates prelude loading from
+    fallback behavior.
+  * Fallback behavior now first applies `command` to the ancestor workspace, and
+    whatever is returned by that will receive additional arguments to the load
+    command (rather than applying these arguments directly to the ancestor
+    workspace return value).
 
 ## 1.0.0-beta.2  -- 2020-10-07
 * Change script syntax, adding pipe operators and indexing/accessing bindings
