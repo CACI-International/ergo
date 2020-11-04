@@ -41,6 +41,7 @@ pub fn script_context(
     cb.build().map(|mut ctx| {
         // Add initial traits
         ergo_runtime::traits::traits(&mut ctx.traits);
+        runtime::traits(&mut ctx.traits);
         Runtime::new(ctx, global_env)
     })
 }

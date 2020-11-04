@@ -38,6 +38,10 @@ use std::str::FromStr;
 #[derive(Clone, Copy, Debug, GreaseType, Hash)]
 pub struct ScriptEnvIntoMap;
 
+grease::grease_traits_fn! {
+    ergo_runtime::grease_type_name!(traits, ScriptEnvIntoMap, "set expression");
+}
+
 /// Look at the file contents to determine if the file is a plugin (dynamic library).
 fn is_plugin(f: &path::Path) -> bool {
     use std::fs::File;
