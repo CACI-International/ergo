@@ -1,6 +1,6 @@
 # ergo changelog
 
-## 1.0.0-beta.3  -- UNRELEASED
+## 1.0.0-beta.3  -- 2020-11-4
 * Support interactive subprocesses by suspending logging while they run.
 * Support dynamically-typed values, and change indexing, array merging, match
   expressions, and set expressions to lazily perform their actions.
