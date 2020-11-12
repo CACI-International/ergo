@@ -40,6 +40,7 @@ pub struct ScriptEnvIntoMap;
 
 grease::grease_traits_fn! {
     ergo_runtime::grease_type_name!(traits, ScriptEnvIntoMap, "set expression");
+    ergo_runtime::traits::ValueByContent::add_impl::<ScriptEnvIntoMap>(traits);
 }
 
 /// Look at the file contents to determine if the file is a plugin (dynamic library).
@@ -1553,7 +1554,7 @@ impl Rt<Expression> {
             Set(pat, e) => {
                 let e_source = e.source();
                 let data = Rt(*e).evaluate(ctx).await;
-                let (ret, v) = match data {
+                let (mut ret, v) = match data {
                     Err(e) => (Err(e), None),
                     Ok(v) => (Ok(ScriptEnvIntoMap.into_value().into()), Some(v)),
                 };
@@ -1571,12 +1572,22 @@ impl Rt<Expression> {
                         let deps = deps.clone() + d;
                         (k.clone(), RResult::ROk(source.with(Value::dyn_new(async move {
                             let bindings = pat_result.await?;
-                            bindings.get(&k).expect("internal pattern matching assertion failed")
+                            Ok(bindings.get(&k).expect("internal pattern matching assertion failed")
                                 .clone()
                                 .into_result()?
-                                .make_any_value().await
+                                .unwrap()
+                                .into_any_value())
                         }, deps))))
                     }));
+                    // Add pat_result as something forced by the return value so that if the user forces
+                    // the return value it will force pattern matching.
+                    ret = match ret {
+                        Ok(_) => Ok(make_value!({
+                                pat_result.await?;
+                                Ok(ScriptEnvIntoMap)
+                            }).into()),
+                        otherwise => otherwise
+                    };
                 } else {
                     ctx.env_extend(apply_pattern(pat_compiled, v).await?);
                 }
@@ -1719,17 +1730,29 @@ impl Rt<Expression> {
                 Ok(Value::dyn_new(async move {
                     for (p, e) in pats {
                         if let Ok(bindings) = apply_pattern(p, Some(val.clone())).await {
-                            return ctx
+                            return Ok(ctx
                                 .env_scoped(bindings, |ctx| Rt(e).evaluate(ctx).boxed())
                                 .await
                                 .0
                                 .map(Source::unwrap)?
-                                .make_any_value().await;
+                                .into_any_value());
                         }
                     }
 
                     Err(val.source().with(Error::MatchFailed(val.unwrap())).into())
                 }, deps))
+            }
+            Force(val) => {
+                let val = Rt(*val).evaluate(ctx).await?;
+
+                val.map_async(|val| async {
+                    // If the value is a dynamic value, get the inner value.
+                    // Otherwise return the value by its (shallow) content.
+                    match val.dyn_value().await? {
+                        Ok(inner) => Ok(inner),
+                        Err(val) => ctx.value_by_content(val, false).await
+                    }
+                }).await.transpose_err_with_context("in forced value")
             }
         }
     }.boxed()

@@ -12,5 +12,5 @@ grease_macro = { path = "../grease_macro" }
 lazy_static = "^1"
 log = "^0.4"
 num_cpus = "^1"
-tokio = { version = "0.2", features = ["blocking","parking_lot","rt-threaded"] }
+tokio = { version = "0.3", features = ["parking_lot","rt-multi-thread"] }
 uuid = { version = "0.8", features = ["serde", "v5"] }

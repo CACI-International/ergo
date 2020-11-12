@@ -391,7 +391,7 @@ grease_traits_fn! {
     trts::IntoTyped::<ByteStream>::add_impl::<crate::types::String>(traits);
 
     impl trts::ValueByContent for ByteStream {
-        async fn value_by_content(self) -> Value {
+        async fn value_by_content(self, _deep: bool) -> Value {
             let data = self.clone().await?;
             let mut reader = data.read();
             let mut buf: [u8; BYTE_STREAM_BLOCK_LIMIT] =

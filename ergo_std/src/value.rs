@@ -9,19 +9,19 @@ pub fn module() -> Value {
     crate::grease_string_map! {
         "cache" = cache_fn(),
         "debug" = debug_fn(),
-        "force" = force_fn(),
+        "by-content" = by_content_fn(),
         "variable" = variable_fn()
     }
 }
 
-fn force_fn() -> Value {
+fn by_content_fn() -> Value {
     ergo_function!(independent std::value::force, |ctx| {
         let val = ctx.args.next().ok_or("value not provided")?;
 
         ctx.unused_arguments()?;
 
         let (source, val) = val.take();
-        let val = ctx.value_by_content(val);
+        let val = ctx.value_by_content(val, true);
         val.await.map_err(move |e| source.with(e).into_grease_error())?
     })
     .into()
@@ -77,7 +77,7 @@ fn cache_fn() -> Value {
                             "successfully read cached value for {}",
                             id
                         ));
-                        return Ok(val.make_any_value().await.expect("value should have success value from cache"));
+                        return Ok(val.into_any_value());
                     }
                     Err(e) => e,
                 };
@@ -87,10 +87,7 @@ fn cache_fn() -> Value {
                 {
                     log.warn(format!("failed to cache value for {}: {}", id, e));
                 }
-                Ok(to_cache
-                    .make_any_value()
-                    .await
-                    .expect("error should have been caught previously"))
+                Ok(to_cache.into_any_value())
             }, id)
         }
     })

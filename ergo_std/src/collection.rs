@@ -9,6 +9,7 @@ pub fn module() -> Value {
     crate::grease_string_map! {
         "entries" = entries_fn(),
         "fold" = fold_fn(),
+        "get" = get_fn(),
         "has" = has_fn(),
         "map" = map_fn()
     }
@@ -50,7 +51,7 @@ fn fold_fn() -> Value {
                     .boxed()
                 });
 
-                val.await?.make_any_value().await
+                Ok(val.await?.unwrap().into_any_value())
             },
             deps,
         )
@@ -137,6 +138,41 @@ fn has_fn() -> Value {
             }).await
         })
         .into()
+    })
+    .into()
+}
+
+fn get_fn() -> Value {
+    ergo_function!(std::collection::get, |ctx| {
+        let value = ctx.args.next().ok_or("value not provided")?.unwrap();
+        let index = ctx.args.next().ok_or("index not provided")?;
+
+        ctx.unused_arguments()?;
+
+        use ergo_runtime::context_ext::AsContext;
+        let ctx: grease::runtime::Context = ctx.as_context().clone();
+
+        let deps = depends![value, *index];
+
+        Value::dyn_new(
+            async move {
+                match_value!(value => {
+                    types::Array => |val| {
+                        let index = ctx.source_value_as::<types::String>(index);
+                        let index = index.await?.unwrap().await?;
+                        use std::str::FromStr;
+                        let i = usize::from_str(index.as_ref())?;
+                        val.await?.0.get(i).cloned().unwrap_or(().into()).into_any_value()
+                    }
+                    types::Map => |val| {
+                        val.await?.0.get(&index).cloned().unwrap_or(().into()).into_any_value()
+                    }
+                    => |_| Err("non-indexable value")?
+                })
+                .await
+            },
+            deps,
+        )
     })
     .into()
 }

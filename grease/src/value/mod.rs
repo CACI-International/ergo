@@ -41,8 +41,7 @@ pub type MetadataId = u128;
 #[derive(Debug, Clone, StableAbi)]
 #[repr(C)]
 pub struct AnyValue {
-    tp: RArc<Type>,
-    data: RArc<Erased>,
+    inner: Value,
 }
 
 impl AnyValue {
@@ -50,8 +49,8 @@ impl AnyValue {
     ///
     /// # Safety
     /// Callers must ensure the type corresponds to the data.
-    pub unsafe fn new(tp: RArc<Type>, data: RArc<Erased>) -> Self {
-        AnyValue { tp, data }
+    fn new(inner: Value) -> Self {
+        AnyValue { inner }
     }
 }
 
@@ -300,32 +299,18 @@ impl Value {
         }
     }
 
-    /// Convert into a dynamically-typed Value.
-    pub fn into_dyn(self) -> Self {
-        Value {
-            data: match self.data {
-                ValueData::Typed { tp, fut } => ValueData::Dynamic {
-                    fut: BoxSharedFuture::from_eager(fut.into_eager().map(move |result| {
-                        result.map(move |data| unsafe { AnyValue::new(tp, data) })
-                    })),
-                },
-                other => other,
-            },
-            ..self
-        }
+    /// If this value is dynamically typed, force the inner dynamic value. Otherwise return this
+    /// value (as Err).
+    pub async fn dyn_value(self) -> crate::Result<std::result::Result<Value, Value>> {
+        match_value_data!(self.data => {
+            ValueData::Dynamic { fut } => Ok(Ok(fut.await.into_result()?.inner)),
+            ValueData::Typed {..} => Ok(Err(self))
+        })
     }
 
     /// Create an AnyValue from this value.
-    ///
-    /// Evaluates the value when
-    pub async fn make_any_value(&self) -> crate::Result<AnyValue> {
-        match_value_data!(&self.data => {
-            ValueData::Dynamic { fut } => fut.clone().await.into_result(),
-            ValueData::Typed { tp, fut } => {
-                let data = fut.clone().await.into_result()?;
-                Ok(unsafe { AnyValue::new(tp.clone(), data) })
-            }
-        })
+    pub fn into_any_value(self) -> AnyValue {
+        AnyValue::new(self)
     }
 
     /// Set dependencies of this value, producing a new value with a new identifier.
@@ -420,40 +405,46 @@ impl Value {
     /// Try to convert this Value to a TypedValue.
     ///
     /// If the conversion fails, the given function is used to get an Error from the type.
-    pub async fn typed<T: GreaseType, F, Fut>(self, on_error: F) -> crate::Result<TypedValue<T>>
+    pub fn typed<T: GreaseType, F, Fut>(
+        self,
+        on_error: F,
+    ) -> futures::future::BoxFuture<'static, crate::Result<TypedValue<T>>>
     where
         F: FnOnce(&Type) -> Fut + Send + 'static,
         Fut: std::future::Future<Output = Error> + Send,
     {
-        match_value_data!(self.data => {
-            ValueData::Typed { ref tp, .. } => {
-                if &**tp == &T::grease_type() {
-                    Ok(unsafe { TypedValue::from_value(self) })
-                } else {
-                    Err(on_error(&*tp).await)
+        async move {
+            match_value_data!(self.data => {
+                ValueData::Typed { ref tp, .. } => {
+                    if &**tp == &T::grease_type() {
+                        Ok(unsafe { TypedValue::from_value(self) })
+                    } else {
+                        Err(on_error(&*tp).await)
+                    }
                 }
-            }
-            ValueData::Dynamic { fut } => Ok(unsafe {
-                TypedValue::from_value(Value {
-                    data: ValueData::Typed {
-                        tp: RArc::new(T::grease_type()),
-                        fut: BoxSharedFuture::from_eager(fut.into_eager().then(move |r| async move {
-                            match r {
-                                RResult::ROk(AnyValue {tp, data}) => {
-                                    if &*tp == &T::grease_type() {
-                                        RResult::ROk(data)
-                                    } else {
-                                        RResult::RErr(on_error(&*tp).await)
-                                    }
-                                },
-                                RResult::RErr(e) => RResult::RErr(e)
-                            }
-                        }).await),
-                    },
-                    ..self
+                ValueData::Dynamic { fut } => Ok(unsafe {
+                    TypedValue::from_value(Value {
+                        data: ValueData::Typed {
+                            tp: RArc::new(T::grease_type()),
+                            fut: BoxSharedFuture::from_eager(fut.into_eager().then(move |r| async move {
+                                match r {
+                                    RResult::ROk(AnyValue {inner}) => {
+                                        let v = match inner.typed::<T, F, Fut>(on_error).await {
+                                            Ok(v) => v,
+                                            Err(e) => return RResult::RErr(e)
+                                        };
+                                        let v: Value = v.into();
+                                        v.await.into()
+                                    },
+                                    RResult::RErr(e) => RResult::RErr(e)
+                                }
+                            }).await),
+                        },
+                        ..self
+                    })
                 })
             })
-        })
+        }.boxed()
     }
 
     /// Try to convert this Value by reference to a TypedValue reference.
@@ -483,14 +474,19 @@ impl Value {
     /// Get the type of the contained value.
     ///
     /// This may force the value to be evaluated if dynamically typed.
-    pub async fn grease_type(&self) -> crate::Result<&Type> {
-        match &self.data {
-            ValueData::Dynamic { fut } => {
-                fut.clone().await;
+    pub fn grease_type(&self) -> futures::future::BoxFuture<'_, crate::Result<&Type>> {
+        async move {
+            match &self.data {
+                ValueData::Dynamic { fut } => {
+                    if let RResult::ROk(v) = fut.clone().await {
+                        let _unused = v.inner.grease_type().await;
+                    }
+                }
+                _ => (),
             }
-            _ => (),
+            self.peek_type().unwrap()
         }
-        self.peek_type().unwrap()
+        .boxed()
     }
 
     /// Get the type of the contained value if immediately available.
@@ -507,9 +503,9 @@ impl Value {
     pub fn peek_type(&self) -> Option<crate::Result<&Type>> {
         match_value_data!(&self.data => {
             ValueData::Typed { tp, .. } => Some(Ok(&**tp)),
-            ValueData::Dynamic { ref fut } => fut.peek().map(|r| match r {
-                RResult::ROk(ref v) => Ok(&*v.tp),
-                RResult::RErr(e) => Err(e.clone()),
+            ValueData::Dynamic { ref fut } => fut.peek().and_then(|r| match r {
+                RResult::ROk(ref v) => v.inner.peek_type(),
+                RResult::RErr(e) => Some(Err(e.clone())),
             })
         })
     }
@@ -554,12 +550,7 @@ impl Value {
                 let v = self;
                 let deps = depends![v, ^deps.into()];
                 Ok(Value::dyn_new(
-                    async move {
-                        f(v.grease_type().await?.clone(), v)
-                            .await?
-                            .make_any_value()
-                            .await
-                    },
+                    async move { Ok(f(v.grease_type().await?.clone(), v).await?.into_any_value()) },
                     deps,
                 ))
             }
@@ -572,7 +563,10 @@ impl Value {
             ValueData::Typed { fut, .. } => fut.peek().map(|v| RResult::into_result(v.clone())),
             ValueData::Dynamic { fut } => fut
                 .peek()
-                .map(|v| RResult::into_result(v.clone().map(|v| v.data)))
+                .and_then(|v| match v {
+                    RResult::ROk(v) => v.inner.peek(),
+                    RResult::RErr(e) => Some(Err(e.clone()))
+                })
         })
     }
 
@@ -592,7 +586,7 @@ impl Value {
                 let v = self;
                 let deps = depends![v, ^deps.into()];
                 Ok(Value::dyn_new(
-                    async move { f(v).await?.make_any_value().await },
+                    async move { Ok(f(v).await?.into_any_value()) },
                     deps,
                 ))
             }
@@ -615,7 +609,8 @@ impl Value {
             ValueData::Typed { fut, .. } => fut.into_eager().map(RResult::into_result).boxed(),
             ValueData::Dynamic { fut } => fut
                 .into_eager()
-                .map(|r| r.into_result().map(|r| r.data))
+                .map(RResult::into_result)
+                .and_then_eager(|v| v.inner.into_eager().into_future())
                 .boxed(),
         })
     }
@@ -627,12 +622,18 @@ impl Future for Value {
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let me = &mut *self;
         match_value_data!(&mut me.data => {
-            ValueData::Typed { fut, .. } => Future::poll(Pin::new(fut), cx),
+            ValueData::Typed { fut, .. } => Future::poll(Pin::new(fut), cx).map(RResult::into_result),
             ValueData::Dynamic { fut } => {
-                Future::poll(Pin::new(fut), cx).map(|v| v.map(|v| v.data))
+                match Future::poll(Pin::new(fut), cx) {
+                    Poll::Pending => Poll::Pending,
+                    Poll::Ready(RResult::ROk(v)) => {
+                        *me = v.inner;
+                        Future::poll(self, cx)
+                    },
+                    Poll::Ready(RResult::RErr(e)) => Poll::Ready(Err(e))
+                }
             }
         })
-        .map(RResult::into_result)
     }
 }
 

@@ -86,14 +86,13 @@ impl ThreadPoolInterface for std::sync::Arc<tokio_runtime::Runtime> {
     ) -> BoxFuture<'static, RResult<Erased, Error>> {
         BoxFuture::new(
             self.as_ref()
-                .handle()
                 .spawn_blocking(move || f.call())
                 .map(|r| r.map_err(|e| e.into()).into()),
         )
     }
 
     fn block_on<'a>(&self, future: LocalBoxFuture<'a, ()>) {
-        self.as_ref().handle().block_on(future)
+        self.as_ref().block_on(future)
     }
 }
 
@@ -164,10 +163,9 @@ impl TaskManager {
         let closure_thread_ids = thread_ids.clone();
         let closure_barrier = barrier.clone();
         let closure_is_core = is_core.clone();
-        let pool = tokio_runtime::Builder::new()
-            .threaded_scheduler()
+        let pool = tokio_runtime::Builder::new_multi_thread()
             .enable_all()
-            .core_threads(threads)
+            .worker_threads(threads)
             .thread_name("grease-thread")
             .on_thread_start(move || {
                 if closure_is_core.load(std::sync::atomic::Ordering::Relaxed) {
@@ -354,8 +352,8 @@ mod join {
 
     impl<Fut1, Fut2> Future for Join<Fut1, Fut2>
     where
-        Fut1: Future + TryFuture<Error = Error> + Unpin,
-        Fut2: Future + TryFuture<Error = Error> + Unpin,
+        Fut1: Future + TryFuture<Error = Error>,
+        Fut2: Future + TryFuture<Error = Error>,
     {
         type Output = Result<(<Fut1 as TryFuture>::Ok, <Fut2 as TryFuture>::Ok), Error>;
 
@@ -363,25 +361,14 @@ mod join {
             self: std::pin::Pin<&mut Self>,
             cx: &mut std::task::Context,
         ) -> std::task::Poll<Self::Output> {
-            match &*self {
-                Join::Normal(_) => Future::poll(
-                    unsafe {
-                        self.map_unchecked_mut(|s| match s {
-                            Join::Normal(inner) => inner,
-                            _ => panic!("invalid"),
-                        })
-                    },
-                    cx,
-                ),
-                Join::Aggregate(_) => Future::poll(
-                    unsafe {
-                        self.map_unchecked_mut(|s| match s {
-                            Join::Aggregate(inner) => inner,
-                            _ => panic!("invalid"),
-                        })
-                    },
-                    cx,
-                ),
+            let me = unsafe { self.get_unchecked_mut() };
+            match me {
+                Join::Normal(inner) => {
+                    Future::poll(unsafe { std::pin::Pin::new_unchecked(inner) }, cx)
+                }
+                Join::Aggregate(inner) => {
+                    Future::poll(unsafe { std::pin::Pin::new_unchecked(inner) }, cx)
+                }
             }
         }
     }
@@ -455,25 +442,10 @@ mod join_all {
             self: std::pin::Pin<&mut Self>,
             cx: &mut std::task::Context,
         ) -> std::task::Poll<Self::Output> {
-            match &*self {
-                JoinAll::Normal(_) => Future::poll(
-                    unsafe {
-                        self.map_unchecked_mut(|s| match s {
-                            JoinAll::Normal(inner) => inner,
-                            _ => panic!("invalid"),
-                        })
-                    },
-                    cx,
-                ),
-                JoinAll::Aggregate(_) => Future::poll(
-                    unsafe {
-                        self.map_unchecked_mut(|s| match s {
-                            JoinAll::Aggregate(inner) => inner,
-                            _ => panic!("invalid"),
-                        })
-                    },
-                    cx,
-                ),
+            let me = unsafe { self.get_unchecked_mut() };
+            match me {
+                JoinAll::Normal(inner) => Future::poll(std::pin::Pin::new(inner), cx),
+                JoinAll::Aggregate(inner) => Future::poll(std::pin::Pin::new(inner), cx),
             }
         }
     }

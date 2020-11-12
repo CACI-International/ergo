@@ -1,5 +1,13 @@
 # ergo changelog
 
+## 1.0.0-beta.4  -- Unreleased
+* Add the `!` operator, which may precede any expression to evaluate the result
+  immediately.
+  * If the expression evaluates to a dynamically-typed value, it will evaluate
+    the value to the inner value once.
+  * If the expression evaluates to a typed value, it will shallowly evaluate the
+    value by content.
+
 ## 1.0.0-beta.3  -- 2020-11-4
 * Support interactive subprocesses by suspending logging while they run.
 * Support dynamically-typed values, and change indexing, array merging, match

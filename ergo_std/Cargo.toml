@@ -1,6 +1,6 @@
 [package]
 name = "ergo_std"
-version = "1.0.0-beta.3"
+version = "1.0.0-beta.4"
 authors = ["Alex Franchuk <afranchuk@caci.com>"]
 edition = "2018"
 
@@ -23,7 +23,8 @@ reqwest = { version = "0.10", default-features = false, features = ["blocking","
 serde = { version = "^1", features = ["derive"] }
 sha = "1.0"
 tar = "0.4"
-tokio = { version = "0.2", features = ["stream"] }
+tokio = "0.3"
+tokio-util = { version = "0.5", features = ["io"] }
 xz = "0.1"
 zip = "0.5"
 

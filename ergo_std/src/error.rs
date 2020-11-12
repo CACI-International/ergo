@@ -45,10 +45,14 @@ fn catch_fn() -> Value {
         let handler = types::Portable::portable(handler, ctx);
 
         Value::dyn_new(
-            async move { value.make_any_value().await }.or_else(move |e| {
+            async move {
+                value.clone().await?;
+                Ok(value.into_any_value())
+            }
+            .or_else(move |e: grease::Error| {
                 let e = e.to_string();
                 async move {
-                    handler
+                    Ok(handler
                         .await?
                         .call(
                             FunctionArguments::positional(vec![
@@ -57,8 +61,8 @@ fn catch_fn() -> Value {
                             call_site,
                         )
                         .await?
-                        .make_any_value()
-                        .await
+                        .unwrap()
+                        .into_any_value())
                 }
             }),
             deps,

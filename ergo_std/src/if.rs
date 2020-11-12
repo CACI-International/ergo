@@ -36,11 +36,11 @@ pub fn function() -> Value {
                 }
             _ => Value::dyn_new(async move {
                     let c = cond.await?;
-                    if *c.as_ref() {
-                        if_true.make_any_value().await
+                    Ok(if *c.as_ref() {
+                        if_true.into_any_value()
                     } else {
-                        if_false.make_any_value().await
-                    }
+                        if_false.into_any_value()
+                    })
                 }, deps)
         }
     })

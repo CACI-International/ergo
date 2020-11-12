@@ -139,12 +139,12 @@ mod expression {
 
     /// An expression in argument position (words are interpreted as strings rather than as commands).
     pub fn arg<'a>() -> Parser<'a, Expr> {
-        call(|| index(true, true))
+        call(|| index(true, true)).cache()
     }
 
     /// Same as `arg`, but not allowing = in strings.
     pub fn arg_no_eq<'a>() -> Parser<'a, Expr> {
-        call(|| index(true, false))
+        call(|| index(true, false)).cache()
     }
 
     fn arg_no_index<'a>(eq_allowed: bool) -> Parser<'a, Expr> {
@@ -154,8 +154,10 @@ mod expression {
                 | array()
                 | block()
         })
+        .cache()
     }
 
+    #[derive(Clone)]
     struct CommandArgs {
         cmd: MergeExpr,
         args: VecDeque<MergeExpr>,
@@ -184,6 +186,7 @@ mod expression {
     fn command_args<'a>() -> Parser<'a, CommandArgs> {
         (merge_with(arg()) + (req_space() * merge_with(arg())).repeat(0..))
             .map(|(first, rest)| CommandArgs::new(first, rest))
+            .cache()
     }
 
     /// Translate command arguments into a command expression.
@@ -331,7 +334,7 @@ mod expression {
     fn function<'a>() -> Parser<'a, Expr> {
         let tok = tag("fn");
         let end_tok = function_delim();
-        let pat = req_space() * pattern::command_pattern() - req_space() - end_tok;
+        let pat = req_space() * pattern::command_pattern() - space() - end_tok;
         let rest = space() * expression(true);
         (tok + pat + rest.expect("fn argument")).map(|res| {
             let p = res.into_source();
@@ -399,6 +402,11 @@ mod expression {
         })
     }
 
+    pub fn force_expr<'a>() -> Parser<'a, Expr> {
+        (sym(Token::Bang) - space() + expression(false))
+            .map(|e| e.into_source().map(|(_, e)| Expression::Force(e.into())))
+    }
+
     /// Expressions with an opening keyword.
     pub fn kw_expr<'a>() -> Parser<'a, Expr> {
         function() | match_expr()
@@ -406,7 +414,7 @@ mod expression {
 
     /// A single expression.
     pub fn expression<'a>(literal: bool) -> Parser<'a, Expr> {
-        call(move || kw_expr() | set() | unset() | command_pipes(literal))
+        call(move || force_expr() | kw_expr() | set() | unset() | command_pipes(literal)).cache()
     }
 }
 
@@ -429,13 +437,15 @@ fn word<'a>() -> Parser<'a, Source<String>> {
             if let Token::String(st) = &**t {
                 Ok((t.clone().with(st.clone()), s + 1))
             } else {
-                Err(pom::Error::Mismatch {
-                    message: format!("expected string, found {}", t),
+                Err(pom::result::ErrorDelayed::Mismatch {
+                    message: pom::result::ErrorMessage::new(move || {
+                        format!("expected string, found {}", t)
+                    }),
                     position: s,
                 })
             }
         } else {
-            Err(pom::Error::Incomplete)
+            Err(pom::result::ErrorDelayed::Incomplete)
         }
     })
 }
@@ -714,6 +724,42 @@ mod test {
                     ))
                     .into(),
                     vec![],
+                ),
+            )?;
+            Ok(())
+        }
+
+        #[test]
+        fn force_command() -> Result {
+            assert(
+                &[
+                    Bang,
+                    String("echo".to_owned()),
+                    Whitespace,
+                    String("howdy".to_owned()),
+                ],
+                Expression::Force(
+                    src(Expression::Command(
+                        Box::new(src(Expression::String("echo".to_owned()))),
+                        vec![nomerge(Expression::String("howdy".to_owned()))],
+                    ))
+                    .into(),
+                ),
+            )?;
+            assert(
+                &[
+                    Bang,
+                    Whitespace,
+                    String("echo".to_owned()),
+                    Whitespace,
+                    String("howdy".to_owned()),
+                ],
+                Expression::Force(
+                    src(Expression::Command(
+                        Box::new(src(Expression::String("echo".to_owned()))),
+                        vec![nomerge(Expression::String("howdy".to_owned()))],
+                    ))
+                    .into(),
                 ),
             )?;
             Ok(())

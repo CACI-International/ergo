@@ -1,5 +1,10 @@
 # ergo_std changelog
 
+## 1.0.0-beta.4  -- Unreleased
+* Rename `value:force` to `value:by-content`.
+* Add `collection:get` to index values without causing errors to occur.
+  * If a key/index doesn't exist, the function returns `()`.
+
 ## 1.0.0-beta.3  -- 2020-11-04
 * Improve byte streams to support async io, allowing `io:stdin`, `io:stdout`,
   and `io:stderr` to be implemented.

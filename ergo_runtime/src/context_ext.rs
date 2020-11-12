@@ -89,8 +89,8 @@ pub trait ContextExt: AsContext {
         crate::traits::write_to_store(self.as_context(), store_item, v).boxed()
     }
 
-    fn value_by_content<'a>(&'a self, v: Value) -> BoxFuture<'a, Result<Value>> {
-        crate::traits::value_by_content(self.as_context(), v).boxed()
+    fn value_by_content<'a>(&'a self, v: Value, deep: bool) -> BoxFuture<'a, Result<Value>> {
+        crate::traits::value_by_content(self.as_context(), v, deep).boxed()
     }
 }
 

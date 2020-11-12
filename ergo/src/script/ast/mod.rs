@@ -19,6 +19,7 @@ pub enum Expression {
     Block(Exprs),
     Function(CmdPat, Box<Expr>),
     Match(Box<Expr>, Vec<(Pat, Expr)>),
+    Force(Box<Expr>),
 }
 
 /// A parsed pattern.

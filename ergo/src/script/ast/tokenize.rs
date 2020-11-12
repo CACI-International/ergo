@@ -74,6 +74,7 @@ pub enum Token {
     Equal,
     Caret,
     Colon,
+    Bang,
     Pipe,
     PipeLeft,
     PipeRight,
@@ -100,6 +101,7 @@ impl fmt::Display for Token {
             Token::Equal => write!(f, "="),
             Token::Caret => write!(f, "^"),
             Token::Colon => write!(f, ":"),
+            Token::Bang => write!(f, "!"),
             Token::Pipe => write!(f, "|"),
             Token::PipeLeft => write!(f, "<|"),
             Token::PipeRight => write!(f, "|>"),
@@ -249,6 +251,8 @@ impl<I: Iterator<Item = char>> Iterator for Tokens<I> {
                         Ok(Token::Caret)
                     } else if c == ':' {
                         Ok(Token::Colon)
+                    } else if c == '!' {
+                        Ok(Token::Bang)
                     } else if c == '|' {
                         Ok(if self.iter.peek_match(&['>']) {
                             self.iter.next();
@@ -265,7 +269,7 @@ impl<I: Iterator<Item = char>> Iterator for Tokens<I> {
                         let mut s = String::new();
                         s.push(c);
                         while let Some(c) = self.iter.peek() {
-                            if c.is_whitespace() || "[](){},;=^|:".contains(*c) || self.iter.peek_match(&['<','|']) {
+                            if c.is_whitespace() || "[](){},;=^|:!".contains(*c) || self.iter.peek_match(&['<','|']) {
                                 break;
                             } else {
                                 s.push(self.iter.next().unwrap());
@@ -290,7 +294,7 @@ mod test {
     #[test]
     fn symbols() -> Result<(), Source<Error>> {
         assert_tokens(
-            "[]{}(),;=^:|<||>\n",
+            "[]{}(),;=^:!|<||>\n",
             &[
                 Token::OpenBracket,
                 Token::CloseBracket,
@@ -303,6 +307,7 @@ mod test {
                 Token::Equal,
                 Token::Caret,
                 Token::Colon,
+                Token::Bang,
                 Token::Pipe,
                 Token::PipeLeft,
                 Token::PipeRight,
@@ -328,11 +333,11 @@ mod test {
     #[test]
     fn strings() -> Result<(), Source<Error>> {
         assert_tokens(
-            "hello \"world[]{}():,;=^|\" \"escape\\\"quote\\n\"",
+            "hello \"world[]{}():!,;=^|\" \"escape\\\"quote\\n\"",
             &[
                 Token::String("hello".to_owned()),
                 Token::Whitespace,
-                Token::String("world[]{}():,;=^|".to_owned()),
+                Token::String("world[]{}():!,;=^|".to_owned()),
                 Token::Whitespace,
                 Token::String("escape\"quote\n".to_owned()),
             ],
@@ -342,7 +347,7 @@ mod test {
     #[test]
     fn string_ends() -> Result<(), Source<Error>> {
         assert_tokens(
-            "a[b]c{d}e(f)g:h,i;j^k=l\nm n|o<|p|>",
+            "a[b]c{d}e(f)g:h,i;j^k=l\nm n|o<|p|>q!",
             &[
                 Token::String("a".to_owned()),
                 Token::OpenBracket,
@@ -376,6 +381,8 @@ mod test {
                 Token::PipeLeft,
                 Token::String("p".to_owned()),
                 Token::PipeRight,
+                Token::String("q".to_owned()),
+                Token::Bang,
             ],
         )
     }

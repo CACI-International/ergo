@@ -196,8 +196,9 @@ impl<T: tokio::io::AsyncRead + std::marker::Unpin> AsyncRead for TokioWrapped<T>
         _task: &super::TaskManager,
         buf: &mut [u8],
     ) -> Poll<Result<usize, Error>> {
-        tokio::io::AsyncRead::poll_read(Pin::new(&mut self.0), cx, buf)
-            .map(|r| r.map_err(|e| e.into()))
+        let mut rb = tokio::io::ReadBuf::new(buf);
+        tokio::io::AsyncRead::poll_read(Pin::new(&mut self.0), cx, &mut rb)
+            .map(|r| r.map(|()| rb.filled().len()).map_err(|e| e.into()))
     }
 }
 
@@ -338,21 +339,16 @@ impl<'a, T: ?Sized + AsyncRead + std::marker::Unpin> Future for ReadToString<'a,
 
 pub struct Take<T>(T, u64);
 
-impl<T: AsyncRead> AsyncRead for Take<T> {
+impl<T: AsyncRead + std::marker::Unpin> AsyncRead for Take<T> {
     fn poll_read(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut Context,
         task: &super::TaskManager,
         buf: &mut [u8],
     ) -> Poll<Result<usize, Error>> {
         let size = std::cmp::min(buf.len() as u64, self.1);
-        // Safe to get reference from Pin because we own the data and won't be moving it.
-        let me = unsafe { self.get_unchecked_mut() };
-        let count = ready!(unsafe { Pin::new_unchecked(&mut me.0) }.poll_read(
-            cx,
-            task,
-            &mut buf[..size as usize]
-        ))?;
+        let me = &mut *self;
+        let count = ready!(Pin::new(&mut me.0).poll_read(cx, task, &mut buf[..size as usize]))?;
         me.1 -= count as u64;
         Poll::Ready(Ok(count as usize))
     }
@@ -360,19 +356,18 @@ impl<T: AsyncRead> AsyncRead for Take<T> {
 
 pub struct Once<T>(Option<T>);
 
-impl<T: AsyncRead> AsyncRead for Once<T> {
+impl<T: AsyncRead + std::marker::Unpin> AsyncRead for Once<T> {
     fn poll_read(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut Context,
         task: &super::TaskManager,
         buf: &mut [u8],
     ) -> Poll<Result<usize, Error>> {
-        // Safe to get reference from Pin because we own the data and won't be moving it.
-        let me = unsafe { self.get_unchecked_mut() };
+        let me = &mut *self;
         Poll::Ready(Ok(match &mut me.0 {
             None => 0,
             Some(v) => {
-                let ret = ready!(unsafe { Pin::new_unchecked(v) }.poll_read(cx, task, buf))?;
+                let ret = ready!(Pin::new(v).poll_read(cx, task, buf))?;
                 me.0 = None;
                 ret
             }
@@ -549,7 +544,9 @@ where
                 }
                 State::Busy(ref mut rx) => {
                     let (res, mut buf, inner) = match Pin::new(rx).poll(cx) {
-                        Poll::Pending => return Poll::Pending,
+                        Poll::Pending => {
+                            return Poll::Pending;
+                        }
                         Poll::Ready(v) => v,
                     }?;
                     self.inner = Some(inner);

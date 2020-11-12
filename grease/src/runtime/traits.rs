@@ -266,11 +266,9 @@ impl Traits {
     /// Try all generators with the given type and trait.
     fn try_generators(&self, tp: &Type, trt: &trt::Trait) -> Option<Erased> {
         let generators = self.inner.generators.read();
-        if let Some(gens) = generators.by_type.get(tp) {
-            for g in gens {
-                if let ROption::RSome(imp) = g.call(self, trt) {
-                    return Some(imp);
-                }
+        for g in &generators.general {
+            if let ROption::RSome(imp) = g.call(self, tp, trt) {
+                return Some(imp);
             }
         }
         if let Some(gens) = generators.by_trait.get(trt) {
@@ -280,9 +278,11 @@ impl Traits {
                 }
             }
         }
-        for g in &generators.general {
-            if let ROption::RSome(imp) = g.call(self, tp, trt) {
-                return Some(imp);
+        if let Some(gens) = generators.by_type.get(tp) {
+            for g in gens {
+                if let ROption::RSome(imp) = g.call(self, trt) {
+                    return Some(imp);
+                }
             }
         }
         None

@@ -77,7 +77,7 @@ pub async fn into<T: GreaseType + StableAbi + Send + Sync + 'static>(
     let val = Value::dyn_new(
         async move {
             let v = t.into_typed(v).await?;
-            v.make_any_value().await
+            Ok(v.into_any_value())
         },
         deps,
     );
@@ -101,6 +101,22 @@ pub async fn into<T: GreaseType + StableAbi + Send + Sync + 'static>(
 }
 
 grease_traits_fn! {
+    // Anything -> bool (true)
+    {
+        extern "C" fn to_bool<'a>(_ctx: &'a grease::runtime::Context, v: Value) ->
+            grease::future::BoxFuture<'a, grease::error::RResult<Value>> {
+            grease::future::BoxFuture::new(async move {
+                grease::error::RResult::ROk(v.then(true.into_value()))
+            })
+        }
+        traits.add_generator_by_trait_for_trait::<IntoTyped<bool>>(|_traits, _type| {
+            ROption::RSome(IntoTypedImpl::<bool> {
+                into_typed: FnPtr::new(to_bool),
+                _phantom0: Default::default(),
+            })
+        });
+    }
+
     // Identity: T -> T
     {
         extern "C" fn id_f<'a>(_ctx: &'a grease::runtime::Context, v: Value) ->
@@ -123,23 +139,6 @@ grease_traits_fn! {
         }
         unsafe { traits.add_generator(id) };
     }
-
-    // Anything -> bool (true)
-    {
-        extern "C" fn to_bool<'a>(_ctx: &'a grease::runtime::Context, v: Value) ->
-            grease::future::BoxFuture<'a, grease::error::RResult<Value>> {
-            grease::future::BoxFuture::new(async move {
-                grease::error::RResult::ROk(v.then(true.into_value()))
-            })
-        }
-        traits.add_generator_by_trait_for_trait::<IntoTyped<bool>>(|_traits, _type| {
-            ROption::RSome(IntoTypedImpl::<bool> {
-                into_typed: FnPtr::new(to_bool),
-                _phantom0: Default::default(),
-            })
-        });
-    }
-
 
     // () -> bool (false)
     impl IntoTyped<bool> for () {

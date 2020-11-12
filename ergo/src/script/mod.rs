@@ -170,6 +170,13 @@ mod test {
     }
 
     #[test]
+    fn forced_bindings() -> Result<(), String> {
+        script_eval_to("[a,b] = [a]", SRAny)?;
+        script_fail("![a,b] = [a]")?;
+        Ok(())
+    }
+
+    #[test]
     fn function() -> Result<(), String> {
         script_eval_to("f = fn ^_ -> a\nf something", SRString("a"))?;
         script_eval_to("second = fn _ b ^_ -> :b\nsecond a b", SRString("b"))?;
@@ -195,6 +202,13 @@ mod test {
     #[test]
     fn match_failure() -> Result<(), String> {
         script_result_fail("match {a=[1,2]} { {b} = :b, [a,b] = :b }")
+    }
+
+    #[test]
+    fn forced_match() -> Result<(), String> {
+        script_eval_to("match {a=[1,2]} { {b} = :b, [a,b] = :b }; ()", SRUnit)?;
+        script_fail("!match {a=[1,2]} { {b} = :b, [a,b] = :b }")?;
+        Ok(())
     }
 
     mod merge {

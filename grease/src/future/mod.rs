@@ -31,7 +31,7 @@ unsafe fn waker_clone(v: *const ()) -> task::RawWaker {
 }
 
 unsafe fn waker_wake(v: *const ()) {
-    let r = (v as *const RawWaker).as_ref().unwrap();
+    let r = Box::from_raw(v as *mut RawWaker);
     (r.vtable.wake)(r.data)
 }
 
@@ -49,7 +49,7 @@ const RAW_WAKER_VTABLE: task::RawWakerVTable =
     task::RawWakerVTable::new(waker_clone, waker_wake, waker_wake_by_ref, waker_drop);
 
 extern "C" fn internal_waker_clone(v: *const ()) -> RawWaker {
-    let waker = unsafe { (v as *const Option<task::Waker>).as_ref() }.expect("waker state invalid");
+    let waker = unsafe { (v as *const task::Waker).as_ref() }.expect("waker state invalid");
     RawWaker {
         data: Box::into_raw(Box::new(waker.clone())) as *const (),
         vtable: &INTERNAL_RAW_WAKER_VTABLE,
@@ -57,17 +57,17 @@ extern "C" fn internal_waker_clone(v: *const ()) -> RawWaker {
 }
 
 extern "C" fn internal_waker_wake(v: *const ()) {
-    let waker = unsafe { (v as *mut Option<task::Waker>).as_mut() }.expect("waker state invalid");
-    waker.take().expect("waker state invalid").wake()
+    let waker = unsafe { Box::from_raw(v as *mut task::Waker) };
+    waker.wake()
 }
 
 extern "C" fn internal_waker_wake_by_ref(v: *const ()) {
-    let waker = unsafe { (v as *const Option<task::Waker>).as_ref() }.expect("waker state invalid");
-    waker.as_ref().expect("waker state invalid").wake_by_ref()
+    let waker = unsafe { (v as *const task::Waker).as_ref() }.expect("waker state invalid");
+    waker.wake_by_ref()
 }
 
 extern "C" fn internal_waker_drop(v: *const ()) {
-    unsafe { Box::from_raw(v as *mut Option<task::Waker>) };
+    unsafe { Box::from_raw(v as *mut task::Waker) };
 }
 
 const INTERNAL_RAW_WAKER_VTABLE: RawWakerVTable = RawWakerVTable {
@@ -97,7 +97,7 @@ struct Context(RawWaker);
 impl From<&mut task::Context<'_>> for RawWaker {
     fn from(cx: &mut task::Context) -> Self {
         RawWaker {
-            data: Box::into_raw(Box::new(Some(cx.waker().clone()))) as *const (),
+            data: Box::into_raw(Box::new(cx.waker().clone())) as *const (),
             vtable: &INTERNAL_RAW_WAKER_VTABLE,
         }
     }
@@ -195,10 +195,9 @@ where
 impl<'a, T> future::Future for LocalBoxFuture<'a, T> {
     type Output = T;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut task::Context) -> task::Poll<Self::Output> {
-        unsafe { self.map_unchecked_mut(|s| &mut s.inner) }
-            .poll(Context(cx.into()))
-            .into()
+    fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context) -> task::Poll<Self::Output> {
+        let me = &mut *self;
+        me.inner.poll(Context(cx.into())).into()
     }
 }
 
@@ -227,8 +226,8 @@ where
     fn poll(&mut self, cx: Context) -> Poll<Self::Output> {
         let waker = unsafe { task::Waker::from_raw(cx.0.into()) };
         let mut ctx = task::Context::from_waker(&waker);
-        // Safe to use Pin::new_unchecked because these futures will _only_ be within a Box (and
-        // are moved into the box), so we guarantee that the future will not be moved out.
+        // Safe to use Pin::new_unchecked because these futures will _only_ be within a Box, so we
+        // guarantee that the future will not be moved out.
         future::Future::poll(unsafe { Pin::new_unchecked(self) }, &mut ctx).into()
     }
 }

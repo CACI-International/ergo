@@ -79,7 +79,7 @@ struct PipeSend {
     send: futures::channel::mpsc::UnboundedSender<tokio::io::Result<PipeBuf>>,
 }
 
-type PipeRecv = tokio::io::StreamReader<
+type PipeRecv = tokio_util::io::StreamReader<
     futures::stream::Fuse<futures::channel::mpsc::UnboundedReceiver<tokio::io::Result<PipeBuf>>>,
     PipeBuf,
 >;
@@ -88,7 +88,7 @@ fn pipe() -> (TokioWrapped<PipeSend>, TokioWrapped<PipeRecv>) {
     let (send, recv) = futures::channel::mpsc::unbounded::<tokio::io::Result<PipeBuf>>();
     (
         wrap(PipeSend { send }),
-        wrap(tokio::io::stream_reader(recv.fuse())),
+        wrap(tokio_util::io::StreamReader::new(recv.fuse())),
     )
 }
 
@@ -424,7 +424,9 @@ pub fn function() -> Value {
             // Only run stdin while waiting for exit status
             let exit_status = BoundTo::new(exit_status, input);
 
-            let (exit_status, _, _) = futures::future::try_join3(exit_status, output, error).await?;
+            let (exit_status, _) = ctx.task.join(exit_status, ctx.task.join(output, error)).await?;
+
+            log.debug(format!("child process exited: {:?}", command));
 
             // These pipes should be dropped here so that, if an error occurred, the recv pipes
             // terminate correctly if gathering stdout/stderr.
