@@ -92,17 +92,9 @@ Within a script, the following are defined:
 * Reduce function captures to the bare minimum.
 * Allow functions to get call-site variables? Convenient for things like
   `work-dir`.
-* Add work recording to script.
+* Add work recording to scripts.
 * Add value dependency tree print to help debug consistency issues.
 * Support `collection:map` over map values.
 * Change `path:new` to have identity based on source file and occurrence/seed
   value.
 * Deduplicate values based on identity.
-* Separate command-line interactions with workspace.ergo from fallback behavior
-  (like that which accesses `prelude`), accessing a specific key rather than
-  simply the final value?
-  * Generally translating `ergo [args...]` on the command-line to `ergo
-    [path-to-resolved-workspace.ergo-if-necessary] command [args...]`.
-  * Only for workspace.ergo?
-  * Should fallback behavior (from scripts in child directories) be behind a
-    specific key too?

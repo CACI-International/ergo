@@ -8,6 +8,8 @@
   * If the expression evaluates to a typed value, it will shallowly evaluate the
     value by content.
 * Add `if` as a syntactic operator.
+  * Now the `if` cases are conditionally evaluated, as opposed to the prior
+    function which evaluated them immediately.
 * Ensure parenthesized commands allow newlines between arguments.
 
 ## 1.0.0-beta.3  -- 2020-11-4
