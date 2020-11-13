@@ -10,6 +10,7 @@ mod io;
 mod log;
 mod net;
 mod path;
+mod script;
 mod seq;
 mod string;
 mod task;
@@ -47,6 +48,7 @@ fn entry(ctx: &mut Runtime) -> EvalResult {
         "log" = log::function(ctx),
         "net" = net::module(),
         "path" = path::module(),
+        "script" = script::module(),
         "seq" = seq::function(),
         "string" = string::module(),
         "task" = task::function(),

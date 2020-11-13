@@ -5,6 +5,8 @@
 * Add `collection:get` to index values without causing errors to occur.
   * If a key/index doesn't exist, the function returns `()`.
 * Remove `if` function as it is now a syntactic operator.
+* Add `script` module and `script:bindings` function to return a map of all
+  current bindings.
 
 ## 1.0.0-beta.3  -- 2020-11-04
 * Improve byte streams to support async io, allowing `io:stdin`, `io:stdout`,
