@@ -4,17 +4,10 @@ Language: Ergo
 function ergo_lang(hljs) {
     return {
         name: "Ergo",
-        keywords: "fn match",
+        keywords: "fn match if",
         contains: [
             hljs.COMMENT(/#/, /$/),
             hljs.QUOTE_STRING_MODE,
-            /*
-            {
-                className: 'string',
-                begin: /"/,
-                end: /"/
-            },
-            */
             {
                 className: 'type',
                 begin: /(:|\^)/

@@ -6,8 +6,6 @@ mod env;
 mod error;
 mod exec;
 mod fs;
-#[path = "if.rs"]
-mod if_;
 mod io;
 mod log;
 mod net;
@@ -45,7 +43,6 @@ fn entry(ctx: &mut Runtime) -> EvalResult {
         "error" = error::module(),
         "exec" = exec::function(),
         "fs" = fs::module(),
-        "if" = if_::function(),
         "io" = io::module(),
         "log" = log::function(ctx),
         "net" = net::module(),

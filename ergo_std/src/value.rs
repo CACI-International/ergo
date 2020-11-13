@@ -7,21 +7,21 @@ use grease::{depends, item_name, value::Value};
 
 pub fn module() -> Value {
     crate::grease_string_map! {
+        "by-content" = by_content_fn(true),
         "cache" = cache_fn(),
         "debug" = debug_fn(),
-        "by-content" = by_content_fn(),
         "variable" = variable_fn()
     }
 }
 
-fn by_content_fn() -> Value {
+fn by_content_fn(deep: bool) -> Value {
     ergo_function!(independent std::value::force, |ctx| {
         let val = ctx.args.next().ok_or("value not provided")?;
 
         ctx.unused_arguments()?;
 
         let (source, val) = val.take();
-        let val = ctx.value_by_content(val, true);
+        let val = ctx.value_by_content(val, deep);
         val.await.map_err(move |e| source.with(e).into_grease_error())?
     })
     .into()

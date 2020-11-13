@@ -1724,8 +1724,17 @@ impl Rt<Expression> {
                 }
                 let pats = ps;
 
-                let deps = depends![*val, ^pat_deps];
-                // TODO pre-compile expressions in match and functions
+                let env = ctx.env_flatten();
+                let mut env_deps = grease::value::Dependencies::default();
+                for (k,v) in env.iter() {
+                    env_deps += depends![*k];
+                    if let RResult::ROk(v) = v {
+                        env_deps += depends![**v];
+                    }
+                }
+
+                let deps = depends![*val, ^pat_deps, ^env_deps];
+                // TODO pre-compile expressions in match, fn, and if
                 let mut ctx = ctx.clone();
                 Ok(Value::dyn_new(async move {
                     for (p, e) in pats {
@@ -1740,6 +1749,38 @@ impl Rt<Expression> {
                     }
 
                     Err(val.source().with(Error::MatchFailed(val.unwrap())).into())
+                }, deps))
+            }
+            If(cond, if_true, if_false) => {
+                let cond = Rt(*cond).evaluate(ctx).await?;
+                let if_true = *if_true;
+                let if_false = if_false.map(|v| *v);
+
+                let to_sourced = ctx.into_sourced::<bool>(cond);
+                let cond = to_sourced.await?.unwrap();
+
+                let env = ctx.env_flatten();
+                let mut env_deps = grease::value::Dependencies::default();
+                for (k,v) in env.iter() {
+                    env_deps += depends![*k];
+                    if let RResult::ROk(v) = v {
+                        env_deps += depends![**v];
+                    }
+                }
+
+                let deps = depends![cond, if_true, if_false, ^env_deps];
+
+                let mut ctx = ctx.clone();
+                Ok(Value::dyn_new(async move {
+                    let c = cond.await?;
+                    Ok(if *c.as_ref() {
+                        Rt(if_true).evaluate(&mut ctx).await?.unwrap().into_any_value()
+                    } else {
+                        match if_false {
+                            Some(e) => Rt(e).evaluate(&mut ctx).await?.unwrap().into_any_value(),
+                            None => ().into_value().into_any_value()
+                        }
+                    })
                 }, deps))
             }
             Force(val) => {

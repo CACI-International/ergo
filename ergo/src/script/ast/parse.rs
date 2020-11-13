@@ -137,14 +137,23 @@ mod expression {
         }
     }
 
+    fn optional_forced<'a>(inner: Parser<'a, Expr>) -> Parser<'a, Expr> {
+        (sym(Token::Bang).opt() + inner).map(|(b, i)| match b {
+            None => i,
+            Some(b) => (b, i)
+                .into_source()
+                .map(|(_, i)| Expression::Force(i.into())),
+        })
+    }
+
     /// An expression in argument position (words are interpreted as strings rather than as commands).
     pub fn arg<'a>() -> Parser<'a, Expr> {
-        call(|| index(true, true)).cache()
+        call(|| optional_forced(index(true, true))).cache()
     }
 
     /// Same as `arg`, but not allowing = in strings.
     pub fn arg_no_eq<'a>() -> Parser<'a, Expr> {
-        call(|| index(true, false)).cache()
+        call(|| optional_forced(index(true, false))).cache()
     }
 
     fn arg_no_index<'a>(eq_allowed: bool) -> Parser<'a, Expr> {
@@ -183,8 +192,10 @@ mod expression {
     }
 
     /// Get command arguments.
-    fn command_args<'a>() -> Parser<'a, CommandArgs> {
-        (merge_with(arg()) + (req_space() * merge_with(arg())).repeat(0..))
+    fn command_args<'a>(literal: bool) -> Parser<'a, CommandArgs> {
+        let space = if literal { req_space() } else { req_spacenl() };
+
+        (merge_with(arg()) + (space * merge_with(arg())).repeat(0..))
             .map(|(first, rest)| CommandArgs::new(first, rest))
             .cache()
     }
@@ -240,9 +251,12 @@ mod expression {
     fn command_pipes<'a>(literal: bool) -> Parser<'a, Expr> {
         const MERGE_EXPR_ERROR: &'static str = "cannot begin a command with a merge expression";
 
-        fn backward_pipes<'a>() -> Parser<'a, CommandArgs> {
-            (command_args()
-                + (space() * sym(Token::PipeLeft) * spacenl() * command_args()).repeat(0..))
+        let m_space = || if literal { space() } else { spacenl() };
+
+        let backward_pipes = || {
+            (command_args(literal)
+                + (m_space() * sym(Token::PipeLeft) * spacenl() * command_args(literal))
+                    .repeat(0..))
             .convert(|(first, rest)| {
                 if rest.is_empty() {
                     Ok(first)
@@ -256,10 +270,10 @@ mod expression {
                     .ok_or(MERGE_EXPR_ERROR)
                 }
             })
-        }
+        };
 
         let forward_pipes = (backward_pipes()
-            + (space() * one_of([Token::Pipe, Token::PipeRight].as_ref())
+            + (m_space() * one_of([Token::Pipe, Token::PipeRight].as_ref())
                 + spacenl_present()
                 + backward_pipes())
             .repeat(0..))
@@ -331,11 +345,13 @@ mod expression {
     }
 
     /// A function expression.
-    fn function<'a>() -> Parser<'a, Expr> {
+    fn function<'a>(literal: bool) -> Parser<'a, Expr> {
+        let m_space = || if literal { space() } else { spacenl() };
+        let m_req_space = || if literal { req_space() } else { req_spacenl() };
         let tok = tag("fn");
         let end_tok = function_delim();
-        let pat = req_space() * pattern::command_pattern() - space() - end_tok;
-        let rest = space() * expression(true);
+        let pat = m_req_space() * pattern::command_pattern() - m_space() - end_tok;
+        let rest = m_space() * expression(true);
         (tok + pat + rest.expect("fn argument")).map(|res| {
             let p = res.into_source();
             p.map(|(pat, e)| {
@@ -346,16 +362,34 @@ mod expression {
     }
 
     /// A match expression.
-    fn match_expr<'a>() -> Parser<'a, Expr> {
+    fn match_expr<'a>(literal: bool) -> Parser<'a, Expr> {
+        let m_space = || if literal { req_space() } else { req_spacenl() };
         let tok = tag("match");
         let item = pattern::pattern() - space() - sym(Token::Equal) - space() + expression(true);
-        let rest = req_space() * arg() - spacenl() + block_syntax(item);
+        let rest = m_space() * arg() - spacenl() + block_syntax(item);
         (tok + rest.expect("match arguments")).map(|res| {
             res.into_source().map(|(_, vs)| {
                 let (val, pats) = vs.unwrap();
                 Expression::Match(
                     val.into(),
                     pats.unwrap().into_iter().map(Source::unwrap).collect(),
+                )
+            })
+        })
+    }
+
+    /// An if expression.
+    fn if_expr<'a>(literal: bool) -> Parser<'a, Expr> {
+        let m_space = || if literal { space() } else { spacenl() };
+        let tok = tag("if");
+        (tok - m_space() + arg() - m_space() + arg() - m_space() + arg().opt()).map(|v| {
+            v.into_source().map(|(r, if_false)| {
+                let (r, if_true) = r.unwrap();
+                let (_, cond) = r.unwrap();
+                Expression::If(
+                    cond.into(),
+                    if_true.into(),
+                    if_false.unwrap().map(Box::from),
                 )
             })
         })
@@ -403,18 +437,19 @@ mod expression {
     }
 
     pub fn force_expr<'a>() -> Parser<'a, Expr> {
-        (sym(Token::Bang) - space() + expression(false))
+        (sym(Token::Bang) - space() + expression(true))
             .map(|e| e.into_source().map(|(_, e)| Expression::Force(e.into())))
     }
 
     /// Expressions with an opening keyword.
-    pub fn kw_expr<'a>() -> Parser<'a, Expr> {
-        function() | match_expr()
+    pub fn kw_expr<'a>(literal: bool) -> Parser<'a, Expr> {
+        function(literal) | match_expr(literal) | if_expr(literal)
     }
 
     /// A single expression.
     pub fn expression<'a>(literal: bool) -> Parser<'a, Expr> {
-        call(move || force_expr() | kw_expr() | set() | unset() | command_pipes(literal)).cache()
+        call(move || force_expr() | kw_expr(literal) | set() | unset() | command_pipes(literal))
+            .cache()
     }
 }
 
@@ -471,6 +506,13 @@ fn req_space<'a>() -> Parser<'a, ()> {
     sym(Token::Whitespace).discard()
 }
 
+/// One or more whitespace characters, including newlines.
+fn req_spacenl<'a>() -> Parser<'a, ()> {
+    one_of([Token::Newline, Token::Whitespace].as_ref())
+        .repeat(1..)
+        .discard()
+}
+
 /// An optional whitespace.
 fn space<'a>() -> Parser<'a, ()> {
     sym(Token::Whitespace).opt().discard()
@@ -512,6 +554,27 @@ mod test {
         Source::new(NoSource).with(e)
     }
 
+    fn assert_parse_fail<T: std::fmt::Debug>(
+        s: &[Token],
+        parser: impl for<'a> FnOnce(std::marker::PhantomData<&'a ()>) -> Parser<'a, T>,
+    ) -> Result {
+        let src = Source::new(NoSource);
+        let toks: Vec<_> = s
+            .into_iter()
+            .cloned()
+            .map(|tok| src.clone().with(tok))
+            .collect();
+        let p = parser(std::marker::PhantomData) - pom::parser::end();
+        match p.parse(&toks) {
+            Err(_) => Ok(()),
+            Ok(v) => Err(pom::Error::Custom {
+                message: format!("parsing should have failed, got {:?}", v),
+                position: 0,
+                inner: None,
+            }),
+        }
+    }
+
     fn assert_parse<T: PartialEq<I> + std::fmt::Debug, I>(
         s: &[Token],
         parser: impl for<'a> FnOnce(std::marker::PhantomData<&'a ()>) -> Parser<'a, T>,
@@ -523,7 +586,7 @@ mod test {
             .cloned()
             .map(|tok| src.clone().with(tok))
             .collect();
-        let r = parser(std::marker::PhantomData).parse(&toks)?;
+        let r = (parser(std::marker::PhantomData) - pom::parser::end()).parse(&toks)?;
         dbg!(&r);
         assert!(r == expected);
         Ok(())
@@ -730,6 +793,39 @@ mod test {
         }
 
         #[test]
+        fn command_newlines() -> Result {
+            assert_parse_fail(
+                &[
+                    String("f".into()),
+                    Whitespace,
+                    String("a".into()),
+                    Newline,
+                    String("b".into()),
+                ],
+                |_| expression(true),
+            )?;
+            assert(
+                &[
+                    OpenParen,
+                    String("f".into()),
+                    Whitespace,
+                    String("a".into()),
+                    Newline,
+                    String("b".into()),
+                    CloseParen,
+                ],
+                Expression::Command(
+                    src(Expression::String("f".into())).into(),
+                    vec![
+                        nomerge(Expression::String("a".into())),
+                        nomerge(Expression::String("b".into())),
+                    ],
+                ),
+            )?;
+            Ok(())
+        }
+
+        #[test]
         fn force_command() -> Result {
             assert(
                 &[
@@ -763,6 +859,28 @@ mod test {
                 ),
             )?;
             Ok(())
+        }
+
+        #[test]
+        fn force_arg() -> Result {
+            assert(
+                &[
+                    String("echo".into()),
+                    Whitespace,
+                    Bang,
+                    Colon,
+                    String("howdy".into()),
+                ],
+                Expression::Command(
+                    Box::new(src(Expression::String("echo".to_owned()))),
+                    vec![nomerge(Expression::Force(
+                        src(Expression::Get(
+                            src(Expression::String("howdy".into())).into(),
+                        ))
+                        .into(),
+                    ))],
+                ),
+            )
         }
 
         #[test]
@@ -1196,6 +1314,41 @@ mod test {
                     src(Expression::String("howdy".into())).into(),
                 ),
             )
+        }
+
+        #[test]
+        fn if_expr() -> Result {
+            assert(
+                &[
+                    String("if".into()),
+                    Whitespace,
+                    String("a".into()),
+                    Whitespace,
+                    String("b".into()),
+                    Whitespace,
+                    String("c".into()),
+                ],
+                Expression::If(
+                    src(Expression::String("a".into())).into(),
+                    src(Expression::String("b".into())).into(),
+                    Some(src(Expression::String("c".into())).into()),
+                ),
+            )?;
+            assert(
+                &[
+                    String("if".into()),
+                    Whitespace,
+                    String("a".into()),
+                    Whitespace,
+                    String("b".into()),
+                ],
+                Expression::If(
+                    src(Expression::String("a".into())).into(),
+                    src(Expression::String("b".into())).into(),
+                    None,
+                ),
+            )?;
+            Ok(())
         }
 
         #[test]

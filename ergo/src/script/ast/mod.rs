@@ -19,6 +19,7 @@ pub enum Expression {
     Block(Exprs),
     Function(CmdPat, Box<Expr>),
     Match(Box<Expr>, Vec<(Pat, Expr)>),
+    If(Box<Expr>, Box<Expr>, Option<Box<Expr>>),
     Force(Box<Expr>),
 }
 
