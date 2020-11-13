@@ -1,13 +1,15 @@
 //! The AST definition for script files.
 
 use ergo_runtime::source::*;
+use ergo_runtime::EvalResult;
+use grease::depends;
 use std::fmt;
 
 mod parse;
 mod tokenize;
 
 /// A parsed expression.
-#[derive(Clone, Debug, Hash, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Expression {
     Empty,
     String(String),
@@ -21,10 +23,16 @@ pub enum Expression {
     Match(Box<Expr>, Vec<(Pat, Expr)>),
     If(Box<Expr>, Box<Expr>, Option<Box<Expr>>),
     Force(Box<Expr>),
+    Compiled(CompiledExpression),
+}
+
+#[derive(Clone, Debug)]
+pub struct CompiledExpression {
+    pub value: EvalResult,
 }
 
 /// A parsed pattern.
-#[derive(Clone, Debug, Hash, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Pattern<Lit, Bnd> {
     Any,
     Literal(Lit),
@@ -33,13 +41,13 @@ pub enum Pattern<Lit, Bnd> {
     Map(Vec<Source<MapPattern<Lit, Bnd>>>),
 }
 
-#[derive(Clone, Debug, Hash, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ArrayPattern<Lit, Bnd> {
     Item(PatT<Lit, Bnd>),
     Rest(PatT<Lit, Bnd>),
 }
 
-#[derive(Clone, Debug, Hash, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MapPattern<Lit, Bnd> {
     Item(Bnd, PatT<Lit, Bnd>),
     Rest(PatT<Lit, Bnd>),
@@ -54,7 +62,7 @@ pub type Pat = PatT<Expr, Expr>;
 ///
 /// A merge expression is an expression with a merge parameter. The parameter indicates whether the
 /// contents of the value should be merged into the parent expression.
-#[derive(Clone, Debug, Hash, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MergeExpression {
     pub merge: bool,
     pub expr: Expr,
@@ -80,6 +88,166 @@ pub type Exprs = Vec<MergeExpr>;
 
 /// A parsed script.
 pub type Script = Source<Exprs>;
+
+/// Get Dependencies of the expression.
+///
+/// This takes into account the expression structure.
+pub fn expr_dependencies(e: &Expr) -> grease::value::Dependencies {
+    use Expression::*;
+    let mut deps = depends![std::mem::discriminant(e)];
+
+    pub fn pat_deps(pat: &Pat) -> grease::value::Dependencies {
+        pattern_dependencies(pat, expr_dependencies, expr_dependencies)
+    }
+
+    match e.as_ref().unwrap() {
+        Empty => (),
+        String(s) => {
+            deps += depends![s];
+        }
+        Array(es) => {
+            for e in es {
+                deps += depends![e.merge] + expr_dependencies(&e.expr);
+            }
+        }
+        Set(pat, e) => {
+            deps += pat_deps(pat) + expr_dependencies(e);
+        }
+        Unset(e) => {
+            deps += expr_dependencies(e);
+        }
+        Get(e) => {
+            deps += expr_dependencies(e);
+        }
+        Command(cmd, args) => {
+            deps += expr_dependencies(cmd);
+            for a in args {
+                deps += depends![a.merge] + expr_dependencies(&a.expr);
+            }
+        }
+        Block(es) => {
+            for e in es {
+                deps += depends![e.merge] + expr_dependencies(&e.expr);
+            }
+        }
+        Function(pat, e) => {
+            for p in pat.as_ref().unwrap() {
+                let p = p.as_ref().unwrap();
+                deps += depends![std::mem::discriminant(p)];
+                match p {
+                    ArrayPattern::Item(p) => deps += pat_deps(p),
+                    ArrayPattern::Rest(p) => deps += pat_deps(p),
+                }
+            }
+
+            deps += expr_dependencies(e);
+        }
+        Match(e, pats) => {
+            deps += expr_dependencies(e);
+            for (p, e) in pats {
+                deps += pat_deps(p) + expr_dependencies(e);
+            }
+        }
+        If(cond, t, f) => {
+            deps += expr_dependencies(cond)
+                + expr_dependencies(t)
+                + depends![std::mem::discriminant(f)];
+            if let Some(f) = f {
+                deps += expr_dependencies(f);
+            }
+        }
+        Force(e) => {
+            deps += expr_dependencies(e);
+        }
+        Compiled(CompiledExpression { value }) => match value {
+            Ok(v) => deps += depends![**v],
+            Err(_) => (),
+        },
+    }
+
+    deps
+}
+
+/// Get Dependencies of the pattern.
+///
+/// This takes into account the pattern structure.
+pub fn pattern_dependencies<L, B, LF, BF>(
+    pat: &PatT<L, B>,
+    literal_deps: LF,
+    binding_deps: BF,
+) -> grease::value::Dependencies
+where
+    LF: Fn(&L) -> grease::value::Dependencies + Copy,
+    BF: Fn(&B) -> grease::value::Dependencies + Copy,
+{
+    use Pattern::*;
+    let mut deps = depends![std::mem::discriminant(pat)];
+    match pat.as_ref().unwrap() {
+        Any => (),
+        Literal(l) => deps += literal_deps(l),
+        Binding(b) => deps += binding_deps(b),
+        Array(pats) => {
+            for p in pats {
+                let p = p.as_ref().unwrap();
+                deps += depends![std::mem::discriminant(p)];
+                match p {
+                    ArrayPattern::Item(p) => {
+                        deps += pattern_dependencies(p, literal_deps, binding_deps)
+                    }
+                    ArrayPattern::Rest(p) => {
+                        deps += pattern_dependencies(p, literal_deps, binding_deps)
+                    }
+                }
+            }
+        }
+        Map(pats) => {
+            for p in pats {
+                let p = p.as_ref().unwrap();
+                deps += depends![std::mem::discriminant(p)];
+                match p {
+                    MapPattern::Item(_, p) => {
+                        deps += pattern_dependencies(p, literal_deps, binding_deps)
+                    }
+                    MapPattern::Rest(p) => {
+                        deps += pattern_dependencies(p, literal_deps, binding_deps)
+                    }
+                }
+            }
+        }
+    }
+    deps
+}
+
+impl Ord for CompiledExpression {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match (&self.value, &other.value) {
+            (Ok(a), Ok(b)) => a.cmp(b),
+            (Ok(_), Err(_)) => std::cmp::Ordering::Less,
+            (Err(_), Ok(_)) => std::cmp::Ordering::Greater,
+            (Err(_), Err(_)) => std::cmp::Ordering::Equal,
+        }
+    }
+}
+
+impl PartialOrd for CompiledExpression {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for CompiledExpression {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == std::cmp::Ordering::Equal
+    }
+}
+
+impl Eq for CompiledExpression {}
+
+impl From<EvalResult> for CompiledExpression {
+    fn from(value: EvalResult) -> Self {
+        CompiledExpression { value }
+    }
+}
 
 /// A script loading error.
 #[derive(Debug)]

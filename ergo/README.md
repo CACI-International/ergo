@@ -89,7 +89,6 @@ Within a script, the following are defined:
   * This has been added but child programs still capture the signal, need to
     change the process group to prevent this.
 * Persist command timing information for better estimates.
-* Reduce function captures to the bare minimum.
 * Allow functions to get call-site variables? Convenient for things like
   `work-dir`.
 * Add work recording to scripts.

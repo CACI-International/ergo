@@ -183,7 +183,24 @@ mod test {
         script_eval_to(
             "f = fn a _ b ^_ -> {\n  a = :a\n  b = :b\n}\nf 1 2 3",
             SRMap(&[("a", SRString("1")), ("b", SRString("3"))]),
-        )
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn function_capture() -> Result<(), String> {
+        script_eval_to("f = { a = 100; fn -> :a }; a = 5; (f)", SRString("100"))?;
+        script_fail("f = fn -> :b")?;
+        script_eval_to(
+            "f = fn a -> { b = [:a,something]; fn -> {b,a} }; ((f hi))",
+            SRMap(&[
+                ("b", SRArray(&[SRString("hi"), SRString("something")])),
+                ("a", SRString("hi")),
+            ]),
+        )?;
+        script_eval_to("a = 5; :a = 10; f = fn -> ::a; (f)", SRString("10"))?;
+        script_fail("a = 5; :a = 10; f = fn -> b = 4; ::b")?;
+        Ok(())
     }
 
     #[test]
@@ -208,6 +225,14 @@ mod test {
     fn forced_match() -> Result<(), String> {
         script_eval_to("match {a=[1,2]} { {b} = :b, [a,b] = :b }; ()", SRUnit)?;
         script_fail("!match {a=[1,2]} { {b} = :b, [a,b] = :b }")?;
+        Ok(())
+    }
+
+    #[test]
+    fn if_expr() -> Result<(), String> {
+        script_eval_to("t = 1; f = 2; if () :t :f", SRString("2"))?;
+        script_eval_to("t = 1; f = 2; if something :t :f", SRString("1"))?;
+        script_eval_to("t = 1; f = 2; if () :t", SRUnit)?;
         Ok(())
     }
 

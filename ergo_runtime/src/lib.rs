@@ -81,7 +81,7 @@ pub struct Runtime {
     /// clearing the environment when loading separate scripts easier.
     global_env: ScriptEnv,
     env: RVec<ScriptEnv>,
-    pub loading: RVec<PathBuf>,
+    pub loading: RArc<RMutex<RVec<PathBuf>>>,
     pub load_cache: RArc<RMutex<BstMap<PathBuf, EvalResultAbi>>>,
     pub lint: bool,
     lifetime: RArc<RMutex<RVec<Erased>>>,
@@ -173,7 +173,7 @@ impl Runtime {
             context,
             global_env,
             env: Default::default(),
-            loading: Default::default(),
+            loading: RArc::new(RMutex::new(Default::default())),
             load_cache: RArc::new(RMutex::new(Default::default())),
             lint: false,
             lifetime: RArc::new(RMutex::new(Default::default())),
@@ -263,6 +263,21 @@ impl Runtime {
     pub fn clear_env(&mut self) {
         self.global_env.clear();
         self.env.clear();
+    }
+
+    /// Clear the local environment in a new copy of the runtime to be used in
+    /// a delayed context.
+    pub fn delayed(&self) -> Self {
+        Runtime {
+            context: self.context.clone(),
+            global_env: self.global_env.clone(),
+            env: Default::default(),
+            loading: self.loading.clone(),
+            load_cache: self.load_cache.clone(),
+            lint: self.lint,
+            lifetime: self.lifetime.clone(),
+            keyed_lifetime: self.keyed_lifetime.clone(),
+        }
     }
 }
 

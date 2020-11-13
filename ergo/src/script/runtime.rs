@@ -5,7 +5,8 @@
 //! useful error information can be provided.
 
 use super::ast::{
-    ArrayPattern, CmdPatT, Expr, Expression, MapPattern, MergeExpression, Pat, PatT, Pattern,
+    expr_dependencies, pattern_dependencies, ArrayPattern, CmdPatT, CompiledExpression, Expr,
+    Expression, MapPattern, MergeExpression, Pat, PatT, Pattern,
 };
 use crate::constants::{
     app_dirs, LOAD_PATH_BINDING, SCRIPT_DIR_NAME, SCRIPT_EXTENSION, SCRIPT_PATH_BINDING,
@@ -29,7 +30,7 @@ use grease::{
 };
 use libloading as dl;
 use log::{debug, trace};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path;
 use std::str::FromStr;
@@ -312,7 +313,7 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
 
         let mut was_loading = false;
         let to_load = to_load.and_then(|p| {
-            for l_path in ctx.loading.iter() {
+            for l_path in ctx.loading.lock().iter() {
                 if l_path.as_ref() == p {
                     was_loading = true;
                     break;
@@ -344,7 +345,7 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                         // Exclude path from loading in nested calls.
                         // This should be done prior to prelude loading in the case where we are loading the
                         // prelude.
-                        ctx.loading.push(PathBuf::from(p.clone()));
+                        ctx.loading.lock().push(PathBuf::from(p.clone()));
                     }
                     ret
                 };
@@ -364,7 +365,7 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                             // Find ancestor workspace, if any, and use it to get the prelude.
                             if let Some(p) = mod_path.ancestors().find_map(script_path_exists(SCRIPT_WORKSPACE_NAME, false)) {
                                 // If ancestor workspace is already being loaded, do not load the prelude.
-                                if ctx.loading.iter().any(|o| o.as_ref() == p) {
+                                if ctx.loading.lock().iter().any(|o| o.as_ref() == p) {
                                     None
                                 } else {
                                     let call_site = ctx.call_site.clone();
@@ -393,7 +394,7 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                                     let ws = match fctx.env_scoped(env, load_script).await.0 {
                                         Ok(ws) => ws,
                                         Err(e) => {
-                                                ctx.loading.pop();
+                                                ctx.loading.lock().pop();
                                                 return Err(source.with("while running 'ergo [workspace] prelude' to load script").context_for_error(e));
                                         }
                                     };
@@ -473,7 +474,7 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                         let cache = ctx.load_cache.clone();
                         let mut cache = cache.lock();
                         cache.insert(PathBuf::from(p.clone()), result.clone());
-                        ctx.loading.pop();
+                        ctx.loading.lock().pop();
                         result
                     }
                     Some(v) => v,
@@ -685,37 +686,18 @@ impl PatternValues {
 type PatCompiled = PatT<grease::value::Id, EvalResult>;
 
 /// Get dependencies suitable for PatCompiled.
-fn pattern_dependencies(pat: &PatCompiled) -> grease::value::Dependencies {
-    use Pattern::*;
-    let mut deps = depends![std::mem::discriminant(pat)];
-    match pat.as_ref().unwrap() {
-        Literal(id) => deps += depends![id],
-        Array(pats) => {
-            for p in pats {
-                let p = p.as_ref().unwrap();
-                deps += depends![std::mem::discriminant(p)];
-                match p {
-                    ArrayPattern::Item(p) => deps += pattern_dependencies(p),
-                    ArrayPattern::Rest(p) => deps += pattern_dependencies(p),
-                }
-            }
-        }
-        Map(pats) => {
-            for p in pats {
-                let p = p.as_ref().unwrap();
-                deps += depends![std::mem::discriminant(p)];
-                match p {
-                    MapPattern::Item(_, p) => deps += pattern_dependencies(p),
-                    MapPattern::Rest(p) => deps += pattern_dependencies(p),
-                }
-            }
-        }
-        _ => (),
-    }
-    deps
+fn pattern_dependencies_comp(pat: &PatCompiled) -> grease::value::Dependencies {
+    pattern_dependencies(
+        pat,
+        |id| depends![id],
+        |e| match e {
+            Ok(v) => depends![**v],
+            Err(_) => depends![],
+        },
+    )
 }
 
-/// Get all bindings in a pattern.
+/// Get all bindings in a compiled pattern.
 ///
 /// The returned tuple contains the binding key and a value appropriate to use as a dependency of
 /// the binding position within the pattern.
@@ -753,6 +735,37 @@ fn pattern_bindings(pat: &PatCompiled) -> Vec<(Source<Value>, grease::value::Dep
                             p,
                             deps.clone() + depends![ergo_runtime::namespace_id!(ergo::rest)],
                         )),
+                    }
+                }
+            }
+            _ => (),
+        }
+    }
+
+    bindings
+}
+
+/// Get all bindings in a pattern.
+fn pattern_bindings_basic<L, B: Clone>(pat: &PatT<L, B>) -> Vec<Source<B>> {
+    let mut bindings: Vec<Source<B>> = Vec::new();
+    let mut remaining = vec![pat];
+    while let Some(pat) = remaining.pop() {
+        use Pattern::*;
+        match pat.as_ref().unwrap() {
+            Binding(v) => bindings.push(pat.source().with(v.clone())),
+            Array(pats) => {
+                for p in pats {
+                    match p.as_ref().unwrap() {
+                        ArrayPattern::Item(p) => remaining.push(p),
+                        ArrayPattern::Rest(p) => remaining.push(p),
+                    }
+                }
+            }
+            Map(pats) => {
+                for p in pats {
+                    match p.as_ref().unwrap() {
+                        MapPattern::Item(_, p) => remaining.push(p),
+                        MapPattern::Rest(p) => remaining.push(p),
                     }
                 }
             }
@@ -1448,6 +1461,284 @@ pub fn apply_value(
     .boxed()
 }
 
+/// Compiles environment accesses into the expression.
+fn compile_env_into_expr(ctx: &mut Runtime, local_env: Vec<Expr>, expr: Expr) -> EResult<Expr> {
+    type LocalEnv = BTreeSet<Expr>;
+
+    struct Ctx<'a> {
+        ctx: &'a mut Runtime,
+        local_env: Vec<LocalEnv>,
+    }
+
+    impl<'a> Ctx<'a> {
+        pub fn new(ctx: &'a mut Runtime) -> Self {
+            Ctx {
+                ctx,
+                local_env: vec![Default::default()],
+            }
+        }
+
+        /// Get the current scoped environment.
+        fn env_current(&mut self) -> &mut LocalEnv {
+            self.local_env
+                .last_mut()
+                .expect("invalid env access; no environment stack")
+        }
+
+        /// Insert a binding into the current scoped environment.
+        pub fn env_insert(&mut self, e: Expr) {
+            self.env_current().insert(e);
+        }
+
+        /// Remove a binding from the current scoped environment.
+        pub fn env_remove(&mut self, e: &Expr) {
+            self.env_current().remove(e);
+        }
+
+        /// Get a binding from the current environment.
+        pub fn env_get(
+            &'a self,
+            e: &'a Expr,
+        ) -> EResult<Option<std::result::Result<&'a Source<Value>, &'a grease::Error>>> {
+            if self.local_env.iter().rev().any(|m| m.contains(e)) {
+                Ok(None)
+            } else if let Expression::Compiled(v) = e.as_ref().unwrap() {
+                match &v.value {
+                    Ok(v) => self.ctx.env_get(v).map(|v| Ok(Some(v))).unwrap_or_else(|| {
+                        Err(Error::MissingBinding(v.as_ref().unwrap().clone()).into())
+                    }),
+                    Err(e) => Ok(Some(Err(e))),
+                }
+            } else {
+                Err(Error::MissingBinding(().into_value().into()).into())
+            }
+        }
+
+        /// Call the given function in a new, scoped environment.
+        pub fn env_scoped<F, R>(&mut self, f: F) -> R
+        where
+            F: FnOnce(&mut Self) -> R,
+        {
+            self.local_env.push(Default::default());
+            let r = f(self);
+            self.local_env.pop();
+            r
+        }
+    }
+
+    fn do_expr(ctx: &mut Ctx, expr: Expr) -> EResult<Expr> {
+        do_expr_ext(ctx, expr, false)
+    }
+
+    fn do_expr_ext(ctx: &mut Ctx, expr: Expr, ignore_string_env_match: bool) -> EResult<Expr> {
+        use Expression::*;
+        let src = expr.source();
+        expr.map(move |e| {
+            Ok(match e {
+                Empty => Compiled(Ok(src.with(().into_value().into())).into()),
+                Expression::String(s) => {
+                    let s: Value = types::String::from(s).into();
+                    let ret = Compiled(Ok(src.clone().with(s)).into());
+
+                    if let (true, Ok(Some(_))) = (
+                        ctx.ctx.lint && !ignore_string_env_match,
+                        ctx.env_get(&src.clone().with(ret.clone())),
+                    ) {
+                        ctx.ctx.log.warn(format!(
+                            "{}",
+                            src.with(
+                                "string literal matches a binding in scope; did you mean to index?"
+                            )
+                        ));
+                    }
+                    ret
+                }
+                Array(es) => Array(
+                    es.into_iter()
+                        .map(|mut me| {
+                            me.expr = do_expr(ctx, me.expr.clone())?;
+                            Ok(me)
+                        })
+                        .collect_result()?,
+                ),
+                Set(pat, e) => {
+                    let pat = do_pat(ctx, *pat)?;
+                    let expr = do_expr(ctx, *e)?;
+                    for b in pattern_bindings_basic(&pat) {
+                        ctx.env_insert(b.unwrap());
+                    }
+                    Set(pat.into(), expr.into())
+                }
+                Unset(var) => {
+                    let var = do_expr(ctx, *var)?;
+                    ctx.env_remove(&var);
+                    Unset(var.into())
+                }
+                Get(var) => {
+                    let var = do_expr_ext(ctx, *var, true)?;
+
+                    let new_var = ctx.env_get(&var)?;
+
+                    match new_var {
+                        None => Get(var.into()),
+                        Some(v) => Compiled(v.map(|o| o.clone()).map_err(|e| e.clone()).into()),
+                    }
+                }
+                Command(cmd, args) => {
+                    let cmd = {
+                        let new_cmd = do_expr_ext(ctx, *cmd, true)?;
+                        if let Compiled(CompiledExpression { value: Ok(v) }) =
+                            new_cmd.as_ref().unwrap()
+                        {
+                            if v.grease_type_immediate() == Some(&types::String::grease_type()) {
+                                if let Some(value) = ctx.env_get(&new_cmd)? {
+                                    new_cmd.source().with(Compiled(
+                                        value.map(|v| v.clone()).map_err(|e| e.clone()).into(),
+                                    ))
+                                } else {
+                                    new_cmd
+                                }
+                            } else {
+                                new_cmd
+                            }
+                        } else {
+                            new_cmd
+                        }
+                    };
+                    let args = args
+                        .into_iter()
+                        .map(|mut me| {
+                            me.expr = do_expr(ctx, me.expr.clone())?;
+                            Ok(me)
+                        })
+                        .collect_result()?;
+                    Command(cmd.into(), args)
+                }
+                Block(es) => ctx
+                    .env_scoped(|ctx| {
+                        Ok(Block(
+                            es.into_iter()
+                                .map(|mut me| {
+                                    me.expr = do_expr(ctx, me.expr.clone())?;
+                                    Ok(me)
+                                })
+                                .collect_result()?,
+                        ))
+                    })
+                    .map_err(|e: grease::Error| e)?,
+                Function(pat, e) => {
+                    let pat = pat
+                        .map(|ps| {
+                            ps.into_iter()
+                                .map(|sap| {
+                                    sap.map(|ap| {
+                                        Ok(match ap {
+                                            ArrayPattern::Item(p) => {
+                                                ArrayPattern::Item(do_pat(ctx, p)?)
+                                            }
+                                            ArrayPattern::Rest(p) => {
+                                                ArrayPattern::Rest(do_pat(ctx, p)?)
+                                            }
+                                        })
+                                    })
+                                    .transpose_ok()
+                                })
+                                .collect_result::<Vec<_>>()
+                        })
+                        .transpose_ok()?;
+                    // Aggregate all bindings to be added to the local env.
+                    let mut binds = Vec::new();
+                    for p in pat.iter() {
+                        match p.as_ref().unwrap() {
+                            ArrayPattern::Item(p) => binds.extend(pattern_bindings_basic(p)),
+                            ArrayPattern::Rest(p) => binds.extend(pattern_bindings_basic(p)),
+                        }
+                    }
+                    let e = ctx.env_scoped(move |ctx| {
+                        for b in binds {
+                            ctx.env_insert(b.unwrap());
+                        }
+                        ctx.env_scoped(move |ctx| do_expr(ctx, *e))
+                    })?;
+                    Function(pat, e.into())
+                }
+                Match(val, pats) => {
+                    let val = do_expr(ctx, *val)?;
+                    let pats = pats
+                        .into_iter()
+                        .map(|(p, e)| {
+                            let p = do_pat(ctx, p)?;
+                            let binds = pattern_bindings_basic(&p);
+                            let e = ctx.env_scoped(move |ctx| {
+                                for b in binds {
+                                    ctx.env_insert(b.unwrap());
+                                }
+                                ctx.env_scoped(move |ctx| do_expr(ctx, e))
+                            })?;
+                            Ok((p, e))
+                        })
+                        .collect_result()?;
+                    Match(val.into(), pats)
+                }
+                If(cond, if_true, if_false) => {
+                    let cond = do_expr(ctx, *cond)?;
+                    let if_true = do_expr(ctx, *if_true)?;
+                    let if_false = if_false.map(|e| do_expr(ctx, *e)).transpose()?;
+                    If(cond.into(), if_true.into(), if_false.map(Box::from))
+                }
+                Force(v) => Force(do_expr(ctx, *v)?.into()),
+                Compiled(v) => Compiled(v),
+            })
+        })
+        .transpose_ok()
+    }
+
+    fn do_pat(ctx: &mut Ctx, pat: Pat) -> EResult<Pat> {
+        use Pattern::*;
+        pat.map(|p| {
+            Ok(match p {
+                Any => Any,
+                Literal(e) => Literal(do_expr_ext(ctx, e, true)?),
+                Binding(e) => Binding(do_expr_ext(ctx, e, true)?),
+                Array(ps) => Array(
+                    ps.into_iter()
+                        .map(|sap| {
+                            sap.map(|ap| {
+                                Ok(match ap {
+                                    ArrayPattern::Item(p) => ArrayPattern::Item(do_pat(ctx, p)?),
+                                    ArrayPattern::Rest(p) => ArrayPattern::Rest(do_pat(ctx, p)?),
+                                })
+                            })
+                            .transpose_ok()
+                        })
+                        .collect_result()?,
+                ),
+                Map(ps) => Map(ps
+                    .into_iter()
+                    .map(|smp| {
+                        smp.map(|mp| {
+                            Ok(match mp {
+                                MapPattern::Item(k, p) => {
+                                    MapPattern::Item(do_expr(ctx, k)?, do_pat(ctx, p)?)
+                                }
+                                MapPattern::Rest(p) => MapPattern::Rest(do_pat(ctx, p)?),
+                            })
+                        })
+                        .transpose_ok()
+                    })
+                    .collect_result()?),
+            })
+        })
+        .transpose_ok()
+    }
+
+    let mut ctx = Ctx::new(ctx);
+    for e in local_env {
+        ctx.env_insert(e);
+    }
+    ctx.env_scoped(move |ctx| do_expr(ctx, expr))
+}
+
 pub struct Rt<T>(pub T);
 
 impl<T> std::ops::Deref for Rt<T> {
@@ -1564,7 +1855,7 @@ impl Rt<Expression> {
                     // immediately evaluating any values to check for array/map.
                     let bindings = pattern_bindings(&pat_compiled);
                     let v = v.unwrap_or(e_source.with(make_value!({ let ret: Result<(),_> = Err(grease::Error::aborted()); ret }).into()));
-                    let deps = depends![^pattern_dependencies(&pat_compiled), *v];
+                    let deps = depends![^pattern_dependencies_comp(&pat_compiled), *v];
                     let pat_result = apply_pattern(pat_compiled, Some(v)).shared();
                     ctx.env_extend(bindings.into_iter().map(|(key, d)| {
                         let (source, k) = key.take();
@@ -1654,45 +1945,44 @@ impl Rt<Expression> {
             }
             Block(_) => panic!("Block expression must be evaluated at a higher level"),
             Function(pat, e) => {
-                let env = ctx.env_flatten();
-                let mut env_deps = grease::value::Dependencies::default();
-                for (k,v) in env.iter() {
-                    env_deps += depends![*k];
-                    if let RResult::ROk(v) = v {
-                        env_deps += depends![**v];
-                    }
-                }
-
                 // Pre-compile patterns
                 let (pat_source, pat) = pat.take();
                 let mut pats = Vec::new();
                 let mut pat_deps = grease::value::Dependencies::default();
+                let mut pat_bindings = Vec::new();
                 for p in pat {
                     let p_compiled = compile_array_pattern(ctx, p).await?;
                     pat_deps += depends![std::mem::discriminant(&p_compiled)];
                     match p_compiled.as_ref().unwrap() {
-                        ArrayPattern::Item(p) => pat_deps += pattern_dependencies(p),
-                        ArrayPattern::Rest(p) => pat_deps += pattern_dependencies(p),
+                        ArrayPattern::Item(p) => {
+                            pat_deps += pattern_dependencies_comp(p);
+                            pat_bindings.extend(pattern_bindings_basic(p).into_iter().map(|v| v.map(|v| Expression::Compiled(v.into()))));
+                        },
+                        ArrayPattern::Rest(p) => {
+                            pat_deps += pattern_dependencies_comp(p);
+                            pat_bindings.extend(pattern_bindings_basic(p).into_iter().map(|v| v.map(|v| Expression::Compiled(v.into()))));
+                        }
                     }
                     pats.push(p_compiled);
                 }
                 let pat = pat_source.with(pats);
 
-                let deps = depends![^env_deps, ^pat_deps, e];
+                let e = compile_env_into_expr(ctx, pat_bindings, *e)?;
+
+                let deps = depends![^pat_deps, ^expr_dependencies(&e)];
                 Ok(types::Function::new(move |ctx| {
                     let e = e.clone();
                     let pat = pat.clone();
-                    let env = env.clone();
                     async move {
                         let src = e.source();
 
-                        ctx.substituting_env(rvec![env.clone()], |ctx| {
+                        ctx.substituting_env(Default::default(), |ctx| {
                             async move {
                                 let args = std::mem::take(&mut ctx.args);
                                 match apply_command_pattern(pat.clone(), args).await {
                                     Ok(bindings) => {
                                         ctx.env_scoped(bindings, |ctx| {
-                                            Rt(e.as_ref().clone()).evaluate(ctx).boxed()
+                                            Rt(e).evaluate(ctx).boxed()
                                         })
                                         .await
                                         .0
@@ -1714,28 +2004,21 @@ impl Rt<Expression> {
             Match(val, pats) => {
                 let val = Rt(*val).evaluate(ctx).await?;
 
-                // Pre-compile patterns
+                // Pre-compile patterns and expressions
                 let mut ps = Vec::new();
                 let mut pat_deps = depends![];
                 for (p,e) in pats {
                     let p = compile_pattern(ctx, p).await?;
-                    pat_deps += pattern_dependencies(&p);
+                    pat_deps += pattern_dependencies_comp(&p);
+                    let pat_bindings = pattern_bindings_basic(&p).into_iter().map(|v| v.map(|v| Expression::Compiled(v.into()))).collect();
+                    let e = compile_env_into_expr(ctx, pat_bindings, e)?;
+                    pat_deps += expr_dependencies(&e);
                     ps.push((p,e));
                 }
                 let pats = ps;
 
-                let env = ctx.env_flatten();
-                let mut env_deps = grease::value::Dependencies::default();
-                for (k,v) in env.iter() {
-                    env_deps += depends![*k];
-                    if let RResult::ROk(v) = v {
-                        env_deps += depends![**v];
-                    }
-                }
-
-                let deps = depends![*val, ^pat_deps, ^env_deps];
-                // TODO pre-compile expressions in match, fn, and if
-                let mut ctx = ctx.clone();
+                let deps = depends![*val, ^pat_deps];
+                let mut ctx = ctx.delayed();
                 Ok(Value::dyn_new(async move {
                     for (p, e) in pats {
                         if let Ok(bindings) = apply_pattern(p, Some(val.clone())).await {
@@ -1753,24 +2036,19 @@ impl Rt<Expression> {
             }
             If(cond, if_true, if_false) => {
                 let cond = Rt(*cond).evaluate(ctx).await?;
-                let if_true = *if_true;
-                let if_false = if_false.map(|v| *v);
+                let if_true = compile_env_into_expr(ctx, Default::default(), *if_true)?;
+                let if_false = if_false.map(|v| compile_env_into_expr(ctx, Default::default(), *v)).transpose()?;
 
                 let to_sourced = ctx.into_sourced::<bool>(cond);
                 let cond = to_sourced.await?.unwrap();
 
-                let env = ctx.env_flatten();
-                let mut env_deps = grease::value::Dependencies::default();
-                for (k,v) in env.iter() {
-                    env_deps += depends![*k];
-                    if let RResult::ROk(v) = v {
-                        env_deps += depends![**v];
-                    }
+                let mut deps = depends![cond, ^expr_dependencies(&if_true)];
+
+                if let Some(v) = &if_false {
+                    deps += expr_dependencies(v);
                 }
 
-                let deps = depends![cond, if_true, if_false, ^env_deps];
-
-                let mut ctx = ctx.clone();
+                let mut ctx = ctx.delayed();
                 Ok(Value::dyn_new(async move {
                     let c = cond.await?;
                     Ok(if *c.as_ref() {
@@ -1795,6 +2073,7 @@ impl Rt<Expression> {
                     }
                 }).await.transpose_err_with_context("in forced value")
             }
+            Compiled(v) => v.value.map(Source::unwrap)
         }
     }.boxed()
     }
