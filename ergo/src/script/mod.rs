@@ -1,8 +1,9 @@
 //! Script loading and execution.
 
 use crate::constants::*;
+use abi_stable::rvec;
 pub use ergo_runtime::source::{FileSource, Source, StringSource};
-use ergo_runtime::{ContextEnv, EvalResult, Runtime, ScriptEnv};
+use ergo_runtime::{types, EvalResult, Runtime, ScriptEnv};
 
 mod ast;
 mod base;
@@ -10,12 +11,11 @@ mod runtime;
 
 use runtime::*;
 
-pub use runtime::add_load_path;
-
 /// A loaded script.
 pub struct Script {
     ast: ast::Script,
     top_level_env: ScriptEnv,
+    file_path: Option<std::path::PathBuf>,
 }
 
 /// Create a script context from a context builder.
@@ -52,6 +52,7 @@ impl Script {
         ast::load(src).map(|ast| Script {
             ast,
             top_level_env: Default::default(),
+            file_path: None,
         })
     }
 
@@ -60,14 +61,82 @@ impl Script {
         self.top_level_env = env;
     }
 
-    pub async fn evaluate(self, ctx: &mut Runtime) -> EvalResult {
-        // Swap existing env; loading a script should have a clean environment besides the
-        // configured top-level env.
-        let ast = self.ast;
-        ctx.substituting_env(vec![self.top_level_env].into(), move |ctx| {
-            Rt(ast).evaluate(ctx)
-        })
-        .await
+    /// Configure the file path of the script, if any.
+    pub fn file_path(&mut self, path: std::path::PathBuf) {
+        self.file_path = Some(path);
+    }
+
+    pub async fn evaluate(self, ctx: &Runtime) -> EvalResult {
+        // Create an environment appropriate based on the configuration.
+        let mut ctx = ctx.empty();
+        ctx.mod_path = self.file_path.map(|v| v.into()).into();
+
+        let script_dir = grease::path::PathBuf::from(ctx.mod_dir());
+
+        // Set up load paths
+        let mut load_paths = rvec![script_dir.clone()];
+
+        // Add neighboring share directories when running in a [prefix]/bin directory.
+        let mut neighbor_dir = std::env::current_exe().ok().and_then(|path| {
+            path.parent().and_then(|parent| {
+                if parent.file_name() == Some("bin".as_ref()) {
+                    let path = parent
+                        .parent()
+                        .expect("must have parent directory")
+                        .join("share")
+                        .join(crate::constants::PROGRAM_NAME)
+                        .join("lib");
+                    if path.exists() {
+                        Some(path)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+        });
+
+        // If the neighbor directory is somewhere in the home directory, it should be added prior to the local
+        // data app dir.
+        if let (Some(dir), Some(user_dirs)) = (&neighbor_dir, &directories::UserDirs::new()) {
+            if dir.starts_with(user_dirs.home_dir()) {
+                load_paths.push(neighbor_dir.take().unwrap().into());
+            }
+        }
+
+        // Add local data app dir.
+        if let Some(proj_dirs) = app_dirs() {
+            let path = proj_dirs.data_local_dir().join("lib");
+            if path.exists() {
+                load_paths.push(path.into());
+            }
+        }
+
+        // If the neighbor directory wasn't added, it should be added now, after the local data app dir.
+        if let Some(dir) = neighbor_dir {
+            load_paths.push(dir.into());
+        }
+
+        ctx.load_paths = load_paths.clone();
+
+        let mut env = self.top_level_env;
+        // Add script-dir/load-path last; they should not be overwritten.
+        env.insert(
+            types::String::from(SCRIPT_DIR_BINDING).into(),
+            Ok(Source::builtin(script_dir.into())).into(),
+        );
+        env.insert(
+            types::String::from(LOAD_PATH_BINDING).into(),
+            Ok(Source::builtin(
+                types::Array(load_paths.into_iter().map(|v| v.into()).collect()).into(),
+            ))
+            .into(),
+        );
+
+        ctx.env_extend(env);
+
+        Rt(self.ast).evaluate(&mut ctx).await
     }
 }
 

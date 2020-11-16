@@ -9,11 +9,13 @@ use super::ast::{
     Expression, MapPattern, MergeExpression, Pat, PatT, Pattern,
 };
 use crate::constants::{
-    app_dirs, LOAD_PATH_BINDING, SCRIPT_DIR_NAME, SCRIPT_EXTENSION, SCRIPT_PATH_BINDING,
-    SCRIPT_PRELUDE_NAME, SCRIPT_WORKSPACE_FALLBACK_NAME, SCRIPT_WORKSPACE_NAME,
-    WORKING_DIRECTORY_BINDING,
+    PLUGIN_ENTRY, SCRIPT_DIR_NAME, SCRIPT_EXTENSION, SCRIPT_PRELUDE_NAME,
+    SCRIPT_WORKSPACE_FALLBACK_NAME, SCRIPT_WORKSPACE_NAME,
 };
-use abi_stable::{rvec, std_types::RResult};
+use abi_stable::{
+    rvec,
+    std_types::{ROption, RResult},
+};
 use ergo_runtime::source::{FileSource, IntoSource, Source};
 use ergo_runtime::Result as EResult;
 use ergo_runtime::{
@@ -100,59 +102,6 @@ fn is_plugin(f: &path::Path) -> bool {
     }
 }
 
-/// Add the LOAD_PATH_BINDING to the environment, with the working directory and
-/// any applicable system directories.
-pub fn add_load_path(env: &mut ScriptEnv, work_dir: &Value) {
-    let mut vals = rvec![work_dir.clone()];
-
-    // Add neighboring share directories when running in a [prefix]/bin directory.
-    let mut neighbor_dir = std::env::current_exe().ok().and_then(|path| {
-        path.parent().and_then(|parent| {
-            if parent.file_name() == Some("bin".as_ref()) {
-                let path = parent
-                    .parent()
-                    .expect("must have parent directory")
-                    .join("share")
-                    .join(crate::constants::PROGRAM_NAME)
-                    .join("lib");
-                if path.exists() {
-                    Some(path)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        })
-    });
-
-    // If the neighbor directory is somewhere in the home directory, it should be added prior to the local
-    // data app dir.
-    if let (Some(dir), Some(user_dirs)) = (&neighbor_dir, &directories::UserDirs::new()) {
-        if dir.starts_with(user_dirs.home_dir()) {
-            vals.push(PathBuf::from(neighbor_dir.take().unwrap()).into());
-        }
-    }
-
-    // Add local data app dir.
-    if let Some(proj_dirs) = app_dirs() {
-        let path = proj_dirs.data_local_dir().join("lib");
-        if path.exists() {
-            vals.push(PathBuf::from(path).into());
-        }
-    }
-
-    // If the neighbor directory wasn't added, it should be added now, after the local data app dir.
-    if let Some(dir) = neighbor_dir {
-        vals.push(PathBuf::from(dir).into());
-    }
-
-    env.insert(
-        types::String::from(LOAD_PATH_BINDING).into(),
-        Ok(Source::builtin(types::Array(vals).into())).into(),
-    );
-}
-
 /// Load and execute a script given the function call context.
 pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
     async move {
@@ -228,35 +177,7 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                 load_path = Some(target_path.clone());
 
                 // Get current load path
-                let loadpath = match ctx.env_get(&types::String::from(LOAD_PATH_BINDING).into()) {
-                    Some(v) => {
-                        let v = v.map(|r| r.clone()).map_err(|e| e.clone())?;
-                        let source = v.source();
-                        let arr = ctx.source_value_as::<types::Array>(v.clone());
-                        arr.await?
-                            .unwrap()
-                            .await?
-                            .owned()
-                            .0
-                            .into_iter()
-                            .map(|v| source.clone().with(v))
-                            .collect()
-                    }
-                    None => vec![],
-                };
-
-                // Get paths from load path
-                let mut paths: Vec<std::path::PathBuf> = Vec::new();
-                for path in loadpath {
-                    paths.push({
-                        let p = ctx.source_value_as::<PathBuf>(path);
-                        p.await?
-                            .unwrap()
-                            .await?
-                            .owned()
-                            .into_pathbuf()
-                    });
-                }
+                let paths: Vec<std::path::PathBuf> = ctx.load_paths.clone().into_iter().map(|v| v.into()).collect();
 
                 // Try to find path match in load paths
                 paths
@@ -279,17 +200,11 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                 source = Source::builtin(());
 
                 // If the current file is a workspace, allow it to load from parent workspaces.
-                let (path_basis, check_for_workspace) = if let Some(v) = ctx.env_get(&types::String::from(SCRIPT_PATH_BINDING).into()) {
-                    (v.map_err(|e| e.clone())?.clone(), true)
+                let (path_basis, check_for_workspace) = if let ROption::RSome(v) = &ctx.mod_path {
+                    (v.clone().into(), true)
                 } else {
-                    (ctx.env_get(&types::String::from(WORKING_DIRECTORY_BINDING).into())
-                        .expect("working directory unset")
-                        .map_err(|e| e.clone())?
-                        .clone(), false)
+                    (ctx.mod_dir(), false)
                 };
-                let path_basis = ctx.source_value_as::<PathBuf>(path_basis);
-                let path_basis = path_basis.await?.unwrap().await?;
-                let path_basis = path_basis.as_ref().as_ref();
 
                 let within_workspace = check_for_workspace && path_basis.file_name().map(|v| v == SCRIPT_WORKSPACE_NAME).unwrap_or(false);
 
@@ -377,25 +292,12 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                                         call_site,
                                     );
 
-                                    // New scope with working directory/script path set to that of the script, so that
-                                    // prelude loading behaves as if it were in the script file itself.
-                                    let mut env = ScriptEnv::default();
-                                    env.insert(
-                                        types::String::from(WORKING_DIRECTORY_BINDING).into(),
-                                        Ok(Source::builtin(PathBuf::from(mod_path.to_owned()).into()))
-                                            .into(),
-                                    );
-                                    env.insert(
-                                        types::String::from(SCRIPT_PATH_BINDING).into(),
-                                        Ok(Source::builtin(PathBuf::from(p.to_owned()).into())).into()
-                                    );
-
                                     // Load workspace
-                                    let ws = match fctx.env_scoped(env, load_script).await.0 {
+                                    let ws = match load_script(&mut fctx).await {
                                         Ok(ws) => ws,
                                         Err(e) => {
-                                                ctx.loading.lock().pop();
-                                                return Err(source.with("while running 'ergo [workspace] prelude' to load script").context_for_error(e));
+                                            ctx.loading.lock().pop();
+                                            return Err(source.with("while running 'ergo [workspace] prelude' to load script").context_for_error(e));
                                         }
                                     };
 
@@ -427,13 +329,10 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                             None
                         };
 
-                        let mod_path: Value = PathBuf::from(mod_path.to_owned()).into();
-
-                        // Add initial load path binding first; the prelude may override it.
-                        let mut top_level_env: ScriptEnv = Default::default();
-                        add_load_path(&mut top_level_env, &mod_path);
-
-                        if !plugin {
+                        let result = if !plugin {
+                            let mut script =
+                                super::Script::load(Source::new(FileSource(p.clone())))?;
+                            let mut top_level_env: ScriptEnv = Default::default();
                             if let Some(v) = prelude {
                                 let (source, v) = v.take();
                                 top_level_env.extend(
@@ -441,22 +340,8 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                                         .map(|(k, v)| (k, Ok(source.clone().with(v)).into())),
                                 );
                             }
-                        }
-
-                        // Add mod path and script file binding last; they should not be overriden.
-                        top_level_env.insert(
-                            types::String::from(WORKING_DIRECTORY_BINDING).into(),
-                            Ok(Source::builtin(mod_path)).into(),
-                        );
-                        top_level_env.insert(
-                            types::String::from(SCRIPT_PATH_BINDING).into(),
-                            Ok(Source::builtin(PathBuf::from(p.to_owned()).into())).into()
-                        );
-
-                        let result = if !plugin {
-                            let mut script =
-                                super::Script::load(Source::new(FileSource(p.clone())))?;
                             script.top_level_env(top_level_env);
+                            script.file_path(p.clone());
                             script.evaluate(ctx).await.into()
                         } else {
                             let lib = dl::Library::new(&p)?;
@@ -465,7 +350,7 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                                     &mut Runtime,
                                 )
                                     -> RResult<Source<Value>, grease::Error>,
-                            > = unsafe { lib.get(b"_ergo_plugin") }?;
+                            > = unsafe { lib.get(PLUGIN_ENTRY.as_bytes()) }?;
                             let result = f(ctx);
                             ctx.lifetime(lib);
                             result
@@ -1533,7 +1418,7 @@ fn compile_env_into_expr(ctx: &mut Runtime, local_env: Vec<Expr>, expr: Expr) ->
     fn do_expr_ext(ctx: &mut Ctx, expr: Expr, ignore_string_env_match: bool) -> EResult<Expr> {
         use Expression::*;
         let src = expr.source();
-        expr.map(move |e| {
+        expr.map(move |e| -> EResult<_> {
             Ok(match e {
                 Empty => Compiled(Ok(src.with(().into_value().into())).into()),
                 Expression::String(s) => {
@@ -1690,12 +1575,12 @@ fn compile_env_into_expr(ctx: &mut Runtime, local_env: Vec<Expr>, expr: Expr) ->
                 Compiled(v) => Compiled(v),
             })
         })
-        .transpose_ok()
+        .transpose_with_context("in expression")
     }
 
     fn do_pat(ctx: &mut Ctx, pat: Pat) -> EResult<Pat> {
         use Pattern::*;
-        pat.map(|p| {
+        pat.map(|p| -> EResult<_> {
             Ok(match p {
                 Any => Any,
                 Literal(e) => Literal(do_expr_ext(ctx, e, true)?),
@@ -1729,7 +1614,7 @@ fn compile_env_into_expr(ctx: &mut Runtime, local_env: Vec<Expr>, expr: Expr) ->
                     .collect_result()?),
             })
         })
-        .transpose_ok()
+        .transpose_with_context("in pattern")
     }
 
     let mut ctx = Ctx::new(ctx);
@@ -1970,32 +1855,29 @@ impl Rt<Expression> {
                 let e = compile_env_into_expr(ctx, pat_bindings, *e)?;
 
                 let deps = depends![^pat_deps, ^expr_dependencies(&e)];
-                Ok(types::Function::new(move |ctx| {
+                let ctx = ctx.empty();
+                Ok(types::Function::new(move |fctx| {
                     let e = e.clone();
                     let pat = pat.clone();
+                    let mut ctx = ctx.clone();
                     async move {
                         let src = e.source();
 
-                        ctx.substituting_env(Default::default(), |ctx| {
-                            async move {
-                                let args = std::mem::take(&mut ctx.args);
-                                match apply_command_pattern(pat.clone(), args).await {
-                                    Ok(bindings) => {
-                                        ctx.env_scoped(bindings, |ctx| {
-                                            Rt(e).evaluate(ctx).boxed()
-                                        })
-                                        .await
-                                        .0
-                                    }
-                                    Err(errs) => Err(grease::Error::from(
-                                        src.with(Error::ArgumentMismatch),
-                                    )
-                                    .with_context(grease::Error::aggregate(errs))),
-                                }
+                        let args = std::mem::take(&mut fctx.args);
+
+                        match apply_command_pattern(pat.clone(), args).await {
+                            Ok(bindings) => {
+                                ctx.env_scoped(bindings, |ctx| {
+                                    Rt(e).evaluate(ctx).boxed()
+                                })
+                                .await
+                                .0
                             }
-                            .boxed()
-                        })
-                        .await
+                            Err(errs) => Err(grease::Error::from(
+                                src.with(Error::ArgumentMismatch),
+                            )
+                            .with_context(grease::Error::aggregate(errs))),
+                        }
                     }
                     .boxed()
                 }, deps)
@@ -2018,7 +1900,7 @@ impl Rt<Expression> {
                 let pats = ps;
 
                 let deps = depends![*val, ^pat_deps];
-                let mut ctx = ctx.delayed();
+                let mut ctx = ctx.empty();
                 Ok(Value::dyn_new(async move {
                     for (p, e) in pats {
                         if let Ok(bindings) = apply_pattern(p, Some(val.clone())).await {
@@ -2048,7 +1930,7 @@ impl Rt<Expression> {
                     deps += expr_dependencies(v);
                 }
 
-                let mut ctx = ctx.delayed();
+                let mut ctx = ctx.empty();
                 Ok(Value::dyn_new(async move {
                     let c = cond.await?;
                     Ok(if *c.as_ref() {

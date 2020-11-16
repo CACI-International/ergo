@@ -86,8 +86,8 @@ pub struct StringSource {
 /// A file-based source.
 pub struct FileSource(pub std::path::PathBuf);
 
-/// No source.
-pub struct NoSource;
+/// A builtin source.
+pub struct Builtin(Option<&'static std::panic::Location<'static>>);
 
 /// A reference to a SourceFactory.
 #[derive(Clone, Default, StableAbi)]
@@ -234,9 +234,12 @@ impl SourceFactory for FileSource {
     }
 }
 
-impl SourceFactory for NoSource {
+impl SourceFactory for Builtin {
     fn name(&self) -> String {
-        "none".into()
+        match self.0 {
+            None => "builtin".into(),
+            Some(l) => format!("builtin ({})", l),
+        }
     }
 
     fn read<'a>(&'a self) -> Result<Box<dyn Read + 'a>, String> {
@@ -280,8 +283,14 @@ impl Source<()> {
 
 impl<T> Source<T> {
     /// Create a value that has internal source.
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn builtin(v: T) -> Self {
-        Source::new(NoSource).map(|_| v)
+        Source::new(Builtin(if cfg!(debug_assertions) {
+            Some(std::panic::Location::caller())
+        } else {
+            None
+        }))
+        .map(|_| v)
     }
 
     /// Get the inner value.

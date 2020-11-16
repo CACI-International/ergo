@@ -35,25 +35,13 @@ fn glob_fn() -> Value {
         let pattern = ctx.into_sourced::<types::String>(pattern);
         let pattern = pattern.await?.unwrap();
 
-        let path = ctx.source_value_as::<PathBuf>(
-            ctx.env_get(&crate::grease_string("work-dir"))
-                .ok_or(
-                    ctx.call_site
-                        .clone()
-                        .with("work-dir not set")
-                        .into_grease_error(),
-                )?
-                .map(|v| v.clone())?,
-        );
-        let path = path.await?.unwrap();
-
-        let task = ctx.task.clone();
+        let path = ctx.mod_dir();
 
         make_value!((path, pattern) {
-            let (path, pattern) = task.join(path,pattern).await?;
+            let pattern = pattern.await?;
 
             let pattern = {
-                let mut p = path.owned().into_pathbuf();
+                let mut p = path;
                 p.push(pattern.as_str());
                 p
             };

@@ -1,5 +1,5 @@
 use abi_stable::std_types::{RDuration, ROption, RSlice, RString, RVec};
-use ergo_runtime::{source::Source, ContextExt, ScriptEnv};
+use ergo_runtime::{source::Source, ContextExt};
 use grease::runtime::*;
 use simplelog::WriteLogger;
 use std::io::Write;
@@ -14,13 +14,13 @@ mod sync;
 mod constants {
     pub const PROGRAM_NAME: &'static str = env!("CARGO_PKG_NAME");
     pub const LOAD_PATH_BINDING: &'static str = "load-path";
-    pub const WORKING_DIRECTORY_BINDING: &'static str = "work-dir";
-    pub const SCRIPT_PATH_BINDING: &'static str = "self-file-path";
+    pub const SCRIPT_DIR_BINDING: &'static str = "script-dir";
     pub const SCRIPT_EXTENSION: &'static str = PROGRAM_NAME;
     pub const SCRIPT_WORKSPACE_NAME: &'static str = concat!("workspace.", env!("CARGO_PKG_NAME"));
     pub const SCRIPT_DIR_NAME: &'static str = concat!("dir.", env!("CARGO_PKG_NAME"));
     pub const SCRIPT_PRELUDE_NAME: &'static str = "prelude";
     pub const SCRIPT_WORKSPACE_FALLBACK_NAME: &'static str = "command";
+    pub const PLUGIN_ENTRY: &'static str = concat!("_", env!("CARGO_PKG_NAME"), "_plugin");
 
     use directories;
     pub fn app_dirs() -> Option<directories::ProjectDirs> {
@@ -31,7 +31,7 @@ mod constants {
 use constants::PROGRAM_NAME;
 use options::*;
 use output::{output, Output};
-use script::{add_load_path, Script, StringSource};
+use script::{Script, StringSource};
 
 trait AppErr {
     type Output;
@@ -189,21 +189,11 @@ fn run(opts: Opts) -> Result<String, String> {
     }
 
     let source = Source::new(StringSource::new("<command line>", to_eval));
-    let mut loaded = Script::load(source).app_err_result("failed to parse script file")?;
+    let loaded = Script::load(source).app_err_result("failed to parse script file")?;
 
-    let work_dir: grease::value::Value = grease::path::PathBuf::from(working_dir).into();
-
-    // Add initial load path and working directory.
-    let mut env: ScriptEnv = Default::default();
-    add_load_path(&mut env, &work_dir);
-    env.insert(
-        ergo_runtime::types::String::from(constants::WORKING_DIRECTORY_BINDING).into(),
-        Ok(Source::builtin(work_dir)).into(),
-    );
-    loaded.top_level_env(env);
     let task = ctx.task.clone();
     let script_output = task
-        .block_on(loaded.evaluate(&mut ctx))
+        .block_on(loaded.evaluate(&ctx))
         .app_err_result("errors(s) while executing script")?;
 
     // Clear context, which removes any unneeded values that may be held.

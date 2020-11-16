@@ -12,6 +12,9 @@
     function which evaluated them immediately.
 * Ensure parenthesized commands allow newlines between arguments.
 * Properly (and minimally) capture environment variables in fn/match/if blocks.
+* No longer rely on environment bindings when loading scripts.
+* Rename `work-dir` to `script-dir` in script default bindings to more
+  accurately describe the value.
 
 ## 1.0.0-beta.3  -- 2020-11-4
 * Support interactive subprocesses by suspending logging while they run.

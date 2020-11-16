@@ -4,7 +4,8 @@
 
 use abi_stable::{
     external_types::RMutex,
-    std_types::{RArc, RHashMap, RVec},
+    rvec,
+    std_types::{RArc, RHashMap, ROption, RVec},
     StableAbi,
 };
 use futures::future::{BoxFuture, FutureExt};
@@ -83,6 +84,8 @@ pub struct Runtime {
     env: RVec<ScriptEnv>,
     pub loading: RArc<RMutex<RVec<PathBuf>>>,
     pub load_cache: RArc<RMutex<BstMap<PathBuf, EvalResultAbi>>>,
+    pub mod_path: ROption<PathBuf>,
+    pub load_paths: RVec<PathBuf>,
     pub lint: bool,
     lifetime: RArc<RMutex<RVec<Erased>>>,
     keyed_lifetime: RArc<RMutex<RHashMap<grease::types::Type, RArc<Erased>>>>,
@@ -175,6 +178,8 @@ impl Runtime {
             env: Default::default(),
             loading: RArc::new(RMutex::new(Default::default())),
             load_cache: RArc::new(RMutex::new(Default::default())),
+            mod_path: ROption::RNone,
+            load_paths: Default::default(),
             lint: false,
             lifetime: RArc::new(RMutex::new(Default::default())),
             keyed_lifetime: RArc::new(RMutex::new(Default::default())),
@@ -265,18 +270,34 @@ impl Runtime {
         self.env.clear();
     }
 
-    /// Clear the local environment in a new copy of the runtime to be used in
-    /// a delayed context.
-    pub fn delayed(&self) -> Self {
+    /// Clear the local environment in a new copy of the runtime.
+    pub fn empty(&self) -> Self {
         Runtime {
             context: self.context.clone(),
             global_env: self.global_env.clone(),
-            env: Default::default(),
+            env: rvec![Default::default()],
             loading: self.loading.clone(),
             load_cache: self.load_cache.clone(),
+            mod_path: self.mod_path.clone(),
+            load_paths: self.load_paths.clone(),
             lint: self.lint,
             lifetime: self.lifetime.clone(),
             keyed_lifetime: self.keyed_lifetime.clone(),
+        }
+    }
+
+    /// Get the effective directory of the current runtime instance.
+    ///
+    /// This will be the parent directory of mod_path if set, otherwise the program's current
+    /// directory.
+    pub fn mod_dir(&self) -> std::path::PathBuf {
+        if let ROption::RSome(p) = &self.mod_path {
+            p.as_ref()
+                .parent()
+                .expect("script file path invalid")
+                .to_owned()
+        } else {
+            std::env::current_dir().expect("failed to get current directory")
         }
     }
 }
@@ -478,21 +499,6 @@ impl GetEnv for FunctionCall<'_> {
 }
 
 pub trait ContextEnv: GetEnv {
-    /// Call the given function while substituting the current environment.
-    fn substituting_env<'b, F, R>(&'b mut self, mut env: RVec<ScriptEnv>, f: F) -> BoxFuture<'b, R>
-    where
-        F: for<'a> FnOnce(&'a mut Self) -> BoxFuture<'a, R> + Send + 'b,
-        Self: Send,
-    {
-        async move {
-            std::mem::swap(self.get_env(), &mut env);
-            let ret = f(self).await;
-            std::mem::swap(self.get_env(), &mut env);
-            ret
-        }
-        .boxed()
-    }
-
     /// Call the given function in a new, scoped environment.
     fn env_scoped<'b, F, R>(&'b mut self, env: ScriptEnv, f: F) -> BoxFuture<'b, (R, ScriptEnv)>
     where

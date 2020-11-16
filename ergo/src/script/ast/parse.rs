@@ -551,14 +551,14 @@ mod test {
     type Result = pom::Result<()>;
 
     fn src<T>(e: T) -> Source<T> {
-        Source::new(NoSource).with(e)
+        Source::builtin(e)
     }
 
     fn assert_parse_fail<T: std::fmt::Debug>(
         s: &[Token],
         parser: impl for<'a> FnOnce(std::marker::PhantomData<&'a ()>) -> Parser<'a, T>,
     ) -> Result {
-        let src = Source::new(NoSource);
+        let src = Source::builtin(());
         let toks: Vec<_> = s
             .into_iter()
             .cloned()
@@ -580,7 +580,7 @@ mod test {
         parser: impl for<'a> FnOnce(std::marker::PhantomData<&'a ()>) -> Parser<'a, T>,
         expected: I,
     ) -> Result {
-        let src = Source::new(NoSource);
+        let src = Source::builtin(());
         let toks: Vec<_> = s
             .into_iter()
             .cloned()

@@ -7,6 +7,8 @@
 * Remove `if` function as it is now a syntactic operator.
 * Add `script` module and `script:bindings` function to return a map of all
   current bindings.
+* Add `script:set-load-path` (previously one could set `load-path` in the
+  environment).
 
 ## 1.0.0-beta.3  -- 2020-11-04
 * Improve byte streams to support async io, allowing `io:stdin`, `io:stdout`,
