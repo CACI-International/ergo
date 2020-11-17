@@ -1,6 +1,6 @@
 # ergo changelog
 
-## 1.0.0-beta.4  -- Unreleased
+## 1.0.0-beta.4  -- 2020-11-17
 * Add the `!` operator, which may precede any expression or argument to evaluate
   the result immediately.
   * If the expression evaluates to a dynamically-typed value, it will evaluate

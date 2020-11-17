@@ -1,6 +1,6 @@
 # ergo_std changelog
 
-## 1.0.0-beta.4  -- Unreleased
+## 1.0.0-beta.4  -- 2020-11-17
 * Rename `value:force` to `value:by-content`.
 * Add `collection:get` to index values without causing errors to occur.
   * If a key/index doesn't exist, the function returns `()`.
