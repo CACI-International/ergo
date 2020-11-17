@@ -20,7 +20,7 @@ used to estimate future performance.
 ```sh
 #!/usr/bin/env ergo
 
-^(ergo std)
+^ergo std
 
 run_with_path = fn ^{^kwargs} ^args -> exec ^:kwargs ^{env = {PATH = env:get PATH}} ^:args |>:complete
 

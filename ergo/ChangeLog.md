@@ -15,6 +15,8 @@
 * No longer rely on environment bindings when loading scripts.
 * Rename `work-dir` to `script-dir` in script default bindings to more
   accurately describe the value.
+* Allow merge operator (`^`) to prefix command expressions without
+  parentheses.
 
 ## 1.0.0-beta.3  -- 2020-11-4
 * Support interactive subprocesses by suspending logging while they run.

@@ -404,38 +404,41 @@ mod expression {
     fn block<'a>() -> Parser<'a, Expr> {
         // Change literal strings in blocks to set the string from the currently-bound value
         // i.e., { a } -> { a = :a }
-        let item = expression(true).map(|e| {
-            let (source, e) = e.take();
-            source.clone().with(match e {
-                Expression::String(s) => {
-                    let s = source.clone().with(Expression::String(s));
-                    Expression::Set(
-                        source.clone().with(Pattern::Binding(s.clone())).into(),
-                        source.clone().with(Expression::Get(s.into())).into(),
-                    )
-                }
-                other => other,
-            })
+        let item = merge_with(expression(true)).map(|e| {
+            if !e.merge {
+                let (source, e) = e.unwrap().expr.take();
+                let e = match e {
+                    Expression::String(s) => {
+                        let s = source.clone().with(Expression::String(s));
+                        Expression::Set(
+                            source.clone().with(Pattern::Binding(s.clone())).into(),
+                            source.clone().with(Expression::Get(s.into())).into(),
+                        )
+                    }
+                    other => other,
+                };
+                source.clone().with(MergeExpression {
+                    merge: false,
+                    expr: source.with(e),
+                })
+            } else {
+                e
+            }
         });
-        block_syntax(merge_with(item)).map(|e| e.into_source().map(Expression::Block))
+        block_syntax(item).map(|e| e.into_source().map(Expression::Block))
     }
 
     /// A merge expression generator.
     pub fn merge_with<'a>(p: Parser<'a, Expr>) -> Parser<'a, MergeExpr> {
-        (sym(Token::Caret) + arg()).map(|es| {
-            es.into_source().map(|(_, e)| MergeExpression {
-                merge: true,
-                expr: e,
-            })
-        }) | p.map(|e| {
-            let src = e.source();
-            src.with(MergeExpression {
-                merge: false,
+        (sym(Token::Caret).opt() + p).map(|es| {
+            es.into_source().map(|(t, e)| MergeExpression {
+                merge: t.is_some(),
                 expr: e,
             })
         })
     }
 
+    /// A force expression.
     pub fn force_expr<'a>() -> Parser<'a, Expr> {
         (sym(Token::Bang) - space() + expression(true))
             .map(|e| e.into_source().map(|(_, e)| Expression::Force(e.into())))
