@@ -47,6 +47,10 @@ pub struct Opts {
     pub storage: std::path::PathBuf,
 
     #[structopt(short, long)]
+    /// Clear the storage directory prior to executing.
+    pub clean: bool,
+
+    #[structopt(short, long)]
     /// Check for common syntax mistakes without executing the final value.
     pub lint: bool,
 

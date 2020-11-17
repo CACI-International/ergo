@@ -17,6 +17,8 @@
   accurately describe the value.
 * Allow merge operator (`^`) to prefix command expressions without
   parentheses.
+* Add `-c`/`--clean` command-line parameter to clear the storage directory prior
+  to execution.
 
 ## 1.0.0-beta.3  -- 2020-11-4
 * Support interactive subprocesses by suspending logging while they run.

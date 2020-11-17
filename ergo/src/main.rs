@@ -141,6 +141,12 @@ fn run(opts: Opts) -> Result<String, String> {
         working_dir.clone()
     };
 
+    let storage_directory = storage_dir_root.join(opts.storage);
+    if opts.clean && storage_directory.exists() {
+        std::fs::remove_dir_all(&storage_directory)
+            .app_err_result("failed to clean storage directory")?;
+    }
+
     // Create build context
     let mut ctx = {
         // Use a weak pointer to the logger in the context, so that when the logger goes out of
@@ -152,7 +158,7 @@ fn run(opts: Opts) -> Result<String, String> {
         script::script_context(
             Context::builder()
                 .logger(WeakLogTarget(weak.clone()))
-                .storage_directory(storage_dir_root.join(opts.storage))
+                .storage_directory(storage_directory)
                 .threads(opts.jobs)
                 .keep_going(!opts.stop)
                 .on_error(move |added| {
