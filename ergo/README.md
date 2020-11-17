@@ -1,13 +1,17 @@
-# ergo program
+# Effio ergo sum.
 
-Current features include:
-* A hybrid-typed scripting language that (in many ways) closely resembles 
-shell scripts.
-* Automatic concurrent processing of commands.
+Ergo is a task runner akin to `make`, however with dependency tracking that
+extends to arbitrary values, not just files and a language and runtime that
+allows one to write tasks imperatively rather than explicitly specifying rules.
+
+Features include:
+* A hybrid-typed scripting language with string-first syntax, like that of shell
+  scripts.
+* Script-level control of concurrent processing.
 * Dependency tracking for all produced values.
+* ABI-stability to support native plugins.
 
 Planned features include:
-* A platform-agnostic plugin system based on WASM.
 * Persistent database of command statistics aggregated over multiple runs and
 used to estimate future performance.
 
@@ -48,7 +52,7 @@ test = value:cache <| seq ^[
     :out
 ]
 
-test-dist = path:join :work-dir influx-test
+test-dist = path:join :script-dir influx-test
 
 # Create output map
 {
@@ -58,25 +62,23 @@ test-dist = path:join :work-dir influx-test
 }
 ```
 
-## Modes of operation
-Project-mode is detected by the presence of a `workspace.ergo` directory
+## Script Resolution
+Project-mode is detected by the presence of a `workspace.ergo` file/directory
 somewhere in the parent hierarchy. That directory is where project top-level
 scripts reside.
 
-In basic-mode (detected by the lack of a project-mode directory), a `ergo` user
-configuration directory is used.
-
 Within a script, the following are defined:
-* `work-dir`: this is the directory that contains the currently-executing
+* `script-dir`: this is the directory that contains the currently-executing
   script.
-* `self-file-path`: this is the filename of the currently-executing script.
-* `load-path`: an array of paths (that can be altered within scripts) that are
+* `load-path`: an array of paths that are
   used when resolving `ergo` calls to load external scripts. In any given script,
-  it will by default contain the `work-dir` directory. In basic-mode, it will
-  also contain the path to the OS-specific configuration directory:
-  * __Linux__: `$XDG_CONFIG_HOME/ergo` or `$HOME/.config/ergo`
-  * __macOS__: `$HOME/Library/Preferences/ergo`
-  * __Windows__: `{FOLDERID_RoamingAppData}\ergo\config`
+  it will by default contain the `script-dir` directory. An accompanything
+  `share/ergo/lib` directory is also used if the location of the `ergo` binary
+  is in a sibling `bin` directory. The application's user-local directory will
+  also be added:
+  * __Linux__: `$XDG_CONFIG_HOME/ergo/lib` or `$HOME/.local/share/ergo/lib`
+  * __macOS__: `$HOME/Library/Application Support/ergo/lib`
+  * __Windows__: `{FOLDERID_LocalAppData}\ergo\data\lib`
 
 ## Development Notes
 
@@ -90,7 +92,7 @@ Within a script, the following are defined:
     change the process group to prevent this.
 * Persist command timing information for better estimates.
 * Allow functions to get call-site variables? Convenient for things like
-  `work-dir`.
+  `script-dir`.
 * Add work recording to scripts.
 * Add value dependency tree print to help debug consistency issues.
 * Support `collection:map` over map values.
