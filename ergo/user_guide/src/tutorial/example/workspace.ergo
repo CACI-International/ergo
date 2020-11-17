@@ -1,7 +1,1 @@
-^(ergo std)
-
-mod = fn m -> fn a -> m::a
-
-mod {
-    prelude = ergo std
-}
+prelude = ergo std

@@ -1,4 +1,4 @@
 #!/usr/bin/env ergo
 
 # Compile our code!
-exec ^{env = {PATH=:}} c++ -o forty_two main.cpp lib.cpp
+exec ^{env = { PATH = env:get PATH }} c++ -o forty_two main.cpp lib.cpp

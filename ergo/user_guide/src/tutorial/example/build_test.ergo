@@ -2,8 +2,8 @@
 
 # Convenience bindings for following functions
 run = fn ^{^kwargs} ^args -> exec ^:kwargs ^:args |>:complete
-run-with-path = fn ^{^kwargs} ^args -> run ^{ env = {}, ^:kwargs, env = { ^:env, PATH=: }} ^:args
-copy-out = fn file name -> fs:copy :file (path:join :work-dir :name)
+run-with-path = fn ^{^kwargs} ^args -> run ^{ ^:kwargs, env = { PATH = env:get PATH }} ^:args
+copy-out = fn file name -> fs:copy :file (path:join :script-dir :name)
 
 # Compile function, taking one argument indicating the file to compile,
 # and a non-positional `includes` argument.

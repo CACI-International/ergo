@@ -9,11 +9,6 @@ files change.
 {{#include example/build_track.ergo}}
 ```
 
-> You probably noticed that we have used `:` in the `env` directive. When `:`
-> is not followed by a value (or when a nested expression is empty, `()`), it
-> evaluates to the unit value. In the case of the `env` directive, this indicates
-> that the environment variable should be inherited.
-
 We made a few changes in and around our `exec c++` command, and also added a
 `fs:copy` command and the `value:cache`, `seq`, `fs:track`, and `path:new` commands:
 

@@ -3,23 +3,23 @@
 # Compile main.cpp
 main = value:cache <| seq ^[
     out = (path:new)
-    task "compiling main.cpp" <| exec ^{env = {PATH=:}} c++ -o :out -c (fs:track main.cpp)
+    task "compiling main.cpp" <| exec ^{env = {PATH = env:get PATH}} c++ -o :out -c (fs:track main.cpp)
     :out
 ]
 
 # Compile lib.cpp
 lib = value:cache <| seq ^[
     out = (path:new)
-    task "compiling lib.cpp" <| exec ^{env = {PATH=:}} c++ -o :out -c (fs:track lib.cpp)
+    task "compiling lib.cpp" <| exec ^{env = {PATH = env:get PATH}} c++ -o :out -c (fs:track lib.cpp)
     :out
 ]
 
 # Link the object files together
 exe = value:cache <| seq ^[
     out = (path:new)
-    task "linking executable" <| exec ^{env = {PATH=:}} c++ -o :out :main :lib
+    task "linking executable" <| exec ^{env = {PATH = env:get PATH}} c++ -o :out :main :lib
     :out
 ]
 
 # Copy to a file in the current directory.
-fs:copy :exe (path:join :work-dir forty_two)
+fs:copy :exe (path:join :script-dir forty_two)
