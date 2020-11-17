@@ -101,3 +101,4 @@ Within a script, the following are defined:
 * Deduplicate values based on identity.
 * Fix task status output; it gets a little wonky when you `seq` with multiple
   `task`.
+* Improve concurrent calls to `value:cache` which are on the same value.
