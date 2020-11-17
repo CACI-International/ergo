@@ -87,20 +87,22 @@ fn run(opts: Opts) -> Result<String, String> {
     let mut output =
         output(opts.format, !opts.stop).app_err("could not create output from requested format");
     output.set_log_level(opts.log_level);
-    let (logger, orig_logger) = logger_ref(output);
+    let logger = std::sync::Arc::new(std::sync::Mutex::new(output));
 
     #[derive(Clone)]
-    struct WeakLogTarget(std::sync::Weak<grease::runtime::Logger>);
+    struct WeakLogTarget<T>(std::sync::Weak<std::sync::Mutex<T>>);
 
-    impl WeakLogTarget {
+    impl<T: LogTarget + Send> WeakLogTarget<T> {
         fn with<F: FnOnce(&mut (dyn LogTarget + Send))>(&self, f: F) {
             if let Some(logger) = self.0.upgrade() {
-                f(&mut *logger.lock())
+                if let Ok(mut logger) = logger.lock() {
+                    f(&mut *logger)
+                }
             }
         }
     }
 
-    impl LogTarget for WeakLogTarget {
+    impl<T: LogTarget + Send> LogTarget for WeakLogTarget<T> {
         fn log(&mut self, entry: LogEntry) {
             self.with(move |l| l.log(entry))
         }
@@ -146,17 +148,18 @@ fn run(opts: Opts) -> Result<String, String> {
         // logger given in on_error) doesn't reliably shutdown as it drops the ThreadPool
         // asynchronously, and likewise for general logging we shouldn't rely on values cleaning up
         // after themselves.
-        let weak = std::sync::Arc::downgrade(&orig_logger);
-        let logger_weak = logger_ref(WeakLogTarget(std::sync::Arc::downgrade(&logger))).0;
+        let weak = std::sync::Arc::downgrade(&logger);
         script::script_context(
             Context::builder()
-                .logger_ref(logger_weak.into())
+                .logger(WeakLogTarget(weak.clone()))
                 .storage_directory(storage_dir_root.join(opts.storage))
                 .threads(opts.jobs)
                 .keep_going(!opts.stop)
                 .on_error(move |added| {
                     if let Some(logger) = weak.upgrade() {
-                        logger.lock().on_error(added);
+                        if let Ok(mut logger) = logger.lock() {
+                            logger.on_error(added);
+                        }
                     }
                 }),
         )
@@ -167,7 +170,7 @@ fn run(opts: Opts) -> Result<String, String> {
 
     // Set thread ids in the logger, as reported by the task manager.
     {
-        let mut l = orig_logger.lock();
+        let mut l = logger.lock().unwrap();
         l.set_thread_ids(ctx.task.thread_ids().iter().cloned().collect());
     }
 

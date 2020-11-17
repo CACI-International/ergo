@@ -131,7 +131,7 @@ pub use grease_macro::grease_trait_impl;
 ///         }
 ///         traits.add_generator_by_trait_for_trait::<ToBool>(|_traits,_type| {
 ///             ROption::RSome(ToBoolImpl {
-///                 to_bool: FnPtr::new(always_true)
+///                 to_bool: unsafe { FnPtr::new(always_true) }
 ///             })
 ///         });
 ///     }

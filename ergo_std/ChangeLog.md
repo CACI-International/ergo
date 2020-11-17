@@ -9,6 +9,7 @@
   current bindings.
 * Add `script:set-load-path` (previously one could set `load-path` in the
   environment).
+* Improve `fs:copy` to create parent destination directories if missing.
 
 ## 1.0.0-beta.3  -- 2020-11-04
 * Improve byte streams to support async io, allowing `io:stdin`, `io:stdout`,

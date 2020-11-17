@@ -17,7 +17,7 @@ pub use set::BstSet;
 struct Node<K, V> {
     key: K,
     value: V,
-    parent: *mut Node<K, V>,
+    parent: *const Node<K, V>,
     left: ROption<RBox<Node<K, V>>>,
     right: ROption<RBox<Node<K, V>>>,
 }
@@ -26,9 +26,26 @@ struct Node<K, V> {
 unsafe impl<K: Send, V: Send> Send for Node<K, V> {}
 unsafe impl<K: Sync, V: Sync> Sync for Node<K, V> {}
 
+/// Convert an RBox node into a Box node.
+/// This is necessary as RBox::into_box may move the value.
+fn into_box<K, V>(node: RBox<Node<K, V>>) -> Box<Node<K, V>> {
+    let prev = &*node as *const _;
+    let mut b = RBox::into_box(node);
+    let parent = &*b as *const _;
+    if prev != parent {
+        if let RSome(l) = &mut b.left {
+            l.parent = parent;
+        }
+        if let RSome(r) = &mut b.right {
+            r.parent = parent;
+        }
+    }
+    b
+}
+
 #[allow(dead_code)]
 impl<K, V> Node<K, V> {
-    pub fn new(parent: *mut Self, key: K, value: V) -> Self {
+    pub fn new(parent: *const Self, key: K, value: V) -> Self {
         Node {
             key,
             value,
@@ -38,7 +55,7 @@ impl<K, V> Node<K, V> {
         }
     }
 
-    pub fn reparent(&mut self, parent: *mut Self) {
+    pub fn reparent(&mut self, parent: *const Self) {
         self.parent = parent;
     }
 
@@ -56,9 +73,10 @@ impl<K, V> Node<K, V> {
         } else {
             let l = self.left.take().unwrap();
             // Release box ownership; it is up to the child nodes to reassume ownership of the
-            // parent.
-            Box::into_raw(self);
-            RBox::into_box(l).first_owned()
+            // parent. Since the new box may
+            debug_assert!(l.parent == (&*self) as *const _);
+            std::mem::forget(self);
+            into_box(l).first_owned()
         }
     }
 
@@ -77,7 +95,11 @@ impl<K, V> Node<K, V> {
 }
 
 fn clone_node<K: Clone, V: Clone>(v: &RBox<Node<K, V>>) -> RBox<Node<K, V>> {
-    let mut n = RBox::new(Node::new(v.parent, v.key.clone(), v.value.clone()));
+    let mut n = RBox::new(Node::new(
+        std::ptr::null_mut(),
+        v.key.clone(),
+        v.value.clone(),
+    ));
     n.left = match v.left {
         RNone => RNone,
         RSome(ref v) => RSome(clone_node(v)),
@@ -330,7 +352,7 @@ mod map {
             IntoIter {
                 node: self
                     .root
-                    .map(|v| unsafe { RBox::into_box(v).first_owned() })
+                    .map(|v| unsafe { into_box(v).first_owned() })
                     .into_option(),
                 len: self.len,
             }
@@ -432,12 +454,12 @@ mod map {
                         self.node = if n.parent.is_null() {
                             None
                         } else {
-                            Some(unsafe { Box::from_raw(n.parent) })
+                            Some(unsafe { Box::from_raw(n.parent as *mut _) })
                         };
                     } else {
                         let mut r = n.right.take().unwrap();
                         r.parent = n.parent;
-                        self.node = Some(unsafe { RBox::into_box(r).first_owned() });
+                        self.node = Some(unsafe { into_box(r).first_owned() });
                     }
                     Some((n.key, n.value))
                 }
@@ -463,7 +485,7 @@ mod map {
                 self.node = if v.parent.is_null() {
                     None
                 } else {
-                    Some(unsafe { Box::from_raw(v.parent) })
+                    Some(unsafe { Box::from_raw(v.parent as *mut _) })
                 };
             }
         }
@@ -535,7 +557,8 @@ mod map {
 
                 let entries: Vec<_> = m.iter().collect();
                 assert_eq!(entries.len(), m.len());
-                let expected: Vec<(&u8, &u8)> = vec![(&1, &5), (&2, &6), (&3, &3), (&5, &1), (&8, &4)];
+                let expected: Vec<(&u8, &u8)> =
+                    vec![(&1, &5), (&2, &6), (&3, &3), (&5, &1), (&8, &4)];
                 assert_eq!(entries, expected);
             }
             {
@@ -576,6 +599,22 @@ mod map {
                 m.into_iter().collect::<Vec<_>>(),
                 vec![(1, 2), (2, 2), (3, 2), (4, 2), (5, 1)]
             );
+        }
+
+        #[test]
+        fn clone() {
+            let mut m: BstMap<u8, u8> = BstMap::new();
+            assert_eq!(m.insert(5, 1), None);
+            assert_eq!(m.insert(2, 2), None);
+            assert_eq!(m.insert(3, 3), None);
+            assert_eq!(m.insert(8, 4), None);
+            assert_eq!(m.insert(1, 5), None);
+            let cloned = m.clone();
+            assert_eq!(m.len(), cloned.len());
+            assert_eq!(m, cloned);
+            let m: Vec<_> = m.into_iter().collect();
+            let cloned: Vec<_> = cloned.into_iter().collect();
+            assert_eq!(m, cloned);
         }
 
         #[test]

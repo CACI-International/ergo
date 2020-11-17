@@ -111,7 +111,7 @@ grease_traits_fn! {
         }
         traits.add_generator_by_trait_for_trait::<IntoTyped<bool>>(|_traits, _type| {
             ROption::RSome(IntoTypedImpl::<bool> {
-                into_typed: FnPtr::new(to_bool),
+                into_typed: unsafe { FnPtr::new(to_bool) },
                 _phantom0: Default::default(),
             })
         });
@@ -130,7 +130,7 @@ grease_traits_fn! {
                 let TypeParameters(trait_types) = trt.data.clone().into();
                 if tp == &trait_types[0] {
                     return ROption::RSome(Erased::new(IntoTypedImpl::<()> {
-                        into_typed: FnPtr::new(id_f),
+                        into_typed: unsafe { FnPtr::new(id_f) },
                         _phantom0: Default::default(),
                     }));
                 }

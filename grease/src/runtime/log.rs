@@ -126,37 +126,6 @@ pub type Logger = RMutex<LogTarget_TO<'static, RBox<()>>>;
 /// A reference to a LogTarget.
 pub type LoggerRef = RArc<Logger>;
 
-/// A reference to a types logger.
-pub struct OriginalLogger<T>(Logger, std::marker::PhantomData<RMutex<RBox<T>>>);
-
-pub struct OriginalLoggerGuard<'a, T>(
-    abi_stable::external_types::parking_lot::mutex::RMutexGuard<
-        'a,
-        LogTarget_TO<'static, RBox<()>>,
-    >,
-    std::marker::PhantomData<RBox<T>>,
-);
-
-impl<T> OriginalLogger<T> {
-    pub fn lock(&self) -> OriginalLoggerGuard<T> {
-        OriginalLoggerGuard(self.0.lock(), Default::default())
-    }
-}
-
-impl<'a, T: std::any::Any> std::ops::Deref for OriginalLoggerGuard<'a, T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        self.0.obj.as_unerased().unwrap()
-    }
-}
-
-impl<'a, T: std::any::Any> std::ops::DerefMut for OriginalLoggerGuard<'a, T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.0.obj.as_unerased_mut().unwrap()
-    }
-}
-
 /// A LogTarget that does nothing.
 #[derive(StableAbi)]
 #[repr(C)]
@@ -167,9 +136,8 @@ impl LogTarget for EmptyLogTarget {
 }
 
 /// Create a logger reference.
-pub fn logger_ref<T: LogTarget + 'static>(target: T) -> (Arc<Logger>, Arc<OriginalLogger<T>>) {
-    let r = Arc::new(RMutex::new(LogTarget_TO::from_value(target, TU_Unerasable)));
-    (r.clone(), unsafe { std::mem::transmute(r) })
+pub fn logger_ref<T: LogTarget + 'static>(target: T) -> Arc<Logger> {
+    Arc::new(RMutex::new(LogTarget_TO::from_value(target, TU_Unerasable)))
 }
 
 /// The logging interface.

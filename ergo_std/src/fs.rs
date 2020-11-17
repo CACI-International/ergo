@@ -87,6 +87,9 @@ fn recursive_link<F: AsRef<Path>, T: AsRef<Path>>(from: F, to: T) -> Result<(), 
         }
         Ok(())
     } else {
+        if let Some(parent) = to.as_ref().parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         std::fs::hard_link(from, to)
     }
 }

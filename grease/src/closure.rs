@@ -16,8 +16,13 @@ pub struct FnPtr<F>(
 );
 
 impl<F: Eraseable + Copy> FnPtr<F> {
-    pub fn new(f: F) -> Self {
-        FnPtr(ErasedTrivial::new(f), Default::default())
+    /// # Safety
+    /// `F` must be a function pointer type.
+    pub unsafe fn new(f: F) -> Self {
+        FnPtr(
+            ErasedTrivial::new(crate::type_erase::trivialize(f)),
+            Default::default(),
+        )
     }
 
     pub fn as_fn(&self) -> &F {
@@ -273,7 +278,7 @@ mod test {
             v + 2
         }
 
-        let ptr: FnPtr<extern "C" fn(u8) -> u8> = FnPtr::new(my_func);
+        let ptr: FnPtr<extern "C" fn(u8) -> u8> = unsafe { FnPtr::new(my_func) };
         assert_eq!((ptr.as_fn())(40), 42);
     }
 }

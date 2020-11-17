@@ -10,9 +10,7 @@ mod task_manager;
 mod traits;
 
 use self::log::EmptyLogTarget;
-pub use self::log::{
-    logger_ref, Log, LogEntry, LogLevel, LogTarget, Logger, LoggerRef, OriginalLogger,
-};
+pub use self::log::{logger_ref, Log, LogEntry, LogLevel, LogTarget, Logger, LoggerRef};
 pub use store::{Item, ItemContent, ItemName, Store};
 pub use task_manager::{thread_id, OnError, TaskManager};
 pub use traits::{Trait, TraitGenerator, TraitGeneratorByTrait, TraitGeneratorByType, Traits};
@@ -67,18 +65,9 @@ impl std::error::Error for BuilderError {
 
 impl ContextBuilder {
     /// Set the logger to use.
-    pub fn logger<T: LogTarget + Send + 'static>(
-        mut self,
-        logger: T,
-    ) -> (Self, std::sync::Arc<OriginalLogger<T>>) {
-        let (logger, orig) = logger_ref(logger);
+    pub fn logger<T: LogTarget + Send + 'static>(mut self, logger: T) -> Self {
+        let logger = logger_ref(logger);
         self.logger = Some(logger.into());
-        (self, orig)
-    }
-
-    /// Set the logger to use by a LoggerRef.
-    pub fn logger_ref(mut self, logger: LoggerRef) -> Self {
-        self.logger = Some(logger);
         self
     }
 
@@ -121,7 +110,7 @@ impl ContextBuilder {
             .map_err(BuilderError::TaskManagerError)?,
             log: Log::new(
                 self.logger
-                    .unwrap_or_else(|| logger_ref(EmptyLogTarget).0.into()),
+                    .unwrap_or_else(|| logger_ref(EmptyLogTarget).into()),
             ),
             store: Store::new(self.store_dir.unwrap_or(std::env::temp_dir())),
             traits: Default::default(),

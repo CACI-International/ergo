@@ -24,7 +24,8 @@ impl Buffer {
     /// Create a buffer from the given value.
     pub fn new<T>(v: T) -> Self {
         Self::check_type::<T>();
-        let mut ret = Buffer(unsafe { std::mem::MaybeUninit::uninit().assume_init() });
+        // Zero-initialize so that any padding bytes are consistent.
+        let mut ret = Buffer([0; 24]);
         let ptr = &mut ret.0 as *mut [u8; 24] as *mut T;
         unsafe {
             ptr.write(v);
@@ -154,15 +155,39 @@ impl std::fmt::Debug for Erased {
 /// Note this differs from Copy because Copy implies copy semantics, which may not necessarily be
 /// present/desirable for all trivial types. Though it is true that all Copy types are Trivial (and
 /// such a blanket implementation exists).
-pub trait Trivial {}
+///
+/// # Safety
+/// Trivial types _must_ have consistent padding bytes, if any. Otherwise the guarantees of
+/// equality/ordering/hashing for ErasedTrivial do not hold.
+pub unsafe trait Trivial: Sized {
+    fn new_zeroed() -> Self {
+        let mut v = std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            v.as_mut_ptr().write_bytes(0, 1);
+            v.assume_init()
+        }
+    }
+}
 
-impl<T: Copy> Trivial for T {}
+unsafe impl Trivial for () {}
+unsafe impl Trivial for bool {}
+unsafe impl Trivial for char {}
+unsafe impl Trivial for u8 {}
+unsafe impl Trivial for i8 {}
+unsafe impl Trivial for u16 {}
+unsafe impl Trivial for i16 {}
+unsafe impl Trivial for u32 {}
+unsafe impl Trivial for i32 {}
+unsafe impl Trivial for u64 {}
+unsafe impl Trivial for i64 {}
+unsafe impl Trivial for usize {}
+unsafe impl Trivial for isize {}
 
 mod triv {
     #[repr(C)]
     pub struct Trivialized<T>(T);
 
-    impl<T> super::Trivial for Trivialized<T> {}
+    unsafe impl<T> super::Trivial for Trivialized<T> {}
 
     pub trait Trivialize {
         type Output;
@@ -191,7 +216,8 @@ mod triv {
     }
 }
 
-use triv::{trivialize, Trivialize};
+use triv::Trivialize;
+pub use triv::{trivialize, Trivialized};
 
 /// An Erased type for Trivial types.
 ///
@@ -214,15 +240,10 @@ impl ErasedTrivial {
 
     /// Create a new ErasedTrivial from the given value.
     pub fn new<T: Eraseable + Trivial>(v: T) -> Self {
-        if std::mem::size_of_val(&v) <= std::mem::size_of::<Buffer>()
-            && std::mem::align_of_val(&v) <= std::mem::align_of::<Buffer>()
-        {
-            Self::from_type(
-                v,
-                false,
-                std::mem::size_of::<T>(),
-                std::mem::align_of::<T>(),
-            )
+        let size = std::mem::size_of_val(&v);
+        let align = std::mem::align_of_val(&v);
+        if size <= std::mem::size_of::<Buffer>() && align <= std::mem::align_of::<Buffer>() {
+            Self::from_type(v, false, size, align)
         } else {
             // Box<T: Sized> is defined as having the same size as usize/pointer, so the size
             // assertions should be true on any platform.
@@ -234,7 +255,12 @@ impl ErasedTrivial {
     ///
     /// When retrieving the value later, one should use `as_ref::<T>()`/`to_owned::<T>()`.
     pub fn from_boxed<T: Eraseable + Trivial>(v: Box<T>) -> Self {
-        Self::from_type(v, true, std::mem::size_of::<T>(), std::mem::align_of::<T>())
+        Self::from_type(
+            Box::into_raw(v),
+            true,
+            std::mem::size_of::<T>(),
+            std::mem::align_of::<T>(),
+        )
     }
 
     /// Create a new ErasedTrivial from the given boxed slice.
@@ -246,7 +272,7 @@ impl ErasedTrivial {
             Self::default()
         } else {
             let align = std::mem::align_of_val(&*v);
-            Self::from_type(v, true, size, align)
+            Self::from_type(Box::into_raw(v), true, size, align)
         }
     }
 
@@ -259,7 +285,7 @@ impl ErasedTrivial {
 
     /// Create an ErasedTrivial from the given type, assuming the size and alignment of the type will fit
     /// in the Buffer. Panics if these constraints are not satisfied (in debug builds).
-    fn from_type<T: Eraseable>(v: T, boxed: bool, size: usize, align: usize) -> Self {
+    fn from_type<T>(v: T, boxed: bool, size: usize, align: usize) -> Self {
         debug_assert!(std::mem::size_of::<T>() <= std::mem::size_of::<Buffer>());
         debug_assert!(std::mem::align_of::<T>() <= std::mem::align_of::<Buffer>());
         assert!(size <= u32::MAX as usize);
@@ -621,6 +647,17 @@ mod test {
         c: [usize; 4],
     }
 
+    impl S {
+        pub fn new(a: i32, c: [usize; 4]) -> Self {
+            let mut v = Self::new_zeroed();
+            v.a = a;
+            v.c = c;
+            v
+        }
+    }
+
+    unsafe impl Trivial for S {}
+
     struct Dropper(Box<dyn FnMut()>);
     unsafe impl Send for Dropper {}
     unsafe impl Sync for Dropper {}
@@ -657,17 +694,31 @@ mod test {
     }
 
     #[test]
+    fn erased_ref() {
+        let s = S::new(42, [0, 1, 2, 3]);
+        let erased = RArc::new(Erased::new(s));
+        let r = unsafe { Ref::<S, _>::new(erased) };
+        assert_eq!(r.as_ref(), &s);
+        let cloned = r.clone();
+        assert_eq!(r.as_ref(), cloned.as_ref());
+        let s2 = cloned.owned();
+        assert_eq!(s, s2);
+        let s3 = r.owned();
+        assert_eq!(s, s3);
+    }
+
+    #[test]
     fn erased_trivial() {
-        let s = S {
-            a: 42,
-            b: (),
-            c: [0, 1, 2, 3],
-        };
+        let s = S::new(42, [0, 1, 2, 3]);
         let erased = ErasedTrivial::new(s);
-        let copied = erased.clone();
+        assert_eq!(erased.size(), std::mem::size_of::<S>());
+        assert_eq!(erased.align(), std::mem::align_of::<S>());
         assert_eq!(unsafe { erased.as_ref::<S>() }, &s);
-        assert_eq!(unsafe { copied.as_ref::<S>() }, &s);
+        let copied = erased.clone();
+        assert_eq!(erased.align(), copied.align());
+        assert_eq!(erased.size(), copied.size());
         assert_eq!(erased, copied);
+        assert_eq!(unsafe { copied.as_ref::<S>() }, &s);
     }
 
     #[test]
