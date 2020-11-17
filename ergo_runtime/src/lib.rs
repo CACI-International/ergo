@@ -87,8 +87,11 @@ pub struct Runtime {
     pub mod_path: ROption<PathBuf>,
     pub load_paths: RVec<PathBuf>,
     pub lint: bool,
-    lifetime: RArc<RMutex<RVec<Erased>>>,
     keyed_lifetime: RArc<RMutex<RHashMap<grease::types::Type, RArc<Erased>>>>,
+    // It is important that lifetime is the last member of the runtime, so that when dropped it is
+    // the last thing dropped. Other members of this struct, like env, load_cache, and
+    // keyed_lifetime, may depend on something in this vec (like a loaded plugin).
+    lifetime: RArc<RMutex<RVec<Erased>>>,
 }
 
 impl std::ops::Deref for Runtime {
@@ -181,8 +184,8 @@ impl Runtime {
             mod_path: ROption::RNone,
             load_paths: Default::default(),
             lint: false,
-            lifetime: RArc::new(RMutex::new(Default::default())),
             keyed_lifetime: RArc::new(RMutex::new(Default::default())),
+            lifetime: RArc::new(RMutex::new(Default::default())),
         }
     }
 
@@ -281,8 +284,8 @@ impl Runtime {
             mod_path: self.mod_path.clone(),
             load_paths: self.load_paths.clone(),
             lint: self.lint,
-            lifetime: self.lifetime.clone(),
             keyed_lifetime: self.keyed_lifetime.clone(),
+            lifetime: self.lifetime.clone(),
         }
     }
 
