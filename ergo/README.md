@@ -99,3 +99,5 @@ Within a script, the following are defined:
 * Change `path:new` to have identity based on source file and occurrence/seed
   value.
 * Deduplicate values based on identity.
+* Fix task status output; it gets a little wonky when you `seq` with multiple
+  `task`.
