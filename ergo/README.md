@@ -102,3 +102,5 @@ Within a script, the following are defined:
 * Fix task status output; it gets a little wonky when you `seq` with multiple
   `task`.
 * Improve concurrent calls to `value:cache` which are on the same value.
+* Add `fs:expose` or something named similarly to expose read-only files.
+  * Change `fs:copy` behavior to actually make copies (i.e., write-able files).

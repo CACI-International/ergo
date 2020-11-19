@@ -431,7 +431,7 @@ fn read_fn() -> Value {
 }
 
 fn write_fn() -> Value {
-    ergo_function!(std::fs::read, |ctx| {
+    ergo_function!(std::fs::write, |ctx| {
         let path = ctx.args.next().ok_or("'path' missing")?;
         let data = ctx.args.next().ok_or("'data' missing")?;
 
