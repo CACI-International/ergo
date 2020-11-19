@@ -1,25 +1,67 @@
 //! An ABI-stable binary search tree.
 
-use abi_stable::{
-    std_types::{RBox, ROption},
-    StableAbi,
-};
+use abi_stable::{std_types::ROption, StableAbi};
+use pin_project::pin_project;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
+use std::pin::Pin;
 
 use ROption::*;
 
 pub use map::BstMap;
 pub use set::BstSet;
 
+/// RBox<T> should implement Unpin but doesn't, so we mirror it here.
+#[derive(Debug, StableAbi)]
+#[repr(transparent)]
+struct RBox<T>(abi_stable::std_types::RBox<T>);
+
+impl<T> RBox<T> {
+    pub fn new(v: T) -> Self {
+        RBox(abi_stable::std_types::RBox::new(v))
+    }
+
+    pub fn into_box(this: Self) -> Box<T> {
+        abi_stable::std_types::RBox::into_box(this.0)
+    }
+
+    pub fn into_inner(this: Self) -> T {
+        abi_stable::std_types::RBox::into_inner(this.0)
+    }
+}
+
+impl<T> std::marker::Unpin for RBox<T> {}
+
+impl<T> std::ops::Deref for RBox<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &*self.0
+    }
+}
+
+impl<T> std::ops::DerefMut for RBox<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut *self.0
+    }
+}
+
+type BoxedNode<K, V> = Pin<RBox<Node<K, V>>>;
+
+#[pin_project]
 #[derive(Debug, StableAbi)]
 #[repr(C)]
 struct Node<K, V> {
     key: K,
     value: V,
+    #[pin]
     parent: *const Node<K, V>,
-    left: ROption<RBox<Node<K, V>>>,
-    right: ROption<RBox<Node<K, V>>>,
+    #[pin]
+    left: ROption<BoxedNode<K, V>>,
+    #[pin]
+    right: ROption<BoxedNode<K, V>>,
+    #[pin]
+    _pin: std::marker::PhantomPinned,
 }
 
 // By default, Node<K, V> is not Send/Sync because of the raw pointer.
@@ -28,35 +70,34 @@ unsafe impl<K: Sync, V: Sync> Sync for Node<K, V> {}
 
 /// Convert an RBox node into a Box node.
 /// This is necessary as RBox::into_box may move the value.
-fn into_box<K, V>(node: RBox<Node<K, V>>) -> Box<Node<K, V>> {
+fn into_box<K, V>(node: BoxedNode<K, V>) -> Pin<Box<Node<K, V>>> {
     let prev = &*node as *const _;
-    let mut b = RBox::into_box(node);
+    let mut b = unsafe { RBox::into_box(Pin::into_inner_unchecked(node)) };
     let parent = &*b as *const _;
     if prev != parent {
         if let RSome(l) = &mut b.left {
-            l.parent = parent;
+            *l.as_mut().project().parent = parent;
         }
         if let RSome(r) = &mut b.right {
-            r.parent = parent;
+            *r.as_mut().project().parent = parent;
         }
     }
-    b
+    unsafe { Pin::new_unchecked(b) }
 }
 
 #[allow(dead_code)]
 impl<K, V> Node<K, V> {
-    pub fn new(parent: *const Self, key: K, value: V) -> Self {
-        Node {
-            key,
-            value,
-            parent,
-            left: RNone,
-            right: RNone,
+    pub fn new(parent: *const Self, key: K, value: V) -> BoxedNode<K, V> {
+        unsafe {
+            Pin::new_unchecked(RBox::new(Node {
+                key,
+                value,
+                parent,
+                left: RNone,
+                right: RNone,
+                _pin: std::marker::PhantomPinned,
+            }))
         }
-    }
-
-    pub fn reparent(&mut self, parent: *const Self) {
-        self.parent = parent;
     }
 
     pub fn first(&self) -> &Self {
@@ -67,17 +108,25 @@ impl<K, V> Node<K, V> {
     }
 
     /// Unsafe because the returned node must retake ownership of parent(s).
-    pub unsafe fn first_owned(mut self: Box<Self>) -> Box<Self> {
+    pub unsafe fn first_owned(self: Pin<Box<Self>>) -> Pin<Box<Self>> {
         if self.left.is_none() {
             self
         } else {
-            let l = self.left.take().unwrap();
+            let mut b = Pin::into_inner_unchecked(self);
+            let l = b.left.take().unwrap();
             // Release box ownership; it is up to the child nodes to reassume ownership of the
-            // parent. Since the new box may
-            debug_assert!(l.parent == (&*self) as *const _);
-            std::mem::forget(self);
+            // parent.
+            debug_assert!(l.parent == (&*b) as *const _);
+            std::mem::forget(b);
             into_box(l).first_owned()
         }
+    }
+
+    /// Unsafe because self must no longer be used in a tree.
+    pub unsafe fn claim_parent(&self) -> Pin<Box<Self>> {
+        debug_assert!(self.left.is_none());
+        debug_assert!(self.right.is_none());
+        Pin::new_unchecked(Box::from_raw(self.parent as *mut _))
     }
 
     pub fn next_parent(&self) -> Option<&Self> {
@@ -92,36 +141,37 @@ impl<K, V> Node<K, V> {
             }
         })
     }
+
+    /// Unsafe because caller must ensure no references to the node exist in the children.
+    pub unsafe fn into_value(this: BoxedNode<K, V>) -> V {
+        debug_assert!(this.left.is_none());
+        debug_assert!(this.right.is_none());
+        RBox::into_inner(Pin::into_inner_unchecked(this)).value
+    }
 }
 
-fn clone_node<K: Clone, V: Clone>(v: &RBox<Node<K, V>>) -> RBox<Node<K, V>> {
-    let mut n = RBox::new(Node::new(
-        std::ptr::null_mut(),
-        v.key.clone(),
-        v.value.clone(),
-    ));
-    n.left = match v.left {
+fn clone_node<K: Clone, V: Clone>(
+    v: &BoxedNode<K, V>,
+    parent: *const Node<K, V>,
+) -> BoxedNode<K, V> {
+    let mut n = Node::new(parent, v.key.clone(), v.value.clone());
+    let ptr: *const Node<K, V> = &*n;
+    let mut p = n.as_mut().project();
+    *p.left = match v.left {
         RNone => RNone,
-        RSome(ref v) => RSome(clone_node(v)),
+        RSome(ref v) => RSome(clone_node(v, ptr)),
     };
-    n.right = match v.right {
+    *p.right = match v.right {
         RNone => RNone,
-        RSome(ref v) => RSome(clone_node(v)),
+        RSome(ref v) => RSome(clone_node(v, ptr)),
     };
-    let parent: *mut Node<K, V> = &mut *n;
-    if let RSome(l) = &mut n.left {
-        l.parent = parent;
-    }
-    if let RSome(r) = &mut n.right {
-        r.parent = parent;
-    }
     n
 }
 
 fn find_node<'a, Q, K, V>(
-    mut node: &'a ROption<RBox<Node<K, V>>>,
+    mut node: &'a ROption<BoxedNode<K, V>>,
     key: &Q,
-) -> (*const Node<K, V>, &'a ROption<RBox<Node<K, V>>>)
+) -> (*const Node<K, V>, &'a ROption<BoxedNode<K, V>>)
 where
     K: std::borrow::Borrow<Q>,
     Q: Ord + ?Sized,
@@ -146,9 +196,9 @@ where
 }
 
 fn find_node_mut<'a, Q, K, V>(
-    node: &'a mut ROption<RBox<Node<K, V>>>,
+    node: &'a mut ROption<BoxedNode<K, V>>,
     key: &Q,
-) -> (*mut Node<K, V>, &'a mut ROption<RBox<Node<K, V>>>)
+) -> (*mut Node<K, V>, &'a mut ROption<BoxedNode<K, V>>)
 where
     K: std::borrow::Borrow<Q>,
     Q: Ord + ?Sized,
@@ -158,15 +208,12 @@ where
 
 mod map {
     use super::*;
-    use abi_stable::{
-        std_types::{RBox, ROption},
-        StableAbi,
-    };
+    use abi_stable::{std_types::ROption, StableAbi};
 
     #[derive(Debug, StableAbi)]
     #[repr(C)]
     pub struct BstMap<K, V> {
-        root: ROption<RBox<Node<K, V>>>,
+        root: ROption<BoxedNode<K, V>>,
         len: usize,
     }
 
@@ -214,15 +261,16 @@ mod map {
             match node.take() {
                 RNone => None,
                 RSome(mut val) => {
+                    let mut proj = val.as_mut().project();
                     self.len -= 1;
-                    match (val.left.take(), val.right.take()) {
+                    match (proj.left.take(), proj.right.take()) {
                         (RNone, RNone) => (),
                         (RSome(mut l), RNone) => {
-                            l.reparent(parent);
+                            *l.as_mut().project().parent = parent;
                             *node = RSome(l);
                         }
                         (RNone, RSome(mut r)) => {
-                            r.reparent(parent);
+                            *r.as_mut().project().parent = parent;
                             *node = RSome(r);
                         }
                         (RSome(l), RSome(r)) => {
@@ -231,15 +279,15 @@ mod map {
                             } else {
                                 (r, l)
                             };
-                            root.reparent(parent);
+                            *root.as_mut().project().parent = parent;
                             *node = RSome(root);
                             let (parent, ins) = find_node_mut(&mut self.root, val.key.borrow());
                             debug_assert!(ins.is_none());
-                            other.reparent(parent);
+                            *other.as_mut().project().parent = parent;
                             *ins = RSome(other);
                         }
                     }
-                    Some(RBox::into_box(val).value)
+                    Some(unsafe { Node::into_value(val) })
                 }
             }
         }
@@ -251,12 +299,12 @@ mod map {
             let (parent, node) = find_node_mut(&mut self.root, &key);
             match node {
                 RNone => {
-                    *node = RSome(RBox::from(Box::new(Node::new(parent, key, value))));
+                    *node = RSome(Node::new(parent, key, value));
                     self.len += 1;
                     None
                 }
                 RSome(val) => {
-                    std::mem::swap(&mut val.value, &mut value);
+                    std::mem::swap(val.as_mut().project().value, &mut value);
                     Some(value)
                 }
             }
@@ -309,7 +357,7 @@ mod map {
             BstMap {
                 root: match &self.root {
                     RNone => RNone,
-                    RSome(v) => RSome(clone_node(&v)),
+                    RSome(v) => RSome(clone_node(&v, std::ptr::null())),
                 },
                 len: self.len,
             }
@@ -403,7 +451,7 @@ mod map {
 
     #[derive(Debug)]
     pub struct IntoIter<K, V> {
-        node: Option<Box<Node<K, V>>>,
+        node: Option<Pin<Box<Node<K, V>>>>,
         len: usize,
     }
 
@@ -448,17 +496,18 @@ mod map {
         fn next(&mut self) -> Option<Self::Item> {
             match self.node.take() {
                 None => None,
-                Some(mut n) => {
+                Some(n) => {
                     self.len -= 1;
+                    let mut n = unsafe { Pin::into_inner_unchecked(n) };
                     if n.right.is_none() {
                         self.node = if n.parent.is_null() {
                             None
                         } else {
-                            Some(unsafe { Box::from_raw(n.parent as *mut _) })
+                            Some(unsafe { n.claim_parent() })
                         };
                     } else {
                         let mut r = n.right.take().unwrap();
-                        r.parent = n.parent;
+                        *r.as_mut().project().parent = n.parent;
                         self.node = Some(unsafe { into_box(r).first_owned() });
                     }
                     Some((n.key, n.value))
@@ -481,13 +530,7 @@ mod map {
 
     impl<K, V> Drop for IntoIter<K, V> {
         fn drop(&mut self) {
-            while let Some(v) = self.node.take() {
-                self.node = if v.parent.is_null() {
-                    None
-                } else {
-                    Some(unsafe { Box::from_raw(v.parent as *mut _) })
-                };
-            }
+            while self.next().is_some() {}
         }
     }
 
