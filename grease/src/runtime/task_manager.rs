@@ -124,29 +124,38 @@ impl<'a> SemaphorePermit<'a> {
 #[sabi_trait]
 trait SemaphoreInterface: Debug + Send + Sync {
     #[sabi(last_prefix_field)]
-    fn acquire<'a>(&'a self) -> BoxFuture<'a, SemaphorePermit<'a>>;
+    fn acquire<'a>(&'a self, count: u32) -> BoxFuture<'a, SemaphorePermit<'a>>;
 }
 
 impl SemaphoreInterface for tokio::sync::Semaphore {
-    fn acquire<'a>(&'a self) -> BoxFuture<'a, SemaphorePermit<'a>> {
-        BoxFuture::new(async move { SemaphorePermit::new(self.acquire().await) })
+    fn acquire<'a>(&'a self, count: u32) -> BoxFuture<'a, SemaphorePermit<'a>> {
+        BoxFuture::new(async move {
+            if count == 0 {
+                SemaphorePermit::new(())
+            } else {
+                SemaphorePermit::new(self.acquire_many(count).await)
+            }
+        })
     }
 }
 
 #[derive(Debug, StableAbi)]
 #[repr(C)]
-struct Semaphore(SemaphoreInterface_TO<'static, RBox<()>>);
+struct Semaphore(SemaphoreInterface_TO<'static, RBox<()>>, usize);
 
 impl Semaphore {
     pub fn new(permits: usize) -> Self {
-        Semaphore(SemaphoreInterface_TO::from_value(
-            tokio::sync::Semaphore::new(permits),
-            TU_Opaque,
-        ))
+        Semaphore(
+            SemaphoreInterface_TO::from_value(tokio::sync::Semaphore::new(permits), TU_Opaque),
+            permits,
+        )
     }
 
-    pub async fn acquire<'a>(&'a self) -> SemaphorePermit<'a> {
-        self.0.acquire().await
+    pub async fn acquire<'a>(&'a self, mut count: u32) -> SemaphorePermit<'a> {
+        if count as usize > self.1 {
+            count = self.1 as u32;
+        }
+        self.0.acquire(count).await
     }
 }
 
@@ -467,12 +476,12 @@ impl TaskManager {
             .expect("value not sent")
     }
 
-    /// Count a task as being active.
+    /// Count `n` tasks as being active.
     ///
-    /// Until the returned permit is dropped, it will be counted as an active task against the
-    /// total permissible concurrent tasks.
-    pub async fn task_acquire(&'_ self) -> TaskPermit<'_> {
-        self.tasks.acquire().await
+    /// Until the returned permit is dropped, `n` active tasks will be counted against the total
+    /// permissible concurrent tasks.
+    pub async fn task_acquire(&'_ self, count: u32) -> TaskPermit<'_> {
+        self.tasks.acquire(count).await
     }
 }
 

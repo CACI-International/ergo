@@ -1,5 +1,9 @@
 # ergo_std changelog
 
+## 1.0.0-beta.5  -- Unreleased
+* Add `task-count` keyword argument to `task`, allowing one to specify how many
+  task slots the task should consume when running.
+
 ## 1.0.0-beta.4  -- 2020-11-17
 * Rename `value:force` to `value:by-content`.
 * Add `collection:get` to index values without causing errors to occur.

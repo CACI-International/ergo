@@ -47,10 +47,23 @@ impl Output {
     }
 
     fn update(&mut self) {
-        let mut renderer = self.out.renderer();
         if self.paused.is_some() {
             return;
         }
+
+        let mut renderer = self.out.renderer();
+
+        renderer += &self.tasks;
+        renderer += &self.progress;
+        renderer += &self.errors;
+    }
+
+    fn update_log(&mut self, entry: LogEntry) {
+        if self.paused.is_some() {
+            return;
+        }
+
+        let mut renderer = self.out.renderer_after(entry);
 
         renderer += &self.tasks;
         renderer += &self.progress;
@@ -73,14 +86,11 @@ impl LogTarget for Output {
     fn log(&mut self, entry: LogEntry) {
         if entry.level >= self.log_level {
             if let Some(v) = &mut self.paused {
-                writeln!(v, "{}", entry)
+                writeln!(v, "{}", entry).expect("failed to write to output");
             } else {
-                writeln!(self.out, "{}", entry)
+                self.update_log(entry);
             }
-            .expect("failed to write to output");
         }
-
-        self.update();
     }
 
     fn task(&mut self, description: RString) -> LogTaskKey {

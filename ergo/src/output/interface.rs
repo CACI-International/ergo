@@ -72,6 +72,20 @@ impl<'a> Renderer<'a> {
 impl TerminalOutput {
     pub fn renderer(&mut self) -> Renderer {
         self.term.reset().expect("failed to reset terminal");
+        // Move cursor to beginning of previously-rendered output.
+        for _ in 0..self.last_rendered_lines {
+            self.term.cursor_up().expect("failed to write to terminal");
+        }
+        Renderer::new(self)
+    }
+
+    pub fn renderer_after<T: std::fmt::Display>(&mut self, to_write: T) -> Renderer {
+        self.term.reset().expect("failed to reset terminal");
+        // Move cursor to beginning of previously-rendered output.
+        for _ in 0..self.last_rendered_lines {
+            self.term.cursor_up().expect("failed to write to terminal");
+        }
+        writeln!(self, "{}", to_write).expect("failed to write");
         Renderer::new(self)
     }
 
@@ -175,10 +189,14 @@ impl Terminal for RendererInner<'_> {
 impl Drop for RendererInner<'_> {
     fn drop(&mut self) {
         let lines = self.lines;
+        let mut lines_up = 0;
+        // Clear any following lines from prior renders.
         while self.term.last_rendered_lines > 0 {
             writeln!(self).expect("failed to write to terminal");
+            lines_up += 1;
         }
-        for _ in 0..self.lines {
+        // Move the cursor back to the line after our last output line.
+        for _ in 0..lines_up {
             self.term
                 .term
                 .cursor_up()

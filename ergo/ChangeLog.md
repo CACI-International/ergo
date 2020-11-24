@@ -1,5 +1,8 @@
 # ergo changelog
 
+## 1.0.0-beta.5  -- Unreleased
+* Improve task tracking and UI display of running tasks.
+
 ## 1.0.0-beta.4  -- 2020-11-17
 * Add the `!` operator, which may precede any expression or argument to evaluate
   the result immediately.
