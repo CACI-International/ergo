@@ -2,24 +2,25 @@
 
 use super::interface::{render::*, TerminalOutput};
 use abi_stable::std_types::{RDuration, ROption, RSlice, RString, RVec};
-use grease::runtime::{LogEntry, LogLevel, LogTarget};
+use grease::runtime::{LogEntry, LogLevel, LogTarget, LogTaskKey};
 use log::warn;
+use slab::Slab;
 use std::collections::HashMap;
 use std::convert::TryInto;
-
-const THREAD_STATUS_LOG_LEVEL: LogLevel = LogLevel::Info;
+use std::sync::{Arc, Mutex};
 
 pub struct Output {
     log_level: LogLevel,
     out: TerminalOutput,
-    threads: Option<ThreadStatus>,
+    tasks: TaskStatus,
     progress: Progress,
     errors: Errors,
     paused: Option<Vec<u8>>,
 }
 
-struct ThreadStatus {
-    thread_mapping: HashMap<u64, Option<LogEntry>>,
+#[derive(Clone)]
+struct TaskStatus {
+    tasks: Arc<Mutex<Slab<String>>>,
 }
 
 #[derive(Default)]
@@ -38,7 +39,7 @@ impl Output {
         Output {
             log_level: LogLevel::Info,
             out,
-            threads: None,
+            tasks: TaskStatus::new(),
             progress: Default::default(),
             errors: Errors::new(keep_going),
             paused: None,
@@ -51,19 +52,13 @@ impl Output {
             return;
         }
 
-        if let Some(ref t) = self.threads {
-            renderer += t;
-        }
+        renderer += &self.tasks;
         renderer += &self.progress;
         renderer += &self.errors;
     }
 }
 
 impl super::Output for Output {
-    fn set_thread_ids(&mut self, ids: Vec<u64>) {
-        self.threads = Some(ids.into_iter().collect());
-    }
-
     fn set_log_level(&mut self, log_level: LogLevel) {
         self.log_level = log_level;
     }
@@ -85,33 +80,23 @@ impl LogTarget for Output {
             .expect("failed to write to output");
         }
 
-        if let Some(ref mut t) = self.threads {
-            if entry.level >= THREAD_STATUS_LOG_LEVEL {
-                t.set(Some(entry));
-            }
-        }
-
         self.update();
     }
 
-    fn dropped(&mut self, _context: RVec<RString>) {
-        if let Some(ref mut t) = self.threads {
-            t.set(None);
-        }
-
+    fn task(&mut self, description: RString) -> LogTaskKey {
+        let key = self.tasks.insert(description);
         self.update();
+        key
     }
 
     fn timer_pending(&mut self, id: RSlice<RString>) {
         self.progress.pending(id);
-
         self.update();
     }
 
     fn timer_complete(&mut self, id: RSlice<RString>, duration: ROption<RDuration>) {
         self.progress
             .complete(id, duration.map(|v| v.into()).into());
-
         self.update();
     }
 
@@ -131,36 +116,35 @@ impl LogTarget for Output {
     }
 }
 
-impl ThreadStatus {
-    pub fn new<I: IntoIterator<Item = u64>>(i: I) -> Self {
-        ThreadStatus {
-            thread_mapping: i.into_iter().map(|id| (id, None)).collect(),
+impl TaskStatus {
+    pub fn new() -> Self {
+        TaskStatus {
+            tasks: Arc::new(Mutex::new(Slab::with_capacity(16))),
         }
     }
 
-    pub fn set(&mut self, entry: Option<LogEntry>) {
-        if let Some(id) = grease::runtime::thread_id() {
-            if let Some(v) = self.thread_mapping.get_mut(&id) {
-                *v = entry;
+    pub fn insert(&mut self, entry: RString) -> LogTaskKey {
+        let id = self.tasks.lock().unwrap().insert(entry.into());
+        struct Key(TaskStatus, usize);
+
+        impl Drop for Key {
+            fn drop(&mut self) {
+                if let Ok(mut guard) = self.0.tasks.lock() {
+                    guard.remove(self.1);
+                }
             }
         }
+
+        LogTaskKey::new(Key(self.clone(), id))
     }
 }
 
-impl std::iter::FromIterator<u64> for ThreadStatus {
-    fn from_iter<T: IntoIterator<Item = u64>>(iter: T) -> Self {
-        ThreadStatus::new(iter)
-    }
-}
-
-impl Render for ThreadStatus {
+impl Render for TaskStatus {
     fn render<Target: Write + Terminal>(&self, to: &mut Target) -> std::io::Result<()> {
         to.fg(term::color::YELLOW)?;
-        // Assumes thread_mapping remains the same for order consistency
-        for v in self.thread_mapping.values() {
-            if let Some(entry) = v {
-                writeln!(to, "* {}", entry.args)?;
-            }
+        let guard = self.tasks.lock().unwrap();
+        for v in guard.iter() {
+            writeln!(to, "* {}", &v.1)?;
         }
         Ok(())
     }

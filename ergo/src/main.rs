@@ -1,4 +1,4 @@
-use abi_stable::std_types::{RDuration, ROption, RSlice, RString, RVec};
+use abi_stable::std_types::{RDuration, ROption, RSlice, RString};
 use ergo_runtime::{source::Source, ContextExt};
 use grease::runtime::*;
 use simplelog::WriteLogger;
@@ -93,38 +93,40 @@ fn run(opts: Opts) -> Result<String, String> {
     struct WeakLogTarget<T>(std::sync::Weak<std::sync::Mutex<T>>);
 
     impl<T: LogTarget + Send> WeakLogTarget<T> {
-        fn with<F: FnOnce(&mut (dyn LogTarget + Send))>(&self, f: F) {
+        fn with<R, F: FnOnce(&mut (dyn LogTarget + Send)) -> R>(&self, f: F) -> Option<R> {
             if let Some(logger) = self.0.upgrade() {
                 if let Ok(mut logger) = logger.lock() {
-                    f(&mut *logger)
+                    return Some(f(&mut *logger));
                 }
             }
+            None
         }
     }
 
     impl<T: LogTarget + Send> LogTarget for WeakLogTarget<T> {
         fn log(&mut self, entry: LogEntry) {
-            self.with(move |l| l.log(entry))
+            self.with(move |l| l.log(entry));
         }
 
-        fn dropped(&mut self, context: RVec<RString>) {
-            self.with(move |l| l.dropped(context))
+        fn task(&mut self, description: RString) -> LogTaskKey {
+            self.with(move |l| l.task(description))
+                .unwrap_or(LogTaskKey::new(()))
         }
 
         fn timer_pending(&mut self, id: RSlice<RString>) {
-            self.with(move |l| l.timer_pending(id))
+            self.with(move |l| l.timer_pending(id));
         }
 
         fn timer_complete(&mut self, id: RSlice<RString>, duration: ROption<RDuration>) {
-            self.with(move |l| l.timer_complete(id, duration))
+            self.with(move |l| l.timer_complete(id, duration));
         }
 
         fn pause_logging(&mut self) {
-            self.with(move |l| l.pause_logging())
+            self.with(move |l| l.pause_logging());
         }
 
         fn resume_logging(&mut self) {
-            self.with(move |l| l.resume_logging())
+            self.with(move |l| l.resume_logging());
         }
     }
 
@@ -173,12 +175,6 @@ fn run(opts: Opts) -> Result<String, String> {
     };
 
     ctx.lint = opts.lint;
-
-    // Set thread ids in the logger, as reported by the task manager.
-    {
-        let mut l = logger.lock().unwrap();
-        l.set_thread_ids(ctx.task.thread_ids().iter().cloned().collect());
-    }
 
     // Set interrupt signal handler to abort tasks.
     //

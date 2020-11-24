@@ -5,7 +5,7 @@ use abi_stable::{
     sabi_trait,
     sabi_trait::prelude::*,
     std_types::{RArc, RBox, RDuration, ROption, RSlice, RString, RVec},
-    StableAbi,
+    DynTrait, StableAbi,
 };
 use std::fmt;
 use std::sync::Arc;
@@ -92,6 +92,21 @@ impl fmt::Display for LogEntry {
     }
 }
 
+#[derive(StableAbi)]
+#[repr(C)]
+#[sabi(impl_InterfaceType(Send))]
+struct LogTaskKeyInterface;
+
+#[derive(StableAbi)]
+#[repr(C)]
+pub struct LogTaskKey(DynTrait<'static, RBox<()>, LogTaskKeyInterface>);
+
+impl LogTaskKey {
+    pub fn new<T: Send + 'static>(key: T) -> Self {
+        LogTaskKey(DynTrait::from_any_value(key, LogTaskKeyInterface))
+    }
+}
+
 /// A trait for the runtime log target.
 ///
 /// This target is set as part of runtime instantiation. It is used for task runtime logging, not
@@ -101,10 +116,12 @@ pub trait LogTarget: Send {
     /// Send a log entry.
     fn log(&mut self, entry: LogEntry);
 
-    /// A log was dropped.
+    /// Record a running task.
     ///
-    /// This is mainly useful for streaming outputs to know that a log completed.
-    fn dropped(&mut self, _context: RVec<RString>) {}
+    /// When the returned key is dropped, the task is removed.
+    fn task(&mut self, _description: RString) -> LogTaskKey {
+        LogTaskKey::new(())
+    }
 
     /// Indicates a unique timer for the given id has been created.
     fn timer_pending(&mut self, _id: RSlice<RString>) {}
@@ -227,10 +244,11 @@ impl Log {
         }
     }
 
-    /// Indicate that a stream of logging is complete.
-    pub fn end_stream(&self) {
-        let mut l = self.logger.lock();
-        l.dropped(self.context.clone());
+    /// Set the task description for the given future.
+    ///
+    /// The description will be set every time the future is polled, and cleared when it returns.
+    pub fn task<T: ToString>(&self, description: T) -> LogTaskKey {
+        self.logger.lock().task(description.to_string().into())
     }
 
     log_level!(debug, Debug);

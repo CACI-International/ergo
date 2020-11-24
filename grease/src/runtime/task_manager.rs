@@ -3,16 +3,18 @@
 // For generated sabi trait code with Closure<(), ...>.
 #![allow(improper_ctypes_definitions)]
 
+use crate::bst::BstMap;
 use crate::closure::ClosureOnce;
 use crate::future::{BoxFuture, LocalBoxFuture};
-use crate::type_erase::Erased;
+use crate::type_erase::{Eraseable, Erased, Ref};
+use crate::u128::U128;
 use crate::Error;
 use abi_stable::{
     external_types::{RMutex, RRwLock},
     sabi_trait,
     sabi_trait::prelude::*,
-    std_types::{RArc, RBox, ROption, RResult, RVec},
-    StableAbi,
+    std_types::{RArc, RBox, ROption, RResult, RString, RVec},
+    DynTrait, StableAbi,
 };
 use futures::future::{abortable, try_join, try_join_all, AbortHandle, Aborted, Future, FutureExt};
 use log::debug;
@@ -21,9 +23,41 @@ use tokio::runtime as tokio_runtime;
 thread_local! {
     static ERROR_CALLBACK: RMutex<ROption<RArc<RMutex<ErrorCallback>>>> = RMutex::new(ROption::RNone);
     static THREAD_ID: RRwLock<ROption<u64>> = RRwLock::new(ROption::RNone);
+    static TASK_LOCAL: RMutex<BstMap<U128, RArc<Erased>>> = RMutex::new(Default::default());
 }
 
 static NEXT_THREAD_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Create a task local key from the given namespaced name.
+///
+/// Example usage:
+/// ```
+/// # #[macro_use] extern crate grease;
+/// task_local_key!(grease::task_description);
+/// ```
+#[macro_export]
+macro_rules! task_local_key {
+    ( $( $l:ident )::+ ) => {
+        {
+            let mut id = $crate::uuid::grease_uuid(b"grease_task_local");
+            $( id = $crate::uuid::Uuid::new_v5(&id, stringify!($l).as_bytes()); )+
+            id.as_u128()
+        }
+    }
+}
+
+/// The description associated with a given task.
+#[derive(StableAbi)]
+#[repr(C)]
+pub struct TaskDescription {
+    pub description: RString,
+}
+
+impl TaskLocal for TaskDescription {
+    fn task_local_key() -> u128 {
+        task_local_key!(grease::task_description)
+    }
+}
 
 #[derive(StableAbi)]
 #[repr(C)]
@@ -59,6 +93,63 @@ fn call_on_error_internal(cb: &Erased, added: bool) {
 /// Callback when an error is created in a task.
 pub type OnError = dyn Fn(bool) + Send + Sync;
 
+/// A reference to a task local value.
+pub type TaskLocalRef<T> = Ref<T, RArc<Erased>>;
+
+/// A type that has an associated task local key.
+pub trait TaskLocal: Eraseable + StableAbi {
+    /// The associated key.
+    fn task_local_key() -> u128;
+}
+
+#[derive(StableAbi)]
+#[repr(C)]
+#[sabi(impl_InterfaceType(Send, Sync, Debug))]
+struct SemaphorePermitInterface;
+
+#[derive(StableAbi)]
+#[repr(C)]
+pub struct SemaphorePermit<'a>(DynTrait<'a, RBox<()>, SemaphorePermitInterface>);
+
+impl<'a> SemaphorePermit<'a> {
+    fn new<T: Send + Sync + std::fmt::Debug + 'a>(key: T) -> Self {
+        SemaphorePermit(DynTrait::from_borrowing_value(
+            key,
+            SemaphorePermitInterface,
+        ))
+    }
+}
+
+/// Trait to make a trait object from Semaphores.
+#[sabi_trait]
+trait SemaphoreInterface: Debug + Send + Sync {
+    #[sabi(last_prefix_field)]
+    fn acquire<'a>(&'a self) -> BoxFuture<'a, SemaphorePermit<'a>>;
+}
+
+impl SemaphoreInterface for tokio::sync::Semaphore {
+    fn acquire<'a>(&'a self) -> BoxFuture<'a, SemaphorePermit<'a>> {
+        BoxFuture::new(async move { SemaphorePermit::new(self.acquire().await) })
+    }
+}
+
+#[derive(Debug, StableAbi)]
+#[repr(C)]
+struct Semaphore(SemaphoreInterface_TO<'static, RBox<()>>);
+
+impl Semaphore {
+    pub fn new(permits: usize) -> Self {
+        Semaphore(SemaphoreInterface_TO::from_value(
+            tokio::sync::Semaphore::new(permits),
+            TU_Opaque,
+        ))
+    }
+
+    pub async fn acquire<'a>(&'a self) -> SemaphorePermit<'a> {
+        self.0.acquire().await
+    }
+}
+
 /// Trait to be able to make a trait object from `ThreadPool`.
 ///
 /// The only method we currently use on `ThreadPool` is `spawn_ok`.
@@ -71,8 +162,20 @@ trait ThreadPoolInterface: Clone + Debug + Send + Sync {
         f: ClosureOnce<(), Erased>,
     ) -> BoxFuture<'static, RResult<Erased, Error>>;
 
-    #[sabi(last_prefix_field)]
     fn block_on<'a>(&self, future: LocalBoxFuture<'a, ()>);
+
+    // Task-local methods don't actually access the runtime, but are here so that access to
+    // thread-local variables is consistent across plugin boundaries.
+
+    fn get_task_local(&self, key: U128) -> ROption<RArc<Erased>>;
+
+    #[sabi(last_prefix_field)]
+    fn scope_task_local<'a>(
+        &self,
+        key: U128,
+        value: Erased,
+        future: BoxFuture<'a, ()>,
+    ) -> BoxFuture<'a, ()>;
 }
 
 impl ThreadPoolInterface for std::sync::Arc<tokio_runtime::Runtime> {
@@ -94,7 +197,51 @@ impl ThreadPoolInterface for std::sync::Arc<tokio_runtime::Runtime> {
     fn block_on<'a>(&self, future: LocalBoxFuture<'a, ()>) {
         self.as_ref().block_on(future)
     }
+
+    fn get_task_local(&self, key: U128) -> ROption<RArc<Erased>> {
+        TASK_LOCAL.with(move |m| m.lock().get(&key).cloned().into())
+    }
+
+    fn scope_task_local<'a>(
+        &self,
+        key: U128,
+        value: Erased,
+        future: BoxFuture<'a, ()>,
+    ) -> BoxFuture<'a, ()> {
+        struct ScopeTaskLocal<Fut> {
+            key: U128,
+            value: RArc<Erased>,
+            future: Fut,
+        }
+
+        impl<Fut: Future + std::marker::Unpin> Future for ScopeTaskLocal<Fut> {
+            type Output = Fut::Output;
+
+            fn poll(
+                mut self: std::pin::Pin<&mut Self>,
+                cx: &mut std::task::Context,
+            ) -> std::task::Poll<Self::Output> {
+                let me = &mut *self;
+                let old = TASK_LOCAL.with(|m| m.lock().insert(me.key, me.value.clone()));
+                let ret = std::pin::Pin::new(&mut me.future).poll(cx);
+                TASK_LOCAL.with(move |m| match old {
+                    None => m.lock().remove(&me.key),
+                    Some(v) => m.lock().insert(me.key, v),
+                });
+                ret
+            }
+        }
+
+        BoxFuture::new(ScopeTaskLocal {
+            key,
+            value: RArc::new(value),
+            future,
+        })
+    }
 }
+
+/// A permit to run a task.
+pub type TaskPermit<'a> = SemaphorePermit<'a>;
 
 /// Trait to be able to make a trait object from `AbortHandle`.
 #[sabi_trait]
@@ -116,7 +263,7 @@ impl AbortHandleInterface for AbortHandle {
 #[repr(C)]
 pub struct TaskManager {
     pool: ThreadPoolInterface_TO<'static, RBox<()>>,
-    thread_ids: RVec<u64>,
+    tasks: RArc<Semaphore>,
     abort_handles: RArc<RMutex<RVec<AbortHandleInterface_TO<'static, RBox<()>>>>>,
     aggregate_errors: bool,
 }
@@ -125,7 +272,7 @@ impl std::fmt::Debug for TaskManager {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         f.debug_struct("TaskManager")
             .field("pool", &self.pool)
-            .field("thread_ids", &self.thread_ids)
+            .field("tasks", &self.tasks)
             .field("abort_handles", &self.abort_handles.lock())
             .field("aggregate_errors", &self.aggregate_errors)
             .finish()
@@ -147,7 +294,6 @@ impl TaskManager {
     ) -> Result<Self, futures::io::Error> {
         let threads = num_threads.unwrap_or_else(|| std::cmp::max(1, num_cpus::get()));
         let barrier = std::sync::Arc::new(std::sync::Barrier::new(threads + 1));
-        let thread_ids = std::sync::Arc::new(std::sync::Mutex::new(Vec::with_capacity(threads)));
         let is_core = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
 
         let error_cb = ROption::from(on_error.map(|v| {
@@ -160,7 +306,6 @@ impl TaskManager {
             *m.lock() = error_cb.clone();
         });
 
-        let closure_thread_ids = thread_ids.clone();
         let closure_barrier = barrier.clone();
         let closure_is_core = is_core.clone();
         let pool = tokio_runtime::Builder::new_multi_thread()
@@ -177,10 +322,6 @@ impl TaskManager {
                     THREAD_ID.with(|m| {
                         *m.write() = ROption::RSome(thread_id);
                     });
-                    {
-                        let mut v = closure_thread_ids.lock().unwrap();
-                        v.push(thread_id);
-                    }
                     closure_barrier.wait();
                 }
             })
@@ -195,19 +336,13 @@ impl TaskManager {
             .build()?;
         barrier.wait();
         is_core.store(false, std::sync::atomic::Ordering::Relaxed);
-        let ids = thread_ids.lock().unwrap().drain(..).collect();
 
         Ok(TaskManager {
             pool: ThreadPoolInterface_TO::from_value(std::sync::Arc::new(pool), TU_Opaque),
-            thread_ids: ids,
+            tasks: RArc::new(Semaphore::new(threads)),
             abort_handles: RArc::new(RMutex::new(Default::default())),
             aggregate_errors,
         })
-    }
-
-    /// Get the thread ids of pool threads.
-    pub fn thread_ids(&self) -> &[u64] {
-        self.thread_ids.as_ref()
     }
 
     /// Create a concurrent task to execute the given future to completion,
@@ -296,6 +431,48 @@ impl TaskManager {
         rcv.try_recv()
             .expect("channel unexpectedly cancelled")
             .expect("value not sent")
+    }
+
+    /// Get a task local value.
+    pub fn get_task_local<T: TaskLocal>(&self) -> Option<TaskLocalRef<T>> {
+        self.pool
+            .get_task_local(T::task_local_key().into())
+            .into_option()
+            .map(|v| unsafe { TaskLocalRef::new(v) })
+    }
+
+    /// Set a task local value for the scope of the given future and await it.
+    pub async fn scope_task_local<T: TaskLocal, F: Future + Send>(
+        &self,
+        value: T,
+        fut: F,
+    ) -> F::Output
+    where
+        F::Output: Send,
+    {
+        let (send, mut rcv) = futures::channel::oneshot::channel();
+        self.pool
+            .scope_task_local(
+                T::task_local_key().into(),
+                Erased::new(value),
+                BoxFuture::new(async move {
+                    send.send(fut.await)
+                        .map_err(|_| ())
+                        .expect("failed to send result")
+                }),
+            )
+            .await;
+        rcv.try_recv()
+            .expect("channel unexpectedly cancelled")
+            .expect("value not sent")
+    }
+
+    /// Count a task as being active.
+    ///
+    /// Until the returned permit is dropped, it will be counted as an active task against the
+    /// total permissible concurrent tasks.
+    pub async fn task_acquire(&'_ self) -> TaskPermit<'_> {
+        self.tasks.acquire().await
     }
 }
 

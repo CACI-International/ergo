@@ -17,6 +17,10 @@ impl Uuid {
         &self.0
     }
 
+    pub fn as_u128(&self) -> u128 {
+        uuid::Uuid::from_bytes(*self.as_bytes()).as_u128()
+    }
+
     pub fn new_v5(namespace: &Uuid, name: &[u8]) -> Self {
         Self::from(uuid::Uuid::new_v5(
             &uuid::Uuid::from_bytes(*namespace.as_bytes()),
