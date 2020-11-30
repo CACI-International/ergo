@@ -232,11 +232,25 @@ fn run(opts: Opts) -> Result<String, String> {
 fn main() {
     // Install the application logger.
     //
-    // We write all logs to the temp directory, and read from the {PROGRAM_NAME}_LOG environment
-    // variable to set the application log level (which defaults to warn).
+    // We write all logs to the configured (by env variable) file, falling back to the data local
+    // dir or temp directory, and read from the {PROGRAM_NAME}_LOG environment variable to set the
+    // application log level (which defaults to warn).
     {
-        let mut log_file = std::env::temp_dir();
-        log_file.push(format!("{}.log", PROGRAM_NAME));
+        let log_file = {
+            if let Some(f) = std::env::var_os(format!("{}_LOG_FILE", PROGRAM_NAME.to_uppercase())) {
+                f.into()
+            } else {
+                let mut f = if let Some(proj_dirs) = constants::app_dirs() {
+                    proj_dirs.data_local_dir().to_owned()
+                } else {
+                    std::env::temp_dir()
+                };
+                f.push(format!("{}.log", PROGRAM_NAME));
+                f
+            }
+        };
+        std::fs::create_dir_all(log_file.parent().expect("log file is a root directory"))
+            .expect("failed to create log output directory");
         WriteLogger::init(
             std::env::var(format!("{}_LOG", PROGRAM_NAME.to_uppercase()))
                 .map(|v| simplelog::LevelFilter::from_str(&v).expect("invalid program log level"))
