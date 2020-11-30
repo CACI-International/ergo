@@ -1,7 +1,7 @@
 //! ABI-stable closures.
 
 use crate::type_erase::{Eraseable, Erased, ErasedTrivial};
-use abi_stable::{std_types::tuple, StableAbi};
+use abi_stable::{std_types, StableAbi};
 
 /// A function pointer.
 ///
@@ -33,10 +33,10 @@ impl<F: Eraseable + Copy> FnPtr<F> {
 unsafe impl<F> Send for FnPtr<F> {}
 unsafe impl<F> Sync for FnPtr<F> {}
 
-pub type Args1<A> = tuple::Tuple1<A>;
-pub type Args2<A, B> = tuple::Tuple2<A, B>;
-pub type Args3<A, B, C> = tuple::Tuple3<A, B, C>;
-pub type Args4<A, B, C, D> = tuple::Tuple4<A, B, C, D>;
+pub type Args1<A> = std_types::Tuple1<A>;
+pub type Args2<A, B> = std_types::Tuple2<A, B>;
+pub type Args3<A, B, C> = std_types::Tuple3<A, B, C>;
+pub type Args4<A, B, C, D> = std_types::Tuple4<A, B, C, D>;
 
 #[derive(StableAbi)]
 #[repr(C)]
@@ -124,9 +124,12 @@ where
     }
 }
 
-impl<A, Ret> Closure<tuple::Tuple1<A>, Ret> {
+impl<A, Ret> Closure<std_types::Tuple1<A>, Ret> {
     pub fn new<F: Fn(A) -> Ret + Eraseable>(f: F) -> Self {
-        extern "C" fn func<F: Fn(A) -> Ret, A, Ret>(data: &Erased, args: tuple::Tuple1<A>) -> Ret {
+        extern "C" fn func<F: Fn(A) -> Ret, A, Ret>(
+            data: &Erased,
+            args: std_types::Tuple1<A>,
+        ) -> Ret {
             (unsafe { data.as_ref::<F>() })(args.0)
         }
 
@@ -141,7 +144,7 @@ impl<A, Ret> Closure<tuple::Tuple1<A>, Ret> {
     }
 }
 
-impl<F, A, Ret> From<F> for Closure<tuple::Tuple1<A>, Ret>
+impl<F, A, Ret> From<F> for Closure<std_types::Tuple1<A>, Ret>
 where
     F: Fn(A) -> Ret + Eraseable,
 {
@@ -150,11 +153,11 @@ where
     }
 }
 
-impl<A, B, Ret> Closure<tuple::Tuple2<A, B>, Ret> {
+impl<A, B, Ret> Closure<std_types::Tuple2<A, B>, Ret> {
     pub fn new<F: Fn(A, B) -> Ret + Eraseable>(f: F) -> Self {
         extern "C" fn func<F: Fn(A, B) -> Ret, A, B, Ret>(
             data: &Erased,
-            args: tuple::Tuple2<A, B>,
+            args: std_types::Tuple2<A, B>,
         ) -> Ret {
             (unsafe { data.as_ref::<F>() })(args.0, args.1)
         }
@@ -170,7 +173,7 @@ impl<A, B, Ret> Closure<tuple::Tuple2<A, B>, Ret> {
     }
 }
 
-impl<F, A, B, Ret> From<F> for Closure<tuple::Tuple2<A, B>, Ret>
+impl<F, A, B, Ret> From<F> for Closure<std_types::Tuple2<A, B>, Ret>
 where
     F: Fn(A, B) -> Ret + Eraseable,
 {
@@ -179,11 +182,11 @@ where
     }
 }
 
-impl<A, B, C, Ret> Closure<tuple::Tuple3<A, B, C>, Ret> {
+impl<A, B, C, Ret> Closure<std_types::Tuple3<A, B, C>, Ret> {
     pub fn new<F: Fn(A, B, C) -> Ret + Eraseable>(f: F) -> Self {
         extern "C" fn func<F: Fn(A, B, C) -> Ret, A, B, C, Ret>(
             data: &Erased,
-            args: tuple::Tuple3<A, B, C>,
+            args: std_types::Tuple3<A, B, C>,
         ) -> Ret {
             (unsafe { data.as_ref::<F>() })(args.0, args.1, args.2)
         }
@@ -199,7 +202,7 @@ impl<A, B, C, Ret> Closure<tuple::Tuple3<A, B, C>, Ret> {
     }
 }
 
-impl<F, A, B, C, Ret> From<F> for Closure<tuple::Tuple3<A, B, C>, Ret>
+impl<F, A, B, C, Ret> From<F> for Closure<std_types::Tuple3<A, B, C>, Ret>
 where
     F: Fn(A, B, C) -> Ret + Eraseable,
 {
@@ -208,11 +211,11 @@ where
     }
 }
 
-impl<A, B, C, D, Ret> Closure<tuple::Tuple4<A, B, C, D>, Ret> {
+impl<A, B, C, D, Ret> Closure<std_types::Tuple4<A, B, C, D>, Ret> {
     pub fn new<F: Fn(A, B, C, D) -> Ret + Eraseable>(f: F) -> Self {
         extern "C" fn func<F: Fn(A, B, C, D) -> Ret, A, B, C, D, Ret>(
             data: &Erased,
-            args: tuple::Tuple4<A, B, C, D>,
+            args: std_types::Tuple4<A, B, C, D>,
         ) -> Ret {
             (unsafe { data.as_ref::<F>() })(args.0, args.1, args.2, args.3)
         }
@@ -228,7 +231,7 @@ impl<A, B, C, D, Ret> Closure<tuple::Tuple4<A, B, C, D>, Ret> {
     }
 }
 
-impl<F, A, B, C, D, Ret> From<F> for Closure<tuple::Tuple4<A, B, C, D>, Ret>
+impl<F, A, B, C, D, Ret> From<F> for Closure<std_types::Tuple4<A, B, C, D>, Ret>
 where
     F: Fn(A, B, C, D) -> Ret + Eraseable,
 {

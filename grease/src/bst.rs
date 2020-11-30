@@ -1,6 +1,9 @@
 //! An ABI-stable binary search tree.
 
-use abi_stable::{std_types::ROption, StableAbi};
+use abi_stable::{
+    std_types::{RBox, ROption},
+    StableAbi,
+};
 use pin_project::pin_project;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
@@ -10,41 +13,6 @@ use ROption::*;
 
 pub use map::BstMap;
 pub use set::BstSet;
-
-/// RBox<T> should implement Unpin but doesn't, so we mirror it here.
-#[derive(Debug, StableAbi)]
-#[repr(transparent)]
-struct RBox<T>(abi_stable::std_types::RBox<T>);
-
-impl<T> RBox<T> {
-    pub fn new(v: T) -> Self {
-        RBox(abi_stable::std_types::RBox::new(v))
-    }
-
-    pub fn into_box(this: Self) -> Box<T> {
-        abi_stable::std_types::RBox::into_box(this.0)
-    }
-
-    pub fn into_inner(this: Self) -> T {
-        abi_stable::std_types::RBox::into_inner(this.0)
-    }
-}
-
-impl<T> std::marker::Unpin for RBox<T> {}
-
-impl<T> std::ops::Deref for RBox<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        &*self.0
-    }
-}
-
-impl<T> std::ops::DerefMut for RBox<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut *self.0
-    }
-}
 
 type BoxedNode<K, V> = Pin<RBox<Node<K, V>>>;
 
@@ -88,16 +56,14 @@ fn into_box<K, V>(node: BoxedNode<K, V>) -> Pin<Box<Node<K, V>>> {
 #[allow(dead_code)]
 impl<K, V> Node<K, V> {
     pub fn new(parent: *const Self, key: K, value: V) -> BoxedNode<K, V> {
-        unsafe {
-            Pin::new_unchecked(RBox::new(Node {
-                key,
-                value,
-                parent,
-                left: RNone,
-                right: RNone,
-                _pin: std::marker::PhantomPinned,
-            }))
-        }
+        RBox::pin(Node {
+            key,
+            value,
+            parent,
+            left: RNone,
+            right: RNone,
+            _pin: std::marker::PhantomPinned,
+        })
     }
 
     pub fn first(&self) -> &Self {

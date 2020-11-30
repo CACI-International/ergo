@@ -5,7 +5,7 @@ authors = ["Alex Franchuk <afranchuk@caci.com>"]
 edition = "2018"
 
 [dependencies]
-abi_stable = "0.8"
+abi_stable = "0.9"
 bincode = "^1.2"
 ergo_runtime_macro = { path = "../ergo_runtime_macro" }
 futures = "^0.3"

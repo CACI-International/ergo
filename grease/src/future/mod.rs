@@ -531,7 +531,7 @@ trait BufMut {
     unsafe fn advance_mut(&mut self, cnt: usize);
 
     #[sabi(last_prefix_field)]
-    fn bytes_mut(&mut self) -> RSliceMut<u8>;
+    fn bytes_mut<'a>(&'a mut self) -> RSliceMut<'a, u8>;
 }
 
 #[derive(StableAbi)]
