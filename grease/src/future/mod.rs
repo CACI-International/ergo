@@ -160,6 +160,69 @@ trait SharedFuture: Clone + Send + Sync {
     fn peek(&self) -> Option<&Self::Output>;
 }
 
+pub mod shared {
+    use std::future::Future;
+
+    pub trait SharedFuture: Clone + Future
+    where
+        Self::Output: Clone,
+    {
+        fn peek(&self) -> Option<&Self::Output>;
+    }
+
+    /*
+    pub trait SharedFutureExt: SharedFuture
+    where
+        Self::Output: Clone,
+    {
+        fn map<U, F>(self, f: F) -> Map<Self, F, U>
+        where
+            F: FnOnce(Self::Output) -> U,
+        {
+            Map(self, f, Arc::new(Mutex::new(None)))
+        }
+    }
+
+    impl<T: SharedFuture> SharedFutureExt for T where T::Output: Clone {}
+
+    #[pin_project::pin_project]
+    #[derive(Clone)]
+    pub struct Map<Fut, F, U>(#[pin] Fut, F, Arc<Mutex<Option<U>>>);
+
+    impl<Fut, F, U> Future for Map<Fut, F, U>
+    where
+        Fut: Future,
+        F: FnOnce(Fut::Output) -> U,
+    {
+        type Output = U;
+
+        fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+            let proj = self.project();
+            proj.0.poll(cx).map(|v| (proj.1)(v))
+        }
+    }
+
+    impl<Fut, F: Clone, U: Clone> SharedFuture for Map<Fut, F, U>
+    where
+        Fut: SharedFuture,
+        Fut::Output: Clone,
+        F: FnOnce(Fut::Output) -> U,
+    {
+        fn peek(&self) -> Option<&Self::Output> {
+            if let Ok(mut guard) = self.2.lock() {
+                if guard.is_none() {
+                    *guard = self.0.peek().map(|v| self.1(v.clone()));
+                }
+
+                guard.as_ref()
+            } else {
+                None
+            }
+        }
+    }
+    */
+}
+
 /// A boxed, ABI-stable local future.
 ///
 /// Unlike `BoxFuture`, `Send` is not required.
@@ -290,10 +353,41 @@ impl<T: StableAbi + Clone + Send + Sync> BoxSharedFuture<T> {
     }
 }
 
+pub struct ForEach<T, F, Fut>(BoxSharedFuture<T>, F, Option<Fut>);
+
+// # Safety
+// The `Fut` parameter is only ever accessed with a mutable reference, so it only requires Send for
+// `ForEach` to be `Sync`.
+unsafe impl<T: Send + Sync, F: Send + Sync, Fut: Send> Sync for ForEach<T, F, Fut> {}
+
+impl<T: Clone, Fut, F: Clone> Clone for ForEach<T, F, Fut> {
+    fn clone(&self) -> Self {
+        ForEach(self.0.clone(), self.1.clone(), None)
+    }
+}
+
+pub struct FutureResult(crate::type_erase::Erased);
+
+pub type BoxFutureResult =
+    Pin<Box<dyn futures::future::Future<Output = FutureResult> + 'static + Send + Sync>>;
+
 impl<T> BoxSharedFuture<T> {
     /// Returns a reference to the future's value if it has been evaluated.
     pub fn peek(&self) -> Option<&T> {
         self.inner.peek()
+    }
+
+    /// Creates a BoxedSharedFuture that allows the value to be evaluated with some side effects
+    /// for each instance.
+    pub fn for_each<F, Fut>(self, f: F) -> Self
+    where
+        F: Fn(BoxFutureResult) -> Fut + Clone + Send + Sync + 'static,
+        T: Clone + Send + Sync + 'static,
+        Fut: futures::future::Future<Output = FutureResult> + Send + 'static,
+    {
+        BoxSharedFuture {
+            inner: SharedFuture_TO::from_value(ForEach(self, f, None), TU_Opaque),
+        }
     }
 }
 
@@ -304,6 +398,38 @@ impl<T: Clone> BoxSharedFuture<T> {
             Some(v) => eager::Eager::Ready(v.clone()),
             None => eager::Eager::Pending(self),
         }
+    }
+}
+
+impl<T, F, Fut> SharedFuture for ForEach<T, F, Fut>
+where
+    F: Fn(BoxFutureResult) -> Fut + Clone + Send + Sync,
+    T: Clone + Send + Sync + 'static,
+    Fut: futures::future::Future<Output = FutureResult> + Send,
+{
+    type Output = T;
+
+    fn poll(&mut self, cx: Context) -> Poll<Self::Output> {
+        if self.2.is_none() {
+            let fut = Box::pin(
+                self.0
+                    .clone()
+                    .map(|v| FutureResult(crate::type_erase::Erased::new(v))),
+            );
+            self.2 = Some((self.1)(fut));
+        }
+
+        let fut = self.2.as_mut().unwrap();
+
+        let waker = unsafe { task::Waker::from_raw(cx.0.into()) };
+        let mut ctx = task::Context::from_waker(&waker);
+        future::Future::poll(unsafe { Pin::new_unchecked(fut) }, &mut ctx)
+            .map(|FutureResult(v)| unsafe { v.to_owned::<T>() })
+            .into()
+    }
+
+    fn peek(&self) -> Option<&Self::Output> {
+        self.0.peek()
     }
 }
 
@@ -347,6 +473,26 @@ where
         } else {
             None
         }
+    }
+}
+
+#[derive(Clone)]
+struct Shared<T>(T);
+
+impl<T: shared::SharedFuture + Send + Sync + std::marker::Unpin> SharedFuture for Shared<T>
+where
+    T::Output: Clone,
+{
+    type Output = T::Output;
+
+    fn poll(&mut self, cx: Context) -> Poll<Self::Output> {
+        let waker = unsafe { task::Waker::from_raw(cx.0.into()) };
+        let mut ctx = task::Context::from_waker(&waker);
+        future::Future::poll(Pin::new(&mut self.0), &mut ctx).into()
+    }
+
+    fn peek(&self) -> Option<&Self::Output> {
+        shared::SharedFuture::peek(&self.0)
     }
 }
 

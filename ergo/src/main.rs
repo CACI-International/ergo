@@ -108,9 +108,13 @@ fn run(opts: Opts) -> Result<String, String> {
             self.with(move |l| l.log(entry));
         }
 
-        fn task(&mut self, description: RString) -> LogTaskKey {
-            self.with(move |l| l.task(description))
+        fn task_running(&mut self, description: RString) -> LogTaskKey {
+            self.with(move |l| l.task_running(description))
                 .unwrap_or(LogTaskKey::new(()))
+        }
+
+        fn task_suspend(&mut self, key: LogTaskKey) {
+            self.with(move |l| l.task_suspend(key));
         }
 
         fn timer_pending(&mut self, id: RSlice<RString>) {

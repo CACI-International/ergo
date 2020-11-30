@@ -10,9 +10,11 @@ mod task_manager;
 mod traits;
 
 use self::log::EmptyLogTarget;
-pub use self::log::{logger_ref, Log, LogEntry, LogLevel, LogTarget, Logger, LoggerRef, LogTaskKey};
+pub use self::log::{
+    logger_ref, Log, LogEntry, LogLevel, LogTarget, LogTask, LogTaskKey, Logger, LoggerRef,
+};
 pub use store::{Item, ItemContent, ItemName, Store};
-pub use task_manager::{thread_id, OnError, TaskDescription, TaskLocal, TaskLocalRef, TaskManager};
+pub use task_manager::{thread_id, OnError, TaskLocal, TaskLocalRef, TaskManager, TaskPermit};
 pub use traits::{Trait, TraitGenerator, TraitGeneratorByTrait, TraitGeneratorByType, Traits};
 
 pub(crate) use task_manager::call_on_error;

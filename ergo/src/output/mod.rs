@@ -50,8 +50,12 @@ impl LogTarget for OutputInstance {
         self.inner.log(entry)
     }
 
-    fn task(&mut self, description: RString) -> LogTaskKey {
-        self.inner.task(description)
+    fn task_running(&mut self, description: RString) -> LogTaskKey {
+        self.inner.task_running(description)
+    }
+
+    fn task_suspend(&mut self, key: LogTaskKey) {
+        self.inner.task_suspend(key)
     }
 
     fn timer_pending(&mut self, id: RSlice<RString>) {

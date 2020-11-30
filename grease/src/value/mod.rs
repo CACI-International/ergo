@@ -75,6 +75,23 @@ enum ValueData {
 }
 
 impl ValueData {
+    pub fn for_each<F, Fut>(self, f: F) -> Self
+    where
+        F: Fn(crate::future::BoxFutureResult) -> Fut + Clone + Send + Sync + 'static,
+        Fut: Future<Output = crate::future::FutureResult> + Send + 'static,
+    {
+        match self {
+            ValueData::None => ValueData::None,
+            ValueData::Typed { tp, fut } => ValueData::Typed {
+                tp,
+                fut: fut.for_each(f),
+            },
+            ValueData::Dynamic { fut } => ValueData::Dynamic {
+                fut: fut.for_each(f),
+            },
+        }
+    }
+
     pub fn map_data<F, Fut>(self, f: F) -> Self
     where
         F: FnOnce(
@@ -249,6 +266,18 @@ impl Value {
         }
     }
 
+    /// Create a value that performs some side effects when each instance is evaluated.
+    pub fn for_each<F, Fut>(self, f: F) -> Self
+    where
+        F: Fn(crate::future::BoxFutureResult) -> Fut + Clone + Send + Sync + 'static,
+        Fut: Future<Output = crate::future::FutureResult> + Send + 'static,
+    {
+        Value {
+            data: self.data.for_each(f),
+            ..self
+        }
+    }
+
     /// Create an immediately-available Value from raw components.
     ///
     /// # Safety
@@ -374,7 +403,7 @@ impl Value {
 
     /// Map the data of this value, retaining the value type and identity.
     ///
-    /// This is useful to inserting side-effects into the value execution.
+    /// This is useful for inserting side-effects into the value execution.
     pub fn map_data<F, Fut>(self, f: F) -> Self
     where
         F: FnOnce(

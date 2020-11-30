@@ -93,10 +93,17 @@ impl LogTarget for Output {
         }
     }
 
-    fn task(&mut self, description: RString) -> LogTaskKey {
+    fn task_running(&mut self, description: RString) -> LogTaskKey {
         let key = self.tasks.insert(description);
         self.update();
-        key
+        LogTaskKey::new(key)
+    }
+
+    fn task_suspend(&mut self, key: LogTaskKey) {
+        if let Ok(key) = key.into::<usize>() {
+            self.tasks.remove(key);
+            self.update();
+        }
     }
 
     fn timer_pending(&mut self, id: RSlice<RString>) {
@@ -133,19 +140,12 @@ impl TaskStatus {
         }
     }
 
-    pub fn insert(&mut self, entry: RString) -> LogTaskKey {
-        let id = self.tasks.lock().unwrap().insert(entry.into());
-        struct Key(TaskStatus, usize);
+    pub fn insert(&mut self, entry: RString) -> usize {
+        self.tasks.lock().unwrap().insert(entry.into())
+    }
 
-        impl Drop for Key {
-            fn drop(&mut self) {
-                if let Ok(mut guard) = self.0.tasks.lock() {
-                    guard.remove(self.1);
-                }
-            }
-        }
-
-        LogTaskKey::new(Key(self.clone(), id))
+    pub fn remove(&mut self, key: usize) {
+        self.tasks.lock().unwrap().remove(key);
     }
 }
 

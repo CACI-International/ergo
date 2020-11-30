@@ -1,5 +1,8 @@
 //! Runtime logging.
 
+// For generated sabi trait code with LogTaskKey.
+#![allow(improper_ctypes_definitions)]
+
 use abi_stable::{
     external_types::RMutex,
     sabi_trait,
@@ -102,8 +105,19 @@ struct LogTaskKeyInterface;
 pub struct LogTaskKey(DynTrait<'static, RBox<()>, LogTaskKeyInterface>);
 
 impl LogTaskKey {
+    /// Create a new LogTaskKey.
     pub fn new<T: Send + 'static>(key: T) -> Self {
         LogTaskKey(DynTrait::from_any_value(key, LogTaskKeyInterface))
+    }
+
+    /// Recover a typed value from the LogTaskKey.
+    ///
+    /// This will panic if the type does not match the stored type.
+    pub fn into<T: 'static>(self) -> Result<T, Self> {
+        self.0
+            .into_unerased()
+            .map(RBox::into_inner)
+            .map_err(|e| LogTaskKey(e.into_inner()))
     }
 }
 
@@ -116,12 +130,15 @@ pub trait LogTarget: Send {
     /// Send a log entry.
     fn log(&mut self, entry: LogEntry);
 
-    /// Record a running task.
-    ///
-    /// When the returned key is dropped, the task is removed.
-    fn task(&mut self, _description: RString) -> LogTaskKey {
+    /// Indicate a task is running.
+    fn task_running(&mut self, _description: RString) -> LogTaskKey {
         LogTaskKey::new(())
     }
+
+    /// Incidate a task is no longer running.
+    ///
+    /// This does not necessarily mean the task is complete.
+    fn task_suspend(&mut self, _key: LogTaskKey) {}
 
     /// Indicates a unique timer for the given id has been created.
     fn timer_pending(&mut self, _id: RSlice<RString>) {}
@@ -134,6 +151,8 @@ pub trait LogTarget: Send {
     fn pause_logging(&mut self) {}
 
     /// Resume log output.
+    ///
+    /// This differs from `with_id` in that the shared future can be directly supplied.
     #[sabi(last_prefix_field)]
     fn resume_logging(&mut self) {}
 }
@@ -201,6 +220,21 @@ macro_rules! log_level {
     };
 }
 
+/// A log task which will suspend the task when dropped.
+#[derive(StableAbi)]
+#[repr(C)]
+pub struct LogTask {
+    logger: LoggerRef,
+    key: LogTaskKey,
+}
+
+impl Drop for LogTask {
+    fn drop(&mut self) {
+        let key = std::mem::replace(&mut self.key, LogTaskKey::new(()));
+        self.logger.lock().task_suspend(key);
+    }
+}
+
 impl Log {
     pub(crate) fn new(logger: LoggerRef) -> Self {
         Log {
@@ -244,11 +278,18 @@ impl Log {
         }
     }
 
-    /// Set the task description for the given future.
+    /// Add a running task to the log.
     ///
-    /// The description will be set every time the future is polled, and cleared when it returns.
-    pub fn task<T: ToString>(&self, description: T) -> LogTaskKey {
-        self.logger.lock().task(description.to_string().into())
+    /// When the returned OwnedLogTask is dropped, the task is suspended from the log.
+    pub fn task<T: ToString>(&self, description: T) -> LogTask {
+        let key = self
+            .logger
+            .lock()
+            .task_running(description.to_string().into());
+        LogTask {
+            logger: self.logger.clone(),
+            key,
+        }
     }
 
     log_level!(debug, Debug);

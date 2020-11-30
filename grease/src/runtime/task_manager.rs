@@ -13,7 +13,7 @@ use abi_stable::{
     external_types::{RMutex, RRwLock},
     sabi_trait,
     sabi_trait::prelude::*,
-    std_types::{RArc, RBox, ROption, RResult, RString, RVec},
+    std_types::{RArc, RBox, ROption, RResult, RVec},
     DynTrait, StableAbi,
 };
 use futures::future::{abortable, try_join, try_join_all, AbortHandle, Aborted, Future, FutureExt};
@@ -43,19 +43,6 @@ macro_rules! task_local_key {
             $( id = $crate::uuid::Uuid::new_v5(&id, stringify!($l).as_bytes()); )+
             id.as_u128()
         }
-    }
-}
-
-/// The description associated with a given task.
-#[derive(StableAbi)]
-#[repr(C)]
-pub struct TaskDescription {
-    pub description: RString,
-}
-
-impl TaskLocal for TaskDescription {
-    fn task_local_key() -> u128 {
-        task_local_key!(grease::task_description)
     }
 }
 
@@ -107,7 +94,7 @@ pub trait TaskLocal: Eraseable + StableAbi {
 #[sabi(impl_InterfaceType(Send, Sync, Debug))]
 struct SemaphorePermitInterface;
 
-#[derive(StableAbi)]
+#[derive(Debug, StableAbi)]
 #[repr(C)]
 pub struct SemaphorePermit<'a>(DynTrait<'a, RBox<()>, SemaphorePermitInterface>);
 
@@ -124,7 +111,7 @@ impl<'a> SemaphorePermit<'a> {
 #[sabi_trait]
 trait SemaphoreInterface: Debug + Send + Sync {
     #[sabi(last_prefix_field)]
-    fn acquire<'a>(&'a self, count: u32) -> BoxFuture<'a, SemaphorePermit<'a>>;
+    fn acquire<'a>(&'a self, count: u32) -> BoxFuture<'a, SemaphorePermit>;
 }
 
 impl SemaphoreInterface for tokio::sync::Semaphore {
@@ -150,13 +137,20 @@ impl Semaphore {
             permits,
         )
     }
+}
 
-    pub async fn acquire<'a>(&'a self, mut count: u32) -> SemaphorePermit<'a> {
-        if count as usize > self.1 {
-            count = self.1 as u32;
-        }
-        self.0.acquire(count).await
+async fn acquire_owned(this: &RArc<Semaphore>, mut count: u32) -> SemaphorePermit<'static> {
+    if count as usize > this.1 {
+        count = this.1 as u32;
     }
+
+    #[derive(Debug)]
+    struct OwnedSemaphorePermit(RArc<Semaphore>, SemaphorePermit<'static>);
+    let permit = this.0.acquire(count).await;
+
+    SemaphorePermit::new(OwnedSemaphorePermit(this.clone(), unsafe {
+        std::mem::transmute(permit)
+    }))
 }
 
 /// Trait to be able to make a trait object from `ThreadPool`.
@@ -250,7 +244,7 @@ impl ThreadPoolInterface for std::sync::Arc<tokio_runtime::Runtime> {
 }
 
 /// A permit to run a task.
-pub type TaskPermit<'a> = SemaphorePermit<'a>;
+pub type TaskPermit = SemaphorePermit<'static>;
 
 /// Trait to be able to make a trait object from `AbortHandle`.
 #[sabi_trait]
@@ -480,8 +474,8 @@ impl TaskManager {
     ///
     /// Until the returned permit is dropped, `n` active tasks will be counted against the total
     /// permissible concurrent tasks.
-    pub async fn task_acquire(&'_ self, count: u32) -> TaskPermit<'_> {
-        self.tasks.acquire(count).await
+    pub async fn task_acquire(&self, count: u32) -> TaskPermit {
+        acquire_owned(&self.tasks, count).await
     }
 }
 
