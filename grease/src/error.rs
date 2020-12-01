@@ -4,11 +4,7 @@
 //! convenient with `std::ops::Try`.
 //!
 //! `Error` also supports aggregate errors, and thus supports `FromIterator<Error>`.
-//!
-//! These errors integrate with a thread-local error signal within the grease runtime. When a new error is
-//! created, it will call this signal function (if set in the runtime).
 
-use crate::runtime::call_on_error;
 use abi_stable::{
     rvec,
     std_types::{RArc, RBoxError, RVec},
@@ -63,47 +59,12 @@ pub fn downcast_ref<'a, T: std::error::Error + 'static>(
     })
 }
 
-/// A single error, tracked by call_on_error.
-#[derive(Debug, StableAbi)]
-#[repr(C)]
-struct SingleError {
-    error: RBoxError,
-    counted: bool,
-}
-
-impl SingleError {
-    pub fn new(e: Box<ExternalError>) -> Self {
-        let counted = !has_inner_error(e.as_ref());
-        if counted {
-            call_on_error(true);
-        }
-        SingleError {
-            error: RBoxError::from_box(e.into()),
-            counted,
-        }
-    }
-}
-
-impl std::fmt::Display for SingleError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}", self.error)
-    }
-}
-
-impl Drop for SingleError {
-    fn drop(&mut self) {
-        if self.counted {
-            call_on_error(false);
-        }
-    }
-}
-
 /// Grease errors may be aborted, new errors, or nested sets of errors.
 #[derive(Clone, Debug, StableAbi)]
 #[repr(u8)]
 enum InnerError {
     Aborted,
-    New(RArc<SingleError>),
+    New(RArc<RBoxError>),
     Nested(RVec<RArc<RBoxError>>),
 }
 
@@ -126,7 +87,7 @@ impl std::fmt::Display for InnerError {
 impl std::error::Error for InnerError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            InnerError::New(e) => Some(&e.error),
+            InnerError::New(e) => Some(e.as_ref()),
             _ => None,
         }
     }
@@ -217,7 +178,7 @@ where
             Ok(v) => Error { inner: v.inner },
             // TODO: traverse source() to find WrappedError?
             Err(e) => Error {
-                inner: InnerError::New(RArc::new(SingleError::new(e))),
+                inner: InnerError::New(RArc::new(RBoxError::from_box(e))),
             },
         }
     }

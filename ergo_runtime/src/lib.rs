@@ -42,6 +42,10 @@ pub trait ResultIterator<T> {
     fn collect_result<R: FromIterator<T>>(self) -> Result<R>;
 }
 
+pub mod plugin {
+    pub use plugin_tls::Context;
+}
+
 impl<T, I> ResultIterator<T> for I
 where
     I: IntoIterator<Item = Result<T>>,
@@ -303,6 +307,21 @@ impl Runtime {
             std::env::current_dir().expect("failed to get current directory")
         }
     }
+
+    /*
+    pub fn set_error_handler<F>(&self, on_error: F)
+    where
+        F: Fn(),
+    {
+    }
+
+    pub fn record_error<T>(&self, result: Result<T>) -> Result<T> {
+        match &result {
+        }
+        todo!();
+        result
+    }
+    */
 }
 
 impl FunctionCall<'_> {

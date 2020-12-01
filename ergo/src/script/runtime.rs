@@ -347,11 +347,12 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                             let lib = dl::Library::new(&p)?;
                             let f: dl::Symbol<
                                 extern "C" fn(
+                                    ergo_runtime::plugin::Context,
                                     &mut Runtime,
                                 )
                                     -> RResult<Source<Value>, grease::Error>,
                             > = unsafe { lib.get(PLUGIN_ENTRY.as_bytes()) }?;
-                            let result = f(ctx);
+                            let result = f(ergo_runtime::plugin::Context::get(), ctx);
                             ctx.lifetime(lib);
                             result
                         };

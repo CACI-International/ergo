@@ -14,10 +14,10 @@ pub use self::log::{
     logger_ref, Log, LogEntry, LogLevel, LogTarget, LogTask, LogTaskKey, Logger, LoggerRef,
 };
 pub use store::{Item, ItemContent, ItemName, Store};
-pub use task_manager::{thread_id, OnError, TaskLocal, TaskLocalRef, TaskManager, TaskPermit};
+pub use task_manager::{
+    get_task_local, scope_task_local, thread_id, TaskLocal, TaskLocalRef, TaskManager, TaskPermit,
+};
 pub use traits::{Trait, TraitGenerator, TraitGeneratorByTrait, TraitGeneratorByType, Traits};
-
-pub(crate) use task_manager::call_on_error;
 
 /// Runtime context.
 #[derive(Clone, Debug, StableAbi)]
@@ -40,7 +40,6 @@ pub struct ContextBuilder {
     store_dir: Option<std::path::PathBuf>,
     threads: Option<usize>,
     aggregate_errors: Option<bool>,
-    on_error: Option<Box<OnError>>,
 }
 
 /// An error produced by the ContextBuilder.
@@ -92,24 +91,11 @@ impl ContextBuilder {
         self
     }
 
-    /// Set a callback to be called when an error is created while tasks are executing.
-    pub fn on_error<F>(mut self, value: F) -> Self
-    where
-        F: Fn(bool) + Send + Sync + 'static,
-    {
-        self.on_error = Some(Box::new(value));
-        self
-    }
-
     /// Create a Context.
     pub fn build(self) -> Result<Context, BuilderError> {
         Ok(Context {
-            task: TaskManager::new(
-                self.threads,
-                self.aggregate_errors.unwrap_or(false),
-                self.on_error,
-            )
-            .map_err(BuilderError::TaskManagerError)?,
+            task: TaskManager::new(self.threads, self.aggregate_errors.unwrap_or(false))
+                .map_err(BuilderError::TaskManagerError)?,
             log: Log::new(
                 self.logger
                     .unwrap_or_else(|| logger_ref(EmptyLogTarget).into()),

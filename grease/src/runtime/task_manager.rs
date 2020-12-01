@@ -20,8 +20,7 @@ use futures::future::{abortable, try_join, try_join_all, AbortHandle, Aborted, F
 use log::debug;
 use tokio::runtime as tokio_runtime;
 
-thread_local! {
-    static ERROR_CALLBACK: RMutex<ROption<RArc<RMutex<ErrorCallback>>>> = RMutex::new(ROption::RNone);
+plugin_tls::thread_local! {
     static THREAD_ID: RRwLock<ROption<u64>> = RRwLock::new(ROption::RNone);
     static TASK_LOCAL: RMutex<BstMap<U128, RArc<Erased>>> = RMutex::new(Default::default());
 }
@@ -46,39 +45,10 @@ macro_rules! task_local_key {
     }
 }
 
-#[derive(StableAbi)]
-#[repr(C)]
-struct ErrorCallback(*const (), Erased);
-
-unsafe impl Send for ErrorCallback {}
-
-impl ErrorCallback {
-    pub fn call(&self, added: bool) {
-        unsafe { (std::mem::transmute::<*const (), fn(&Erased, bool)>(self.0))(&self.1, added) }
-    }
-}
-
-/// Call the on_error handler for the active task manager.
-pub fn call_on_error(added: bool) {
-    ERROR_CALLBACK.with(|m| {
-        let guard = m.lock();
-        if let ROption::RSome(m2) = &*guard {
-            m2.lock().call(added)
-        }
-    })
-}
-
 /// Get the current thread id, if it is a grease pool thread.
 pub fn thread_id() -> Option<u64> {
     THREAD_ID.with(|m| m.read().as_ref().copied().into_option())
 }
-
-fn call_on_error_internal(cb: &Erased, added: bool) {
-    (unsafe { cb.as_ref::<Box<OnError>>() })(added)
-}
-
-/// Callback when an error is created in a task.
-pub type OnError = dyn Fn(bool) + Send + Sync;
 
 /// A reference to a task local value.
 pub type TaskLocalRef<T> = Ref<T, RArc<Erased>>;
@@ -87,6 +57,50 @@ pub type TaskLocalRef<T> = Ref<T, RArc<Erased>>;
 pub trait TaskLocal: Eraseable + StableAbi {
     /// The associated key.
     fn task_local_key() -> u128;
+}
+
+/// Get a task local value.
+pub fn get_task_local<T: TaskLocal>() -> Option<TaskLocalRef<T>> {
+    let key = T::task_local_key().into();
+    TASK_LOCAL
+        .with(move |m| m.lock().get(&key).cloned())
+        .map(|v| unsafe { TaskLocalRef::new(v) })
+}
+
+/// The future produced by `scope_task_local`.
+#[pin_project::pin_project]
+pub struct ScopeTaskLocal<Fut> {
+    key: U128,
+    value: RArc<Erased>,
+    #[pin]
+    future: Fut,
+}
+
+impl<Fut: Future> Future for ScopeTaskLocal<Fut> {
+    type Output = Fut::Output;
+
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context,
+    ) -> std::task::Poll<Self::Output> {
+        let mut proj = self.project();
+        let old = TASK_LOCAL.with(|m| m.lock().insert(proj.key.clone(), proj.value.clone()));
+        let ret = proj.future.as_mut().poll(cx);
+        TASK_LOCAL.with(move |m| match old {
+            None => m.lock().remove(&proj.key),
+            Some(v) => m.lock().insert(proj.key.clone(), v),
+        });
+        ret
+    }
+}
+
+/// Set a task local value for the scope of the given future.
+pub fn scope_task_local<T: TaskLocal, Fut: Future>(value: T, fut: Fut) -> ScopeTaskLocal<Fut> {
+    ScopeTaskLocal {
+        key: T::task_local_key().into(),
+        value: RArc::new(Erased::new(value)),
+        future: fut,
+    }
 }
 
 #[derive(StableAbi)]
@@ -165,20 +179,8 @@ trait ThreadPoolInterface: Clone + Debug + Send + Sync {
         f: ClosureOnce<(), Erased>,
     ) -> BoxFuture<'static, RResult<Erased, Error>>;
 
-    fn block_on<'a>(&self, future: LocalBoxFuture<'a, ()>);
-
-    // Task-local methods don't actually access the runtime, but are here so that access to
-    // thread-local variables is consistent across plugin boundaries.
-
-    fn get_task_local(&self, key: U128) -> ROption<RArc<Erased>>;
-
     #[sabi(last_prefix_field)]
-    fn scope_task_local<'a>(
-        &self,
-        key: U128,
-        value: Erased,
-        future: BoxFuture<'a, ()>,
-    ) -> BoxFuture<'a, ()>;
+    fn block_on<'a>(&self, future: LocalBoxFuture<'a, ()>);
 }
 
 impl ThreadPoolInterface for std::sync::Arc<tokio_runtime::Runtime> {
@@ -199,47 +201,6 @@ impl ThreadPoolInterface for std::sync::Arc<tokio_runtime::Runtime> {
 
     fn block_on<'a>(&self, future: LocalBoxFuture<'a, ()>) {
         self.as_ref().block_on(future)
-    }
-
-    fn get_task_local(&self, key: U128) -> ROption<RArc<Erased>> {
-        TASK_LOCAL.with(move |m| m.lock().get(&key).cloned().into())
-    }
-
-    fn scope_task_local<'a>(
-        &self,
-        key: U128,
-        value: Erased,
-        future: BoxFuture<'a, ()>,
-    ) -> BoxFuture<'a, ()> {
-        struct ScopeTaskLocal<Fut> {
-            key: U128,
-            value: RArc<Erased>,
-            future: Fut,
-        }
-
-        impl<Fut: Future + std::marker::Unpin> Future for ScopeTaskLocal<Fut> {
-            type Output = Fut::Output;
-
-            fn poll(
-                mut self: std::pin::Pin<&mut Self>,
-                cx: &mut std::task::Context,
-            ) -> std::task::Poll<Self::Output> {
-                let me = &mut *self;
-                let old = TASK_LOCAL.with(|m| m.lock().insert(me.key, me.value.clone()));
-                let ret = std::pin::Pin::new(&mut me.future).poll(cx);
-                TASK_LOCAL.with(move |m| match old {
-                    None => m.lock().remove(&me.key),
-                    Some(v) => m.lock().insert(me.key, v),
-                });
-                ret
-            }
-        }
-
-        BoxFuture::new(ScopeTaskLocal {
-            key,
-            value: RArc::new(value),
-            future,
-        })
     }
 }
 
@@ -293,21 +254,10 @@ impl TaskManager {
     pub fn new(
         num_threads: Option<usize>,
         aggregate_errors: bool,
-        on_error: Option<Box<OnError>>,
     ) -> Result<Self, futures::io::Error> {
         let threads = num_threads.unwrap_or_else(|| std::cmp::max(1, num_cpus::get()));
         let barrier = std::sync::Arc::new(std::sync::Barrier::new(threads + 1));
         let is_core = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
-
-        let error_cb = ROption::from(on_error.map(|v| {
-            RArc::new(RMutex::new(ErrorCallback(
-                call_on_error_internal as *const (),
-                Erased::new(v),
-            )))
-        }));
-        ERROR_CALLBACK.with(|m| {
-            *m.lock() = error_cb.clone();
-        });
 
         let closure_barrier = barrier.clone();
         let closure_is_core = is_core.clone();
@@ -317,9 +267,6 @@ impl TaskManager {
             .thread_name("grease-thread")
             .on_thread_start(move || {
                 if closure_is_core.load(std::sync::atomic::Ordering::Relaxed) {
-                    ERROR_CALLBACK.with(|m| {
-                        *m.lock() = error_cb.clone();
-                    });
                     let thread_id =
                         NEXT_THREAD_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     THREAD_ID.with(|m| {
@@ -329,9 +276,6 @@ impl TaskManager {
                 }
             })
             .on_thread_stop(|| {
-                ERROR_CALLBACK.with(|m| {
-                    *m.lock() = ROption::RNone;
-                });
                 THREAD_ID.with(|m| {
                     *m.write() = ROption::RNone;
                 });
@@ -431,40 +375,6 @@ impl TaskManager {
                 .map_err(|_| ())
                 .expect("failed to send result");
         }));
-        rcv.try_recv()
-            .expect("channel unexpectedly cancelled")
-            .expect("value not sent")
-    }
-
-    /// Get a task local value.
-    pub fn get_task_local<T: TaskLocal>(&self) -> Option<TaskLocalRef<T>> {
-        self.pool
-            .get_task_local(T::task_local_key().into())
-            .into_option()
-            .map(|v| unsafe { TaskLocalRef::new(v) })
-    }
-
-    /// Set a task local value for the scope of the given future and await it.
-    pub async fn scope_task_local<T: TaskLocal, F: Future + Send>(
-        &self,
-        value: T,
-        fut: F,
-    ) -> F::Output
-    where
-        F::Output: Send,
-    {
-        let (send, mut rcv) = futures::channel::oneshot::channel();
-        self.pool
-            .scope_task_local(
-                T::task_local_key().into(),
-                Erased::new(value),
-                BoxFuture::new(async move {
-                    send.send(fut.await)
-                        .map_err(|_| ())
-                        .expect("failed to send result")
-                }),
-            )
-            .await;
         rcv.try_recv()
             .expect("channel unexpectedly cancelled")
             .expect("value not sent")

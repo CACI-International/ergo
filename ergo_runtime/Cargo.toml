@@ -11,4 +11,5 @@ ergo_runtime_macro = { path = "../ergo_runtime_macro" }
 futures = "^0.3"
 grease = { path = "../grease" }
 log = "^0.4"
+plugin_tls = "~0.2.1"
 uuid = { version = "0.8", features = ["v5"] }

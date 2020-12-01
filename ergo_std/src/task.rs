@@ -3,7 +3,7 @@
 use abi_stable::{external_types::RMutex, std_types::RString, StableAbi};
 use ergo_runtime::{ergo_function, types, ContextExt};
 use grease::future::eager::Eager;
-use grease::runtime::{LogTask, TaskLocal, TaskPermit};
+use grease::runtime::{get_task_local, scope_task_local, LogTask, TaskLocal, TaskPermit};
 use grease::task_local_key;
 use grease::value::Value;
 use std::str::FromStr;
@@ -28,7 +28,6 @@ pub fn function() -> Value {
         let desc = desc.await?.unwrap();
 
         let task = ctx.task.clone();
-        let task2 = task.clone();
         let log = ctx.log.sublog("task");
         val.map_data(move |inner| Eager::Pending(async move {
             let task_inner = task.clone();
@@ -37,15 +36,14 @@ pub fn function() -> Value {
                 let s = desc.await?;
                 log.info(format!("starting: {}", s.clone()));
                 let parent_task = ParentTask::new(s.clone().owned(), task_count, log.clone(), task_inner.clone()).await;
-                let ret = task_inner.scope_task_local(parent_task, inner.into_future()).await;
+                let ret = scope_task_local(parent_task, inner.into_future()).await;
                 log.info(format!("complete{}: {}", if ret.is_err() { " (failed)" } else { "" }, s));
                 ret
             })
             .await
         })).for_each(move |res| {
-            let task2 = task2.clone();
             async move {
-                let parent = task2.get_task_local::<ParentTask>();
+                let parent = get_task_local::<ParentTask>();
                 match parent {
                     Some(v) => v.run_child(res).await,
                     None => res.await

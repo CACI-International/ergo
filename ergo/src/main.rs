@@ -156,24 +156,16 @@ fn run(opts: Opts) -> Result<String, String> {
     // Create build context
     let mut ctx = {
         // Use a weak pointer to the logger in the context, so that when the logger goes out of
-        // scope the output is cleaned up reliably. The runtime (which ends up holding onto the
-        // logger given in on_error) doesn't reliably shutdown as it drops the ThreadPool
-        // asynchronously, and likewise for general logging we shouldn't rely on values cleaning up
-        // after themselves.
+        // scope the output is cleaned up reliably. The runtime doesn't reliably shutdown as it
+        // drops the ThreadPool asynchronously, and likewise for general logging we shouldn't rely
+        // on values cleaning up after themselves.
         let weak = std::sync::Arc::downgrade(&logger);
         script::script_context(
             Context::builder()
                 .logger(WeakLogTarget(weak.clone()))
                 .storage_directory(storage_directory)
                 .threads(opts.jobs)
-                .keep_going(!opts.stop)
-                .on_error(move |added| {
-                    if let Some(logger) = weak.upgrade() {
-                        if let Ok(mut logger) = logger.lock() {
-                            logger.on_error(added);
-                        }
-                    }
-                }),
+                .keep_going(!opts.stop),
         )
         .expect("failed to create script context")
     };
@@ -218,7 +210,7 @@ fn run(opts: Opts) -> Result<String, String> {
         return Ok(Default::default());
     }
 
-    script_output
+    let ret = script_output
         .map(|v| {
             ctx.task.block_on(async {
                 ctx.force_value_nested(v.clone()).await?;
@@ -226,10 +218,20 @@ fn run(opts: Opts) -> Result<String, String> {
             })
         })
         .unwrap()
-        .map_err(|e: grease::Error| e.to_string())
+        .map_err(|e: grease::Error| e.to_string());
+
+    // Before the context is destroyed (unloading plugins), clear the thread-local storage in case
+    // there are values which were allocated in the plugins.
+    plugin_tls::Context::reset();
+    ret
 }
 
 fn main() {
+    // Initialize plugin thread-local storage.
+    unsafe {
+        plugin_tls::Context::get().initialize_tls();
+    }
+
     // Install the application logger.
     //
     // We write all logs to the configured (by env variable) file, falling back to the data local
