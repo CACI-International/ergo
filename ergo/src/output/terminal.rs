@@ -30,7 +30,7 @@ struct Progress {
 }
 
 struct Errors {
-    count: usize,
+    errors: grease::error::UniqueErrorSources,
     prompt_abort: bool,
 }
 
@@ -76,8 +76,8 @@ impl super::Output for Output {
         self.log_level = log_level;
     }
 
-    fn on_error(&mut self, added: bool) {
-        self.errors.update(added);
+    fn new_error(&mut self, err: grease::Error) {
+        self.errors.update(err);
         self.update();
     }
 }
@@ -208,31 +208,28 @@ impl Render for Progress {
 impl Errors {
     pub fn new(prompt_abort: bool) -> Self {
         Errors {
-            count: 0,
+            errors: Default::default(),
             prompt_abort,
         }
     }
 
-    pub fn update(&mut self, added: bool) {
-        if added {
-            self.count += 1;
-        } else {
-            self.count -= 1;
-        }
+    pub fn update(&mut self, err: grease::Error) {
+        self.errors.insert(err);
     }
 }
 
 impl Render for Errors {
     fn render<Target: Write + Terminal>(&self, to: &mut Target) -> std::io::Result<()> {
-        if self.count == 0 {
+        let count = self.errors.len();
+        if count == 0 {
             Ok(())
         } else {
             to.fg(term::color::RED)?;
             writeln!(
                 to,
                 "{} error{} occurred. {}",
-                self.count,
-                if self.count == 1 { "" } else { "s" },
+                count,
+                if count == 1 { "" } else { "s" },
                 if self.prompt_abort {
                     "Press Ctrl-C to stop."
                 } else {

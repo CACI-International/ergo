@@ -15,7 +15,8 @@ pub use self::log::{
 };
 pub use store::{Item, ItemContent, ItemName, Store};
 pub use task_manager::{
-    get_task_local, scope_task_local, thread_id, TaskLocal, TaskLocalRef, TaskManager, TaskPermit,
+    get_task_local, scope_task_local, thread_id, ScopeTaskLocal, TaskLocal, TaskLocalRef,
+    TaskManager, TaskPermit,
 };
 pub use traits::{Trait, TraitGenerator, TraitGeneratorByTrait, TraitGeneratorByType, Traits};
 

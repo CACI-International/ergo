@@ -353,7 +353,11 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                                     -> RResult<Source<Value>, grease::Error>,
                             > = unsafe { lib.get(PLUGIN_ENTRY.as_bytes()) }?;
                             let result = f(ergo_runtime::plugin::Context::get(), ctx);
-                            ctx.lifetime(lib);
+                            // Leak loaded libraries rather than storing them and dropping them in
+                            // the context, as this can cause issues if the thread pool hasn't shut
+                            // down.
+                            // ctx.lifetime(lib);
+                            std::mem::forget(lib);
                             result
                         };
 

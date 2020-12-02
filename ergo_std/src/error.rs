@@ -2,7 +2,10 @@
 
 use ergo_runtime::{ergo_function, types, ContextExt, FunctionArguments};
 use futures::future::TryFutureExt;
-use grease::{depends, make_value, value::Value};
+use grease::{
+    depends, make_value,
+    value::{Errored, Value},
+};
 
 pub fn module() -> Value {
     crate::grease_string_map! {
@@ -46,7 +49,7 @@ fn catch_fn() -> Value {
 
         Value::dyn_new(
             async move {
-                value.clone().await?;
+                Errored::ignore(value.clone()).await?;
                 Ok(value.into_any_value())
             }
             .or_else(move |e: grease::Error| {

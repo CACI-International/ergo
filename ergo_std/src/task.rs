@@ -2,11 +2,13 @@
 
 use abi_stable::{external_types::RMutex, std_types::RString, StableAbi};
 use ergo_runtime::{ergo_function, types, ContextExt};
+use grease::error::UniqueErrorSources;
 use grease::future::eager::Eager;
-use grease::runtime::{get_task_local, scope_task_local, LogTask, TaskLocal, TaskPermit};
+use grease::runtime::{scope_task_local, LogTask, TaskLocal, TaskPermit};
 use grease::task_local_key;
-use grease::value::Value;
+use grease::value::{Errored, Value};
 use std::str::FromStr;
+use std::sync::{Arc, Mutex};
 
 pub fn function() -> Value {
     ergo_function!(independent std::task, |ctx| {
@@ -27,23 +29,33 @@ pub fn function() -> Value {
         let desc = ctx.source_value_as::<types::String>(desc);
         let desc = desc.await?.unwrap();
 
+        let observed_errors = Arc::new(Mutex::new(ObservedErrors::default()));
+        let observed_errors_each = observed_errors.clone();
         let task = ctx.task.clone();
         let log = ctx.log.sublog("task");
         val.map_data(move |inner| Eager::Pending(async move {
             let task_inner = task.clone();
 
-            task.spawn(async move {
+            task.spawn(Errored::observe(move |e| {
+                if let Ok(mut oe) = observed_errors.lock() { oe.call(e) }
+            }, async move {
                 let s = desc.await?;
                 log.info(format!("starting: {}", s.clone()));
                 let parent_task = ParentTask::new(s.clone().owned(), task_count, log.clone(), task_inner.clone()).await;
                 let ret = scope_task_local(parent_task, inner.into_future()).await;
                 log.info(format!("complete{}: {}", if ret.is_err() { " (failed)" } else { "" }, s));
                 ret
-            })
+            }))
             .await
         })).for_each(move |res| {
+            let observed_errors_each = observed_errors_each.clone();
             async move {
-                let parent = get_task_local::<ParentTask>();
+                let parent = ParentTask::task_local();
+                if let Some(e) = Errored::task_local() {
+                    if let Ok(mut oe) = observed_errors_each.lock() {
+                        oe.register(e);
+                    }
+                }
                 match parent {
                     Some(v) => v.run_child(res).await,
                     None => res.await
@@ -52,6 +64,29 @@ pub fn function() -> Value {
         })
     })
     .into()
+}
+
+#[derive(Default)]
+struct ObservedErrors {
+    errors: UniqueErrorSources,
+    observers: Vec<grease::runtime::TaskLocalRef<Errored>>,
+}
+
+impl ObservedErrors {
+    pub fn call(&mut self, err: grease::Error) {
+        if self.errors.insert(err.clone()) {
+            for o in self.observers.iter() {
+                o.call(err.clone());
+            }
+        }
+    }
+
+    pub fn register(&mut self, observer: grease::runtime::TaskLocalRef<Errored>) {
+        for e in self.errors.iter() {
+            observer.call(e.clone());
+        }
+        self.observers.push(observer);
+    }
 }
 
 #[derive(StableAbi)]

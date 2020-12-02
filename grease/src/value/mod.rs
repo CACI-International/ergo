@@ -3,10 +3,11 @@
 //! A plan is a graph of values, where each value may depend on others. Plans use asynchronous
 //! values to build the graph and dependency tree.
 
-use super::type_erase::Erased;
 use crate::bst::{BstMap, BstSet};
 use crate::future::{eager::Eager, BoxSharedFuture};
 use crate::hash::HashFn;
+use crate::runtime::TaskLocal;
+use crate::type_erase::Erased;
 use crate::types::*;
 use crate::u128::U128;
 use abi_stable::{
@@ -57,6 +58,62 @@ impl AnyValue {
 impl GreaseType for AnyValue {
     fn grease_type() -> Type {
         Type::named(b"grease::value::AnyValue")
+    }
+}
+
+/// A callback to use when a Value returns an error.
+///
+/// All methods of a [`Value`] which return a [`crate::Result`] (including future polling) will
+/// report errors using this task-local value, if set.
+#[derive(StableAbi)]
+#[repr(C)]
+pub struct Errored {
+    target: crate::closure::Closure<crate::closure::Args1<Error>, ()>,
+}
+
+impl Errored {
+    /// Create a new Errored callback.
+    pub fn new<F: Fn(crate::error::Error) + crate::type_erase::Eraseable>(f: F) -> Self {
+        Errored { target: f.into() }
+    }
+
+    /// Call a Errored callback.
+    pub fn call(&self, err: Error) {
+        self.target.call(err);
+    }
+
+    /// Call the task-local Errored callback (if any) with `err.clone()`.
+    pub fn call_if_set(err: &Error) {
+        if let Some(r) = Self::task_local() {
+            r.call(err.clone());
+        }
+    }
+
+    /// Convenience function to passively report result errors.
+    pub fn report<T>(result: crate::Result<T>) -> crate::Result<T> {
+        if let Err(e) = &result {
+            Self::call_if_set(e);
+        }
+        result
+    }
+
+    /// Run the given future with the provided function for observing errors.
+    pub fn observe<F: Fn(crate::error::Error) + crate::type_erase::Eraseable, Fut: Future>(
+        f: F,
+        fut: Fut,
+    ) -> crate::runtime::ScopeTaskLocal<Fut> {
+        Self::new(f).scoped(fut)
+    }
+
+    /// Ignore errors that occur while executing the given future.
+    pub fn ignore<Fut: Future>(fut: Fut) -> crate::runtime::ScopeTaskLocal<Fut> {
+        Self::observe(|_| (), fut)
+    }
+}
+
+impl TaskLocal for Errored {
+    fn task_local_key() -> u128 {
+        crate::task_local_key!(grease::value::Errored)
     }
 }
 
@@ -238,7 +295,7 @@ impl Value {
     /// Callers must ensure the type corresponds to the future's data.
     pub unsafe fn new<F, D>(tp: RArc<Type>, value: F, deps: D) -> Self
     where
-        F: Future<Output = std::result::Result<RArc<Erased>, Error>> + Send + 'static,
+        F: Future<Output = crate::Result<RArc<Erased>>> + Send + 'static,
         D: Into<Dependencies>,
     {
         let deps = deps.into();
@@ -254,7 +311,7 @@ impl Value {
     /// Callers must ensure the type corresponds to the future's data.
     pub unsafe fn with_id<F>(tp: RArc<Type>, value: F, id: u128) -> Self
     where
-        F: Future<Output = std::result::Result<RArc<Erased>, Error>> + Send + 'static,
+        F: Future<Output = crate::Result<RArc<Erased>>> + Send + 'static,
     {
         Value {
             id: id.into(),
@@ -332,7 +389,7 @@ impl Value {
     /// value (as Err).
     pub async fn dyn_value(self) -> crate::Result<std::result::Result<Value, Value>> {
         match_value_data!(self.data => {
-            ValueData::Dynamic { fut } => Ok(Ok(fut.await.into_result()?.inner)),
+            ValueData::Dynamic { fut } => Ok(Ok(Errored::report(fut.await.into_result())?.inner)),
             ValueData::Typed {..} => Ok(Err(self))
         })
     }
@@ -443,36 +500,38 @@ impl Value {
         Fut: std::future::Future<Output = Error> + Send,
     {
         async move {
-            match_value_data!(self.data => {
-                ValueData::Typed { ref tp, .. } => {
-                    if &**tp == &T::grease_type() {
-                        Ok(unsafe { TypedValue::from_value(self) })
-                    } else {
-                        Err(on_error(&*tp).await)
+            Errored::report(
+                match_value_data!(self.data => {
+                    ValueData::Typed { ref tp, .. } => {
+                        if &**tp == &T::grease_type() {
+                            Ok(unsafe { TypedValue::from_value(self) })
+                        } else {
+                            Err(on_error(&*tp).await)
+                        }
                     }
-                }
-                ValueData::Dynamic { fut } => Ok(unsafe {
-                    TypedValue::from_value(Value {
-                        data: ValueData::Typed {
-                            tp: RArc::new(T::grease_type()),
-                            fut: BoxSharedFuture::from_eager(fut.into_eager().then(move |r| async move {
-                                match r {
-                                    RResult::ROk(AnyValue {inner}) => {
-                                        let v = match inner.typed::<T, F, Fut>(on_error).await {
-                                            Ok(v) => v,
-                                            Err(e) => return RResult::RErr(e)
-                                        };
-                                        let v: Value = v.into();
-                                        v.await.into()
-                                    },
-                                    RResult::RErr(e) => RResult::RErr(e)
-                                }
-                            }).await),
-                        },
-                        ..self
+                    ValueData::Dynamic { fut } => Ok(unsafe {
+                        TypedValue::from_value(Value {
+                            data: ValueData::Typed {
+                                tp: RArc::new(T::grease_type()),
+                                fut: BoxSharedFuture::from_eager(fut.into_eager().then(move |r| async move {
+                                    match r {
+                                        RResult::ROk(AnyValue {inner}) => {
+                                            let v = match inner.typed::<T, F, Fut>(on_error).await {
+                                                Ok(v) => v,
+                                                Err(e) => return RResult::RErr(e)
+                                            };
+                                            let v: Value = v.into();
+                                            v.await.into()
+                                        },
+                                        RResult::RErr(e) => RResult::RErr(e)
+                                    }
+                                }).await),
+                            },
+                            ..self
+                        })
                     })
                 })
-            })
+            )
         }.boxed()
     }
 
@@ -513,7 +572,7 @@ impl Value {
                 }
                 _ => (),
             }
-            self.peek_type().unwrap()
+            Errored::report(self.peek_type().unwrap())
         }
         .boxed()
     }
@@ -553,14 +612,14 @@ impl Value {
         Fut: Future<Output = crate::Result<R>> + Send + 'static,
         R: Send + 'static,
     {
-        match self.peek_type() {
+        Errored::report(match self.peek_type() {
             Some(Err(e)) => Err(e),
             Some(Ok(t)) => f(t).await.map(|r| futures::future::ok(r).boxed()),
             None => {
                 let this = self.clone();
                 Ok(async move { this.grease_type().and_then(f).await }.boxed())
             }
-        }
+        })
     }
 
     /// Return a new value based on the type of this one.
@@ -572,7 +631,7 @@ impl Value {
         Fut: Future<Output = crate::Result<Value>> + Send + 'static,
         D: Into<Dependencies>,
     {
-        match self.peek_type() {
+        Errored::report(match self.peek_type() {
             Some(Err(e)) => Err(e),
             Some(Ok(t)) => f(t.clone(), self).await,
             None => {
@@ -583,7 +642,7 @@ impl Value {
                     deps,
                 ))
             }
-        }
+        })
     }
 
     /// Get the result of the value, if immediately available.
@@ -608,7 +667,7 @@ impl Value {
         Fut: Future<Output = crate::Result<Value>> + Send + 'static,
         D: Into<Dependencies>,
     {
-        match self.peek() {
+        Errored::report(match self.peek() {
             Some(Err(e)) => Err(e),
             Some(Ok(_)) => f(self).await,
             None => {
@@ -619,7 +678,7 @@ impl Value {
                     deps,
                 ))
             }
-        }
+        })
     }
 
     /// Get the result of the value, assuming it was forced previously.
@@ -650,6 +709,7 @@ impl Future for Value {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let me = &mut *self;
+
         match_value_data!(&mut me.data => {
             ValueData::Typed { fut, .. } => Future::poll(Pin::new(fut), cx).map(RResult::into_result),
             ValueData::Dynamic { fut } => {
@@ -662,7 +722,7 @@ impl Future for Value {
                     Poll::Ready(RResult::RErr(e)) => Poll::Ready(Err(e))
                 }
             }
-        })
+        }).map(Errored::report)
     }
 }
 

@@ -4,6 +4,7 @@
 * Improve task tracking and UI display of running tasks.
 * Change the application log to be written to the data local directory. Support
   `ERGO_LOG_FILE` environment variable to override this.
+* Improve error logging to accurately track pending errors.
 
 ## 1.0.0-beta.4  -- 2020-11-17
 * Add the `!` operator, which may precede any expression or argument to evaluate

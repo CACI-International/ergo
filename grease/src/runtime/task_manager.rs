@@ -57,6 +57,22 @@ pub type TaskLocalRef<T> = Ref<T, RArc<Erased>>;
 pub trait TaskLocal: Eraseable + StableAbi {
     /// The associated key.
     fn task_local_key() -> u128;
+
+    /// Get the task local value, if set.
+    fn task_local() -> Option<TaskLocalRef<Self>>
+    where
+        Self: Sized,
+    {
+        get_task_local::<Self>()
+    }
+
+    /// Run the given future with this task local value set.
+    fn scoped<Fut: Future>(self, fut: Fut) -> ScopeTaskLocal<Fut>
+    where
+        Self: Sized,
+    {
+        scope_task_local(self, fut)
+    }
 }
 
 /// Get a task local value.
@@ -167,9 +183,7 @@ async fn acquire_owned(this: &RArc<Semaphore>, mut count: u32) -> SemaphorePermi
     }))
 }
 
-/// Trait to be able to make a trait object from `ThreadPool`.
-///
-/// The only method we currently use on `ThreadPool` is `spawn_ok`.
+/// Trait to make a trait object for the async runtime.
 #[sabi_trait]
 trait ThreadPoolInterface: Clone + Debug + Send + Sync {
     fn spawn_ok(&self, future: BoxFuture<'static, ()>);
@@ -386,6 +400,11 @@ impl TaskManager {
     /// permissible concurrent tasks.
     pub async fn task_acquire(&self, count: u32) -> TaskPermit {
         acquire_owned(&self.tasks, count).await
+    }
+
+    /// Return whether the runtime is configured for error aggregation.
+    pub fn aggregate_errors(&self) -> bool {
+        self.aggregate_errors
     }
 }
 

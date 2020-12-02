@@ -58,12 +58,31 @@ fn add_value<'a>(
 /// Force all Values, and all recursive Values from the Nested grease trait.
 pub async fn force_value_nested(ctx: &Context, v: Value) -> grease::Result<()> {
     let mut values = FuturesUnordered::new();
+    let mut errs = vec![];
 
     add_value(&mut values, ctx, v);
-    while let Some(vals) = values.try_next().await? {
-        for v in vals {
-            add_value(&mut values, ctx, v);
+    loop {
+        match values.try_next().await {
+            Ok(Some(vals)) => {
+                for v in vals {
+                    add_value(&mut values, ctx, v);
+                }
+            }
+            Ok(None) => break,
+            Err(e) => {
+                if ctx.task.aggregate_errors() {
+                    errs.push(e);
+                } else {
+                    return Err(e);
+                }
+            }
         }
     }
-    Ok(())
+    if errs.len() == 1 {
+        Err(errs.into_iter().next().unwrap())
+    } else if errs.len() > 1 {
+        Err(errs.into_iter().collect())
+    } else {
+        Ok(())
+    }
 }

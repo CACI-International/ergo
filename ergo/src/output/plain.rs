@@ -22,7 +22,7 @@ impl super::Output for Output {
         self.log_level = log_level;
     }
 
-    fn on_error(&mut self, _added: bool) {}
+    fn new_error(&mut self, _err: grease::Error) {}
 }
 
 impl LogTarget for Output {

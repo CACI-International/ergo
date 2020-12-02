@@ -153,22 +153,21 @@ fn run(opts: Opts) -> Result<String, String> {
             .app_err_result("failed to clean storage directory")?;
     }
 
-    // Create build context
-    let mut ctx = {
-        // Use a weak pointer to the logger in the context, so that when the logger goes out of
-        // scope the output is cleaned up reliably. The runtime doesn't reliably shutdown as it
-        // drops the ThreadPool asynchronously, and likewise for general logging we shouldn't rely
-        // on values cleaning up after themselves.
-        let weak = std::sync::Arc::downgrade(&logger);
-        script::script_context(
-            Context::builder()
-                .logger(WeakLogTarget(weak.clone()))
-                .storage_directory(storage_directory)
-                .threads(opts.jobs)
-                .keep_going(!opts.stop),
-        )
-        .expect("failed to create script context")
-    };
+    // Use a weak pointer to the logger in the context, so that when the logger goes out of
+    // scope the output is cleaned up reliably. The runtime doesn't reliably shutdown as it
+    // drops the ThreadPool asynchronously, and likewise for general logging we shouldn't rely
+    // on values cleaning up after themselves.
+    let weak_logger = std::sync::Arc::downgrade(&logger);
+
+    // Create runtime context
+    let mut ctx = script::script_context(
+        Context::builder()
+            .logger(WeakLogTarget(weak_logger.clone()))
+            .storage_directory(storage_directory)
+            .threads(opts.jobs)
+            .keep_going(!opts.stop),
+    )
+    .expect("failed to create script context");
 
     ctx.lint = opts.lint;
 
@@ -192,9 +191,21 @@ fn run(opts: Opts) -> Result<String, String> {
     let source = Source::new(StringSource::new("<command line>", to_eval));
     let loaded = Script::load(source).app_err_result("failed to parse script file")?;
 
+    // Setup error observer to display in logging.
+    let on_error = move |e: grease::Error| {
+        if let Some(logger) = weak_logger.upgrade() {
+            if let Ok(mut logger) = logger.lock() {
+                logger.new_error(e);
+            }
+        }
+    };
+
     let task = ctx.task.clone();
     let script_output = task
-        .block_on(loaded.evaluate(&ctx))
+        .block_on(grease::value::Errored::observe(
+            on_error.clone(),
+            loaded.evaluate(&ctx),
+        ))
         .app_err_result("errors(s) while executing script")?;
 
     // Clear context, which removes any unneeded values that may be held.
@@ -212,10 +223,11 @@ fn run(opts: Opts) -> Result<String, String> {
 
     let ret = script_output
         .map(|v| {
-            ctx.task.block_on(async {
-                ctx.force_value_nested(v.clone()).await?;
-                ctx.display(v).await
-            })
+            ctx.task
+                .block_on(grease::value::Errored::observe(on_error, async {
+                    ctx.force_value_nested(v.clone()).await?;
+                    ctx.display(v).await
+                }))
         })
         .unwrap()
         .map_err(|e: grease::Error| e.to_string());
@@ -223,6 +235,11 @@ fn run(opts: Opts) -> Result<String, String> {
     // Before the context is destroyed (unloading plugins), clear the thread-local storage in case
     // there are values which were allocated in the plugins.
     plugin_tls::Context::reset();
+
+    // Drop the logger prior to the context dropping, so that any stored state (like errors) can
+    // free with the plugins still loaded.
+    drop(logger);
+
     ret
 }
 
