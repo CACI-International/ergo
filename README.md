@@ -1,6 +1,6 @@
-# Bob Gets Rusty
-This repository contains a bob core runtime implementation in rust. It has
-diverged from `bob`'s limitations, allowing arbitrary program execution.
+# Ergo
+This repository contains related projects for the `ergo` task running program.
+See the [`ergo` README](ergo/README.md) for more details.
 
 The project includes a few separate rust crates:
 * [`ergo`](ergo) - The main executable, using the other crates.
@@ -11,6 +11,7 @@ The project includes a few separate rust crates:
 * [`ergo_runtime_macro`](ergo_runtime_macro) - Procedural macros exposed by
   `ergo_runtime`.
 * [`ergo_std`](ergo_std) - The ergo standard library plugin.
-* [`grease`](grease) - A plan definition and runtime library.
+* [`grease`](grease) - An abi-stable dynamic-typing runtime library and type
+  trait system.
 * [`grease_macro`](grease_macro) - Procedural macros exposed by `grease`.
 

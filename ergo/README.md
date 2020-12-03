@@ -1,12 +1,12 @@
 # Effio ergo sum.
 
-Ergo is a task runner akin to `make`, however with dependency tracking that
-extends to arbitrary values, not just files and a language and runtime that
+Ergo is a task runner akin to `make`, with dependency tracking that
+extends to arbitrary values (not just files) and a language and runtime that
 allows one to write tasks imperatively rather than explicitly specifying rules.
 
 Features include:
-* A hybrid-typed scripting language with string-first syntax, like that of shell
-  scripts.
+* A hybrid-typed scripting language.
+* A simple string-first syntax, like that of shell scripts.
 * Script-level control of concurrent processing.
 * Dependency tracking for all produced values.
 * ABI-stability to support native plugins.
