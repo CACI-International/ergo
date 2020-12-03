@@ -123,11 +123,8 @@ impl Write for TerminalOutput {
 
 impl Drop for TerminalOutput {
     fn drop(&mut self) {
-        let lines = self.last_rendered_lines;
-        let mut renderer = self.renderer();
-        for _ in 0..lines {
-            writeln!(renderer.0).expect("failed to write to terminal");
-        }
+        // Render nothing to clear the previous rendered content.
+        self.renderer();
     }
 }
 
