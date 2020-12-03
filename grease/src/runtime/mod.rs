@@ -12,6 +12,7 @@ mod traits;
 use self::log::EmptyLogTarget;
 pub use self::log::{
     logger_ref, Log, LogEntry, LogLevel, LogTarget, LogTask, LogTaskKey, Logger, LoggerRef,
+    RecordingWork, Work,
 };
 pub use store::{Item, ItemContent, ItemName, Store};
 pub use task_manager::{

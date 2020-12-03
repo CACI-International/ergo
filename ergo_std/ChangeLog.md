@@ -3,6 +3,7 @@
 ## 1.0.0-beta.5  -- Unreleased
 * Add `task-count` keyword argument to `task`, allowing one to specify how many
   task slots the task should consume when running.
+* Track work of active tasks (displayed in progress statistics in log output).
 
 ## 1.0.0-beta.4  -- 2020-11-17
 * Rename `value:force` to `value:by-content`.

@@ -1,10 +1,14 @@
 //! Concurrent task creation.
 
-use abi_stable::{external_types::RMutex, std_types::RString, StableAbi};
+use abi_stable::{
+    external_types::RMutex,
+    std_types::{RArc, RString},
+    StableAbi,
+};
 use ergo_runtime::{ergo_function, types, ContextExt};
 use grease::error::UniqueErrorSources;
 use grease::future::eager::Eager;
-use grease::runtime::{scope_task_local, LogTask, TaskLocal, TaskPermit};
+use grease::runtime::{LogTask, RecordingWork, TaskLocal, TaskPermit};
 use grease::task_local_key;
 use grease::value::{Errored, Value};
 use std::str::FromStr;
@@ -24,6 +28,12 @@ pub fn function() -> Value {
             0
         };
 
+        let work_id = if let Some(v) = ctx.args.kw("track-work-by") {
+            v.id()
+        } else {
+            val.id()
+        };
+
         ctx.unused_arguments()?;
 
         let desc = ctx.source_value_as::<types::String>(desc);
@@ -41,9 +51,14 @@ pub fn function() -> Value {
             }, async move {
                 let s = desc.await?;
                 log.info(format!("starting: {}", s.clone()));
-                let parent_task = ParentTask::new(s.clone().owned(), task_count, log.clone(), task_inner.clone()).await;
-                let ret = scope_task_local(parent_task, inner.into_future()).await;
-                log.info(format!("complete{}: {}", if ret.is_err() { " (failed)" } else { "" }, s));
+                let work = RArc::new(RMutex::new(log.work(format!("{:x}", work_id))));
+                let parent_task = ParentTask::new(s.clone().owned(), task_count, log.clone(), work.clone(), task_inner.clone()).await;
+                let ret = parent_task.scoped(inner.into_future()).await;
+                let errored = ret.is_err();
+                if errored {
+                    work.lock().err();
+                }
+                log.info(format!("complete{}: {}", if errored { " (failed)" } else { "" }, s));
                 ret
             }))
             .await
@@ -95,6 +110,7 @@ struct ParentTask {
     pub description: RString,
     task_count: u32,
     log: grease::runtime::Log,
+    work: RArc<RMutex<grease::runtime::Work>>,
     task_manager: grease::runtime::TaskManager,
     state: RMutex<ParentTaskState>,
 }
@@ -105,10 +121,18 @@ impl TaskLocal for ParentTask {
     }
 }
 
+impl Drop for ParentTask {
+    fn drop(&mut self) {
+        // Change state to inactive to record any final values bound to dropping (like that of
+        // RecordingWork).
+        *self.state.lock() = ParentTaskState::Inactive(0);
+    }
+}
+
 #[derive(StableAbi)]
 #[repr(C)]
 enum ParentTaskState {
-    Active(LogTask, TaskPermit),
+    Active(LogTask, RecordingWork, TaskPermit),
     Inactive(usize),
 }
 
@@ -117,16 +141,20 @@ impl ParentTask {
         description: RString,
         task_count: u32,
         log: grease::runtime::Log,
+        work: RArc<RMutex<grease::runtime::Work>>,
         task_manager: grease::runtime::TaskManager,
     ) -> Self {
+        let recording = work.lock().start();
         let state = RMutex::new(ParentTaskState::Active(
             log.task(description.clone()),
+            recording,
             task_manager.task_acquire(task_count).await,
         ));
         ParentTask {
             description,
             task_count,
             log,
+            work,
             task_manager,
             state,
         }
@@ -136,7 +164,7 @@ impl ParentTask {
         {
             let mut guard = self.state.lock();
             let make_inactive = match &*guard {
-                ParentTaskState::Active(_, _) => true,
+                ParentTaskState::Active(_, _, _) => true,
                 _ => false,
             };
 
@@ -144,7 +172,7 @@ impl ParentTask {
                 *guard = ParentTaskState::Inactive(0);
             }
             match &mut *guard {
-                ParentTaskState::Active(_, _) => panic!("logic error"),
+                ParentTaskState::Active(_, _, _) => panic!("logic error"),
                 ParentTaskState::Inactive(n) => *n += 1,
             }
         }
@@ -156,7 +184,7 @@ impl ParentTask {
             let make_active = {
                 let mut guard = self.state.lock();
                 match &mut *guard {
-                    ParentTaskState::Active(_, _) => panic!("logic error"),
+                    ParentTaskState::Active(_, _, _) => panic!("logic error"),
                     ParentTaskState::Inactive(n) => *n -= 1,
                 }
 
@@ -178,6 +206,7 @@ impl ParentTask {
                 if let ParentTaskState::Inactive(0) = &*guard {
                     *guard = ParentTaskState::Active(
                         self.log.task(self.description.clone()),
+                        self.work.lock().start(),
                         task_permit,
                     );
                 }

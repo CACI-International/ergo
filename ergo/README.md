@@ -93,7 +93,6 @@ Within a script, the following are defined:
 * Persist command timing information for better estimates.
 * Allow functions to get call-site variables? Convenient for things like
   `script-dir`.
-* Add work recording to scripts.
 * Add value dependency tree print to help debug consistency issues.
 * Support `collection:map` over map values.
 * Change `path:new` to have identity based on source file and occurrence/seed

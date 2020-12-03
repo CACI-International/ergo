@@ -3,6 +3,7 @@
 // For generated sabi trait code with LogTaskKey.
 #![allow(improper_ctypes_definitions)]
 
+use crate::type_erase::Erased;
 use abi_stable::{
     external_types::RMutex,
     sabi_trait,
@@ -185,10 +186,12 @@ pub struct Log {
 }
 
 /// Tracks a particular unit of work.
+#[derive(StableAbi)]
+#[repr(C)]
 pub struct Work {
     logger: LoggerRef,
-    id: Box<[RString]>,
-    duration: Duration,
+    id: RVec<RString>,
+    duration: RArc<RMutex<RDuration>>,
     recorded: bool,
     errored: bool,
 }
@@ -197,14 +200,17 @@ pub struct PausedLog {
     logger: LoggerRef,
 }
 
-/// Tracks a unit of work that is currently occurring.
-///
-/// When dropped, the duration of work is recorded.
-#[derive(Debug)]
-pub struct RecordingWork<'a> {
-    work: &'a mut Work,
+struct RecordingWorkInner {
+    target: RArc<RMutex<RDuration>>,
     at: Instant,
 }
+
+/// Tracks a unit of work that is currently active.
+///
+/// When dropped, the duration of work is recorded.
+#[derive(StableAbi)]
+#[repr(C)]
+pub struct RecordingWork(Erased);
 
 macro_rules! log_level {
     ( $name:ident, $level:ident ) => {
@@ -258,8 +264,8 @@ impl Log {
         v.push(name.into().into());
         let w = Work {
             logger: self.logger.clone(),
-            id: Box::from(v),
-            duration: Duration::default(),
+            id: v.into(),
+            duration: RArc::new(RMutex::new(RDuration::new(0, 0))),
             recorded: false,
             errored: false,
         };
@@ -310,10 +316,10 @@ impl Work {
     /// Start the unit of work.
     pub fn start(&mut self) -> RecordingWork {
         self.recorded = true;
-        RecordingWork {
-            work: self,
+        RecordingWork(Erased::new(RecordingWorkInner {
+            target: self.duration.clone(),
             at: Instant::now(),
-        }
+        }))
     }
 
     /// Indicate the unit of work errored.
@@ -326,7 +332,7 @@ impl fmt::Debug for Work {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Work")
             .field("id", &self.id)
-            .field("duration", &self.duration)
+            .field("duration", &*self.duration.lock())
             .finish()
     }
 }
@@ -337,7 +343,7 @@ impl std::ops::Drop for Work {
         l.timer_complete(
             RSlice::from_slice(&self.id),
             if self.recorded {
-                ROption::RSome(self.duration.into())
+                ROption::RSome(self.duration.lock().clone())
             } else {
                 ROption::RNone
             },
@@ -345,9 +351,12 @@ impl std::ops::Drop for Work {
     }
 }
 
-impl std::ops::Drop for RecordingWork<'_> {
+impl std::ops::Drop for RecordingWorkInner {
     fn drop(&mut self) {
-        self.work.duration += self.at.elapsed();
+        let mut guard = self.target.lock();
+        let mut duration: Duration = guard.clone().into();
+        duration += self.at.elapsed();
+        *guard = duration.into();
     }
 }
 
