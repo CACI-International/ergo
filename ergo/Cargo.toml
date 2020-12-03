@@ -15,7 +15,7 @@ futures = "^0.3"
 grease = { path = "../grease" }
 libloading = "^0.6"
 log = "^0.4"
-plugin_tls = { version = "~0.2.1", features = ["host"] }
+plugin_tls = { version = "~0.2.2", features = ["host"] }
 pom = { git = "https://github.com/afranchuk/pom", rev = "d0a979fdee0fc83d32531b5fa5085a98fc26e16d" }
 simplelog = "^0.7"
 slab = "^0.4"

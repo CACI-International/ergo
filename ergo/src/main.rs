@@ -244,11 +244,6 @@ fn run(opts: Opts) -> Result<String, String> {
 }
 
 fn main() {
-    // Initialize plugin thread-local storage.
-    unsafe {
-        plugin_tls::Context::get().initialize_tls();
-    }
-
     // Install the application logger.
     //
     // We write all logs to the configured (by env variable) file, falling back to the data local
