@@ -20,7 +20,16 @@ pub fn module() -> Value {
 }
 
 fn new_fn() -> Value {
-    ergo_function!(std::path::new, |ctx| {
+    ergo_function!(std::path::new,
+    r"Create a new, unique, non-existent path.
+
+Arguments: (none)
+
+Returns a new Path which has a fixed identity (all calls to this function return different paths but the same identity,
+since the returned value is semantically identified as a new path; the actual path doesn't matter.
+
+This is often used for intermediate values where external programs generate the values as files.",
+    |ctx| {
         ctx.unused_arguments()?;
 
         let store = ctx.store.item(item_name!("path")).item(item_name!("new"));
@@ -52,66 +61,81 @@ impl From<&JoinComponent> for Dependency {
 }
 
 fn join_fn() -> Value {
-    ergo_function!(std::path::join, |ctx| {
-        let mut args = Vec::new();
+    ergo_function!(
+        std::path::join,
+        r"Join components into a Path.
 
-        let mut deps = depends![];
+Arguments: [component: Path-or-String...]
 
-        while let Some(sv) = ctx.args.next() {
-            deps += depends![*sv];
-            args.push(
-                sv.map_async(|v| async move {
-                    match_value!(peek v => {
-                        types::String => |s| JoinComponent::String(s),
-                        PathBuf => |s| JoinComponent::Path(s),
-                        => |_| Err("all arguments must be strings or paths")?
+Return a Path that is the result of joining the individual path components together.",
+        |ctx| {
+            let mut args = Vec::new();
+
+            let mut deps = depends![];
+
+            while let Some(sv) = ctx.args.next() {
+                deps += depends![*sv];
+                args.push(
+                    sv.map_async(|v| async move {
+                        match_value!(peek v => {
+                            types::String => |s| JoinComponent::String(s),
+                            PathBuf => |s| JoinComponent::Path(s),
+                            => |_| Err("all arguments must be strings or paths")?
+                        })
+                        .await
                     })
                     .await
-                })
-                .await
-                .transpose()
-                // Change Source<impl Future<Result>> to impl Future<Result>
-                .map(|source_fut| {
-                    futures::future::FutureExt::map(source_fut, |source_res| {
-                        source_res
-                            .transpose_err()
-                            .map_err(|e| e.into_grease_error())
+                    .transpose()
+                    // Change Source<impl Future<Result>> to impl Future<Result>
+                    .map(|source_fut| {
+                        futures::future::FutureExt::map(source_fut, |source_res| {
+                            source_res
+                                .transpose_err()
+                                .map_err(|e| e.into_grease_error())
+                        })
                     })
-                })
-                .map_err(|e| e.into_grease_error())?,
-            );
-        }
-
-        ctx.unused_arguments()?;
-
-        if args.is_empty() {
-            return Err(ctx
-                .call_site
-                .clone()
-                .with("at least one path component is required")
-                .into_grease_error());
-        }
-
-        let task = ctx.task.clone();
-
-        make_value!([^deps] {
-            let mut path = std::path::PathBuf::new();
-            let args = task.join_all(args).await?;
-            for a in args {
-                match a {
-                    JoinComponent::String(s) => path.push(s.await?.as_ref().as_str()),
-                    JoinComponent::Path(p) => path.push(p.await?.as_ref().as_ref()),
-                }
+                    .map_err(|e| e.into_grease_error())?,
+                );
             }
-            Ok(PathBuf::from(path))
-        })
-        .into()
-    })
+
+            ctx.unused_arguments()?;
+
+            if args.is_empty() {
+                return Err(ctx
+                    .call_site
+                    .clone()
+                    .with("at least one path component is required")
+                    .into_grease_error());
+            }
+
+            let task = ctx.task.clone();
+
+            make_value!([^deps] {
+                let mut path = std::path::PathBuf::new();
+                let args = task.join_all(args).await?;
+                for a in args {
+                    match a {
+                        JoinComponent::String(s) => path.push(s.await?.as_ref().as_str()),
+                        JoinComponent::Path(p) => path.push(p.await?.as_ref().as_ref()),
+                    }
+                }
+                Ok(PathBuf::from(path))
+            })
+            .into()
+        }
+    )
     .into()
 }
 
 fn split_fn() -> Value {
-    ergo_function!(std::path::split, |ctx| {
+    ergo_function!(std::path::split,
+    r"Split a path into its components.
+
+Arguments: <Path>
+
+Returns an Array of Strings, where each element in the array is a (in-order, from least to most specific) component of
+the argument.",
+    |ctx| {
         let to_split = ctx.args.next().ok_or("no path to split")?;
 
         ctx.unused_arguments()?;
@@ -136,7 +160,12 @@ fn split_fn() -> Value {
 }
 
 fn parent_fn() -> Value {
-    ergo_function!(std::path::parent, |ctx| {
+    ergo_function!(std::path::parent,
+    r"Return the parent path of the given path.
+
+Arguments: <Path>
+Fails if the given path does not have a parent (is a root).",
+    |ctx| {
         let path = ctx.args.next().ok_or("no path provided")?;
 
         ctx.unused_arguments()?;
@@ -152,7 +181,13 @@ fn parent_fn() -> Value {
 }
 
 fn relative_fn() -> Value {
-    ergo_function!(std::path::relative, |ctx| {
+    ergo_function!(std::path::relative,
+    r"Get a relative path.
+
+Arguments: <base: Path> <child: Path>
+
+Returns a path that is composed of the components of `child` that are children of `base`.",
+    |ctx| {
         let base = ctx.args.next().ok_or("no base path")?;
         let path = ctx.args.next().ok_or("no path")?;
 

@@ -274,7 +274,32 @@ where
 }
 
 pub fn function() -> Value {
-    ergo_function!(independent std::exec, |ctx| {
+    ergo_function!(independent std::exec,
+        "Execute an external program.
+
+Arguments: <program> [arguments...]
+Both `program` and `arguments` must be convertible to CommandString. By default String, Path, and ByteStream satisfy
+this. 
+
+Keyword Arguments:
+* <env: Map>: A map of Strings to Strings where key-value pairs define the environment variables to
+  set while executing the program.
+* <pwd: Into<Path>>: The working directory to set while executing the program.
+* <stdin: Into<ByteStream>>: The stdin to pipe into the program.
+
+Programs are by default run without any working directory or environment variables.
+
+This returns a map with the following keys:
+* <stdout: ByteStream>: The standard output stream from the program.
+* <stderr: ByteStream>: The standard output stream from the program.
+* <exit-status: ExitStatus>: The exit status of the program.
+* <complete: ()>: A value which returns successfully when the program does.
+
+Note that `complete` _won't_ cause an error to occur if `exit-status` is used in the script.
+Also note that if `complete` throws an error, it will include the stdout or stderr values if they are unused in the
+script.
+",
+    |ctx| {
         let cmd = ctx.args.next().ok_or("no command provided")?;
 
         let cmd = ctx.into_sourced::<CommandString>(cmd);

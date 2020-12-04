@@ -4,7 +4,15 @@ use ergo_runtime::{context_ext::AsContext, ergo_function, ContextExt};
 use grease::{make_value, value::Value};
 
 pub fn function() -> Value {
-    ergo_function!(independent std::seq, |ctx| {
+    ergo_function!(independent std::seq,
+    r"Execute the arguments sequentially.
+
+Arguments: value [value...]
+
+Returns a value that is identical to the final value, but identified as if it depends on the previous values. When
+executed, the returned value will execute each of the prior values in order and deeply (i.e., the indices of arrays and
+maps will be evaluated concurrently).",
+    |ctx| {
         let mut val = ctx.args.next().ok_or("no values provided")?;
         while let Some(next) = ctx.args.next() {
             // TODO attribute errors to the correct Source

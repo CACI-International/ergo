@@ -8,7 +8,7 @@ pub fn module() -> Value {
     crate::grease_string_map! {
         r"A map of program IO functions.
 
-Each of these functions grants exlusive access to the byte stream."
+`stdin` and `stdout` grant exclusive access when used."
         "stdin": "A byte stream of the program's stdin handle." = stdin_fn(),
         "stdout": "Write a byte stream to the program's stdout handle." = stdout_fn(),
         "stderr": "Write a byte stream to the program's stderr handle." = stderr_fn()
@@ -51,7 +51,12 @@ lazy_static::lazy_static! {
 }
 
 fn stdin_fn() -> Value {
-    ergo_function!(std::io::stdin, |ctx| {
+    ergo_function!(std::io::stdin,
+    r"Get the standard input ByteStream of the process.
+
+Arguments: (none)
+Returns a ByteStream that, when read, takes exclusive access of the process standard input.",
+    |ctx| {
         ctx.unused_arguments()?;
 
         // Derive identity from random integer; stdin may contain anything.
@@ -65,7 +70,13 @@ fn stdin_fn() -> Value {
 }
 
 fn stdout_fn() -> Value {
-    ergo_function!(std::io::stdout, |ctx| {
+    ergo_function!(std::io::stdout,
+    r"Write a ByteStream to the process standard output.
+
+Arguments: <ByteStream>
+When the returned unit value is evaluated, takes exclusive access of the process standard output (pausing logging) and writes
+the ByteStream to it.",
+    |ctx| {
         let data = ctx.args.next().ok_or("'data' missing")?;
 
         ctx.unused_arguments()?;
@@ -90,7 +101,13 @@ fn stdout_fn() -> Value {
 }
 
 fn stderr_fn() -> Value {
-    ergo_function!(std::io::stderr, |ctx| {
+    ergo_function!(std::io::stderr,
+    r"Write a ByteStream to the process standard error.
+
+Arguments: <ByteStream>
+When the returned unit value is evaluated, writes the ByteStream to the process standard error. This does not have any
+exlusive access guarantees like `stdin` and `stdout`.",
+    |ctx| {
         let data = ctx.args.next().ok_or("'data' missing")?;
 
         ctx.unused_arguments()?;

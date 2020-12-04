@@ -19,7 +19,7 @@ pub fn module() -> Value {
         "glob": "Find files using a glob." = glob_fn(),
         "read": "Read a file as a byte stream." = read_fn(),
         "remove": "Remove a file or directory tree." = remove_fn(),
-        "sha1": "Compute the SHA1 hash of the contents of a file." = sha1_fn(),
+        "sha1": "Check the SHA1 hash of the contents of a file." = sha1_fn(),
         "track": "Track a path based on the file contents." = track_fn(),
         "unarchive": "Extract an archive to a directory." = unarchive_fn(),
         "write": "Write a byte stream to a file." = write_fn()
@@ -27,7 +27,33 @@ pub fn module() -> Value {
 }
 
 fn glob_fn() -> Value {
-    ergo_function!(std::fs::glob, |ctx| {
+    ergo_function!(std::fs::glob,
+    r"Get an array of files using a glob.
+
+Arguments: <glob-pattern: Into<String>>
+The glob pattern is similar to unix-style globs, where:
+* `?` matches any single character.
+* `*` matches any (possibly empty) sequence of characters.
+* `**` matches the current directory and arbitrary subdirectories. This
+  sequence **must** form a single path component, so both `**a` and `b**`
+  are invalid and will result in an error.  A sequence of more than two
+  consecutive `*` characters is also invalid.
+* `[...]` matches any character inside the brackets.  Character sequences
+  can also specify ranges of characters, as ordered by Unicode, so e.g.
+  `[0-9]` specifies any character between 0 and 9 inclusive. An unclosed
+  bracket is invalid.
+* `[!...]` is the negation of `[...]`, i.e. it matches any characters
+  **not** in the brackets.
+* The metacharacters `?`, `*`, `[`, `]` can be matched by using brackets
+  (e.g. `[?]`).  When a `]` occurs immediately following `[` or `[!` then it
+  is interpreted as being part of, rather then ending, the character set, so
+  `]` and NOT `]` can be matched by `[]]` and `[!]]` respectively.  The `-`
+  character can be specified inside a character sequence pattern by placing
+  it at the start or the end, e.g. `[abc-]`.
+
+The pattern is checked relative to the script directory, however specifying any path as part of the pattern (paths can
+have glob patterns) will result in a search using that path.",
+    |ctx| {
         let pattern = ctx.args.next().ok_or("no glob pattern provided")?;
 
         ctx.unused_arguments()?;
@@ -96,7 +122,14 @@ fn recursive_link<F: AsRef<Path>, T: AsRef<Path>>(from: F, to: T) -> Result<(), 
 }
 
 fn copy_fn() -> Value {
-    ergo_function!(std::fs::copy, |ctx| {
+    ergo_function!(std::fs::copy,
+    r"Copy files or directories.
+
+Arguments: <from: Path> <to: Path>
+If the destination is an existing directory, `from` is copied with the same basename into that directory.
+All destination directories are automatically created.
+If `from` is a directory, it is recursively copied.",
+    |ctx| {
         let from = ctx.args.next().ok_or("'from' missing")?;
         let to = ctx.args.next().ok_or("'to' missing")?;
 
@@ -123,36 +156,50 @@ fn copy_fn() -> Value {
 }
 
 fn exists_fn() -> Value {
-    ergo_function!(std::fs::exists, |ctx| {
-        let path = ctx.args.next().ok_or("'path' missing")?;
+    ergo_function!(
+        std::fs::exists,
+        r"Check whether a path exists.
 
-        ctx.unused_arguments()?;
+Arguments: <Path>
+Returns a boolean indicating whether the path exists (as either a file or directory).",
+        |ctx| {
+            let path = ctx.args.next().ok_or("'path' missing")?;
 
-        let path = ctx.source_value_as::<PathBuf>(path);
-        let path = path.await?.unwrap();
+            ctx.unused_arguments()?;
 
-        make_value!((path) {
-            Ok(path.await?.as_ref().as_ref().exists())
-        })
-        .into()
-    })
+            let path = ctx.source_value_as::<PathBuf>(path);
+            let path = path.await?.unwrap();
+
+            make_value!((path) {
+                Ok(path.await?.as_ref().as_ref().exists())
+            })
+            .into()
+        }
+    )
     .into()
 }
 
 fn create_dir_fn() -> Value {
-    ergo_function!(std::fs::create_dir, |ctx| {
-        let path = ctx.args.next().ok_or("'path' missing")?;
+    ergo_function!(
+        std::fs::create_dir,
+        r"Create a directory (and all ancestor directories).
 
-        ctx.unused_arguments()?;
+Arguments: <Path>
+Returns a unit-value that creates the directory and ancestors if they do not exist.",
+        |ctx| {
+            let path = ctx.args.next().ok_or("'path' missing")?;
 
-        let path = ctx.source_value_as::<PathBuf>(path);
-        let path = path.await?.unwrap();
+            ctx.unused_arguments()?;
 
-        make_value!([path] {
-            Ok(std::fs::create_dir_all(path.await?.as_ref().as_ref())?)
-        })
-        .into()
-    })
+            let path = ctx.source_value_as::<PathBuf>(path);
+            let path = path.await?.unwrap();
+
+            make_value!([path] {
+                Ok(std::fs::create_dir_all(path.await?.as_ref().as_ref())?)
+            })
+            .into()
+        }
+    )
     .into()
 }
 
@@ -166,9 +213,15 @@ fn set_permissions(p: &mut std::fs::Permissions, mode: u32) {
 fn set_permissions(p: &mut std::fs::Permissions, mode: u32) {}
 
 fn unarchive_fn() -> Value {
-    ergo_function!(std::fs::mount, |ctx| {
-        let from = ctx.args.next().ok_or("mount 'from' missing")?;
-        let to = ctx.args.next().ok_or("mount 'to' missing")?;
+    ergo_function!(std::fs::unarchive,
+    r"Extract an archive to a path.
+
+Arguments: <archive: Path> <destination: Path>
+`archive` may be a path to a directory, zip file or tar archive, where the tar archive can optionally be compressed with
+gzip, bzip2, or lzma (xz). The archive contents are extracted into `destination` as a directory.",
+    |ctx| {
+        let from = ctx.args.next().ok_or("'from' missing")?;
+        let to = ctx.args.next().ok_or("'to' missing")?;
 
         ctx.unused_arguments()?;
 
@@ -253,34 +306,47 @@ fn unarchive_fn() -> Value {
 }
 
 fn sha1_fn() -> Value {
-    ergo_function!(std::fs::sha1, |ctx| {
-        let path = ctx.args.next().ok_or("no file provided to sha1")?;
-        let sum = ctx.args.next().ok_or("no checksum provided")?;
+    ergo_function!(
+        std::fs::sha1,
+        r"Check the sha1sum of a file.
 
-        ctx.unused_arguments()?;
+Arguments: <file: Path> <sum: String>
+Returns a boolean indicating whether `sum` is the sha1 sum of the contents of `file`.",
+        |ctx| {
+            let path = ctx.args.next().ok_or("no file provided to sha1")?;
+            let sum = ctx.args.next().ok_or("no checksum provided")?;
 
-        let path = ctx.source_value_as::<PathBuf>(path);
-        let path = path.await?.unwrap();
-        let sum = ctx.source_value_as::<types::String>(sum);
-        let sum = sum.await?.unwrap();
+            ctx.unused_arguments()?;
 
-        let task = ctx.task.clone();
-        make_value!([path, sum] {
-            let (path,sum) = task.join(path, sum).await?;
+            let path = ctx.source_value_as::<PathBuf>(path);
+            let path = path.await?.unwrap();
+            let sum = ctx.source_value_as::<types::String>(sum);
+            let sum = sum.await?.unwrap();
 
-            let mut f = std::fs::File::open(path.as_ref().as_ref())?;
-            let mut digest = Sha1::default();
-            std::io::copy(&mut f, &mut digest)?;
-            use sha::utils::DigestExt;
-            Ok(digest.to_hex().eq_ignore_ascii_case(sum.as_ref().as_str()))
-        })
-        .into()
-    })
+            let task = ctx.task.clone();
+            make_value!([path, sum] {
+                let (path,sum) = task.join(path, sum).await?;
+
+                let mut f = std::fs::File::open(path.as_ref().as_ref())?;
+                let mut digest = Sha1::default();
+                std::io::copy(&mut f, &mut digest)?;
+                use sha::utils::DigestExt;
+                Ok(digest.to_hex().eq_ignore_ascii_case(sum.as_ref().as_str()))
+            })
+            .into()
+        }
+    )
     .into()
 }
 
 fn track_fn() -> Value {
-    ergo_function!(independent std::fs::track, |ctx| {
+    ergo_function!(independent std::fs::track,
+    r"Make a Path depend on the contents of the file to which it refers.
+
+Arguments: <Path-or-String>
+Returns a Path that is identified by the contents of the file to which the argument refers. The path must exist and
+refer to a file.",
+    |ctx| {
         let path = ctx.args.next().ok_or("no file provided to track")?;
 
         ctx.unused_arguments()?;
@@ -303,7 +369,6 @@ fn track_fn() -> Value {
 
         let store = ctx.store.item(item_name!("track"));
 
-        // TODO inefficient to load and store every time
         let loaded_info = ctx.shared_state(move || LoadedTrackInfo::new(store))?;
         let guard = loaded_info.info.read().map_err(|_| "poisoned")?;
 
@@ -388,71 +453,92 @@ impl std::ops::Drop for LoadedTrackInfo {
 }
 
 fn remove_fn() -> Value {
-    ergo_function!(std::fs::remove, |ctx| {
-        let path = ctx.args.next().ok_or("'path' missing")?;
+    ergo_function!(
+        std::fs::remove,
+        r"Remove a file or directory (recursively).
 
-        ctx.unused_arguments()?;
+Arguments: <Path>
+If the path does not exist, nothing happens.",
+        |ctx| {
+            let path = ctx.args.next().ok_or("'path' missing")?;
 
-        let path = ctx.source_value_as::<PathBuf>(path);
-        let path = path.await?.unwrap();
+            ctx.unused_arguments()?;
 
-        make_value!([path] {
-            let path = path.await?;
-            let path = path.as_ref().as_ref();
-            if path.is_file() {
-                std::fs::remove_file(path)?;
-            }
-            else if path.is_dir() {
-                std::fs::remove_dir_all(path)?;
-            }
-            Ok(())
-        })
-        .into()
-    })
+            let path = ctx.source_value_as::<PathBuf>(path);
+            let path = path.await?.unwrap();
+
+            make_value!([path] {
+                let path = path.await?;
+                let path = path.as_ref().as_ref();
+                if path.is_file() {
+                    std::fs::remove_file(path)?;
+                }
+                else if path.is_dir() {
+                    std::fs::remove_dir_all(path)?;
+                }
+                Ok(())
+            })
+            .into()
+        }
+    )
     .into()
 }
 
 fn read_fn() -> Value {
-    ergo_function!(std::fs::read, |ctx| {
-        let path = ctx.args.next().ok_or("'path' missing")?;
+    ergo_function!(
+        std::fs::read,
+        r"Read a file as a ByteStream.
 
-        ctx.unused_arguments()?;
+Arguments: <Path>
+Returns a ByteStream of the file's contents.",
+        |ctx| {
+            let path = ctx.args.next().ok_or("'path' missing")?;
 
-        let path = ctx.source_value_as::<PathBuf>(path);
-        let path = path.await?.unwrap();
+            ctx.unused_arguments()?;
 
-        make_value!([path] {
-            let path = path.await?;
-            let path = path.as_ref().as_ref();
-            Ok(types::ByteStream::new(Blocking::new(std::fs::File::open(path)?)))
-        })
-        .into()
-    })
+            let path = ctx.source_value_as::<PathBuf>(path);
+            let path = path.await?.unwrap();
+
+            make_value!([path] {
+                let path = path.await?;
+                let path = path.as_ref().as_ref();
+                Ok(types::ByteStream::new(Blocking::new(std::fs::File::open(path)?)))
+            })
+            .into()
+        }
+    )
     .into()
 }
 
 fn write_fn() -> Value {
-    ergo_function!(std::fs::write, |ctx| {
-        let path = ctx.args.next().ok_or("'path' missing")?;
-        let data = ctx.args.next().ok_or("'data' missing")?;
+    ergo_function!(
+        std::fs::write,
+        r"Write a ByteStream to a file.
 
-        ctx.unused_arguments()?;
+Arguments: <Path> <ByteStream>
+Creates or overwrites the file with the bytes from the ByteStream.",
+        |ctx| {
+            let path = ctx.args.next().ok_or("'path' missing")?;
+            let data = ctx.args.next().ok_or("'data' missing")?;
 
-        let path = ctx.source_value_as::<PathBuf>(path);
-        let path = path.await?.unwrap();
+            ctx.unused_arguments()?;
 
-        let data = ctx.into_sourced::<types::ByteStream>(data);
-        let data = data.await?.unwrap();
+            let path = ctx.source_value_as::<PathBuf>(path);
+            let path = path.await?.unwrap();
 
-        let task = ctx.task.clone();
+            let data = ctx.into_sourced::<types::ByteStream>(data);
+            let data = data.await?.unwrap();
 
-        make_value!([path,data] {
-            let (path, data) = task.join(path,data).await?;
-            let mut f = Blocking::new(std::fs::File::create(path.as_ref().as_ref())?);
-            grease::runtime::io::copy(&task, &mut data.read(), &mut f).await?;
-            Ok(())
-        })
-        .into()
-    })
+            let task = ctx.task.clone();
+
+            make_value!([path,data] {
+                let (path, data) = task.join(path,data).await?;
+                let mut f = Blocking::new(std::fs::File::create(path.as_ref().as_ref())?);
+                grease::runtime::io::copy(&task, &mut data.read(), &mut f).await?;
+                Ok(())
+            })
+            .into()
+        }
+    )
     .into()
 }

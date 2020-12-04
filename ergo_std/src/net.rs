@@ -16,7 +16,16 @@ pub fn module() -> Value {
 }
 
 fn download_fn() -> Value {
-    ergo_function!(std::net::download, |ctx| {
+    ergo_function!(std::net::download,
+    r"Download a file over HTTP or HTTPS.
+
+Arguments: <url: String> <target: Path>
+
+Keyword Arguments:
+* <headers: Map>: A map of Strings to Strings where key-value pairs are header names and values to set for the request.
+
+Returns a unit-typed value which downloads the file referenced by `url` to the given `target`.",
+    |ctx| {
         let url = ctx.args.next().ok_or("no url provided")?;
         let path = ctx.args.next().ok_or("no path provided")?;
 

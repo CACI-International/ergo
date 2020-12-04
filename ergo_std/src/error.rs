@@ -16,7 +16,12 @@ pub fn module() -> Value {
 }
 
 fn throw_fn() -> Value {
-    ergo_function!(std::error::throw, |ctx| {
+    ergo_function!(std::error::throw,
+    r"Create a value which, when evaluated, will error.
+
+Arguments: <error: String>
+The returned value will be unit-typed and will immediately error with the given error message.",
+        |ctx| {
         let message = ctx.args.next().ok_or("no message provided")?;
 
         ctx.unused_arguments()?;
@@ -35,7 +40,13 @@ fn throw_fn() -> Value {
 }
 
 fn catch_fn() -> Value {
-    ergo_function!(std::error::catch, |ctx| {
+    ergo_function!(std::error::catch,
+        r"Catch an error result in the given value.
+
+Arguments: <handler: Function> <value>
+The returned value is dynamically-typed, and will return the result of `<value>` if it does not error.
+If it _does_ error, `handler` is applied to the error string and whatever it returns will be the result.",
+        |ctx| {
         let handler = ctx.args.next().ok_or("no handler provided")?;
         let (value_source, value) = ctx.args.next().ok_or("no value provided")?.take();
 

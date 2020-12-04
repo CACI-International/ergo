@@ -61,7 +61,24 @@ impl<'a> IntoIterator for &'a Fragments {
 }
 
 fn format_fn() -> Value {
-    ergo_function!(std::string::format, |ctx| {
+    ergo_function!(std::string::format,
+    r#"Create a string based on a format specification.
+
+Arguments: <format string: String> [arguments...]
+
+Keyword Arguments: any
+
+The format string may contain curly brackets to indicate arguments to insert in the string. The curly brackets may be
+empty (`{}`) or may contain a numeric index to indicate which positional argument to use, or a string index to indicate
+which non-positional argument to use. Empty brackets will use the next positional argument unused by other empty
+brackets. Note that since the curly brackets are syntactically-significant, a format string containing them will need
+to be quoted. To insert a literal open curly bracket, use `{{`, and likewise `}}` for a literal close curly bracket.
+
+Examples:
+`format "hello {}" world` => `"hello world"`
+`format "hello {name}" ^{name = billy}` => `"hello billy"`
+`format "{}, {a}, {}, {0}, and {{{}}}" ^{a = alice} bob cal daisy` => `"bob, alice, cal, bob, and {daisy}"`"#,
+    |ctx| {
         let format_str = ctx.args.next().ok_or("no format string provided")?;
         let source = format_str.source();
         let format_str = {
@@ -157,7 +174,13 @@ fn format_fn() -> Value {
 }
 
 fn from_fn() -> Value {
-    ergo_function!(independent std::string::from, |ctx| {
+    ergo_function!(independent std::string::from,
+    r"Convert a value into a string.
+
+Arguments: <value: Into<String>>
+
+Returns the result of converting the value into a string.",
+    |ctx| {
         let value = ctx.args.next().ok_or("value not provided")?;
 
         ctx.unused_arguments()?;
@@ -169,7 +192,13 @@ fn from_fn() -> Value {
 }
 
 fn split_fn() -> Value {
-    ergo_function!(std::string::split, |ctx| {
+    ergo_function!(std::string::split,
+    r"Split a string on a substring.
+
+Arguments: <pattern: String> <str: String>
+
+Returns an Array of Strings representing the segments of `str` separated by `pattern`.",
+    |ctx| {
         let pat = ctx.args.next().ok_or("split pattern not provided")?;
         let s = ctx.args.next().ok_or("string not provided")?;
 
@@ -192,19 +221,25 @@ fn split_fn() -> Value {
 }
 
 fn trim_fn() -> Value {
-    ergo_function!(std::string::trim, |ctx| {
-        let s = ctx.args.next().ok_or("string not provided")?;
+    ergo_function!(
+        std::string::trim,
+        r"Trim whitespace from the beginning and end of a string.
 
-        ctx.unused_arguments()?;
+Arguments: <String>",
+        |ctx| {
+            let s = ctx.args.next().ok_or("string not provided")?;
 
-        let s = ctx.source_value_as::<types::String>(s);
-        let s = s.await?.unwrap();
+            ctx.unused_arguments()?;
 
-        make_value!([s] {
-            let s = s.await?;
-            Ok(types::String::from(s.as_ref().as_str().trim()))
-        })
-        .into()
-    })
+            let s = ctx.source_value_as::<types::String>(s);
+            let s = s.await?.unwrap();
+
+            make_value!([s] {
+                let s = s.await?;
+                Ok(types::String::from(s.as_ref().as_str().trim()))
+            })
+            .into()
+        }
+    )
     .into()
 }

@@ -177,7 +177,7 @@ where
 
 impl Function {
     /// Create a new function with the given implementation.
-    pub fn new<F>(f: F, deps: Dependencies) -> TypedValue<Self>
+    pub fn new<F>(f: F, deps: Dependencies, doc: Option<TypedValue<String>>) -> TypedValue<Self>
     where
         F: for<'a> Fn(
                 &'a mut crate::FunctionCall,
@@ -186,7 +186,12 @@ impl Function {
             + Sync
             + 'static,
     {
-        TypedValue::constant_deps(Function(FunctionAbi_TO::from_value(f, TU_Opaque)), deps)
+        let mut v =
+            TypedValue::constant_deps(Function(FunctionAbi_TO::from_value(f, TU_Opaque)), deps);
+        if let Some(doc) = doc {
+            v.set_metadata(&Doc, doc);
+        }
+        v
     }
 
     /// Call the function.
@@ -229,7 +234,7 @@ macro_rules! namespace_id {
 /// return EvalResult directly, and should evaluate to a Value.
 #[macro_export]
 macro_rules! ergo_function {
-    ( independent $( $l:ident )::+ , $( $m:ident ),* |$ctx:ident| $body:expr ) => {
+    ( independent $( $l:ident )::+, $doc:literal, $( $m:ident ),* |$ctx:ident| $body:expr ) => {
         $crate::types::Function::new(
             move |$ctx| {
                 $( let $m = $m.clone(); )*
@@ -237,12 +242,13 @@ macro_rules! ergo_function {
                     async move { Ok($ctx.call_site.clone().with($body)) }
                 )
             },
-            ::grease::depends![$crate::namespace_id!($( $l )::+)]
+            ::grease::depends![$crate::namespace_id!($( $l )::+)],
+            Some(::grease::value::TypedValue::constant($doc.into()))
         )
     };
 
-    ( $( $l:ident )::+ , $( $m:ident ),* |$ctx:ident| $body:expr ) => {
-        $crate::ergo_function!(independent $( $l )::+, $( $m ),* |$ctx| {
+    ( $( $l:ident )::+, $doc:literal, $( $m:ident ),* |$ctx:ident| $body:expr ) => {
+        $crate::ergo_function!(independent $( $l )::+, $doc, $( $m ),* |$ctx| {
             let val: ::grease::value::Value = $body;
             let new_deps = ::grease::depends![$crate::namespace_id!($( $l )::+), val.id()];
             val.set_dependencies(new_deps)

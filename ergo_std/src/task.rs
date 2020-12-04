@@ -15,7 +15,26 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 pub fn function() -> Value {
-    ergo_function!(independent std::task, |ctx| {
+    ergo_function!(independent std::task,
+    r"Run the given value as a concurrent task.
+
+Arguments: <description: String> <value>
+
+Keyword Arguments:
+* <task-count: String>: A numeric string indicating the number of task slots the task should use.
+  Defaults to 0.
+* <track-work-by>: A value the identity of which is used as the identifier for work tracking. If unset, the task value
+  identity is used. For instance, you might use this to indicate the values which affect a task's runtime, so that
+  progress estimation may be able to predict how long the task will take based on prior runs.
+
+Returns a value identical to `value` (including the identity), however evaluating the value will run it in a concurrent
+task (which may run on a separate thread) that is described by `description`.
+
+When a value running in a task waits on another task, it is considered inactive. A task is considered a single unit of
+work in the runtime progress tracking. An active task takes up `task-count` slots out of the total permitted number of
+concurrent tasks at a single time (as configured in the runtime). If there are not enough slots, the task will wait
+until more become available. If the requested number is greater than the maximum, it will be limited to the maximum.",
+    |ctx| {
         let desc = ctx.args.next().ok_or("no task description")?;
         let val = ctx.args.next().ok_or("no argument to task")?.unwrap();
 
@@ -144,11 +163,12 @@ impl ParentTask {
         work: RArc<RMutex<grease::runtime::Work>>,
         task_manager: grease::runtime::TaskManager,
     ) -> Self {
-        let recording = work.lock().start();
+        // Acquire the permit before setting the task log state.
+        let permit = task_manager.task_acquire(task_count).await;
         let state = RMutex::new(ParentTaskState::Active(
             log.task(description.clone()),
-            recording,
-            task_manager.task_acquire(task_count).await,
+            work.lock().start(),
+            permit,
         ));
         ParentTask {
             description,
@@ -199,6 +219,7 @@ impl ParentTask {
 
             if make_active {
                 // Must await without holding guard or other locals.
+                // Must also acquire the permit prior to getting log state.
                 let task_permit = self.task_manager.task_acquire(self.task_count).await;
                 let mut guard = self.state.lock();
                 // Only set to Active state if still in the inactive and empty state (another child

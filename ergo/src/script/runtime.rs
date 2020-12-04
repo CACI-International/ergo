@@ -1891,7 +1891,7 @@ impl Rt<Expression> {
                         }
                     }
                     .boxed()
-                }, deps)
+                }, deps, None)
                 .into())
             }
             Match(val, pats) => {

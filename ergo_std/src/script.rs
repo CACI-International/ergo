@@ -15,7 +15,13 @@ pub fn module() -> Value {
 }
 
 fn bindings_fn() -> Value {
-    ergo_function!(independent std::script::bindings, |ctx| {
+    ergo_function!(independent std::script::bindings,
+    r"Return the current bindings as a map.
+
+Arguments: (none)
+
+All bindings at the call site are returned as a Map.",
+    |ctx| {
         ctx.unused_arguments()?;
 
         let env = ctx.env_flatten();
@@ -29,7 +35,14 @@ fn bindings_fn() -> Value {
 }
 
 fn set_load_path_fn() -> Value {
-    ergo_function!(independent std::script::set_load_path, |ctx| {
+    ergo_function!(independent std::script::set_load_path,
+    r"Set the load path of the script.
+
+Arguments: <Array of Path>>
+
+This function immediately executes.
+Any load calls (`ergo ...`) following this call will use the given array of paths, where paths are checked in-order.",
+    |ctx| {
         let path = ctx.args.next().ok_or("no load path provided")?;
 
         ctx.unused_arguments()?;
