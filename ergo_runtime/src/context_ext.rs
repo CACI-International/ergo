@@ -20,6 +20,10 @@ impl AsContext for Context {
 }
 
 pub trait ContextExt: AsContext {
+    fn doc(&self, value: &grease::Value) -> TypedValue<crate::types::String> {
+        crate::metadata::Doc::get(self.as_context(), value)
+    }
+
     fn type_name<'a>(&'a self, tp: &'a Type) -> BoxFuture<'a, Result<String>> {
         crate::traits::type_name(self.as_context(), tp).boxed()
     }

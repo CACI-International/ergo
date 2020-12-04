@@ -83,9 +83,6 @@ Within a script, the following are defined:
 ## Development Notes
 
 ### TODO
-* Self-documentation. Accessed and printed directly while evaluating scripts
-  and/or accessed with a `--doc` command-line argument. Add a way to attach
-  documentation (or other metadata?) to arbitrary types in scripts.
 * Display more detailed error information at exit?
 * Add a message/signal handler to exit gracefully.
   * This has been added but child programs still capture the signal, need to

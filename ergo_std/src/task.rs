@@ -52,7 +52,7 @@ pub fn function() -> Value {
                 let s = desc.await?;
                 log.info(format!("starting: {}", s.clone()));
                 let work = RArc::new(RMutex::new(log.work(format!("{:x}", work_id))));
-                let parent_task = ParentTask::new(s.clone().owned(), task_count, log.clone(), work.clone(), task_inner.clone()).await;
+                let parent_task = ParentTask::new(s.clone().owned().0, task_count, log.clone(), work.clone(), task_inner.clone()).await;
                 let ret = parent_task.scoped(inner.into_future()).await;
                 let errored = ret.is_err();
                 if errored {

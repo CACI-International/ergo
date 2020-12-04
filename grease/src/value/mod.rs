@@ -38,6 +38,15 @@ pub type Id = u128;
 /// This identifier uniquely describes the associated metadata content.
 pub type MetadataId = u128;
 
+/// Metadata key types.
+///
+/// Keys generate the metadata id and have an associated output type.
+pub trait MetadataKey {
+    type Value: crate::type_erase::Eraseable;
+
+    fn id(&self) -> MetadataId;
+}
+
 /// Value result used for dynamically-typed Values.
 #[derive(Debug, Clone, StableAbi)]
 #[repr(C)]
@@ -559,6 +568,24 @@ impl Value {
         *self.id
     }
 
+    /// Set a metadata entry for this value.
+    pub fn set_metadata<T: MetadataKey>(&mut self, key: &T, value: T::Value) {
+        self.metadata
+            .insert(key.id().into(), RArc::new(Erased::new(value)));
+    }
+
+    /// Clear a metadata entry for this value.
+    pub fn clear_metadata<T: MetadataKey>(&mut self, key: &T) {
+        self.metadata.remove(&key.id().into());
+    }
+
+    /// Get a metadata entry for this value.
+    pub fn get_metadata<T: MetadataKey>(&self, key: &T) -> Option<Ref<T::Value>> {
+        self.metadata
+            .get(&key.id().into())
+            .map(|v| unsafe { Ref::new(v.clone()) })
+    }
+
     /// Get the type of the contained value.
     ///
     /// This may force the value to be evaluated if dynamically typed.
@@ -794,7 +821,7 @@ macro_rules! match_value {
     };
 }
 
-/// A reference to a TypedValue result.
+/// A reference to a type-erased result.
 pub type Ref<T> = crate::type_erase::Ref<T, RArc<Erased>>;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -911,15 +938,6 @@ impl<T: GreaseType + Send + Sync + 'static> TypedValue<T> {
     }
 }
 
-impl<T> From<T> for TypedValue<T>
-where
-    T: GreaseType + Hash + Send + Sync + 'static,
-{
-    fn from(v: T) -> Self {
-        TypedValue::constant(v)
-    }
-}
-
 impl<T> Clone for TypedValue<T> {
     fn clone(&self) -> Self {
         TypedValue {
@@ -995,9 +1013,21 @@ impl<T> std::ops::Deref for TypedValue<T> {
     }
 }
 
+impl<T> std::ops::DerefMut for TypedValue<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
+
 impl<T> AsRef<Value> for TypedValue<T> {
     fn as_ref(&self) -> &Value {
         &self.inner
+    }
+}
+
+impl<T> AsMut<Value> for TypedValue<T> {
+    fn as_mut(&mut self) -> &mut Value {
+        &mut self.inner
     }
 }
 

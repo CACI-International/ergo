@@ -102,5 +102,5 @@ grease_traits_fn! {
     grease_display_basic!(traits, isize);
     grease_display_basic!(traits, char);
     grease_display_basic!(traits, bool);
-    grease_display_basic!(traits, RString);
+    grease_display_basic!(traits, types::String);
 }

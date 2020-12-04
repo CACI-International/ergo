@@ -41,6 +41,12 @@ use std::str::FromStr;
 #[derive(Clone, Copy, Debug, GreaseType, Hash)]
 pub struct ScriptEnvIntoMap;
 
+impl From<ScriptEnvIntoMap> for TypedValue<ScriptEnvIntoMap> {
+    fn from(v: ScriptEnvIntoMap) -> Self {
+        TypedValue::constant(v)
+    }
+}
+
 grease::grease_traits_fn! {
     ergo_runtime::grease_type_name!(traits, ScriptEnvIntoMap, "set expression");
     ergo_runtime::traits::ValueByContent::add_impl::<ScriptEnvIntoMap>(traits);
@@ -973,7 +979,7 @@ fn _apply_pattern<'a>(
                         errs,
                         rest,
                         val.map(move |(_, m)| {
-                            src.with(PatternValues::singular(types::Map(m).into()))
+                            src.with(PatternValues::singular(types::Map(m).into_value_no_doc()))
                         }),
                     )
                     .await
@@ -1217,7 +1223,7 @@ pub async fn apply_command_pattern(
                             .map(|(k, v)| (k.unwrap(), v.unwrap()))
                             .collect(),
                     )
-                    .into_value()
+                    .into_value_no_doc()
                 })),
             )
             .await
@@ -1400,7 +1406,7 @@ fn compile_env_into_expr(ctx: &mut Runtime, local_env: Vec<Expr>, expr: Expr) ->
                     Err(e) => Ok(Some(Err(e))),
                 }
             } else {
-                Err(Error::MissingBinding(().into_value().into()).into())
+                Err(Error::MissingBinding(types::Unit.into_value().into()).into())
             }
         }
 
@@ -1425,7 +1431,7 @@ fn compile_env_into_expr(ctx: &mut Runtime, local_env: Vec<Expr>, expr: Expr) ->
         let src = expr.source();
         expr.map(move |e| -> EResult<_> {
             Ok(match e {
-                Empty => Compiled(Ok(src.with(().into_value().into())).into()),
+                Empty => Compiled(Ok(src.with(types::Unit.into_value().into())).into()),
                 Expression::String(s) => {
                     let s: Value = types::String::from(s).into();
                     let ret = Compiled(Ok(src.clone().with(s)).into());
@@ -1655,7 +1661,7 @@ impl Rt<Expression> {
 
         use Expression::*;
         match self.0 {
-            Empty => Ok(().into_value().into()),
+            Empty => Ok(types::Unit.into_value().into()),
             Expression::String(s) => {
                 let s: Value = types::String::from(s).into();
                 if let (Some(src), Some(_)) = (string_env_match, ctx.env_get(&s)) {
@@ -1943,7 +1949,7 @@ impl Rt<Expression> {
                     } else {
                         match if_false {
                             Some(e) => Rt(e).evaluate(&mut ctx).await?.unwrap().into_any_value(),
-                            None => ().into_value().into_any_value()
+                            None => types::Unit.into_value().into_any_value()
                         }
                     })
                 }, deps))
@@ -2069,7 +2075,7 @@ impl Rt<Source<Vec<Source<MergeExpression>>>> {
                     let (source, val) = val.take();
                     match val.grease_type_immediate() {
                         Some(tp) if tp == &ScriptEnvIntoMap::grease_type() => {
-                            env_map.map(|ret| self_source.with(types::Map(ret).into_value()))
+                            env_map.map(|ret| self_source.with(types::Map(ret).into_value(ctx)))
                         }
                         _ => Ok(source.with(val)),
                     }

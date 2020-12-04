@@ -8,8 +8,9 @@ use grease::{
 
 pub fn module() -> Value {
     crate::grease_string_map! {
-        "bindings" = bindings_fn(),
-        "set-load-path" = set_load_path_fn()
+        "A map of script-related functions:"
+        "bindings": "Get all of the current bindings in the script at the call site." = bindings_fn(),
+        "set-load-path": "Set the load path for any `ergo` calls." = set_load_path_fn()
     }
 }
 
@@ -22,7 +23,7 @@ fn bindings_fn() -> Value {
         types::Map(env.into_iter()
             .map(|(k,v)| Ok((k,v.into_result()?.unwrap())))
             .collect_result()?
-        ).into()
+        ).into_value(ctx)
     })
     .into()
 }
@@ -45,7 +46,7 @@ fn set_load_path_fn() -> Value {
 
         ctx.load_paths = paths;
 
-        ().into_value().into()
+        types::Unit.into_value().into()
     })
     .into()
 }

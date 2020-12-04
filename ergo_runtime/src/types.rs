@@ -4,6 +4,7 @@
 //! Plugins may define other types; these are just common types that may be used among
 //! implementors.
 
+use crate::metadata::Doc;
 use abi_stable::{
     sabi_trait,
     sabi_trait::prelude::*,
@@ -13,6 +14,7 @@ use abi_stable::{
 use grease::bst::BstMap;
 use grease::depends;
 use grease::future::BoxFuture;
+use grease::make_value;
 use grease::types::GreaseType;
 use grease::value::{Dependencies, TypedValue, Value};
 
@@ -21,10 +23,69 @@ pub(crate) mod byte_stream;
 pub use byte_stream::ByteStream;
 
 /// Script unit type.
-pub type Unit = ();
+#[derive(Clone, Debug, GreaseType, PartialEq, Hash, Eq, StableAbi)]
+#[repr(C)]
+pub struct Unit;
+
+impl From<Unit> for TypedValue<Unit> {
+    fn from(v: Unit) -> Self {
+        let mut v = Self::constant(v);
+        v.set_metadata(&Doc, make_value!(Ok("()".into())));
+        v
+    }
+}
 
 /// Script string type.
-pub type String = RString;
+#[derive(Clone, Debug, Default, GreaseType, PartialEq, Hash, Eq, StableAbi)]
+#[repr(C)]
+pub struct String(pub RString);
+
+impl std::fmt::Display for String {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl<T: Into<RString>> From<T> for String {
+    fn from(t: T) -> Self {
+        String(t.into())
+    }
+}
+
+impl std::ops::Deref for String {
+    type Target = RString;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for String {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl From<String> for TypedValue<String> {
+    fn from(v: String) -> Self {
+        let mut v = Self::constant(v.clone());
+        let v_meta = v.clone();
+        v.set_metadata(&Doc, v_meta);
+        v
+    }
+}
+
+impl String {
+    /// Create a new (empty) string.
+    pub fn new() -> Self {
+        Default::default()
+    }
+
+    /// Convert this value into a std String.
+    pub fn into_string(self) -> std::string::String {
+        self.0.into_string()
+    }
+}
 
 /// Script array type.
 #[derive(Clone, Debug, GreaseType, PartialEq, StableAbi)]
@@ -34,7 +95,10 @@ pub struct Array(pub RVec<Value>);
 impl From<Array> for TypedValue<Array> {
     fn from(v: Array) -> Self {
         let deps = depends![^@v.0];
-        Self::constant_deps(v, deps)
+        let doc = format!("array with {} elements", v.0.len());
+        let mut v = Self::constant_deps(v, deps);
+        v.set_metadata(&Doc, TypedValue::constant(String::from(doc)));
+        v
     }
 }
 
@@ -43,10 +107,48 @@ impl From<Array> for TypedValue<Array> {
 #[repr(C)]
 pub struct Map(pub BstMap<Value, Value>);
 
-impl From<Map> for TypedValue<Map> {
-    fn from(v: Map) -> Self {
-        let deps: grease::value::Dependencies = v.0.iter().map(|(k, v)| depends![*k, *v]).sum();
-        Self::constant_deps(v, deps)
+impl Map {
+    /// Create a new TypedValue<Map> from this Map.
+    ///
+    /// The context is used to generate default documentation for the value.
+    pub fn into_typed_value(self, ctx: &grease::runtime::Context) -> TypedValue<Self> {
+        let key_docs: Vec<_> = self.0.iter().map(|(k, _)| Doc::get(ctx, &k)).collect();
+        let deps: grease::value::Dependencies = self.0.iter().map(|(k, v)| depends![*k, *v]).sum();
+        let mut v = TypedValue::constant_deps(self, deps);
+        v.set_metadata(
+            &Doc,
+            make_value!({
+                let key_docs = futures::future::try_join_all(key_docs).await?;
+                Ok(if key_docs.len() == 0 {
+                    "map with no keys".into()
+                } else {
+                    let mut s = "map with keys:".to_owned();
+                    for k in key_docs {
+                        s.push_str(&format!("\n * {}", k.as_ref()));
+                    }
+                    s.into()
+                })
+            }),
+        );
+        v
+    }
+
+    /// Create a new TypedValue<Map> from this Map without documentation metadata.
+    pub fn into_typed_value_no_doc(self) -> TypedValue<Self> {
+        let deps: grease::value::Dependencies = self.0.iter().map(|(k, v)| depends![*k, *v]).sum();
+        TypedValue::constant_deps(self, deps)
+    }
+
+    /// Create a new Value from this Map.
+    ///
+    /// The context is used to generate default documentation for the value.
+    pub fn into_value(self, ctx: &grease::runtime::Context) -> Value {
+        self.into_typed_value(ctx).into()
+    }
+
+    /// Create a new Value from this Map without documentation metadata.
+    pub fn into_value_no_doc(self) -> Value {
+        self.into_typed_value_no_doc().into()
     }
 }
 

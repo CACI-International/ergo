@@ -3,10 +3,7 @@
 use crate::path::PathBuf;
 use crate::type_erase::ErasedTrivial;
 use crate::uuid::*;
-use abi_stable::{
-    std_types::{RString, RVec},
-    StableAbi,
-};
+use abi_stable::{std_types::RVec, StableAbi};
 use lazy_static::lazy_static;
 use std::convert::TryInto;
 
@@ -152,14 +149,14 @@ impl<T: GreaseType> GreaseType for RVec<T> {
     }
 }
 
-impl GreaseType for RString {
-    fn grease_type() -> Type {
-        Type::named(b"abi_stable::std_types::RString")
-    }
-}
-
 impl GreaseType for PathBuf {
     fn grease_type() -> Type {
         Type::named(b"grease::path::PathBuf")
+    }
+}
+
+impl From<PathBuf> for crate::value::TypedValue<PathBuf> {
+    fn from(p: PathBuf) -> Self {
+        crate::value::TypedValue::constant(p)
     }
 }

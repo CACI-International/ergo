@@ -21,6 +21,7 @@ pub use futures::future;
 
 pub mod context_ext;
 pub mod error;
+pub mod metadata;
 pub mod source;
 pub mod traits;
 pub mod types;

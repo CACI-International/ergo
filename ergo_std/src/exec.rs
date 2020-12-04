@@ -473,10 +473,11 @@ pub fn function() -> Value {
         let exit_status = make_value!((run_command) [namespace_id!(std::exec::exit_status)] { run_command.await?; Ok(ExitStatus::from(rcv_status.await?)) });
 
         crate::grease_string_map! {
-            "stdout" = rt.imbue_error_context(stdout.into(), "while evaluating stdout of exec command"),
-            "stderr" = rt.imbue_error_context(stderr.into(), "while evaluating stderr of exec command"),
-            "exit-status" = rt.imbue_error_context(exit_status.into(), "while evaluating exit_status of exec command"),
-            "complete" = rt.imbue_error_context(run_command.into(), "while evaluating result of exec command")
+            "Outputs from an `exec` call."
+            "stdout": "The standard output byte stream." = rt.imbue_error_context(stdout.into(), "while evaluating stdout of exec command"),
+            "stderr": "The standard error byte stream." = rt.imbue_error_context(stderr.into(), "while evaluating stderr of exec command"),
+            "exit-status": "The exit status, which may be used in boolean contexts to check for successful exit." = rt.imbue_error_context(exit_status.into(), "while evaluating exit_status of exec command"),
+            "complete": "A unit value for the successful completion of the launched program." = rt.imbue_error_context(run_command.into(), "while evaluating result of exec command")
         }
     })
     .into()

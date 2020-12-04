@@ -12,16 +12,17 @@ use std::path::Path;
 
 pub fn module() -> Value {
     crate::grease_string_map! {
-        "copy" = copy_fn(),
-        "create-dir" = create_dir_fn(),
-        "exists" = exists_fn(),
-        "glob" = glob_fn(),
-        "read" = read_fn(),
-        "remove" = remove_fn(),
-        "sha1" = sha1_fn(),
-        "track" = track_fn(),
-        "unarchive" = unarchive_fn(),
-        "write" = write_fn()
+        "A map of filesystem functions:"
+        "copy": "Copy a file or directory tree." = copy_fn(),
+        "create-dir": "Create a directory and all its parents." = create_dir_fn(),
+        "exists": "Check whether a path exists in the filesystem." = exists_fn(),
+        "glob": "Find files using a glob." = glob_fn(),
+        "read": "Read a file as a byte stream." = read_fn(),
+        "remove": "Remove a file or directory tree." = remove_fn(),
+        "sha1": "Compute the SHA1 hash of the contents of a file." = sha1_fn(),
+        "track": "Track a path based on the file contents." = track_fn(),
+        "unarchive": "Extract an archive to a directory." = unarchive_fn(),
+        "write": "Write a byte stream to a file." = write_fn()
     }
 }
 

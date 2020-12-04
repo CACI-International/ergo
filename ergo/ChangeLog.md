@@ -5,6 +5,7 @@
 * Change the application log to be written to the data local directory. Support
   `ERGO_LOG_FILE` environment variable to override this.
 * Improve error logging to accurately track pending errors.
+* Add `-d`/`--doc` flags for getting documentation for the final value.
 
 ## 1.0.0-beta.4  -- 2020-11-17
 * Add the `!` operator, which may precede any expression or argument to evaluate

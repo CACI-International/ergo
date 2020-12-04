@@ -6,9 +6,12 @@ use grease::{make_value, value::Value};
 
 pub fn module() -> Value {
     crate::grease_string_map! {
-        "stdin" = stdin_fn(),
-        "stdout" = stdout_fn(),
-        "stderr" = stderr_fn()
+        r"A map of program IO functions.
+
+Each of these functions grants exlusive access to the byte stream."
+        "stdin": "A byte stream of the program's stdin handle." = stdin_fn(),
+        "stdout": "Write a byte stream to the program's stdout handle." = stdout_fn(),
+        "stderr": "Write a byte stream to the program's stderr handle." = stderr_fn()
     }
 }
 

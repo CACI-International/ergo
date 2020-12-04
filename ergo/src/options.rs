@@ -54,6 +54,10 @@ pub struct Opts {
     /// Check for common syntax mistakes without executing the final value.
     pub lint: bool,
 
+    #[structopt(short, long)]
+    /// Display documentation for the final value rather than executing it.
+    pub doc: bool,
+
     #[structopt(short = "S", long)]
     /// Whether to stop immediately when an error occurs.
     pub stop: bool,

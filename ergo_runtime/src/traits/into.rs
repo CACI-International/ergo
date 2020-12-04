@@ -2,17 +2,14 @@
 
 use super::type_name;
 use crate::source::Source;
-use abi_stable::{
-    std_types::{ROption, RString},
-    StableAbi,
-};
+use abi_stable::{std_types::ROption, StableAbi};
 use grease::closure::*;
 use grease::path::PathBuf;
 use grease::runtime::{Context, Traits};
 use grease::traits::*;
 use grease::type_erase::Erased;
 use grease::types::{GreaseType, Type, TypeParameters};
-use grease::value::{IntoValue, TypedValue, Value};
+use grease::value::{TypedValue, Value};
 use grease::*;
 
 /// A grease trait for converting to different types.
@@ -106,7 +103,7 @@ grease_traits_fn! {
         extern "C" fn to_bool<'a>(_ctx: &'a grease::runtime::Context, v: Value) ->
             grease::future::BoxFuture<'a, grease::error::RResult<Value>> {
             grease::future::BoxFuture::new(async move {
-                grease::error::RResult::ROk(v.then(true.into_value()))
+                grease::error::RResult::ROk(v.then(TypedValue::constant(true).into()))
             })
         }
         traits.add_generator_by_trait_for_trait::<IntoTyped<bool>>(|_traits, _type| {
@@ -143,17 +140,17 @@ grease_traits_fn! {
     // () -> bool (false)
     impl IntoTyped<bool> for () {
         async fn into_typed(self) -> Value {
-            Value::from(self).then(false.into_value())
+            Value::from(self).then(TypedValue::constant(false).into())
         }
     }
 
     // Path -> String
     {
-        traits.add_impl_for_type::<PathBuf, IntoTyped<RString>>(
+        traits.add_impl_for_type::<PathBuf, IntoTyped<crate::types::String>>(
             grease_trait_impl! {
-                impl IntoTyped<RString> for PathBuf {
+                impl IntoTyped<crate::types::String> for PathBuf {
                     async fn into_typed(self) -> Value {
-                        self.map(|v| RString::from(v.as_ref().as_ref().to_string_lossy().into_owned())).into()
+                        self.map(|v| crate::types::String::from(v.as_ref().as_ref().to_string_lossy().into_owned())).into()
                     }
                 }
             }

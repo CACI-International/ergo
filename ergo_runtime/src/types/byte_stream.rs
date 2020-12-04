@@ -272,7 +272,7 @@ pub struct ByteStream {
 impl From<crate::types::String> for ByteStream {
     fn from(s: crate::types::String) -> Self {
         Self::new(grease::runtime::io::wrap(std::io::Cursor::new(
-            s.into_bytes(),
+            s.0.into_bytes(),
         )))
     }
 }

@@ -96,7 +96,7 @@ grease_traits_fn! {
             if !errs.is_empty() {
                 Err(errs.into_iter().collect::<Error>())?
             }
-            types::Map(inner_vals.into_iter().collect()).into()
+            types::Map(inner_vals.into_iter().collect()).into_value(CONTEXT)
         }
     }
 }

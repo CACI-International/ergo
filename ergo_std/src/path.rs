@@ -10,11 +10,12 @@ use grease::{
 
 pub fn module() -> Value {
     crate::grease_string_map! {
-        "new" = new_fn(),
-        "join" = join_fn(),
-        "parent" = parent_fn(),
-        "relative" = relative_fn(),
-        "split" = split_fn()
+        "A map of path manipulation functions:"
+        "new": "Create a new, unique, and non-existent path." = new_fn(),
+        "join": "Join path components into a path." = join_fn(),
+        "parent": "Get the parent of a path." = parent_fn(),
+        "relative": "Get a path relative to another." = relative_fn(),
+        "split": "Split a path into components." = split_fn()
     }
 }
 

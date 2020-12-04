@@ -221,15 +221,18 @@ fn run(opts: Opts) -> Result<String, String> {
         return Ok(Default::default());
     }
 
-    let ret = script_output
-        .map(|v| {
-            ctx.task
-                .block_on(grease::value::Errored::observe(on_error, async {
-                    ctx.force_value_nested(v.clone()).await?;
-                    ctx.display(v).await
-                }))
-        })
-        .unwrap()
+    let value_to_execute = if opts.doc {
+        ergo_runtime::metadata::Doc::get(&ctx, &script_output).into()
+    } else {
+        script_output.unwrap()
+    };
+
+    let ret = ctx
+        .task
+        .block_on(grease::value::Errored::observe(on_error, async {
+            ctx.force_value_nested(value_to_execute.clone()).await?;
+            ctx.display(value_to_execute).await
+        }))
         .map_err(|e: grease::Error| e.to_string());
 
     // Before the context is destroyed (unloading plugins), clear the thread-local storage in case

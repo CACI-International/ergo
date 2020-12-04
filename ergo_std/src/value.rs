@@ -1,16 +1,38 @@
 //! Value-related intrinsics.
 
 use abi_stable::std_types::RArc;
-use ergo_runtime::{context_ext::AsContext, ergo_function, types, ContextExt};
+use ergo_runtime::{
+    context_ext::AsContext,
+    ergo_function,
+    metadata::{Doc, Runtime},
+    types, ContextExt,
+};
 use futures::future::FutureExt;
-use grease::{depends, item_name, value::Value};
+use grease::{
+    depends, item_name,
+    value::{IntoValue, Value},
+};
 
 pub fn module() -> Value {
     crate::grease_string_map! {
-        "by-content" = by_content_fn(true),
-        "cache" = cache_fn(),
-        "debug" = debug_fn(),
-        "variable" = variable_fn()
+        "A map of value-manipulation functions:"
+        "by-content": "Identify a value by its content (forcing evaluation)." = by_content_fn(true),
+        "cache": "Persist a value across program runs." = cache_fn(),
+        "debug": "Display debug info of a value in the debug log."  = debug_fn(),
+        "doc": "Value documentation." = crate::grease_string_map! {
+            "A map of documentation functions:"
+            "get": "Get the documentation of a value." = doc_get_fn(),
+            "set": "Set the documentation of a value." = doc_set_fn()
+        },
+        "meta": "Value metadata manipulation." = crate::grease_string_map! {
+            r"A map of metadata functions.
+Arbitrary values can be attached as metadata to other values, keyed by the identity of a third key value.
+Metadata allows one to retrieve associated values without evaluating a value. While this could be achieved by wrapping
+values with a map, metadata does not alter how other code treats the value."
+            "get": "Get the metadata of a value for a specific key." = meta_get_fn(),
+            "set": "Set the metadata of a value for a specific key." = meta_set_fn()
+        },
+        "variable": "Mark a value as being variable, i.e., with an identity not wholly derived from its dependencies." = variable_fn()
     }
 }
 
@@ -139,5 +161,65 @@ fn debug_fn() -> Value {
         },
         depends![ergo_runtime::namespace_id!(std::value::debug)],
     )
+    .into()
+}
+
+fn doc_get_fn() -> Value {
+    ergo_function!(independent std::value::doc::get, |ctx| {
+        let val = ctx.args.next().ok_or("no argument to doc")?;
+
+        ctx.unused_arguments()?;
+
+        Doc::get(ctx, &val).into()
+    })
+    .into()
+}
+
+fn doc_set_fn() -> Value {
+    ergo_function!(independent std::value::doc::set, |ctx| {
+        let mut val = ctx.args.next().ok_or("no value argument")?.unwrap();
+        let doc = ctx.args.next().ok_or("no documentation argument")?;
+
+        ctx.unused_arguments()?;
+
+        let doc = ctx.source_value_as::<types::String>(doc).await?.unwrap();
+
+        val.set_metadata(&Doc, doc);
+        val
+    })
+    .into()
+}
+
+fn meta_get_fn() -> Value {
+    ergo_function!(independent std::value::meta::get, |ctx| {
+        let val = ctx.args.next().ok_or("no value argument")?.unwrap();
+        let key = ctx.args.next().ok_or("no metadata key provided")?.unwrap();
+
+        ctx.unused_arguments()?;
+
+        match val.get_metadata(&Runtime { key: key.id() }) {
+            Some(v) => v.as_ref().clone(),
+            None => types::Unit.into_value()
+        }
+    })
+    .into()
+}
+
+fn meta_set_fn() -> Value {
+    ergo_function!(independent std::value::meta::set, |ctx| {
+        let mut val = ctx.args.next().ok_or("no value argument")?.unwrap();
+        let key = ctx.args.next().ok_or("no metadata key provided")?.unwrap();
+        let meta = ctx.args.next().map(|v| v.unwrap());
+
+        ctx.unused_arguments()?;
+
+        let key = Runtime { key: key.id() };
+
+        match meta {
+            Some(meta) => val.set_metadata(&key, meta),
+            None => val.clear_metadata(&key),
+        }
+        val
+    })
     .into()
 }

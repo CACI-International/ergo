@@ -53,8 +53,8 @@ grease_traits_fn! {
     grease_type_name!(traits, isize);
     grease_type_name!(traits, char);
     grease_type_name!(traits, bool);
-    grease_type_name!(traits, RString, "String");
     grease_type_name!(traits, PathBuf, "Path");
+    grease_type_name!(traits, types::String, "String");
     grease_type_name!(traits, types::Array, "Array");
     grease_type_name!(traits, types::Map, "Map");
     grease_type_name!(traits, types::Function, "Function");

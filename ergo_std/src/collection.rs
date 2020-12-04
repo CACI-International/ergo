@@ -7,11 +7,12 @@ use grease::{depends, make_value, match_value, value::Value};
 
 pub fn module() -> Value {
     crate::grease_string_map! {
-        "entries" = entries_fn(),
-        "fold" = fold_fn(),
-        "get" = get_fn(),
-        "has" = has_fn(),
-        "map" = map_fn()
+        "A map of map and array manipulation functions:"
+        "entries": "Get the entries in a map as an array of {key,value}." = entries_fn(),
+        "fold": "Fold over the values in an array from first to last." = fold_fn(),
+        "get": "Get a key's value from a map, returning unit if it does not exist." = get_fn(),
+        "has": "Check whether a map contains a key." = has_fn(),
+        "map": "Map a function over the values in an array." = map_fn()
     }
 }
 
@@ -100,8 +101,9 @@ fn entries_fn() -> Value {
             let mut vals = RVec::new();
             for (k,v) in map.await?.owned().0 {
                 vals.push(crate::grease_string_map! {
-                    "key" = k,
-                    "value" = v
+                    "Key-value pair from an entry in a map."
+                    "key": "The key in the map." = k,
+                    "value": "The value in the map." = v
                 });
             }
 
@@ -162,10 +164,10 @@ fn get_fn() -> Value {
                         let index = index.await?.unwrap().await?;
                         use std::str::FromStr;
                         let i = usize::from_str(index.as_ref())?;
-                        val.await?.0.get(i).cloned().unwrap_or(().into()).into_any_value()
+                        val.await?.0.get(i).cloned().unwrap_or(types::Unit.into()).into_any_value()
                     }
                     types::Map => |val| {
-                        val.await?.0.get(&index).cloned().unwrap_or(().into()).into_any_value()
+                        val.await?.0.get(&index).cloned().unwrap_or(types::Unit.into()).into_any_value()
                     }
                     => |_| Err("non-indexable value")?
                 })

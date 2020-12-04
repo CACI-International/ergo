@@ -48,22 +48,22 @@ impl StoredContext {
 grease_traits_fn! {
     impl Stored for types::Unit {
         async fn put(&self, _stored_ctx: &StoredContext, item: ItemContent) {
-            bincode::serialize_into(item, self)?
+            bincode::serialize_into(item, &())?
         }
 
         async fn get(_stored_ctx: &StoredContext, item: ItemContent) -> Erased {
-            let t: types::Unit = bincode::deserialize_from(item)?;
-            Erased::new(t)
+            let _t: () = bincode::deserialize_from(item)?;
+            Erased::new(types::Unit)
         }
     }
 
     impl Stored for types::String {
         async fn put(&self, _stored_ctx: &StoredContext, item: ItemContent) {
-            bincode::serialize_into(item, self)?
+            bincode::serialize_into(item, &self.0)?
         }
 
         async fn get(_stored_ctx: &StoredContext, item: ItemContent) -> Erased {
-            let t: types::String = bincode::deserialize_from(item)?;
+            let t = types::String(bincode::deserialize_from(item)?);
             Erased::new(t)
         }
     }

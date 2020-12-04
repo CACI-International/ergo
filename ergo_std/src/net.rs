@@ -10,7 +10,8 @@ use std::convert::TryFrom;
 
 pub fn module() -> Value {
     crate::grease_string_map! {
-        "download" = download_fn()
+        "A map of networking functions:"
+        "download": "Download a file over HTTP or HTTPS." = download_fn()
     }
 }
 

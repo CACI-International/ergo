@@ -5,10 +5,11 @@ use grease::{make_value, path::PathBuf, value::Value};
 
 pub fn module() -> Value {
     crate::grease_string_map! {
-        "get" = get_fn(),
-        "home" = home_path(),
-        "path-search" = path_search_fn(),
-        "current-dir" = current_dir_path()
+        "A map of program environment functions:"
+        "get": "Get an environment variable." = get_fn(),
+        "home": "Get the user's home directory." = home_path(),
+        "path-search": "Find a binary in the system path." = path_search_fn(),
+        "current-dir": "Get the program's present working directory." = current_dir_path()
     }
 }
 
@@ -26,7 +27,7 @@ pub fn get_fn() -> Value {
 
         // TODO return an either type instead?
         match std::env::var_os(name.await?.as_ref().as_str()) {
-            None => ().into(),
+            None => types::Unit.into(),
             Some(v) => types::String::from(
                 v.into_string()
                     .map_err(|_| "environment variable value is not valid unicode")?,
