@@ -40,7 +40,7 @@ macro_rules! grease_type_name {
 }
 
 grease_traits_fn! {
-    grease_type_name!(traits, (), "unit");
+    grease_type_name!(traits, ());
     grease_type_name!(traits, u8);
     grease_type_name!(traits, i8);
     grease_type_name!(traits, u16);
@@ -54,6 +54,7 @@ grease_traits_fn! {
     grease_type_name!(traits, char);
     grease_type_name!(traits, bool);
     grease_type_name!(traits, PathBuf, "Path");
+    grease_type_name!(traits, types::Unit, "Unit");
     grease_type_name!(traits, types::String, "String");
     grease_type_name!(traits, types::Array, "Array");
     grease_type_name!(traits, types::Map, "Map");

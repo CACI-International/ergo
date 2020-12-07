@@ -138,7 +138,7 @@ grease_traits_fn! {
     }
 
     // () -> bool (false)
-    impl IntoTyped<bool> for () {
+    impl IntoTyped<bool> for crate::types::Unit {
         async fn into_typed(self) -> Value {
             Value::from(self).then(TypedValue::constant(false).into())
         }

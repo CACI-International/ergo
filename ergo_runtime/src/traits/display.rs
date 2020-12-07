@@ -56,6 +56,12 @@ grease_traits_fn! {
         }
     }
 
+    impl Display for types::Unit {
+        async fn fmt(&self) -> RString {
+            Default::default()
+        }
+    }
+
     impl Display for PathBuf {
         async fn fmt(&self) -> RString {
             format!("{}", self.as_ref().display()).into()
