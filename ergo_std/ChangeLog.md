@@ -1,5 +1,10 @@
 # ergo_std changelog
 
+## 1.0.0-beta.6  -- 2020-12-07
+* Fix unit-type returns (using new runtime unit type).
+* Improve task work tracking; previously it only started tracking after the task
+  is started.
+
 ## 1.0.0-beta.5  -- 2020-12-07
 * Add `task-count` keyword argument to `task`, allowing one to specify how many
   task slots the task should consume when running.
