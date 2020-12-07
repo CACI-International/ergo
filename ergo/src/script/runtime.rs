@@ -391,9 +391,8 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                 loaded
             };
 
-            // If there are remaining arguments or the file was direct-loaded and the value is a function,
-            // apply them immediately.
-            if !ctx.args.is_empty() || (!was_workspace && loaded.grease_type().await? == &types::Function::grease_type()) {
+            // If there are remaining arguments apply them immediately.
+            if !ctx.args.is_empty() {
                 let args = std::mem::take(&mut ctx.args);
 
                 apply_value(ctx, loaded, args.unchecked(), false).await

@@ -4,6 +4,7 @@ use crate::constants::*;
 use abi_stable::rvec;
 pub use ergo_runtime::source::{FileSource, Source, StringSource};
 use ergo_runtime::{types, EvalResult, Runtime, ScriptEnv};
+use grease::types::GreaseType;
 
 mod ast;
 mod base;
@@ -44,6 +45,17 @@ pub fn script_context(
         runtime::traits(&mut ctx.traits);
         Runtime::new(ctx, global_env)
     })
+}
+
+/// Get the final value.
+///
+/// This will apply any functions without arguments.
+pub async fn final_value(ctx: &mut Runtime, mut val: Source<grease::Value>) -> EvalResult {
+    // Apply any functions (with no arguments).
+    while val.grease_type().await? == &types::Function::grease_type() {
+        val = runtime::apply_value(ctx, val, Default::default(), false).await?;
+    }
+    Ok(val)
 }
 
 impl Script {

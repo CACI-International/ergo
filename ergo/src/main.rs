@@ -202,10 +202,10 @@ fn run(opts: Opts) -> Result<String, String> {
 
     let task = ctx.task.clone();
     let script_output = task
-        .block_on(grease::value::Errored::observe(
-            on_error.clone(),
-            loaded.evaluate(&ctx),
-        ))
+        .block_on(grease::value::Errored::observe(on_error.clone(), async {
+            let val = loaded.evaluate(&ctx).await?;
+            script::final_value(&mut ctx, val).await
+        }))
         .app_err_result("errors(s) while executing script")?;
 
     // Clear context, which removes any unneeded values that may be held.
