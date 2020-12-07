@@ -1,6 +1,6 @@
 # ergo changelog
 
-## 1.0.0-beta.5  -- Unreleased
+## 1.0.0-beta.5  -- 2020-12-07
 * Improve task tracking and UI display of running tasks.
 * Change the application log to be written to the data local directory. Support
   `ERGO_LOG_FILE` environment variable to override this.

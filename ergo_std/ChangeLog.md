@@ -1,6 +1,6 @@
 # ergo_std changelog
 
-## 1.0.0-beta.5  -- Unreleased
+## 1.0.0-beta.5  -- 2020-12-07
 * Add `task-count` keyword argument to `task`, allowing one to specify how many
   task slots the task should consume when running.
 * Track work of active tasks (displayed in progress statistics in log output).
