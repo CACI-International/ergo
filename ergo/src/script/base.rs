@@ -7,10 +7,8 @@ use grease::{
     value::{TypedValue, Value},
 };
 
-/// Return the load function.
-pub fn load() -> Value {
-    types::Function::new(load_script, depends![namespace_id!(load)], Some(TypedValue::constant(
-                r"Load a script, with optional additional arguments to call the result with.
+/// Documentation for the load function.
+pub const LOAD_DOCUMENTATION: &'static str = r"Load a script, with optional additional arguments to call the result with.
 
 The first argument, if present, must be a string or path.
 
@@ -45,5 +43,14 @@ When loading a script, if an ancestor directory contains a `workspace.ergo` path
 the loaded workspace and the resulting value (which must be a map) is merged into the top-level block. If the workspace
 value fails to apply `prelude`, the error is ignored and nothing is merged into the top-level block.
 
-Note that workspaces do not load preludes (though one could still explicitly load from a parent workspace).".into()))).into()
+Note that workspaces do not load preludes (though one could still explicitly load from a parent workspace).";
+
+/// Return the load function.
+pub fn load() -> Value {
+    types::Function::new(
+        load_script,
+        depends![namespace_id!(load)],
+        Some(TypedValue::constant(LOAD_DOCUMENTATION.into())),
+    )
+    .into()
 }

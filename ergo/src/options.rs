@@ -46,6 +46,10 @@ pub struct Opts {
     /// is used.
     pub storage: std::path::PathBuf,
 
+    /// Prints help information.
+    #[structopt(short, long)]
+    pub help: bool,
+
     #[structopt(short, long)]
     /// Clear the storage directory prior to executing.
     pub clean: bool,

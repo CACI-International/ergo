@@ -12,6 +12,8 @@ mod runtime;
 
 use runtime::*;
 
+pub use base::LOAD_DOCUMENTATION;
+
 /// A loaded script.
 pub struct Script {
     ast: ast::Script,
