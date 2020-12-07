@@ -65,6 +65,8 @@ fn is_plugin(f: &path::Path) -> bool {
         }
         return &magic == &[0xfe, 0xed, 0xfa, 0xce]
             || &magic == &[0xfe, 0xed, 0xfa, 0xcf]
+            || &magic == &[0xcf, 0xfa, 0xed, 0xfe]
+            || &magic == &[0xce, 0xfa, 0xed, 0xfe]
             || &magic == &[0xca, 0xfe, 0xba, 0xbe];
     } else if cfg!(target_os = "windows") {
         use std::io::{Seek, SeekFrom};

@@ -2,6 +2,7 @@
 
 ## 1.0.0-beta.6  -- 2020-12-07
 * Fix log pausing to correctly clear the rendered content.
+* Fix mac plugin detection.
 
 ## 1.0.0-beta.5  -- 2020-12-07
 * Improve task tracking and UI display of running tasks.
