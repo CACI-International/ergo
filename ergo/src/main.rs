@@ -279,10 +279,22 @@ fn main() {
     }
 
     // Parse arguments
-    let opts = Opts::from_args();
+    let mut opts = Opts::from_args();
 
-    // Run and check for error
-    match run(opts) {
+    // Additional opts logic.
+    if opts.doc {
+        opts.page ^= true;
+    }
+
+    let paging_enabled = opts.page;
+
+    let result = run(opts);
+
+    if paging_enabled {
+        pager::Pager::with_default_pager("less").setup();
+    }
+
+    match result {
         Ok(s) => writeln!(std::io::stdout(), "{}", s).expect("writing output failed"),
         Err(e) => err_exit(&e),
     }

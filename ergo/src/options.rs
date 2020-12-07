@@ -56,7 +56,13 @@ pub struct Opts {
 
     #[structopt(short, long)]
     /// Display documentation for the final value rather than executing it.
+    ///
+    /// This option toggles the `--page` state.
     pub doc: bool,
+
+    #[structopt(short, long)]
+    /// Page the evaluation output.
+    pub page: bool,
 
     #[structopt(short = "S", long)]
     /// Whether to stop immediately when an error occurs.
