@@ -79,7 +79,7 @@ impl From<TypeParameters> for ErasedTrivial {
 impl From<ErasedTrivial> for TypeParameters {
     fn from(e: ErasedTrivial) -> Self {
         let mut ret = TypeParameters::default();
-        let bytes = unsafe { e.to_boxed_slice::<u8>() };
+        let bytes = unsafe { e.as_slice::<u8>() };
         let mut remaining: &[u8] = &bytes;
         while !remaining.is_empty() {
             ret.0.push(
@@ -103,7 +103,7 @@ impl From<Type> for ErasedTrivial {
 
 impl From<ErasedTrivial> for Type {
     fn from(e: ErasedTrivial) -> Self {
-        let bytes = unsafe { e.to_boxed_slice::<u8>() };
+        let bytes = unsafe { e.as_slice::<u8>() };
         let id = Uuid::from_bytes(bytes[..16].try_into().expect("invalid erased type"));
         let mut slice = &bytes[16..];
         let data = ErasedTrivial::deserialize(&mut slice).expect("invalid serialized type data");
