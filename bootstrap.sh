@@ -22,7 +22,7 @@ if [ "$OSTYPE" == "darwin"* ]; then
 fi
 
 
-mkdir -p ergo-dist/bin
-mkdir -p ergo-dist/share/ergo/lib
-cp $DIR/target/$TYPE/ergo ergo-dist/bin/ergo
-cp $DIR/target/$TYPE/libergo_std.$DYEXT ergo-dist/share/ergo/lib/std.ergo
+mkdir -p dist/bin
+mkdir -p dist/share/ergo/lib
+cp $DIR/target/$TYPE/ergo dist/bin/ergo
+cp $DIR/target/$TYPE/libergo_std.$DYEXT dist/share/ergo/lib/std.ergo
