@@ -62,6 +62,7 @@ until more become available. If the requested number is greater than the maximum
         let observed_errors_each = observed_errors.clone();
         let task = ctx.task.clone();
         let log = ctx.log.sublog("task");
+        let work = log.work(format!("{:x}", work_id));
         val.map_data(move |inner| Eager::Pending(async move {
             let task_inner = task.clone();
 
@@ -70,7 +71,7 @@ until more become available. If the requested number is greater than the maximum
             }, async move {
                 let s = desc.await?;
                 log.info(format!("starting: {}", s.clone()));
-                let work = RArc::new(RMutex::new(log.work(format!("{:x}", work_id))));
+                let work = RArc::new(RMutex::new(work));
                 let parent_task = ParentTask::new(s.clone().owned().0, task_count, log.clone(), work.clone(), task_inner.clone()).await;
                 let ret = parent_task.scoped(inner.into_future()).await;
                 let errored = ret.is_err();
