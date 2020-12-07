@@ -187,6 +187,8 @@ fn run(opts: Opts) -> Result<String, String> {
         to_eval.push(' ');
         to_eval.push_str(&arg);
     }
+    // Add parenthesis to force function application, relevant if there are no arguments.
+    let to_eval = format!("({})", to_eval);
 
     let source = Source::new(StringSource::new("<command line>", to_eval));
     let loaded = Script::load(source).app_err_result("failed to parse script file")?;
@@ -202,17 +204,11 @@ fn run(opts: Opts) -> Result<String, String> {
 
     let task = ctx.task.clone();
     let script_output = task
-        .block_on(grease::value::Errored::observe(on_error.clone(), async {
-            let val = loaded.evaluate(&ctx).await?;
-            script::final_value(&mut ctx, val).await
-        }))
+        .block_on(grease::value::Errored::observe(
+            on_error.clone(),
+            loaded.evaluate(&ctx),
+        ))
         .app_err_result("errors(s) while executing script")?;
-
-    // Clear context, which removes any unneeded values that may be held.
-    //
-    // This is *important* as some values (like those returned by exec) behave differently if their
-    // peers still exist or not.
-    ctx.clear_env();
 
     // We *must* keep the context around because it holds onto plugins, which may have functions referenced in values.
     // Likewise, our return from this function is "flattened" to strings to ensure any references to plugins are used when the plugins are still loaded.
@@ -221,14 +217,26 @@ fn run(opts: Opts) -> Result<String, String> {
         return Ok(Default::default());
     }
 
+    // Get doc value, prior to forcing resulting functions.
+    // This way users can document the entire function and retrieve that documentation easily.
     let value_to_execute = if opts.doc {
         ergo_runtime::metadata::Doc::get(&ctx, &script_output).into()
     } else {
-        script_output.unwrap()
+        task.block_on(grease::value::Errored::observe(
+            on_error.clone(),
+            script::final_value(&mut ctx, script_output),
+        ))
+        .app_err_result("errors(s) while evaluating final function")?
+        .unwrap()
     };
 
-    let ret = ctx
-        .task
+    // Clear context, which removes any unneeded values that may be held.
+    //
+    // This is *important* as some values (like those returned by exec) behave differently if their
+    // peers still exist or not.
+    ctx.clear_env();
+
+    let ret = task
         .block_on(grease::value::Errored::observe(on_error, async {
             ctx.force_value_nested(value_to_execute.clone()).await?;
             ctx.display(value_to_execute).await
@@ -291,7 +299,7 @@ fn main() {
     let result = run(opts);
 
     if paging_enabled {
-        pager::Pager::with_default_pager("less").setup();
+        pager::Pager::with_default_pager("less -F").setup();
     }
 
     match result {

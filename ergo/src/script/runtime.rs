@@ -111,8 +111,8 @@ fn is_plugin(f: &path::Path) -> bool {
 /// Load and execute a script given the function call context.
 pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
     async move {
-        let target = ctx.args.peek().ok_or("no load target provided")?;
-        let mut source = target.source();
+        let target = ctx.args.peek();
+        let source = ctx.call_site.clone();
 
         fn script_path_exists<'a, P: 'a + AsRef<path::Path>>(
             name: P,
@@ -171,11 +171,16 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
         let mut load_path = None;
         let mut was_workspace = false;
 
-        let to_load: Option<std::path::PathBuf> = match_value!(target.clone().unwrap() => {
-            types::String => |v| Some(<&str>::from(v.await?.as_ref()).into()),
-            PathBuf => |v| Some(v.await?.owned().into()),
-            => |_| None
-        }).await?;
+        let to_load: Option<std::path::PathBuf> = match target {
+            None => None,
+            Some(target) => {
+                match_value!(target.clone().unwrap() => {
+                    types::String => |v| Some(<&str>::from(v.await?.as_ref()).into()),
+                    PathBuf => |v| Some(v.await?.owned().into()),
+                    => |_| None
+                }).await?
+            }
+        };
 
         // If target is a string or path, try to find it in the load path
         let to_load = match to_load {
@@ -190,7 +195,7 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                     .iter()
                     .map(|v| v.as_path())
                     .find_map(script_path_exists(target_path, true))
-            }
+            },
             None => None
         };
 
@@ -203,7 +208,6 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
             }
             None => {
                 was_workspace = true;
-                source = Source::builtin(());
 
                 // If the current file is a workspace, allow it to load from parent workspaces.
                 let (path_basis, check_for_workspace) = if let ROption::RSome(v) = &ctx.mod_path {
@@ -507,6 +511,7 @@ impl fmt::Display for Error {
                 (true,true,None) => write!(f, "load resolved to a workspace that was in the process of loading (circular dependency avoided)"),
                 (true,false,None) => write!(f, "load resolved to a path that was in the process of loading (circular dependency avoided)"),
                 (false,_,Some(v)) => write!(f, "'{}' failed to load", v.display()),
+                (false,true,None) => write!(f, "failed to load (no workspace found)"),
                 (false,_,None) => write!(f, "failed to load")
             },
             ValueError(e) => write!(f, "{}", e),
