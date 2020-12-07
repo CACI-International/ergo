@@ -39,25 +39,25 @@ unit-typed value that, when evaluated, will log to the output.",
             "debug" => make_value!([namespace_id!(std::log::debug), arg] {
                 let arg = arg.await?;
                 log.debug(arg.as_ref().as_str());
-                Ok(())
+                Ok(types::Unit)
             })
             .into(),
             "info" => make_value!([namespace_id!(std::log::info), arg] {
                 let arg = arg.await?;
                 log.info(arg.as_ref().as_str());
-                Ok(())
+                Ok(types::Unit)
             })
             .into(),
             "warn" => make_value!([namespace_id!(std::log::warn), arg] {
                 let arg = arg.await?;
                 log.warn(arg.as_ref().as_str());
-                Ok(())
+                Ok(types::Unit)
             })
             .into(),
             "error" => make_value!([namespace_id!(std::log::error), arg] {
                 let arg = arg.await?;
                 log.error(arg.as_ref().as_str());
-                Ok(())
+                Ok(types::Unit)
             })
             .into(),
             _ => return Err(op.source().with("unrecognized command").into_grease_error()),

@@ -72,7 +72,7 @@ Returns a unit-typed value which downloads the file referenced by `url` to the g
             let mut f = std::fs::File::create(path.as_ref().as_ref())?;
             std::io::copy(&mut response, &mut f)?;
 
-            Ok(())
+            Ok(types::Unit)
         })
         .into()
     })

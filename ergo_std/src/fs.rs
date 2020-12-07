@@ -147,8 +147,8 @@ If `from` is a directory, it is recursively copied.",
             let (from,to) = task.join(from, to).await?;
 
             log.debug(format!("copying {} to {}", from.as_ref().as_ref().display(), to.as_ref().as_ref().display()));
-
-            Ok(recursive_link(from.as_ref().as_ref(), to.as_ref().as_ref())?)
+            recursive_link(from.as_ref().as_ref(), to.as_ref().as_ref())?;
+            Ok(types::Unit)
         })
         .into()
     })
@@ -185,7 +185,7 @@ fn create_dir_fn() -> Value {
         r"Create a directory (and all ancestor directories).
 
 Arguments: <Path>
-Returns a unit-value that creates the directory and ancestors if they do not exist.",
+Returns a unit-typed value that creates the directory and ancestors if they do not exist.",
         |ctx| {
             let path = ctx.args.next().ok_or("'path' missing")?;
 
@@ -195,7 +195,8 @@ Returns a unit-value that creates the directory and ancestors if they do not exi
             let path = path.await?.unwrap();
 
             make_value!([path] {
-                Ok(std::fs::create_dir_all(path.await?.as_ref().as_ref())?)
+                std::fs::create_dir_all(path.await?.as_ref().as_ref())?;
+                Ok(types::Unit)
             })
             .into()
         }
@@ -300,7 +301,7 @@ gzip, bzip2, or lzma (xz). The archive contents are extracted into `destination`
             else {
                 return Err(from_source.with("path is not a file nor directory").into_grease_error());
             }
-            Ok(())
+            Ok(types::Unit)
         }).into()
     }).into()
 }
@@ -476,7 +477,7 @@ If the path does not exist, nothing happens.",
                 else if path.is_dir() {
                     std::fs::remove_dir_all(path)?;
                 }
-                Ok(())
+                Ok(types::Unit)
             })
             .into()
         }
@@ -535,7 +536,7 @@ Creates or overwrites the file with the bytes from the ByteStream.",
                 let (path, data) = task.join(path,data).await?;
                 let mut f = Blocking::new(std::fs::File::create(path.as_ref().as_ref())?);
                 grease::runtime::io::copy(&task, &mut data.read(), &mut f).await?;
-                Ok(())
+                Ok(types::Unit)
             })
             .into()
         }

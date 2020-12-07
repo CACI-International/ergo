@@ -31,7 +31,7 @@ The returned value will be unit-typed and will immediately error with the given 
 
         make_value!([message] {
             let message = message.await?;
-            let ret: Result<(), _> = Err(message.owned().into_string().into());
+            let ret: Result<types::Unit, _> = Err(message.owned().into_string().into());
             ret
         })
         .into()

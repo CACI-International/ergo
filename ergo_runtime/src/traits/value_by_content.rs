@@ -49,6 +49,7 @@ pub async fn value_by_content(
 }
 
 grease_traits_fn! {
+    ValueByContent::add_impl::<()>(traits);
     ValueByContent::add_impl::<types::Unit>(traits);
     ValueByContent::add_impl::<types::String>(traits);
     ValueByContent::add_impl::<bool>(traits);

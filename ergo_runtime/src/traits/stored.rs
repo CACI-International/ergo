@@ -46,6 +46,17 @@ impl StoredContext {
 }
 
 grease_traits_fn! {
+    impl Stored for () {
+        async fn put(&self, _stored_ctx: &StoredContext, item: ItemContent) {
+            bincode::serialize_into(item, self)?
+        }
+
+        async fn get(_stored_ctx: &StoredContext, item: ItemContent) -> Erased {
+            let t: () = bincode::deserialize_from(item)?;
+            Erased::new(t)
+        }
+    }
+
     impl Stored for types::Unit {
         async fn put(&self, _stored_ctx: &StoredContext, item: ItemContent) {
             bincode::serialize_into(item, &())?

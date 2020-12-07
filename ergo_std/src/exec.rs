@@ -486,7 +486,7 @@ script.
             } else {
                 drop(send_status.send(exit_status));
             }
-            Ok(())
+            Ok(types::Unit)
         });
 
         let stdout = make_value!((run_command) [namespace_id!(std::exec::stdout)] {

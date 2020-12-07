@@ -93,7 +93,7 @@ the ByteStream to it.",
             let paused = log.pause();
             io::copy_interactive(&task, &mut data.read(), &mut io::Blocking::new(std::io::stdout())).await?;
             drop(paused);
-            Ok(())
+            Ok(types::Unit)
         })
         .into()
     })
@@ -120,7 +120,7 @@ exlusive access guarantees like `stdin` and `stdout`.",
         make_value!([data] {
             let data = data.await?;
             io::copy_interactive(&task, &mut data.read(), &mut io::Blocking::new(std::io::stderr())).await?;
-            Ok(())
+            Ok(types::Unit)
         })
         .into()
     })
