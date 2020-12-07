@@ -47,11 +47,11 @@ impl Output {
     }
 
     fn update(&mut self) {
+        let mut renderer = self.out.renderer();
+
         if self.paused.is_some() {
             return;
         }
-
-        let mut renderer = self.out.renderer();
 
         renderer += &self.tasks;
         renderer += &self.progress;
