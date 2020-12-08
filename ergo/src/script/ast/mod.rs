@@ -29,6 +29,7 @@ pub enum Expression {
 #[derive(Clone, Debug)]
 pub struct CompiledExpression {
     pub value: EvalResult,
+    pub from_env: bool,
 }
 
 /// A parsed pattern.
@@ -159,7 +160,7 @@ pub fn expr_dependencies(e: &Expr) -> grease::value::Dependencies {
         Force(e) => {
             deps += expr_dependencies(e);
         }
-        Compiled(CompiledExpression { value }) => match value {
+        Compiled(CompiledExpression { value, .. }) => match value {
             Ok(v) => deps += depends![**v],
             Err(_) => (),
         },
@@ -218,6 +219,16 @@ where
     deps
 }
 
+impl Expression {
+    /// Return whether the expression is a compiled expression.
+    pub fn is_compiled_from_env(&self) -> bool {
+        match self {
+            Expression::Compiled(e) => e.from_env,
+            _ => false,
+        }
+    }
+}
+
 impl Ord for CompiledExpression {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         match (&self.value, &other.value) {
@@ -243,9 +254,15 @@ impl PartialEq for CompiledExpression {
 
 impl Eq for CompiledExpression {}
 
+impl CompiledExpression {
+    pub fn new(value: EvalResult, from_env: bool) -> Self {
+        CompiledExpression { value, from_env }
+    }
+}
+
 impl From<EvalResult> for CompiledExpression {
     fn from(value: EvalResult) -> Self {
-        CompiledExpression { value }
+        Self::new(value, false)
     }
 }
 

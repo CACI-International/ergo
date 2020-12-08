@@ -1489,14 +1489,15 @@ fn compile_env_into_expr(ctx: &mut Runtime, local_env: Vec<Expr>, expr: Expr) ->
                 Command(cmd, args) => {
                     let cmd = {
                         let new_cmd = do_expr_ext(ctx, *cmd, true)?;
-                        if let Compiled(CompiledExpression { value: Ok(v) }) =
+                        if let Compiled(CompiledExpression { value: Ok(v), .. }) =
                             new_cmd.as_ref().unwrap()
                         {
                             if v.grease_type_immediate() == Some(&types::String::grease_type()) {
                                 if let Some(value) = ctx.env_get(&new_cmd)? {
-                                    new_cmd.source().with(Compiled(
-                                        value.map(|v| v.clone()).map_err(|e| e.clone()).into(),
-                                    ))
+                                    new_cmd.source().with(Compiled(CompiledExpression::new(
+                                        value.map(|v| v.clone()).map_err(|e| e.clone()),
+                                        true,
+                                    )))
                                 } else {
                                     new_cmd
                                 }
@@ -1799,6 +1800,7 @@ impl Rt<Expression> {
                 lookup(ctx, var).map_err(|e| var_source.with(e).into_grease_error())
             }
             Command(cmd, args) => {
+                let cmd_lookup = !cmd.is_compiled_from_env();
                 let f = Rt(*cmd).evaluate_ext(ctx, true).await?;
                 let args = {
                     let mut results = Vec::new();
@@ -1840,7 +1842,7 @@ impl Rt<Expression> {
                     ctx,
                     f,
                     FunctionArguments::new(vals, kw_vals).unchecked(),
-                    true,
+                    cmd_lookup,
                 )
                 .await
                 .map(Source::unwrap) // TODO: use the source?
