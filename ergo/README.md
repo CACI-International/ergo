@@ -101,3 +101,5 @@ Within a script, the following are defined:
 * Strongly control the lifetime of the thread pool using weak references in the
   grease runtime.
   * This will allow loaded plugins to be properly dropped rather than leaked.
+* Change linting to occur as a side effect (as this is the only way to properly
+  lint everything when nested functions are used).
