@@ -1,5 +1,11 @@
 # ergo changelog
 
+## 1.0.0-beta.7  -- 2020-12-08
+* Add `-e`/`--expression` flags to evaluate the arguments as an expression
+  without preceding `ergo`.
+* Fix evaluation when pipe operators are present in the command-line arguments.
+* Change the first `:` to `|>:` in command-line arguments for convenience.
+
 ## 1.0.0-beta.6  -- 2020-12-07
 * Fix log pausing to correctly clear the rendered content.
 * Fix mac plugin detection.

@@ -1,5 +1,8 @@
 # ergo_std changelog
 
+## 1.0.0-beta.7  -- 2020-12-08
+* No changes!
+
 ## 1.0.0-beta.6  -- 2020-12-07
 * Fix unit-type returns (using new runtime unit type).
 * Improve task work tracking; previously it only started tracking after the task

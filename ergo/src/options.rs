@@ -29,25 +29,32 @@ impl std::str::FromStr for OutputFormat {
 /// Ergo is a runtime and language built for lazy task execution.
 pub struct Opts {
     #[structopt(long = "log", default_value = "warn")]
-    /// The log level used for tasks. May be "debug", "info", "warn", or "error".
+    /// The log level used for tasks.
+    ///
+    /// May be "debug", "info", "warn", or "error".
     pub log_level: LogLevel,
 
     #[structopt(long, default_value = "auto")]
-    /// The output format. May be "auto", "basic", or "pretty".
+    /// The output format.
+    ///
+    /// May be "auto", "basic", or "pretty".
     pub format: OutputFormat,
 
     #[structopt(short, long)]
-    /// The maximum number of jobs to run concurrently. If unspecified, the number of cpus is used.
+    /// The maximum number of jobs to run concurrently.
+    ///
+    /// If unspecified, the number of cpus is used.
     pub jobs: Option<usize>,
 
     #[structopt(long, default_value = concat!(".", env!("CARGO_PKG_NAME"), "_work"))]
-    /// The storage directory for the runtime. If a relative path, it will be made relative to the
-    /// furthest ancestor directory that is a workspace. If none are found, the current directory
-    /// is used.
+    /// The storage directory for the runtime.
+    ///
+    /// If a relative path, it will be made relative to the furthest ancestor directory that is a
+    /// workspace. If none are found, the current directory is used.
     pub storage: std::path::PathBuf,
 
-    /// Prints help information.
     #[structopt(short, long)]
+    /// Prints help information.
     pub help: bool,
 
     #[structopt(short, long)]
@@ -72,7 +79,19 @@ pub struct Opts {
     /// Whether to stop immediately when an error occurs.
     pub stop: bool,
 
+    #[structopt(short, long)]
+    /// Evaluate the arguments as an expression.
+    ///
+    /// That is, evaluate `[args]` instead of `ergo [args]`.
+    pub expression: bool,
+
     /// Arguments for loading the value(s) to run.
-    /// All additional arguments are run as if "ergo <args>..." were executed in a script.
+    ///
+    /// All additional arguments are run as if "ergo <args>..." were executed in a script, unless
+    /// `-e` is specified.
+    ///
+    /// If `-e` is _not_ used, the first `:` is translated into `|>:` for convenience. For example,
+    /// `ergo std:fs:read` becomes `ergo std |>:fs:read` (the same as `(ergo std):fs:read`). Note
+    /// that this does _not_ occur if the first `:` is already preceded by `|>`.
     pub args: Vec<String>,
 }

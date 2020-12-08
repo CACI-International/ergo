@@ -182,13 +182,32 @@ fn run(opts: Opts) -> Result<String, String> {
             .app_err_result("failed to set signal handler")?;
     }
 
-    let mut to_eval = String::from(PROGRAM_NAME);
+    let mut to_eval = if opts.expression {
+        String::new()
+    } else {
+        String::from(PROGRAM_NAME)
+    };
+    let no_args = opts.args.is_empty();
     for arg in opts.args {
-        to_eval.push(' ');
+        if !to_eval.is_empty() {
+            to_eval.push(' ');
+        }
         to_eval.push_str(&arg);
     }
-    // Add parenthesis to force function application, relevant if there are no arguments.
-    let to_eval = format!("({})", to_eval);
+    // Add parenthesis to force function application if there are no arguments.
+    // If opts.expression is set, this makes no arguments become a unit expression.
+    if no_args {
+        to_eval = format!("({})", to_eval);
+    }
+
+    // Replace the first `:` with `|>:` for command-line convenience.
+    if !opts.expression {
+        if let Some(p) = to_eval.find(":") {
+            if to_eval.get(p - 2..p).map(|s| s != "|>").unwrap_or(true) {
+                to_eval.replace_range(p..p + 1, "|>:");
+            }
+        }
+    }
 
     let source = Source::new(StringSource::new("<command line>", to_eval));
     let loaded = Script::load(source).app_err_result("failed to parse script file")?;
