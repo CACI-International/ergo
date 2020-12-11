@@ -8,6 +8,7 @@ mod terminal;
 pub trait Output: LogTarget {
     fn set_log_level(&mut self, log_level: LogLevel);
     fn new_error(&mut self, err: grease::Error);
+    fn interrupt(&mut self);
 }
 
 pub fn output(format: crate::options::OutputFormat, keep_going: bool) -> Option<OutputInstance> {
@@ -42,6 +43,10 @@ impl Output for OutputInstance {
 
     fn new_error(&mut self, err: grease::Error) {
         self.inner.new_error(err)
+    }
+
+    fn interrupt(&mut self) {
+        self.inner.interrupt()
     }
 }
 

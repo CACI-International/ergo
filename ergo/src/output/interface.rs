@@ -30,9 +30,70 @@ pub trait Render {
     fn render<Target: Write + Terminal>(&self, to: &mut Target) -> std::io::Result<()>;
 }
 
+#[cfg(not(unix))]
+struct TerminalInput {}
+
+#[cfg(not(unix))]
+impl TerminalInput {
+    pub fn new() -> Option<Self> {
+        None
+    }
+
+    pub fn enable(&mut self) {}
+
+    pub fn disable(&mut self) {}
+}
+
+#[cfg(unix)]
+struct TerminalInput {
+    original_input_settings: termios::Termios,
+    current_input_settings: termios::Termios
+}
+
+#[cfg(unix)]
+impl TerminalInput {
+    pub fn new() -> Option<Self> {
+        let fd = std::os::unix::io::AsRawFd::as_raw_fd(&std::io::stdin());
+        match termios::Termios::from_fd(fd) {
+            Err(_) => None,
+            Ok(original_input_settings) => {
+                let mut ret = TerminalInput {
+                    original_input_settings,
+                    current_input_settings: original_input_settings.clone(),
+                };
+                ret.disable();
+                Some(ret)
+            }
+        }
+    }
+
+    pub fn enable(&mut self) {
+        let fd = std::os::unix::io::AsRawFd::as_raw_fd(&std::io::stdin());
+        self.current_input_settings.c_lflag |= termios::ECHO | termios::ECHOE | termios::ECHOK | termios::ECHONL;
+        termios::tcsetattr(fd, termios::TCSANOW, &self.current_input_settings).expect("failed to set stdin settings");
+    }
+
+    pub fn disable(&mut self) {
+        let fd = std::os::unix::io::AsRawFd::as_raw_fd(&std::io::stdin());
+        self.current_input_settings.c_lflag &= !(termios::ECHO | termios::ECHOE | termios::ECHOK | termios::ECHONL);
+        termios::tcsetattr(fd, termios::TCSANOW, &self.current_input_settings).expect("failed to set stdin settings");
+    }
+}
+
+#[cfg(unix)]
+impl Drop for TerminalInput {
+    fn drop(&mut self) {
+        let fd = std::os::unix::io::AsRawFd::as_raw_fd(&std::io::stdin());
+        if let Err(e) = termios::tcsetattr(fd, termios::TCSANOW, &self.original_input_settings) {
+            eprintln!("failed to restore stdin settings: {}", e);
+        }
+    }
+}
+
 pub struct TerminalOutput {
     term: Box<term::StdoutTerminal>,
     last_rendered_lines: usize,
+    input_settings: Option<TerminalInput>,
 }
 
 pub struct Renderer<'a>(RendererInner<'a>);
@@ -52,6 +113,7 @@ impl OutputType {
         OutputType::Term(TerminalOutput {
             term,
             last_rendered_lines: 0,
+            input_settings: TerminalInput::new()
         })
     }
 }
@@ -89,6 +151,18 @@ impl TerminalOutput {
         Renderer::new(self)
     }
 
+    pub fn enable_stdin(&mut self) {
+        if let Some(i) = &mut self.input_settings {
+            i.enable();
+        }
+    }
+
+    pub fn disable_stdin(&mut self) {
+        if let Some(i) = &mut self.input_settings {
+            i.disable();
+        }
+    }
+
     /// Write the given bytes, clearing lines of any previous characters.
     ///
     /// Returns the number of bytes and newlines that were written.
@@ -98,12 +172,13 @@ impl TerminalOutput {
         let mut iter = bytes.split(|v| char::from(*v) == '\n').peekable();
         while let Some(bs) = iter.next() {
             self.term.delete_line()?;
-            if self.last_rendered_lines > 0 {
-                self.last_rendered_lines -= 1;
-            }
             total += self.term.write(bs)?;
+            // Another element in the iterator indicates that this element was the end of a line.
             if iter.peek().is_some() {
                 writeln!(self.term)?;
+                if self.last_rendered_lines > 0 {
+                    self.last_rendered_lines -= 1;
+                }
                 nls += 1;
             }
         }

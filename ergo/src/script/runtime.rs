@@ -28,7 +28,7 @@ use grease::{
     depends, make_value, match_value,
     path::PathBuf,
     types::GreaseType,
-    value::{IntoValue, TypedValue, Value},
+    value::{Errored, IntoValue, TypedValue, Value},
 };
 use libloading as dl;
 use log::{debug, trace};
@@ -314,10 +314,10 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                                     };
 
                                     // Try to access prelude, but allow failures
-                                    match apply_value(ctx, ws, FunctionArguments::new(
+                                    match Errored::ignore(apply_value(ctx, ws, FunctionArguments::new(
                                             vec![Source::builtin(types::String::from(SCRIPT_PRELUDE_NAME).into())],
                                             Default::default()
-                                        ).unchecked(), false).await {
+                                        ).unchecked(), false)).await {
                                         Ok(v) => {
                                             // Prelude must be a map.
                                             let (v_source, v) = v.take();

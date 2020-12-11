@@ -408,6 +408,9 @@ script.
 
             log.debug(format!("spawning child process: {:?}", command));
 
+            // Disown process group so signals don't go to children.
+            disown_pgroup(&mut command);
+
             let mut child = command.spawn()?;
 
             let stdin = stdin.map(|v| v.forced_value().read());
@@ -507,6 +510,23 @@ script.
     })
     .into()
 }
+
+#[cfg(unix)]
+fn disown_pgroup(cmd: &mut Command) {
+    use std::os::unix::process::CommandExt;
+    unsafe {
+        cmd.pre_exec(|| {
+            if libc::setsid() == -1 {
+                Err(errno::errno().into())
+            } else {
+                Ok(())
+            }
+        });
+    }
+}
+
+#[cfg(windows)]
+fn disown_pgroup(cmd: &mut Command) {}
 
 grease::grease_traits_fn! {
     // CommandString traits

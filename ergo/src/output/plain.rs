@@ -23,6 +23,8 @@ impl super::Output for Output {
     }
 
     fn new_error(&mut self, _err: grease::Error) {}
+
+    fn interrupt(&mut self) {}
 }
 
 impl LogTarget for Output {

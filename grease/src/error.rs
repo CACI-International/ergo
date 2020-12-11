@@ -141,7 +141,11 @@ impl Error {
         self,
         context: T,
     ) -> Self {
-        ErrorContext::new(self, context).into()
+        if self.is_aborted() {
+            self
+        } else {
+            ErrorContext::new(self, context).into()
+        }
     }
 
     /// Create an aborted error.

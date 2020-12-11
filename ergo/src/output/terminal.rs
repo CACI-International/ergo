@@ -32,6 +32,7 @@ struct Progress {
 struct Errors {
     errors: grease::error::UniqueErrorSources,
     prompt_abort: bool,
+    interrupts: u8,
 }
 
 impl Output {
@@ -80,6 +81,11 @@ impl super::Output for Output {
         self.errors.update(err);
         self.update();
     }
+
+    fn interrupt(&mut self) {
+        self.errors.interrupts += 1;
+        self.update();
+    }
 }
 
 impl LogTarget for Output {
@@ -119,6 +125,7 @@ impl LogTarget for Output {
 
     fn pause_logging(&mut self) {
         self.paused = Some(Default::default());
+        self.out.enable_stdin();
         // Clear previous rendered content.
         self.out.renderer();
     }
@@ -130,6 +137,7 @@ impl LogTarget for Output {
                 .expect("failed to write to output");
             self.out.flush().expect("failed to flush output");
         }
+        self.out.disable_stdin();
         self.update();
     }
 }
@@ -211,6 +219,7 @@ impl Errors {
         Errors {
             errors: Default::default(),
             prompt_abort,
+            interrupts: 0
         }
     }
 

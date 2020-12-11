@@ -268,7 +268,17 @@ fn run(opts: Opts) -> Result<String, String> {
 
     // Drop the logger prior to the context dropping, so that any stored state (like errors) can
     // free with the plugins still loaded.
-    drop(logger);
+    // Only drop when nothing else is using it (so we have reliable terminal cleanup).
+    let mut logger = Some(logger);
+    loop {
+        match std::sync::Arc::try_unwrap(logger.take().unwrap()) {
+            Ok(l) => {
+                drop(l);
+                break
+            }
+            Err(l) => logger = Some(l),
+        }
+    }
 
     ret
 }
