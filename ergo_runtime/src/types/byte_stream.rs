@@ -364,10 +364,13 @@ impl ByteStreamSource for ByteStreamSourceImpl {
                         };
                         let bytes = match std::future::Future::poll(copy_pin, &mut cx) {
                             Pending => return grease::future::Poll::Pending,
-                            Ready(r) => match r {
-                                Ok(v) => v,
-                                Err(e) => return grease::future::Poll::Ready(RResult::RErr(e)),
-                            },
+                            Ready(r) => {
+                                *copy = None;
+                                match r {
+                                    Ok(v) => v,
+                                    Err(e) => return grease::future::Poll::Ready(RResult::RErr(e)),
+                                }
+                            }
                         };
                         if bytes == 0 {
                             *async_read = None;
@@ -494,16 +497,16 @@ impl grease::runtime::io::AsyncRead for ByteStreamReader {
                 // Try to read a block from the byte stream source.
                 let got_data = match me.source.poll_data(grease::future::Context::new(cx), task) {
                     grease::future::Poll::Pending => {
-                        if buf_offset > 0 {
-                            break;
-                        } else {
-                            return std::task::Poll::Pending;
-                        }
+                        debug_assert!(buf_offset == 0);
+                        return std::task::Poll::Pending;
+                    },
+                    grease::future::Poll::Ready(v) => match v.into_result() {
+                        Err(e) => return std::task::Poll::Ready(Err(e)),
+                        Ok(v) => v,
                     }
-                    grease::future::Poll::Ready(v) => v.into_result()?,
                 };
                 // Re-check stream_iter in case the poll_data blocked (and another consumer loaded data)
-                // TODO: improve behavoir with tokio::sync::watch or something similar, to not queue up multiple poll_data
+                // TODO: improve behavior with tokio::sync::watch or something similar, to not queue up multiple poll_data
                 // (though typically all that data will be used).
                 if !got_data && me.stream_iter.current().is_none() {
                     break;
