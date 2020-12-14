@@ -135,36 +135,38 @@ For example, `entries {a=1,b=2}` evalutes to `[{key=a,value=1},{key=b,value=2}]`
 }
 
 fn has_fn() -> Value {
-    ergo_function!(std::collection::has,
-    r"Return whether a map or array has a specific index.
+    ergo_function!(
+        std::collection::has,
+        r"Return whether a map or array has a specific index.
 
 Arguments: <map-or-array> <index>",
-    |ctx| {
-        let value = ctx.args.next().ok_or("value not provided")?.unwrap();
-        let index = ctx.args.next().ok_or("index not provided")?;
+        |ctx| {
+            let value = ctx.args.next().ok_or("value not provided")?.unwrap();
+            let index = ctx.args.next().ok_or("index not provided")?;
 
-        ctx.unused_arguments()?;
+            ctx.unused_arguments()?;
 
-        use ergo_runtime::context_ext::AsContext;
-        let ctx: grease::runtime::Context = ctx.as_context().clone();
+            use ergo_runtime::context_ext::AsContext;
+            let ctx: grease::runtime::Context = ctx.as_context().clone();
 
-        make_value!([value, *index] {
-            match_value!(value => {
-                types::Array => |val| {
-                    let index = ctx.source_value_as::<types::String>(index);
-                    let index = index.await?.unwrap().await?;
-                    use std::str::FromStr;
-                    let i = usize::from_str(index.as_ref())?;
-                    i < val.await?.0.len()
-                }
-                types::Map => |val| {
-                    val.await?.0.get(&index).is_some()
-                }
-                => |_| Err("non-indexable value")?
-            }).await
-        })
-        .into()
-    })
+            make_value!([value, *index] {
+                match_value!(value => {
+                    types::Array => |val| {
+                        let index = ctx.source_value_as::<types::String>(index);
+                        let index = index.await?.unwrap().await?;
+                        use std::str::FromStr;
+                        let i = usize::from_str(index.as_ref())?;
+                        i < val.await?.0.len()
+                    }
+                    types::Map => |val| {
+                        val.await?.0.get(&index).is_some()
+                    }
+                    => |_| Err("non-indexable value")?
+                }).await
+            })
+            .into()
+        }
+    )
     .into()
 }
 

@@ -16,26 +16,28 @@ pub fn module() -> Value {
 }
 
 fn throw_fn() -> Value {
-    ergo_function!(std::error::throw,
-    r"Create a value which, when evaluated, will error.
+    ergo_function!(
+        std::error::throw,
+        r"Create a value which, when evaluated, will error.
 
 Arguments: <error: String>
 The returned value will be unit-typed and will immediately error with the given error message.",
         |ctx| {
-        let message = ctx.args.next().ok_or("no message provided")?;
+            let message = ctx.args.next().ok_or("no message provided")?;
 
-        ctx.unused_arguments()?;
+            ctx.unused_arguments()?;
 
-        let message = ctx.source_value_as::<types::String>(message);
-        let message = message.await?.unwrap();
+            let message = ctx.source_value_as::<types::String>(message);
+            let message = message.await?.unwrap();
 
-        make_value!([message] {
-            let message = message.await?;
-            let ret: Result<types::Unit, _> = Err(message.owned().into_string().into());
-            ret
-        })
-        .into()
-    })
+            make_value!([message] {
+                let message = message.await?;
+                let ret: Result<types::Unit, _> = Err(message.owned().into_string().into());
+                ret
+            })
+            .into()
+        }
+    )
     .into()
 }
 

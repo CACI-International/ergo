@@ -7,7 +7,6 @@ use ergo_runtime::{
 };
 use futures::channel::oneshot::channel;
 use futures::future::FutureExt;
-use futures::sink::SinkExt;
 use futures::stream::StreamExt;
 use grease::{
     depends,
@@ -98,35 +97,45 @@ impl tokio::io::AsyncWrite for PipeSend {
         cx: &mut std::task::Context,
         buf: &[u8],
     ) -> std::task::Poll<tokio::io::Result<usize>> {
-        let len = buf.len();
-        futures::future::Future::poll(
-            std::pin::Pin::new(
-                &mut self
-                    .get_mut()
-                    .send
-                    .send(Ok(std::io::Cursor::new(buf.to_vec().into_boxed_slice()))),
-            ),
-            cx,
+        use futures::sink::Sink;
+        use std::task::Poll::*;
+        let mut me = std::pin::Pin::new(&mut self.get_mut().send);
+        match me.as_mut().poll_ready(cx) {
+            Pending => return Pending,
+            Ready(Err(_)) => return Ready(Err(tokio::io::ErrorKind::BrokenPipe.into())),
+            Ready(Ok(())) => (),
+        }
+
+        Ready(
+            if me
+                .start_send(Ok(std::io::Cursor::new(buf.to_vec().into_boxed_slice())))
+                .is_err()
+            {
+                Err(tokio::io::ErrorKind::BrokenPipe.into())
+            } else {
+                Ok(buf.len())
+            },
         )
-        .map(move |v| {
-            v.map_err(|_| tokio::io::ErrorKind::BrokenPipe.into())
-                .map(move |()| len)
-        })
     }
 
     fn poll_flush(
         self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context,
+        cx: &mut std::task::Context,
     ) -> std::task::Poll<tokio::io::Result<()>> {
-        std::task::Poll::Ready(Ok(()))
+        use futures::sink::Sink;
+        let me = std::pin::Pin::new(&mut self.get_mut().send);
+        me.poll_flush(cx)
+            .map(|r| r.map_err(|_| tokio::io::ErrorKind::BrokenPipe.into()))
     }
 
     fn poll_shutdown(
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context,
     ) -> std::task::Poll<tokio::io::Result<()>> {
-        futures::future::Future::poll(std::pin::Pin::new(&mut self.get_mut().send.close()), cx)
-            .map(|v| v.map_err(|_| tokio::io::ErrorKind::BrokenPipe.into()))
+        use futures::sink::Sink;
+        let me = std::pin::Pin::new(&mut self.get_mut().send);
+        me.poll_close(cx)
+            .map(|r| r.map_err(|_| tokio::io::ErrorKind::BrokenPipe.into()))
     }
 }
 

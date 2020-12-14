@@ -92,7 +92,21 @@ impl From<RawWaker> for task::RawWaker {
 
 #[derive(Debug, StableAbi)]
 #[repr(C)]
-struct Context(RawWaker);
+pub struct Context(RawWaker);
+
+impl Context {
+    pub fn new(cx: &mut task::Context<'_>) -> Self {
+        Context(cx.into())
+    }
+
+    pub fn into_raw_waker(self) -> task::RawWaker {
+        self.0.into()
+    }
+
+    pub fn into_waker(self) -> task::Waker {
+        unsafe { task::Waker::from_raw(self.into_raw_waker()) }
+    }
+}
 
 impl From<&mut task::Context<'_>> for RawWaker {
     fn from(cx: &mut task::Context) -> Self {
@@ -105,13 +119,13 @@ impl From<&mut task::Context<'_>> for RawWaker {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, StableAbi)]
 #[repr(u8)]
-enum Poll<T> {
+pub enum Poll<T> {
     Ready(T),
     Pending,
 }
 
 impl<T> Poll<T> {
-    fn into_poll(self) -> task::Poll<T> {
+    pub fn into_poll(self) -> task::Poll<T> {
         match self {
             Self::Ready(v) => task::Poll::Ready(v),
             Self::Pending => task::Poll::Pending,

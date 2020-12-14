@@ -219,7 +219,7 @@ impl Errors {
         Errors {
             errors: Default::default(),
             prompt_abort,
-            interrupts: 0
+            interrupts: 0,
         }
     }
 

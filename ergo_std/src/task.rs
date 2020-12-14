@@ -70,9 +70,9 @@ until more become available. If the requested number is greater than the maximum
                 if let Ok(mut oe) = observed_errors.lock() { oe.call(e) }
             }, async move {
                 let s = desc.await?;
-                log.info(format!("starting: {}", s.clone()));
                 let work = RArc::new(RMutex::new(work));
                 let parent_task = ParentTask::new(s.clone().owned().0, task_count, log.clone(), work.clone(), task_inner.clone()).await;
+                log.info(format!("starting: {}", s.clone()));
                 let ret = parent_task.scoped(inner.into_future()).await;
                 let errored = ret.is_err();
                 if errored {
@@ -194,7 +194,9 @@ impl ParentTask {
             }
             match &mut *guard {
                 ParentTaskState::Active(_, _, _) => panic!("logic error"),
-                ParentTaskState::Inactive(n) => *n += 1,
+                ParentTaskState::Inactive(n) => {
+                    *n += 1;
+                }
             }
         }
         // Safety: it is fairly safe to AssertUnwindSafe here since we will resume the unwind later
@@ -206,7 +208,9 @@ impl ParentTask {
                 let mut guard = self.state.lock();
                 match &mut *guard {
                     ParentTaskState::Active(_, _, _) => panic!("logic error"),
-                    ParentTaskState::Inactive(n) => *n -= 1,
+                    ParentTaskState::Inactive(n) => {
+                        *n -= 1;
+                    }
                 }
 
                 if let ParentTaskState::Inactive(0) = &*guard {

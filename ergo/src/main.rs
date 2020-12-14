@@ -274,7 +274,7 @@ fn run(opts: Opts) -> Result<String, String> {
         match std::sync::Arc::try_unwrap(logger.take().unwrap()) {
             Ok(l) => {
                 drop(l);
-                break
+                break;
             }
             Err(l) => logger = Some(l),
         }

@@ -15,8 +15,10 @@ use grease::{
     types::GreaseType,
     Erased, Error, Value,
 };
+use std::pin::Pin;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 #[derive(StableAbi)]
 #[repr(C)]
@@ -50,6 +52,8 @@ impl<T> SharedStreamIter<T> {
     }
 
     /// Get the current value, if any.
+    ///
+    /// The returned reference is valid across clones.
     pub fn current(&mut self) -> Option<&T> {
         if let ROption::RSome(v) = &unsafe { self.current.as_ref() }.item {
             self.has_read_current = true;
@@ -63,6 +67,8 @@ impl<T> SharedStreamIter<T> {
     ///
     /// We cannot implement std::iter::Iterator because this is a streaming iterator, which
     /// must retain the reference lifetime correctly.
+    ///
+    /// The returned reference is valid across clones.
     pub fn next(&mut self) -> Option<&T> {
         {
             let guard = self.stream.inner.read();
@@ -208,54 +214,178 @@ const BYTE_STREAM_BLOCK_LIMIT: usize = 2048;
 // can't support arbitrary-sized arrays due to rust generic limitations (const size values).
 type ByteStreamBlock = RVec<u8>;
 
-struct ByteStreamSourceImpl {
-    source: futures::lock::Mutex<Option<BoxAsyncRead<'static>>>,
-    stream: SharedStream<ByteStreamBlock>,
+struct CopyState {
+    task: grease::runtime::TaskManager,
+    reader:
+        grease::runtime::io::Once<grease::runtime::io::Take<&'static mut BoxAsyncRead<'static>>>,
+    writer: grease::runtime::io::TokioWrapped<&'static mut Vec<u8>>,
+    copy: Option<
+        grease::runtime::io::Copy<
+            'static,
+            grease::runtime::io::Once<
+                grease::runtime::io::Take<&'static mut BoxAsyncRead<'static>>,
+            >,
+            grease::runtime::io::TokioWrapped<&'static mut Vec<u8>>,
+        >,
+    >,
+    _pinned: std::marker::PhantomPinned,
 }
 
-#[sabi_trait]
-trait ByteStreamSource: Send + Sync {
-    #[sabi(last_prefix_field)]
-    fn need_data<'a>(
-        &'a self,
-        task: &'a grease::runtime::TaskManager,
-    ) -> grease::future::BoxFuture<'a, RResult<bool, Error>>;
-}
+impl CopyState {
+    pub fn new(
+        task: grease::runtime::TaskManager,
+        r: &'static mut BoxAsyncRead<'static>,
+        w: &'static mut Vec<u8>,
+    ) -> Pin<Box<Self>> {
+        let mut ret = Box::new(CopyState {
+            task,
+            reader: r.take(BYTE_STREAM_BLOCK_LIMIT as u64).once(),
+            writer: grease::runtime::io::wrap(w),
+            copy: None,
+            _pinned: std::marker::PhantomPinned,
+        });
 
-impl ByteStreamSourceImpl {
-    pub async fn need_data_impl(&self, task: &grease::runtime::TaskManager) -> Result<bool, Error> {
-        let mut block = Vec::new();
-        {
-            let mut guard = self.source.lock().await;
-            if let Some(reader) = &mut *guard {
-                block.reserve_exact(BYTE_STREAM_BLOCK_LIMIT);
-                let bytes = grease::runtime::io::copy(
-                    task,
-                    &mut reader.take(BYTE_STREAM_BLOCK_LIMIT as u64).once(),
-                    &mut grease::runtime::io::wrap(&mut block),
-                )
-                .await?;
-                if bytes == 0 {
-                    *guard = None;
-                }
-            }
-        }
-
-        if block.is_empty() {
-            Ok(false)
-        } else {
-            self.stream.push(block.into());
-            Ok(true)
-        }
+        let cpy = grease::runtime::io::copy(&ret.task, &mut ret.reader, &mut ret.writer);
+        ret.copy = Some(unsafe {
+            std::mem::transmute::<
+                grease::runtime::io::Copy<'_, _, _>,
+                grease::runtime::io::Copy<'static, _, _>,
+            >(cpy)
+        });
+        unsafe { Pin::new_unchecked(ret) }
     }
 }
 
-impl ByteStreamSource for ByteStreamSourceImpl {
-    fn need_data<'a>(
-        &'a self,
+impl Drop for CopyState {
+    fn drop(&mut self) {
+        self.copy = None;
+    }
+}
+
+struct ByteStreamSourceState {
+    // copy must be first, dropped before async_read and block
+    copy: Option<Pin<Box<CopyState>>>,
+    async_read: Option<BoxAsyncRead<'static>>,
+    block: Vec<u8>,
+    _pinned: std::marker::PhantomPinned,
+}
+
+enum ByteStreamSourceGuard<'a> {
+    None,
+    Fut(futures::lock::MutexLockFuture<'a, ByteStreamSourceState>),
+    Active(futures::lock::MutexGuard<'a, ByteStreamSourceState>),
+}
+
+impl<'a> Default for ByteStreamSourceGuard<'a> {
+    fn default() -> Self {
+        ByteStreamSourceGuard::None
+    }
+}
+
+impl<'a> Clone for ByteStreamSourceGuard<'a> {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+// ByteStreamSource needs to be Sync to be Eraseable. The inner MutexGuard is only Sync when T is Sync, but it's not due to the inner BoxAsyncRead.
+// However, we know that the guard itself will only be accessed from a single thread at a time.
+unsafe impl<'a> Sync for ByteStreamSourceGuard<'a> {}
+
+#[derive(Clone)]
+struct ByteStreamSourceImpl {
+    guard: ByteStreamSourceGuard<'static>,
+    source: Pin<Arc<futures::lock::Mutex<ByteStreamSourceState>>>,
+    stream: Arc<SharedStream<ByteStreamBlock>>,
+}
+
+#[sabi_trait]
+trait ByteStreamSource: Clone + Send + Sync {
+    #[sabi(last_prefix_field)]
+    fn poll_data<'a>(
+        &'a mut self,
+        cx: grease::future::Context,
         task: &'a grease::runtime::TaskManager,
-    ) -> grease::future::BoxFuture<'a, RResult<bool, Error>> {
-        grease::future::BoxFuture::new(async move { self.need_data_impl(task).await.into() })
+    ) -> grease::future::Poll<RResult<bool, Error>>;
+}
+
+impl ByteStreamSource for ByteStreamSourceImpl {
+    fn poll_data<'a>(
+        &'a mut self,
+        cx: grease::future::Context,
+        task: &'a grease::runtime::TaskManager,
+    ) -> grease::future::Poll<RResult<bool, Error>> {
+        use std::task::Poll::*;
+        let waker = cx.into_waker();
+        let mut cx = std::task::Context::from_waker(&waker);
+
+        loop {
+            match &mut self.guard {
+                ByteStreamSourceGuard::None => {
+                    self.guard = ByteStreamSourceGuard::Fut(unsafe {
+                        // Safety: guard will always be dropped prior to mutex.
+                        std::mem::transmute::<
+                            futures::lock::MutexLockFuture<'_, ByteStreamSourceState>,
+                            futures::lock::MutexLockFuture<'static, ByteStreamSourceState>,
+                        >(self.source.lock())
+                    });
+                }
+                ByteStreamSourceGuard::Fut(f) => {
+                    match std::future::Future::poll(Pin::new(f), &mut cx) {
+                        Pending => return grease::future::Poll::Pending,
+                        Ready(g) => {
+                            self.guard = ByteStreamSourceGuard::Active(g);
+                        }
+                    }
+                }
+                ByteStreamSourceGuard::Active(g) => {
+                    let ByteStreamSourceState {
+                        copy,
+                        async_read,
+                        block,
+                        ..
+                    } = &mut **g;
+                    if let Some(reader) = async_read {
+                        if copy.is_none() {
+                            block.reserve_exact(BYTE_STREAM_BLOCK_LIMIT);
+                            *copy = Some(CopyState::new(
+                                task.clone(),
+                                // Safety: copy is dropped prior to async_read.
+                                unsafe { std::mem::transmute::<&'_ mut _, &'static mut _>(reader) },
+                                // Safety: copy is dropped prior to block.
+                                unsafe { std::mem::transmute::<&'_ mut _, &'static mut _>(block) },
+                            ));
+                        }
+                        let copy_pin = unsafe {
+                            copy.as_mut()
+                                .unwrap()
+                                .as_mut()
+                                .map_unchecked_mut(|cs| cs.copy.as_mut().unwrap())
+                        };
+                        let bytes = match std::future::Future::poll(copy_pin, &mut cx) {
+                            Pending => return grease::future::Poll::Pending,
+                            Ready(r) => match r {
+                                Ok(v) => v,
+                                Err(e) => return grease::future::Poll::Ready(RResult::RErr(e)),
+                            },
+                        };
+                        if bytes == 0 {
+                            *async_read = None;
+                        }
+                    }
+
+                    let ret = if g.block.is_empty() {
+                        false
+                    } else {
+                        self.stream.push(std::mem::take(&mut g.block).into());
+                        true
+                    };
+
+                    self.guard = ByteStreamSourceGuard::None;
+                    return grease::future::Poll::Ready(RResult::ROk(ret));
+                }
+            }
+        }
     }
 }
 
@@ -265,7 +395,7 @@ impl ByteStreamSource for ByteStreamSourceImpl {
 #[derive(Clone, GreaseType, StableAbi)]
 #[repr(C)]
 pub struct ByteStream {
-    source: RArc<ByteStreamSource_TO<'static, RBox<()>>>,
+    source: ByteStreamSource_TO<'static, RBox<()>>,
     stream_iter: SharedStreamIter<ByteStreamBlock>,
 }
 
@@ -280,13 +410,19 @@ impl From<crate::types::String> for ByteStream {
 impl ByteStream {
     pub fn new<Src: grease::runtime::io::AsyncRead + Send + 'static>(source: Src) -> Self {
         let (stream, stream_iter) = SharedStream::new();
-        let source = RArc::new(ByteStreamSource_TO::from_value(
+        let source = ByteStreamSource_TO::from_value(
             ByteStreamSourceImpl {
-                source: futures::lock::Mutex::new(Some(BoxAsyncRead::new(source))),
-                stream,
+                guard: ByteStreamSourceGuard::None,
+                source: Arc::pin(futures::lock::Mutex::new(ByteStreamSourceState {
+                    copy: None,
+                    async_read: Some(BoxAsyncRead::new(source)),
+                    block: Default::default(),
+                    _pinned: std::marker::PhantomPinned,
+                })),
+                stream: Arc::new(stream),
             },
             TU_Opaque,
-        ));
+        );
         ByteStream {
             source,
             stream_iter,
@@ -296,6 +432,7 @@ impl ByteStream {
     /// Get a value supporting `std::io::Read`.
     pub fn read(&self) -> ByteStreamReader {
         ByteStreamReader {
+            oblock: None,
             source: self.source.clone(),
             stream_iter: self.stream_iter.clone(),
             bytes_read: 0,
@@ -310,34 +447,43 @@ impl ByteStream {
 #[derive(Clone, StableAbi)]
 #[repr(C)]
 pub struct ByteStreamReader {
-    source: RArc<ByteStreamSource_TO<'static, RBox<()>>>,
+    // Safety: oblock must be dropped prior to stream_iter
+    // SharedStreamIter guarantees that the referenced ByteStreamBlock remains valid across clones.
+    oblock: Option<&'static ByteStreamBlock>,
+    source: ByteStreamSource_TO<'static, RBox<()>>,
     stream_iter: SharedStreamIter<ByteStreamBlock>,
     bytes_read: usize,
 }
 
-impl ByteStreamReader {
-    async fn read(
-        &mut self,
+impl grease::runtime::io::AsyncRead for ByteStreamReader {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context,
         task: &grease::runtime::TaskManager,
         buf: &mut [u8],
-    ) -> grease::Result<usize> {
+    ) -> std::task::Poll<grease::Result<usize>> {
         let mut buf_offset = 0;
-        let mut oblock = self.stream_iter.current();
-
+        let me = &mut *self;
         while buf_offset < buf.len() {
-            if let Some(block) = oblock {
+            if let Some(block) = me.oblock {
                 // Read data if there's any remaining.
-                if self.bytes_read < block.len() {
-                    let to_read = std::cmp::min(block.len() - self.bytes_read, buf.len());
+                if me.bytes_read < block.len() {
+                    let to_read = std::cmp::min(block.len() - me.bytes_read, buf.len());
                     buf[buf_offset..(buf_offset + to_read)]
-                        .copy_from_slice(&block[self.bytes_read..(self.bytes_read + to_read)]);
+                        .copy_from_slice(&block[me.bytes_read..(me.bytes_read + to_read)]);
                     buf_offset += to_read;
-                    self.bytes_read += to_read;
+                    me.bytes_read += to_read;
                 }
                 // Get next item if we've read all the data.
-                if self.bytes_read == block.len() {
-                    oblock = self.stream_iter.next();
-                    self.bytes_read = 0;
+                if me.bytes_read == block.len() {
+                    // Safety: oblock is dropped prior to stream_iter.
+                    me.oblock = unsafe {
+                        std::mem::transmute::<
+                            Option<&'_ ByteStreamBlock>,
+                            Option<&'static ByteStreamBlock>,
+                        >(me.stream_iter.next())
+                    };
+                    me.bytes_read = 0;
                 }
 
                 // If we've read some data, return it immediately.
@@ -346,28 +492,35 @@ impl ByteStreamReader {
                 }
             } else {
                 // Try to read a block from the byte stream source.
-                if !self.source.need_data(task).await.into_result()? {
+                let got_data = match me.source.poll_data(grease::future::Context::new(cx), task) {
+                    grease::future::Poll::Pending => {
+                        if buf_offset > 0 {
+                            break;
+                        } else {
+                            return std::task::Poll::Pending;
+                        }
+                    }
+                    grease::future::Poll::Ready(v) => v.into_result()?,
+                };
+                // Re-check stream_iter in case the poll_data blocked (and another consumer loaded data)
+                // TODO: improve behavoir with tokio::sync::watch or something similar, to not queue up multiple poll_data
+                // (though typically all that data will be used).
+                if !got_data && me.stream_iter.current().is_none() {
                     break;
                 } else {
-                    oblock = self.stream_iter.current();
-                    debug_assert!(oblock.is_some());
+                    // Safety: oblock is dropped prior to stream_iter.
+                    me.oblock = unsafe {
+                        std::mem::transmute::<
+                            Option<&'_ ByteStreamBlock>,
+                            Option<&'static ByteStreamBlock>,
+                        >(me.stream_iter.current())
+                    };
+                    debug_assert!(me.oblock.is_some());
                 }
             }
         }
 
-        return Ok(buf_offset);
-    }
-}
-
-impl grease::runtime::io::AsyncRead for ByteStreamReader {
-    fn poll_read(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context,
-        task: &grease::runtime::TaskManager,
-        buf: &mut [u8],
-    ) -> std::task::Poll<Result<usize, Error>> {
-        let mut fut = self.read(task, buf);
-        std::future::Future::poll(unsafe { std::pin::Pin::new_unchecked(&mut fut) }, cx)
+        std::task::Poll::Ready(Ok(buf_offset))
     }
 }
 

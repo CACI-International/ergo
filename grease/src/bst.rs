@@ -522,6 +522,7 @@ mod map {
             assert_eq!(m.len(), 5);
             assert!(!m.is_empty());
             assert_eq!(m.insert(2, 6), Some(2));
+            assert_eq!(m.insert(8, 9), Some(4));
             assert_eq!(m.len(), 5);
         }
 

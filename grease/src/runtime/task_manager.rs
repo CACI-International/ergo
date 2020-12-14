@@ -87,7 +87,7 @@ pub fn get_task_local<T: TaskLocal>() -> Option<TaskLocalRef<T>> {
 #[pin_project::pin_project]
 pub struct ScopeTaskLocal<Fut> {
     key: U128,
-    value: RArc<Erased>,
+    value: Option<RArc<Erased>>,
     #[pin]
     future: Fut,
 }
@@ -99,14 +99,36 @@ impl<Fut: Future> Future for ScopeTaskLocal<Fut> {
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context,
     ) -> std::task::Poll<Self::Output> {
+        struct Guard<'a> {
+            key: U128,
+            value: &'a mut Option<RArc<Erased>>,
+            prev: Option<RArc<Erased>>,
+        }
+
+        impl<'a> Drop for Guard<'a> {
+            fn drop(&mut self) {
+                let value = TASK_LOCAL.with(|m| {
+                    let mut g = m.lock();
+                    match self.prev.take() {
+                        None => g.remove(&self.key),
+                        Some(v) => g.insert(self.key, v),
+                    }
+                });
+                *self.value = value;
+            }
+        }
+
         let mut proj = self.project();
-        let old = TASK_LOCAL.with(|m| m.lock().insert(proj.key.clone(), proj.value.clone()));
-        let ret = proj.future.as_mut().poll(cx);
-        TASK_LOCAL.with(move |m| match old {
-            None => m.lock().remove(&proj.key),
-            Some(v) => m.lock().insert(proj.key.clone(), v),
-        });
-        ret
+        let val = proj.value.take().unwrap();
+        let prev = TASK_LOCAL.with(|m| m.lock().insert(*proj.key, val));
+
+        let _guard = Guard {
+            prev,
+            key: *proj.key,
+            value: &mut proj.value,
+        };
+
+        proj.future.poll(cx)
     }
 }
 
@@ -114,7 +136,7 @@ impl<Fut: Future> Future for ScopeTaskLocal<Fut> {
 pub fn scope_task_local<T: TaskLocal, Fut: Future>(value: T, fut: Fut) -> ScopeTaskLocal<Fut> {
     ScopeTaskLocal {
         key: T::task_local_key().into(),
-        value: RArc::new(Erased::new(value)),
+        value: Some(RArc::new(Erased::new(value))),
         future: fut,
     }
 }
@@ -141,7 +163,7 @@ impl<'a> SemaphorePermit<'a> {
 #[sabi_trait]
 trait SemaphoreInterface: Debug + Send + Sync {
     #[sabi(last_prefix_field)]
-    fn acquire<'a>(&'a self, count: u32) -> BoxFuture<'a, SemaphorePermit>;
+    fn acquire<'a>(&'a self, count: u32) -> BoxFuture<'a, SemaphorePermit<'a>>;
 }
 
 impl SemaphoreInterface for tokio::sync::Semaphore {
@@ -150,7 +172,8 @@ impl SemaphoreInterface for tokio::sync::Semaphore {
             if count == 0 {
                 SemaphorePermit::new(())
             } else {
-                SemaphorePermit::new(self.acquire_many(count).await)
+                let ret = SemaphorePermit::new(self.acquire_many(count).await);
+                ret
             }
         })
     }
@@ -175,12 +198,15 @@ async fn acquire_owned(this: &RArc<Semaphore>, mut count: u32) -> SemaphorePermi
     }
 
     #[derive(Debug)]
-    struct OwnedSemaphorePermit(RArc<Semaphore>, SemaphorePermit<'static>);
+    struct OwnedSemaphorePermit(SemaphorePermit<'static>, RArc<Semaphore>, u32);
+
     let permit = this.0.acquire(count).await;
 
-    SemaphorePermit::new(OwnedSemaphorePermit(this.clone(), unsafe {
-        std::mem::transmute(permit)
-    }))
+    SemaphorePermit::new(OwnedSemaphorePermit(
+        unsafe { std::mem::transmute::<SemaphorePermit<'_>, SemaphorePermit<'static>>(permit) },
+        this.clone(),
+        count,
+    ))
 }
 
 /// Trait to make a trait object for the async runtime.

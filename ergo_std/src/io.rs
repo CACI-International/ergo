@@ -51,21 +51,23 @@ lazy_static::lazy_static! {
 }
 
 fn stdin_fn() -> Value {
-    ergo_function!(std::io::stdin,
-    r"Get the standard input ByteStream of the process.
+    ergo_function!(
+        std::io::stdin,
+        r"Get the standard input ByteStream of the process.
 
 Arguments: (none)
 Returns a ByteStream that, when read, takes exclusive access of the process standard input.",
-    |ctx| {
-        ctx.unused_arguments()?;
+        |ctx| {
+            ctx.unused_arguments()?;
 
-        // Derive identity from random integer; stdin may contain anything.
-        make_value!([rand::random::<u64>()] {
-            let guard = STDIN_MUTEX.lock().await;
-            Ok(types::ByteStream::new(Stdin::new(guard)))
-        })
-        .into()
-    })
+            // Derive identity from random integer; stdin may contain anything.
+            make_value!([rand::random::<u64>()] {
+                let guard = STDIN_MUTEX.lock().await;
+                Ok(types::ByteStream::new(Stdin::new(guard)))
+            })
+            .into()
+        }
+    )
     .into()
 }
 

@@ -102,6 +102,7 @@ it.",
                     {
                         log.warn(format!("failed to cache value for {}: {}", id, e));
                     }
+                    log.debug(format!("wrote cache value for {}", id));
                     Ok(to_cache
                         .await
                         .expect("error should have been caught previously"))

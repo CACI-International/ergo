@@ -47,7 +47,7 @@ impl TerminalInput {
 #[cfg(unix)]
 struct TerminalInput {
     original_input_settings: termios::Termios,
-    current_input_settings: termios::Termios
+    current_input_settings: termios::Termios,
 }
 
 #[cfg(unix)]
@@ -69,14 +69,18 @@ impl TerminalInput {
 
     pub fn enable(&mut self) {
         let fd = std::os::unix::io::AsRawFd::as_raw_fd(&std::io::stdin());
-        self.current_input_settings.c_lflag |= termios::ECHO | termios::ECHOE | termios::ECHOK | termios::ECHONL;
-        termios::tcsetattr(fd, termios::TCSANOW, &self.current_input_settings).expect("failed to set stdin settings");
+        self.current_input_settings.c_lflag |=
+            termios::ECHO | termios::ECHOE | termios::ECHOK | termios::ECHONL;
+        termios::tcsetattr(fd, termios::TCSANOW, &self.current_input_settings)
+            .expect("failed to set stdin settings");
     }
 
     pub fn disable(&mut self) {
         let fd = std::os::unix::io::AsRawFd::as_raw_fd(&std::io::stdin());
-        self.current_input_settings.c_lflag &= !(termios::ECHO | termios::ECHOE | termios::ECHOK | termios::ECHONL);
-        termios::tcsetattr(fd, termios::TCSANOW, &self.current_input_settings).expect("failed to set stdin settings");
+        self.current_input_settings.c_lflag &=
+            !(termios::ECHO | termios::ECHOE | termios::ECHOK | termios::ECHONL);
+        termios::tcsetattr(fd, termios::TCSANOW, &self.current_input_settings)
+            .expect("failed to set stdin settings");
     }
 }
 
@@ -113,7 +117,7 @@ impl OutputType {
         OutputType::Term(TerminalOutput {
             term,
             last_rendered_lines: 0,
-            input_settings: TerminalInput::new()
+            input_settings: TerminalInput::new(),
         })
     }
 }
