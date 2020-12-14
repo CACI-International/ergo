@@ -13,6 +13,7 @@ use abi_stable::{
 use futures::{future, future::FutureExt};
 use std::pin::Pin;
 use std::task;
+use std::collections::BTreeMap;
 
 pub mod eager;
 
@@ -367,16 +368,26 @@ impl<T: StableAbi + Clone + Send + Sync> BoxSharedFuture<T> {
     }
 }
 
-pub struct ForEach<T, F, Fut>(BoxSharedFuture<T>, F, Option<Fut>);
+pub struct ForEach<T, Key, GetKey, F, Fut> {
+    inner: BoxSharedFuture<T>,
+    get_key: GetKey,
+    get_fut: F,
+    stored: BTreeMap<Key, Pin<Box<Fut>>>
+}
 
 // # Safety
 // The `Fut` parameter is only ever accessed with a mutable reference, so it only requires Send for
 // `ForEach` to be `Sync`.
-unsafe impl<T: Send + Sync, F: Send + Sync, Fut: Send> Sync for ForEach<T, F, Fut> {}
+unsafe impl<T: Send + Sync, Key: Send + Sync, GetKey: Send + Sync, F: Send + Sync, Fut: Send> Sync for ForEach<T, Key, GetKey, F, Fut> {}
 
-impl<T: Clone, Fut, F: Clone> Clone for ForEach<T, F, Fut> {
+impl<T: Clone, Key: Ord, GetKey: Clone, Fut, F: Clone> Clone for ForEach<T, Key, GetKey, F, Fut> {
     fn clone(&self) -> Self {
-        ForEach(self.0.clone(), self.1.clone(), None)
+        ForEach {
+            inner: self.inner.clone(),
+            get_key: self.get_key.clone(),
+            get_fut: self.get_fut.clone(),
+            stored: Default::default()
+        }
     }
 }
 
@@ -393,14 +404,21 @@ impl<T> BoxSharedFuture<T> {
 
     /// Creates a BoxedSharedFuture that allows the value to be evaluated with some side effects
     /// for each instance.
-    pub fn for_each<F, Fut>(self, f: F) -> Self
+    pub fn for_each<Key, GetKey, F, Fut>(self, key: GetKey, f: F) -> Self
     where
+        Key: Ord + Send + Sync + 'static,
+        GetKey: Fn() -> Key + Clone + Send + Sync + 'static,
         F: Fn(BoxFutureResult) -> Fut + Clone + Send + Sync + 'static,
         T: Clone + Send + Sync + 'static,
         Fut: futures::future::Future<Output = FutureResult> + Send + 'static,
     {
         BoxSharedFuture {
-            inner: SharedFuture_TO::from_value(ForEach(self, f, None), TU_Opaque),
+            inner: SharedFuture_TO::from_value(ForEach {
+                inner: self,
+                get_key: key,
+                get_fut: f,
+                stored: Default::default()
+            }, TU_Opaque),
         }
     }
 }
@@ -415,8 +433,10 @@ impl<T: Clone> BoxSharedFuture<T> {
     }
 }
 
-impl<T, F, Fut> SharedFuture for ForEach<T, F, Fut>
+impl<T, Key, GetKey, F, Fut> SharedFuture for ForEach<T, Key, GetKey, F, Fut>
 where
+    Key: Ord + Send + Sync + 'static,
+    GetKey: Fn() -> Key + Clone + Send + Sync + 'static,
     F: Fn(BoxFutureResult) -> Fut + Clone + Send + Sync,
     T: Clone + Send + Sync + 'static,
     Fut: futures::future::Future<Output = FutureResult> + Send,
@@ -424,26 +444,31 @@ where
     type Output = T;
 
     fn poll(&mut self, cx: Context) -> Poll<Self::Output> {
-        if self.2.is_none() {
-            let fut = Box::pin(
-                self.0
-                    .clone()
-                    .map(|v| FutureResult(crate::type_erase::Erased::new(v))),
-            );
-            self.2 = Some((self.1)(fut));
-        }
-
-        let fut = self.2.as_mut().unwrap();
+        let key = (self.get_key)();
+        let mut fut = match self.stored.remove(&key) {
+            Some(v) => v,
+            None => {
+                let fut = Box::pin(
+                    self.inner
+                        .clone()
+                        .map(|v| FutureResult(crate::type_erase::Erased::new(v))),
+                );
+                Box::pin((self.get_fut)(fut))
+            }
+        };
 
         let waker = unsafe { task::Waker::from_raw(cx.0.into()) };
         let mut ctx = task::Context::from_waker(&waker);
-        future::Future::poll(unsafe { Pin::new_unchecked(fut) }, &mut ctx)
-            .map(|FutureResult(v)| unsafe { v.to_owned::<T>() })
-            .into()
+        let result = future::Future::poll(fut.as_mut(), &mut ctx)
+            .map(|FutureResult(v)| unsafe { v.to_owned::<T>() });
+        if result.is_pending() {
+            self.stored.insert(key, fut);
+        }
+        result.into()
     }
 
     fn peek(&self) -> Option<&Self::Output> {
-        self.0.peek()
+        self.inner.peek()
     }
 }
 

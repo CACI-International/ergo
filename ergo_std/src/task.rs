@@ -8,7 +8,7 @@ use abi_stable::{
 use ergo_runtime::{ergo_function, types, ContextExt};
 use grease::error::UniqueErrorSources;
 use grease::future::eager::Eager;
-use grease::runtime::{LogTask, RecordingWork, TaskLocal, TaskPermit};
+use grease::runtime::{LogTask, RecordingWork, ScopeTaskLocal, TaskLocal, TaskLocalRef, TaskPermit};
 use grease::task_local_key;
 use grease::value::{Errored, Value};
 use std::str::FromStr;
@@ -71,9 +71,9 @@ until more become available. If the requested number is greater than the maximum
             }, async move {
                 let s = desc.await?;
                 let work = RArc::new(RMutex::new(work));
-                let parent_task = ParentTask::new(s.clone().owned().0, task_count, log.clone(), work.clone(), task_inner.clone()).await;
+                let parent_task = ParentTask::new(s.clone().owned().0, task_count, log.clone(), work.clone(), task_inner.clone());
                 log.info(format!("starting: {}", s.clone()));
-                let ret = parent_task.scoped(inner.into_future()).await;
+                let ret = parent_task.run_scoped(inner.into_future()).await;
                 let errored = ret.is_err();
                 if errored {
                     work.lock().err();
@@ -82,19 +82,20 @@ until more become available. If the requested number is greater than the maximum
                 ret
             }))
             .await
-        })).for_each(move |res| {
+        })).for_each(|| {
+            match ParentTask::task_local() {
+                None => None,
+                Some(v) => Some(&*v as *const ParentTask as usize)
+            }
+        }, move |res| {
             let observed_errors_each = observed_errors_each.clone();
             async move {
-                let parent = ParentTask::task_local();
                 if let Some(e) = Errored::task_local() {
                     if let Ok(mut oe) = observed_errors_each.lock() {
                         oe.register(e);
                     }
                 }
-                match parent {
-                    Some(v) => v.run_child(res).await,
-                    None => res.await
-                }
+                res.await
             }
         })
     })
@@ -126,7 +127,7 @@ impl ObservedErrors {
 
 #[derive(StableAbi)]
 #[repr(C)]
-struct ParentTask {
+pub struct ParentTask {
     pub description: RString,
     task_count: u32,
     log: grease::runtime::Log,
@@ -144,103 +145,130 @@ impl TaskLocal for ParentTask {
 impl Drop for ParentTask {
     fn drop(&mut self) {
         // Change state to inactive to record any final values bound to dropping (like that of
-        // RecordingWork).
-        *self.state.lock() = ParentTaskState::Inactive(0);
+        // RecordingWork). It should already be inactive generally.
+        *self.state.lock() = ParentTaskState::Inactive;
     }
 }
 
 #[derive(StableAbi)]
 #[repr(C)]
 enum ParentTaskState {
-    Active(LogTask, RecordingWork, TaskPermit),
-    Inactive(usize),
+    Active(usize, LogTask, RecordingWork, TaskPermit),
+    ActivePending(grease::future::BoxFuture<'static, grease::runtime::TaskPermit>),
+    Inactive,
+}
+
+/// A handle to an active task.
+///
+/// While this is retained, the attributed task is considered active.
+pub struct ActiveTask {
+    task: TaskLocalRef<ParentTask>
+}
+
+impl Drop for ActiveTask {
+    fn drop(&mut self) {
+        let mut guard = self.task.state.lock();
+        match &mut *guard {
+            ParentTaskState::Active(0, _, _, _) => *guard = ParentTaskState::Inactive,
+            ParentTaskState::Active(n, _, _, _) => *n -= 1,
+            _ => panic!("invalid task state"),
+        }
+    }
+}
+
+pub struct Run<Fut>(Fut);
+
+impl<Fut: std::future::Future> std::future::Future for Run<Fut> {
+    type Output = Fut::Output;
+
+    fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context) -> std::task::Poll<Fut::Output> {
+        let task = ParentTask::task_local().expect("ParentTask not set");
+        let _active = {
+            {
+                let mut guard = task.state.lock();
+                loop {
+                    match &mut *guard {
+                        ParentTaskState::Active(n, _, _, _) => {
+                            *n += 1;
+                            break
+                        }
+                        ParentTaskState::ActivePending(p) => {
+                            // Safety: p is a BoxFuture, it will not move
+                            match std::future::Future::poll(unsafe { std::pin::Pin::new_unchecked(p) }, cx) {
+                                std::task::Poll::Pending => return std::task::Poll::Pending,
+                                std::task::Poll::Ready(task_permit) => {
+                                    *guard = ParentTaskState::Active(
+                                        0,
+                                        task.log.task(task.description.clone()),
+                                        task.work.lock().start(),
+                                        task_permit,
+                                    );
+                                    break
+                                }
+                            }
+                        }
+                        ParentTaskState::Inactive => {
+                            *guard = ParentTaskState::ActivePending(
+                                // Safety: the inner state is cleared prior to being dropped, and holds the reference to the task manager.
+                                unsafe {
+                                    std::mem::transmute::<grease::future::BoxFuture<'_, _>, grease::future::BoxFuture<'static, _>>(
+                                        grease::future::BoxFuture::new(task.task_manager.task_acquire(task.task_count))
+                                    )
+                                }
+                            );
+                        }
+                    }
+                }
+            }
+
+            ActiveTask { task }
+        };
+
+        unsafe { self.map_unchecked_mut(|p| &mut p.0) }.poll(cx)
+    }
 }
 
 impl ParentTask {
-    pub async fn new(
+    /// Create a new (inactive) ParentTask.
+    pub fn new(
         description: RString,
         task_count: u32,
         log: grease::runtime::Log,
         work: RArc<RMutex<grease::runtime::Work>>,
         task_manager: grease::runtime::TaskManager,
     ) -> Self {
-        // Acquire the permit before setting the task log state.
-        let permit = task_manager.task_acquire(task_count).await;
-        let state = RMutex::new(ParentTaskState::Active(
-            log.task(description.clone()),
-            work.lock().start(),
-            permit,
-        ));
         ParentTask {
             description,
             task_count,
             log,
             work,
             task_manager,
-            state,
+            state: RMutex::new(ParentTaskState::Inactive)
         }
     }
 
-    pub async fn run_child<Fut: std::future::Future>(&self, fut: Fut) -> Fut::Output {
+    /// Consider the current task active until the returned guard is dropped.
+    ///
+    /// Returns None if there is no active task.
+    pub fn remain_active() -> Option<ActiveTask> {
+        let task = match Self::task_local() {
+            None => return None,
+            Some(task) => task
+        };
         {
-            let mut guard = self.state.lock();
-            let make_inactive = match &*guard {
-                ParentTaskState::Active(_, _, _) => true,
-                _ => false,
-            };
-
-            if make_inactive {
-                *guard = ParentTaskState::Inactive(0);
-            }
+            let mut guard = task.state.lock();
             match &mut *guard {
-                ParentTaskState::Active(_, _, _) => panic!("logic error"),
-                ParentTaskState::Inactive(n) => {
-                    *n += 1;
-                }
+                ParentTaskState::Active(n, _, _, _) => *n += 1,
+                _ => panic!("invalid task state"),
             }
         }
-        // Safety: it is fairly safe to AssertUnwindSafe here since we will resume the unwind later
-        // (without accessing `fut`), so the unwind safety of fut will depend on calling code once
-        // the unwind is resumed.
-        let ret = futures::future::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(fut)).await;
-        {
-            let make_active = {
-                let mut guard = self.state.lock();
-                match &mut *guard {
-                    ParentTaskState::Active(_, _, _) => panic!("logic error"),
-                    ParentTaskState::Inactive(n) => {
-                        *n -= 1;
-                    }
-                }
+        Some(ActiveTask { task })
+    }
 
-                if let ParentTaskState::Inactive(0) = &*guard {
-                    true
-                } else {
-                    false
-                }
-
-                // Guard is dropped prior to await to acquire task.
-            };
-
-            if make_active {
-                // Must await without holding guard or other locals.
-                // Must also acquire the permit prior to getting log state.
-                let task_permit = self.task_manager.task_acquire(self.task_count).await;
-                let mut guard = self.state.lock();
-                // Only set to Active state if still in the inactive and empty state (another child
-                // may have come since the guard was last released).
-                if let ParentTaskState::Inactive(0) = &*guard {
-                    *guard = ParentTaskState::Active(
-                        self.log.task(self.description.clone()),
-                        self.work.lock().start(),
-                        task_permit,
-                    );
-                }
-            }
-        }
-        match ret {
-            Ok(v) => v,
-            Err(e) => std::panic::resume_unwind(e),
-        }
+    /// Run the given future with this ParentTask.
+    ///
+    /// This must be used for `remain_active` to work.
+    pub fn run_scoped<Fut: std::future::Future>(self, fut: Fut) -> ScopeTaskLocal<Run<Fut>> {
+        self.scoped(Run(fut))
     }
 }

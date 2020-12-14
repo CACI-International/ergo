@@ -461,7 +461,10 @@ script.
             // Only run stdin while waiting for exit status
             let exit_status = BoundTo::new(exit_status, input);
 
-            let (exit_status, _) = ctx.task.join(exit_status, ctx.task.join(output, error)).await?;
+            let (exit_status, _) = {
+                let _guard = super::task::ParentTask::remain_active();
+                ctx.task.join(exit_status, ctx.task.join(output, error)).await?
+            };
 
             log.debug(format!("child process exited: {:?}", command));
 

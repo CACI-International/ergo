@@ -13,7 +13,7 @@ mod path;
 mod script;
 mod seq;
 mod string;
-mod task;
+pub mod task;
 mod value;
 
 pub use exec::ExitStatus;

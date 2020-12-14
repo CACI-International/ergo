@@ -141,8 +141,10 @@ enum ValueData {
 }
 
 impl ValueData {
-    pub fn for_each<F, Fut>(self, f: F) -> Self
+    pub fn for_each<Key, GetKey, F, Fut>(self, key: GetKey, f: F) -> Self
     where
+        Key: Ord + Send + Sync + 'static,
+        GetKey: Fn() -> Key + Clone + Send + Sync + 'static,
         F: Fn(crate::future::BoxFutureResult) -> Fut + Clone + Send + Sync + 'static,
         Fut: Future<Output = crate::future::FutureResult> + Send + 'static,
     {
@@ -150,10 +152,10 @@ impl ValueData {
             ValueData::None => ValueData::None,
             ValueData::Typed { tp, fut } => ValueData::Typed {
                 tp,
-                fut: fut.for_each(f),
+                fut: fut.for_each(key, f),
             },
             ValueData::Dynamic { fut } => ValueData::Dynamic {
-                fut: fut.for_each(f),
+                fut: fut.for_each(key, f),
             },
         }
     }
@@ -332,14 +334,16 @@ impl Value {
         }
     }
 
-    /// Create a value that performs some side effects when each instance is evaluated.
-    pub fn for_each<F, Fut>(self, f: F) -> Self
+    /// Create a value that performs some side effects for some key.
+    pub fn for_each<Key, GetKey, F, Fut>(self, key: GetKey, f: F) -> Self
     where
+        Key: Ord + Send + Sync + 'static,
+        GetKey: Fn() -> Key + Clone + Send + Sync + 'static,
         F: Fn(crate::future::BoxFutureResult) -> Fut + Clone + Send + Sync + 'static,
         Fut: Future<Output = crate::future::FutureResult> + Send + 'static,
     {
         Value {
-            data: self.data.for_each(f),
+            data: self.data.for_each(key, f),
             ..self
         }
     }
