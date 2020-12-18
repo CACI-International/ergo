@@ -84,9 +84,8 @@ Within a script, the following are defined:
 
 ### TODO
 * Display more detailed error information at exit?
-* Add a message/signal handler to exit gracefully.
-  * This has been added but child programs still capture the signal, need to
-    change the process group to prevent this.
+* Extend the Ctrl-C behavior to better cancel/stop execution.
+  * Right now it only cancels tasks.
 * Persist command timing information for better estimates.
 * Allow functions to get call-site variables? Convenient for things like
   `script-dir`.
