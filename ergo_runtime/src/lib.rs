@@ -89,8 +89,9 @@ pub struct Runtime {
     env: RVec<ScriptEnv>,
     pub loading: RArc<RMutex<RVec<PathBuf>>>,
     pub load_cache: RArc<RMutex<BstMap<PathBuf, EvalResultAbi>>>,
+    initial_load_path: RVec<PathBuf>,
     pub mod_path: ROption<PathBuf>,
-    pub load_paths: RVec<PathBuf>,
+    pub current_load_path: RVec<PathBuf>,
     pub lint: bool,
     keyed_lifetime: RArc<RMutex<RHashMap<grease::types::Type, RArc<Erased>>>>,
     // It is important that lifetime is the last member of the runtime, so that when dropped it is
@@ -179,7 +180,11 @@ pub struct FunctionArguments {
 
 impl Runtime {
     /// Create a new runtime.
-    pub fn new(context: Context, global_env: ScriptEnv) -> Self {
+    pub fn new(
+        context: Context,
+        global_env: ScriptEnv,
+        initial_load_path: Vec<std::path::PathBuf>,
+    ) -> Self {
         Runtime {
             context,
             global_env,
@@ -187,7 +192,8 @@ impl Runtime {
             loading: RArc::new(RMutex::new(Default::default())),
             load_cache: RArc::new(RMutex::new(Default::default())),
             mod_path: ROption::RNone,
-            load_paths: Default::default(),
+            initial_load_path: initial_load_path.into_iter().map(|p| p.into()).collect(),
+            current_load_path: Default::default(),
             lint: false,
             keyed_lifetime: RArc::new(RMutex::new(Default::default())),
             lifetime: RArc::new(RMutex::new(Default::default())),
@@ -281,16 +287,8 @@ impl Runtime {
     /// Clear the local environment in a new copy of the runtime.
     pub fn empty(&self) -> Self {
         Runtime {
-            context: self.context.clone(),
-            global_env: self.global_env.clone(),
             env: rvec![Default::default()],
-            loading: self.loading.clone(),
-            load_cache: self.load_cache.clone(),
-            mod_path: self.mod_path.clone(),
-            load_paths: self.load_paths.clone(),
-            lint: self.lint,
-            keyed_lifetime: self.keyed_lifetime.clone(),
-            lifetime: self.lifetime.clone(),
+            ..self.clone()
         }
     }
 
@@ -309,20 +307,13 @@ impl Runtime {
         }
     }
 
-    /*
-    pub fn set_error_handler<F>(&self, on_error: F)
-    where
-        F: Fn(),
-    {
+    /// Set current_load_path to the mod_dir followed by the configured initial load path.
+    pub fn reset_load_path(&mut self) {
+        self.current_load_path = Default::default();
+        self.current_load_path.push(self.mod_dir().into());
+        self.current_load_path
+            .extend(self.initial_load_path.clone());
     }
-
-    pub fn record_error<T>(&self, result: Result<T>) -> Result<T> {
-        match &result {
-        }
-        todo!();
-        result
-    }
-    */
 }
 
 impl FunctionCall<'_> {

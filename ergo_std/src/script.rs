@@ -57,7 +57,7 @@ Any load calls (`ergo ...`) following this call will use the given array of path
             paths.push(ctx.source_value_as::<PathBuf>(p).await?.unwrap().await?.owned());
         }
 
-        ctx.load_paths = paths;
+        ctx.current_load_path = paths;
 
         types::Unit.into_value().into()
     })

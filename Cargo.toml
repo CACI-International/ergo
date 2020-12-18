@@ -1,5 +1,5 @@
 [workspace]
-members = ["grease", "grease_macro", "ergo", "ergo-repo", "ergo_runtime", "ergo_runtime_macro", "ergo_std"]
+members = ["grease", "grease_macro", "ergo", "ergo-repo", "ergo_runtime", "ergo_runtime_macro", "ergo_script", "ergo_std"]
 
 [profile.release]
 lto = true

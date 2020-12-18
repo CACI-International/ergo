@@ -9,8 +9,7 @@ use super::ast::{
     Expression, MapPattern, MergeExpression, Pat, PatT, Pattern,
 };
 use crate::constants::{
-    PLUGIN_ENTRY, SCRIPT_DIR_NAME, SCRIPT_EXTENSION, SCRIPT_PRELUDE_NAME,
-    SCRIPT_WORKSPACE_FALLBACK_NAME, SCRIPT_WORKSPACE_NAME,
+    DIR_NAME, EXTENSION, PLUGIN_ENTRY, PRELUDE_ARG, WORKSPACE_FALLBACK_ARG, WORKSPACE_NAME,
 };
 use abi_stable::{
     rvec,
@@ -125,7 +124,7 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                     if let Some(file_name) = name.as_ref().file_name() {
                         let mut p = file_name.to_owned();
                         p.push(".");
-                        p.push(SCRIPT_EXTENSION);
+                        p.push(EXTENSION);
                         let path_with_extension = path.join(name.as_ref()).with_file_name(p);
                         if path_with_extension.exists() {
                             Some(path_with_extension)
@@ -149,11 +148,11 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                 .and_then(|mut p| {
                     while p.is_dir() {
                         // Prefer dir script to workspace
-                        let dir = p.join(SCRIPT_DIR_NAME);
+                        let dir = p.join(DIR_NAME);
                         if dir.exists() {
                             p = dir;
                         } else {
-                            let ws = p.join(SCRIPT_WORKSPACE_NAME);
+                            let ws = p.join(WORKSPACE_NAME);
                             if ws.exists() {
                                 p = ws
                             } else {
@@ -190,7 +189,7 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                 load_path = Some(target_path.clone());
 
                 // Get current load path
-                let paths: Vec<std::path::PathBuf> = ctx.load_paths.clone().into_iter().map(|v| v.into()).collect();
+                let paths: Vec<std::path::PathBuf> = ctx.current_load_path.clone().into_iter().map(|v| v.into()).collect();
 
                 // Try to find path match in load paths
                 paths
@@ -218,12 +217,12 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                     (ctx.mod_dir(), false)
                 };
 
-                let within_workspace = check_for_workspace && path_basis.file_name().map(|v| v == SCRIPT_WORKSPACE_NAME).unwrap_or(false);
+                let within_workspace = check_for_workspace && path_basis.file_name().map(|v| v == WORKSPACE_NAME).unwrap_or(false);
 
                 let mut ancestors = path_basis.ancestors().peekable();
                 if within_workspace {
                     while let Some(v) = ancestors.peek().and_then(|a| a.file_name()) {
-                        if v == SCRIPT_WORKSPACE_NAME {
+                        if v == WORKSPACE_NAME {
                             ancestors.next();
                         } else {
                             break;
@@ -234,7 +233,7 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                     ancestors.next();
                 }
 
-                ancestors.find_map(script_path_exists(SCRIPT_WORKSPACE_NAME, false))
+                ancestors.find_map(script_path_exists(WORKSPACE_NAME, false))
             }
         };
 
@@ -282,7 +281,7 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                         let plugin = is_plugin(&p);
 
                         // Only load prelude if this is not a workspace nor a plugin.
-                        let load_prelude = p.file_name().unwrap() != SCRIPT_WORKSPACE_NAME && !plugin; // unwrap because p must have a final component
+                        let load_prelude = p.file_name().unwrap() != WORKSPACE_NAME && !plugin; // unwrap because p must have a final component
 
                         let mod_path = p.parent().unwrap(); // unwrap because file must exist in some directory
 
@@ -290,7 +289,7 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                         // exist it must evaluate to a map.
                         let prelude = if load_prelude {
                             // Find ancestor workspace, if any, and use it to get the prelude.
-                            if let Some(p) = mod_path.ancestors().find_map(script_path_exists(SCRIPT_WORKSPACE_NAME, false)) {
+                            if let Some(p) = mod_path.ancestors().find_map(script_path_exists(WORKSPACE_NAME, false)) {
                                 // If ancestor workspace is already being loaded, do not load the prelude.
                                 if ctx.loading.lock().iter().any(|o| o.as_ref() == p) {
                                     None
@@ -315,7 +314,7 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
 
                                     // Try to access prelude, but allow failures
                                     match Errored::ignore(apply_value(ctx, ws, FunctionArguments::new(
-                                            vec![Source::builtin(types::String::from(SCRIPT_PRELUDE_NAME).into())],
+                                            vec![Source::builtin(types::String::from(PRELUDE_ARG).into())],
                                             Default::default()
                                         ).unchecked(), false)).await {
                                         Ok(v) => {
@@ -390,7 +389,7 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
             // the result of `[loaded] command`.
             let loaded = if was_workspace {
                 apply_value(ctx, loaded, FunctionArguments::new(
-                        vec![Source::builtin(types::String::from(SCRIPT_WORKSPACE_FALLBACK_NAME).into())],
+                        vec![Source::builtin(types::String::from(WORKSPACE_FALLBACK_ARG).into())],
                         Default::default()
                         ).unchecked(), false).await?
             } else {

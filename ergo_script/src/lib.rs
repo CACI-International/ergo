@@ -1,7 +1,5 @@
-//! Script loading and execution.
+//! Ergo script loading and execution.
 
-use crate::constants::*;
-use abi_stable::rvec;
 pub use ergo_runtime::source::{FileSource, Source, StringSource};
 use ergo_runtime::{types, EvalResult, Runtime, ScriptEnv};
 use grease::types::GreaseType;
@@ -9,6 +7,22 @@ use grease::types::GreaseType;
 mod ast;
 mod base;
 mod runtime;
+
+pub mod constants {
+    macro_rules! program_name {
+        () => {
+            "ergo"
+        };
+    }
+
+    pub const PROGRAM_NAME: &'static str = program_name!();
+    pub const EXTENSION: &'static str = program_name!();
+    pub const WORKSPACE_NAME: &'static str = concat!("workspace.", program_name!());
+    pub const DIR_NAME: &'static str = concat!("dir.", program_name!());
+    pub const PRELUDE_ARG: &'static str = "prelude";
+    pub const WORKSPACE_FALLBACK_ARG: &'static str = "command";
+    pub const PLUGIN_ENTRY: &'static str = concat!("_", program_name!(), "_plugin");
+}
 
 use runtime::*;
 
@@ -21,9 +35,10 @@ pub struct Script {
     file_path: Option<std::path::PathBuf>,
 }
 
-/// Create a script context from a context builder.
+/// Create a script context from a context builder and initial load path.
 pub fn script_context(
     cb: grease::runtime::ContextBuilder,
+    initial_load_path: Vec<std::path::PathBuf>,
 ) -> Result<Runtime, grease::runtime::BuilderError> {
     let mut global_env = ScriptEnv::default();
     {
@@ -35,17 +50,14 @@ pub fn script_context(
         };
 
         // Add initial environment functions
-        let env = vec![(PROGRAM_NAME, base::load())];
-        for (k, v) in env.into_iter() {
-            insert(k, v);
-        }
+        insert(constants::PROGRAM_NAME, base::load());
     }
 
     cb.build().map(|mut ctx| {
         // Add initial traits
         ergo_runtime::traits::traits(&mut ctx.traits);
         runtime::traits(&mut ctx.traits);
-        Runtime::new(ctx, global_env)
+        Runtime::new(ctx, global_env, initial_load_path)
     })
 }
 
@@ -80,75 +92,15 @@ impl Script {
         self.file_path = Some(path);
     }
 
+    /// Evaluate the script with the given runtime and additional load paths.
     pub async fn evaluate(self, ctx: &Runtime) -> EvalResult {
-        // Create an environment appropriate based on the configuration.
+        // Create an environment based on the configuration.
         let mut ctx = ctx.empty();
         ctx.mod_path = self.file_path.map(|v| v.into()).into();
 
-        let script_dir = grease::path::PathBuf::from(ctx.mod_dir());
+        ctx.reset_load_path();
 
-        // Set up load paths
-        let mut load_paths = rvec![script_dir.clone()];
-
-        // Add neighboring share directories when running in a [prefix]/bin directory.
-        let mut neighbor_dir = std::env::current_exe().ok().and_then(|path| {
-            path.parent().and_then(|parent| {
-                if parent.file_name() == Some("bin".as_ref()) {
-                    let path = parent
-                        .parent()
-                        .expect("must have parent directory")
-                        .join("share")
-                        .join(crate::constants::PROGRAM_NAME)
-                        .join("lib");
-                    if path.exists() {
-                        Some(path)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            })
-        });
-
-        // If the neighbor directory is somewhere in the home directory, it should be added prior to the local
-        // data app dir.
-        if let (Some(dir), Some(user_dirs)) = (&neighbor_dir, &directories::UserDirs::new()) {
-            if dir.starts_with(user_dirs.home_dir()) {
-                load_paths.push(neighbor_dir.take().unwrap().into());
-            }
-        }
-
-        // Add local data app dir.
-        if let Some(proj_dirs) = app_dirs() {
-            let path = proj_dirs.data_local_dir().join("lib");
-            if path.exists() {
-                load_paths.push(path.into());
-            }
-        }
-
-        // If the neighbor directory wasn't added, it should be added now, after the local data app dir.
-        if let Some(dir) = neighbor_dir {
-            load_paths.push(dir.into());
-        }
-
-        ctx.load_paths = load_paths.clone();
-
-        let mut env = self.top_level_env;
-        // Add script-dir/load-path last; they should not be overwritten.
-        env.insert(
-            types::String::from(SCRIPT_DIR_BINDING).into(),
-            Ok(Source::builtin(script_dir.into())).into(),
-        );
-        env.insert(
-            types::String::from(LOAD_PATH_BINDING).into(),
-            Ok(Source::builtin(
-                types::Array(load_paths.into_iter().map(|v| v.into()).collect()).into(),
-            ))
-            .into(),
-        );
-
-        ctx.env_extend(env);
+        ctx.env_extend(self.top_level_env);
 
         Rt(self.ast).evaluate(&mut ctx).await
     }

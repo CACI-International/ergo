@@ -1,5 +1,6 @@
 use abi_stable::std_types::{RDuration, ROption, RSlice, RString};
 use ergo_runtime::{source::Source, ContextExt};
+use ergo_script::constants::{PROGRAM_NAME, WORKSPACE_NAME};
 use grease::runtime::*;
 use simplelog::WriteLogger;
 use std::io::Write;
@@ -12,23 +13,12 @@ mod sync;
 
 /// Constant values shared throughout the program.
 mod constants {
-    pub const PROGRAM_NAME: &'static str = env!("CARGO_PKG_NAME");
-    pub const LOAD_PATH_BINDING: &'static str = "load-path";
-    pub const SCRIPT_DIR_BINDING: &'static str = "script-dir";
-    pub const SCRIPT_EXTENSION: &'static str = PROGRAM_NAME;
-    pub const SCRIPT_WORKSPACE_NAME: &'static str = concat!("workspace.", env!("CARGO_PKG_NAME"));
-    pub const SCRIPT_DIR_NAME: &'static str = concat!("dir.", env!("CARGO_PKG_NAME"));
-    pub const SCRIPT_PRELUDE_NAME: &'static str = "prelude";
-    pub const SCRIPT_WORKSPACE_FALLBACK_NAME: &'static str = "command";
-    pub const PLUGIN_ENTRY: &'static str = concat!("_", env!("CARGO_PKG_NAME"), "_plugin");
-
     use directories;
     pub fn app_dirs() -> Option<directories::ProjectDirs> {
-        directories::ProjectDirs::from("", "", PROGRAM_NAME)
+        directories::ProjectDirs::from("", "", super::PROGRAM_NAME)
     }
 }
 
-use constants::PROGRAM_NAME;
 use options::*;
 use output::{output, Output};
 use script::{Script, StringSource};
@@ -139,7 +129,7 @@ fn run(opts: Opts) -> Result<String, String> {
     // Search for furthest workspace ancestor, and set as storage directory root
     let storage_dir_root = if let Some(p) = working_dir
         .ancestors()
-        .filter(|p| p.join(constants::SCRIPT_WORKSPACE_NAME).exists())
+        .filter(|p| p.join(WORKSPACE_NAME).exists())
         .last()
     {
         p.to_owned()
@@ -152,6 +142,55 @@ fn run(opts: Opts) -> Result<String, String> {
         std::fs::remove_dir_all(&storage_directory)
             .app_err_result("failed to clean storage directory")?;
     }
+
+    // Get initial load path from exe location and user directories.
+    let initial_load_path = {
+        let mut load_paths = Vec::new();
+
+        // Add neighboring share directories when running in a [prefix]/bin directory.
+        let mut neighbor_dir = std::env::current_exe().ok().and_then(|path| {
+            path.parent().and_then(|parent| {
+                if parent.file_name() == Some("bin".as_ref()) {
+                    let path = parent
+                        .parent()
+                        .expect("must have parent directory")
+                        .join("share")
+                        .join(PROGRAM_NAME)
+                        .join("lib");
+                    if path.exists() {
+                        Some(path)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+        });
+
+        // If the neighbor directory is somewhere in the home directory, it should be added prior to the local
+        // data app dir.
+        if let (Some(dir), Some(user_dirs)) = (&neighbor_dir, &directories::UserDirs::new()) {
+            if dir.starts_with(user_dirs.home_dir()) {
+                load_paths.push(neighbor_dir.take().unwrap());
+            }
+        }
+
+        // Add local data app dir.
+        if let Some(proj_dirs) = constants::app_dirs() {
+            let path = proj_dirs.data_local_dir().join("lib");
+            if path.exists() {
+                load_paths.push(path);
+            }
+        }
+
+        // If the neighbor directory wasn't added, it should be added now, after the local data app dir.
+        if let Some(dir) = neighbor_dir {
+            load_paths.push(dir);
+        }
+
+        load_paths
+    };
 
     // Use a weak pointer to the logger in the context, so that when the logger goes out of
     // scope the output is cleaned up reliably. The runtime doesn't reliably shutdown as it
@@ -166,6 +205,7 @@ fn run(opts: Opts) -> Result<String, String> {
             .storage_directory(storage_directory)
             .threads(opts.jobs)
             .keep_going(!opts.stop),
+        initial_load_path,
     )
     .expect("failed to create script context");
 
@@ -264,7 +304,7 @@ fn run(opts: Opts) -> Result<String, String> {
 
     // Before the context is destroyed (unloading plugins), clear the thread-local storage in case
     // there are values which were allocated in the plugins.
-    plugin_tls::Context::reset();
+    ergo_runtime::plugin::Context::reset();
 
     // Drop the logger prior to the context dropping, so that any stored state (like errors) can
     // free with the plugins still loaded.

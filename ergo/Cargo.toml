@@ -1,6 +1,6 @@
 [package]
 name = "ergo"
-version = "1.0.0-beta.7"
+version = "1.0.0-beta.8"
 authors = ["Alex Franchuk <afranchuk@caci.com>"]
 edition = "2018"
 
@@ -10,14 +10,12 @@ atty = "^0.2"
 chrono = "^0.4"
 ctrlc = "^3.1"
 directories = "^2.0"
+ergo_script = { path = "../ergo_script" }
 ergo_runtime = { path = "../ergo_runtime" }
 futures = "^0.3"
 grease = { path = "../grease" }
-libloading = "^0.6"
 log = "^0.4"
 pager = "0.16"
-plugin_tls = { version = "~0.2.2", features = ["host"] }
-pom = { git = "https://github.com/afranchuk/pom", rev = "d0a979fdee0fc83d32531b5fa5085a98fc26e16d" }
 simplelog = "^0.7"
 slab = "^0.4"
 structopt = "^0.3"
