@@ -243,3 +243,25 @@ Arguments: <String>",
     )
     .into()
 }
+
+#[cfg(test)]
+mod test {
+    use ergo_runtime::types::String;
+
+    ergo_script::test! {
+        fn string_format(t) {
+            t.assert_value_eq("self:string:format \"hello {}\" world", &String::from("hello world"));
+            t.assert_value_eq("self:string:format \"{1}{}{2}{0}\" a b c d", &String::from("baca"));
+            t.assert_value_eq(
+                "self:string:format \"{my_named_arg} {}\" ^{my_named_arg = howdy} hi",
+                &String::from("howdy hi"),
+            );
+            t.assert_value_eq("self:string:format \"{{{{}}\"", &String::from("{{}"));
+            t.assert_script_fail("self:string:format \"{\"");
+            t.assert_script_fail("self:string:format \"}\"");
+            t.assert_script_fail("self:string:format \"{}\"");
+            t.assert_script_fail("self:string:format \"{named}\" ^{not-named=1}");
+            t.assert_script_fail("self:string:format \"{{{}}\" a");
+        }
+    }
+}

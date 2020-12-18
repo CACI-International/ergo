@@ -7,6 +7,7 @@ use grease::types::GreaseType;
 mod ast;
 mod base;
 mod runtime;
+pub mod testing;
 
 pub mod constants {
     macro_rules! program_name {
@@ -583,8 +584,8 @@ mod test {
     }
 
     async fn script_eval(s: &str) -> Result<Value, String> {
-        let mut ctx = script_context(Default::default()).map_err(|e| e.to_string())?;
-        Script::load(Source::new(StringSource::new("<string>", s.to_owned())))
+        let mut ctx = script_context(Default::default(), vec![]).map_err(|e| e.to_string())?;
+        Script::load(Source::new(StringSource::new("<test>", s.to_owned())))
             .map_err(|e| e.to_string())?
             .evaluate(&mut ctx)
             .await

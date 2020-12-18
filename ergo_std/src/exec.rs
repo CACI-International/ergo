@@ -563,3 +563,19 @@ grease::grease_traits_fn! {
         }
     }
 }
+
+// Only run these tests on unix, where we assume the existence of some programs.
+#[cfg(all(test,unix))]
+mod test {
+    ergo_script::test! {
+        fn exec(t) {
+            t.assert_success("self:exec echo hello |>:complete")
+        }
+    }
+
+    ergo_script::test! {
+        fn exec_fail(t) {
+            t.assert_fail("self:exec false |>:complete")
+        }
+    }
+}

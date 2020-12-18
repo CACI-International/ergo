@@ -29,6 +29,9 @@ tokio-util = { version = "0.5", features = ["io"] }
 xz = "0.1"
 zip = "0.5"
 
+[dev-dependencies]
+ergo_script = { path = "../ergo_script" }
+
 [target.'cfg(unix)'.dependencies]
 errno = "0.2"
 libc = "0.2"
