@@ -207,3 +207,31 @@ Returns a path that is composed of the components of `child` that are children o
         }).into()
     }).into()
 }
+
+#[cfg(test)]
+mod test {
+    ergo_script::test! {
+        fn join(t) {
+            let p = std::path::PathBuf::from("a");
+            t.assert_value_eq("self:path:join a b c", &super::PathBuf::from(p.join("b").join("c")));
+        }
+    }
+
+    ergo_script::test! {
+        fn parent(t) {
+            t.assert_content_eq("self:path:parent (self:path:join a b c)", "self:path:join a b");
+        }
+    }
+
+    ergo_script::test! {
+        fn relative(t) {
+            t.assert_content_eq("self:path:relative (self:path:join a b) (self:path:join a b c d)", "self:path:join c d");
+        }
+    }
+
+    ergo_script::test! {
+        fn split(t) {
+            t.assert_content_eq("self:path:split (self:path:join a b c)", "[a,b,c]");
+        }
+    }
+}

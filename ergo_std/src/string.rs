@@ -249,7 +249,7 @@ mod test {
     use ergo_runtime::types::String;
 
     ergo_script::test! {
-        fn string_format(t) {
+        fn format(t) {
             t.assert_value_eq("self:string:format \"hello {}\" world", &String::from("hello world"));
             t.assert_value_eq("self:string:format \"{1}{}{2}{0}\" a b c d", &String::from("baca"));
             t.assert_value_eq(
@@ -262,6 +262,24 @@ mod test {
             t.assert_script_fail("self:string:format \"{}\"");
             t.assert_script_fail("self:string:format \"{named}\" ^{not-named=1}");
             t.assert_script_fail("self:string:format \"{{{}}\" a");
+        }
+    }
+
+    ergo_script::test! {
+        fn split(t) {
+            t.assert_content_eq(r#"self:string:split l "hello world""#, r#"[he,"","o wor",d]"#);
+            t.assert_content_eq(r#"self:string:split the "the fox jumps over the fence""#, r#"[""," fox jumps over "," fence"]"#);
+            t.assert_content_eq(r#"self:string:split " " "the fox jumps over the fence""#, "[the,fox,jumps,over,the,fence]");
+            t.assert_content_eq("self:string:split t tttt", r#"["","","","",""]"#);
+        }
+    }
+
+    ergo_script::test! {
+        fn trim(t) {
+            t.assert_content_eq(r#"self:string:trim "
+            something
+
+            ""#, "something");
         }
     }
 }

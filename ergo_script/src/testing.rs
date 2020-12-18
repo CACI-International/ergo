@@ -90,6 +90,25 @@ impl Test {
         let b = self.eval(b).expect("eval error");
         assert_eq!(a, b);
     }
+
+    pub fn assert_ne(&self, a: &str, b: &str) {
+        let a = self.eval(a).expect("eval error");
+        let b = self.eval(b).expect("eval error");
+        assert_ne!(a, b);
+    }
+
+    pub fn assert_content_eq(&self, a: &str, b: &str) {
+        let a = self.eval(a).expect("eval error").unwrap();
+        let b = self.eval(b).expect("eval error").unwrap();
+        let task = self.rt.task.clone();
+        let a = task
+            .block_on(self.rt.value_by_content(a, true))
+            .expect("value error");
+        let b = task
+            .block_on(self.rt.value_by_content(b, true))
+            .expect("value error");
+        assert_eq!(a, b);
+    }
 }
 
 #[macro_export]

@@ -87,3 +87,18 @@ If it _does_ error, `handler` is applied to the error string and whatever it ret
     })
     .into()
 }
+
+#[cfg(test)]
+mod test {
+    ergo_script::test! {
+        fn throw(t) {
+            t.assert_fail("self:error:throw doh");
+        }
+    }
+
+    ergo_script::test! {
+        fn catch(t) {
+            t.assert_success("self:error:catch (fn _ -> caught) (self:error:throw doh)");
+        }
+    }
+}

@@ -209,3 +209,43 @@ Unlike normal indexing, this returns `()` if the index does not exist.",
     })
     .into()
 }
+
+#[cfg(test)]
+mod test {
+    ergo_script::test! {
+        fn entries(t) {
+            // This test only has one entry to not rely on ordering.
+            t.assert_content_eq("self:collection:entries {a = 1}", "[{key = a, value = 1}]");
+        }
+    }
+
+    ergo_script::test! {
+        fn fold(t) {
+            t.assert_content_eq("self:collection:fold (fn r a -> [:a,^:r]) [init] [a,b,c]", "[c,b,a,init]");
+        }
+    }
+
+    ergo_script::test! {
+        fn get(t) {
+            t.assert_content_eq("self:collection:get {a = 1} a", "1");
+            t.assert_content_eq("self:collection:get {a = 1} b", "()");
+            t.assert_content_eq("self:collection:get [a] 0", "a");
+            t.assert_content_eq("self:collection:get [a] 1", "()");
+        }
+    }
+
+    ergo_script::test! {
+        fn has(t) {
+            t.assert_content_eq("if (self:collection:has {a = 1} a) t f", "t");
+            t.assert_content_eq("if (self:collection:has {a = 1} b) t f", "f");
+            t.assert_content_eq("if (self:collection:has [a] 0) t f", "t");
+            t.assert_content_eq("if (self:collection:has [a] 1) t f", "f");
+        }
+    }
+
+    ergo_script::test! {
+        fn map(t) {
+            t.assert_content_eq("self:collection:map (fn a -> { mapped = :a }) [2,3]", "[{mapped = 2},{mapped = 3}]");
+        }
+    }
+}

@@ -273,3 +273,12 @@ Arguments: <value> <metadata key> <metadata value>",
     })
     .into()
 }
+
+#[cfg(test)]
+mod test {
+    ergo_script::test! {
+        fn by_content(t) {
+            t.assert_eq("self:value:by-content [a,b,c]:2", "c");
+        }
+    }
+}

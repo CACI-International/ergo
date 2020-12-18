@@ -34,3 +34,15 @@ maps will be evaluated concurrently).",
     })
     .into()
 }
+
+#[cfg(test)]
+mod test {
+    ergo_script::test! {
+        fn seq(t) {
+            t.assert_fail("self:seq (self:error:throw bad) ()");
+            t.assert_content_eq("self:seq a b c", "c");
+            t.assert_eq("self:seq a", "a");
+            t.assert_ne("self:seq a b c", "c");
+        }
+    }
+}
