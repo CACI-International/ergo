@@ -1,5 +1,16 @@
 # ergo changelog
 
+## Unreleased
+* Fix some bugs and improve output UI.
+  * Don't count/display abort errors.
+  * Fix rendering reset.
+  * Don't count prelude load errors.
+  * Don't allow ctrl-C to affect child processes.
+  * Don't echo stdin in fancy formatting.
+* Correct closure lookup.
+  * When a closure-bound value evaluated to a string in command position, it was
+    looked up twice (incorrectly).
+
 ## 1.0.0-beta.7  -- 2020-12-08
 * Add `-e`/`--expression` flags to evaluate the arguments as an expression
   without preceding `ergo`.
