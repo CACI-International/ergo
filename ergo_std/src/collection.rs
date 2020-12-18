@@ -159,7 +159,7 @@ Arguments: <map-or-array> <index>",
                         i < val.await?.0.len()
                     }
                     types::Map => |val| {
-                        val.await?.0.get(&index).is_some()
+                        val.await?.0.get(&index.unwrap()).is_some()
                     }
                     => |_| Err("non-indexable value")?
                 }).await
@@ -198,7 +198,7 @@ Unlike normal indexing, this returns `()` if the index does not exist.",
                         val.await?.0.get(i).cloned().unwrap_or(types::Unit.into()).into_any_value()
                     }
                     types::Map => |val| {
-                        val.await?.0.get(&index).cloned().unwrap_or(types::Unit.into()).into_any_value()
+                        val.await?.0.get(&index.unwrap()).cloned().unwrap_or(types::Unit.into()).into_any_value()
                     }
                     => |_| Err("non-indexable value")?
                 })

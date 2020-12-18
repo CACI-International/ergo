@@ -624,14 +624,7 @@ fn pattern_bindings(pat: &PatCompiled) -> Vec<(Source<Value>, grease::value::Dep
             Map(pats) => {
                 for p in pats {
                     match p.as_ref().unwrap() {
-                        MapPattern::Item(k, p) => remaining.push((
-                            p,
-                            deps.clone()
-                                + match k {
-                                    Ok(k) => depends![**k],
-                                    Err(_) => depends![],
-                                },
-                        )),
+                        MapPattern::Item(k, p) => remaining.push((p, deps.clone() + depends![k])),
                         MapPattern::Rest(p) => remaining.push((
                             p,
                             deps.clone() + depends![ergo_runtime::namespace_id!(ergo::rest)],
@@ -727,7 +720,7 @@ fn compile_pattern<'a>(
                             p.map_async(|p| async {
                                 match p {
                                     MapPattern::Item(k, p) => {
-                                        let k = Rt(k).evaluate(ctx).await;
+                                        let k = Rt(k).evaluate_ext(ctx, true).await?.id();
                                         let p = compile_pattern(ctx, p).await?;
                                         Ok(MapPattern::Item(k, p))
                                     }
@@ -924,13 +917,10 @@ fn _apply_pattern<'a>(
                     let (isource, i) = i.take();
                     let itemdesc = std::mem::discriminant(&i);
                     match i {
-                        MapPattern::Item(Err(e), _) => {
-                            errs.push(isource.with("map key").context_for_error(e))
-                        }
-                        MapPattern::Item(Ok(key), pat) => {
-                            let key = key.unwrap();
+                        MapPattern::Item(key, pat) => {
+                            dbg!(&grease::u128::U128::from(key));
                             let result = match val.as_mut() {
-                                Some((orig_value, m)) => match m.remove(&key) {
+                                Some((orig_value, m)) => match dbg!(m).remove(dbg!(&key)) {
                                     Some(v) => {
                                         let keydep = depends![key];
                                         matched_keys.insert(key, isource.clone());
@@ -1405,7 +1395,7 @@ fn compile_env_into_expr(ctx: &mut Runtime, local_env: Vec<Expr>, expr: Expr) ->
                 Ok(None)
             } else if let Expression::Compiled(v) = e.as_ref().unwrap() {
                 match &v.value {
-                    Ok(v) => self.ctx.env_get(v).map(|v| Ok(Some(v))).unwrap_or_else(|| {
+                    Ok(v) => self.ctx.env_get(v.as_ref().unwrap()).map(|v| Ok(Some(v))).unwrap_or_else(|| {
                         Err(Error::MissingBinding(v.as_ref().unwrap().clone()).into())
                     }),
                     Err(e) => Ok(Some(Err(e))),
@@ -1620,9 +1610,7 @@ fn compile_env_into_expr(ctx: &mut Runtime, local_env: Vec<Expr>, expr: Expr) ->
                     .map(|smp| {
                         smp.map(|mp| {
                             Ok(match mp {
-                                MapPattern::Item(k, p) => {
-                                    MapPattern::Item(do_expr(ctx, k)?, do_pat(ctx, p)?)
-                                }
+                                MapPattern::Item(k, p) => MapPattern::Item(k, do_pat(ctx, p)?),
                                 MapPattern::Rest(p) => MapPattern::Rest(do_pat(ctx, p)?),
                             })
                         })
@@ -1787,7 +1775,7 @@ impl Rt<Expression> {
                 ret
             }
             Unset(var) => {
-                let var = Rt(*var).evaluate(ctx).await?;
+                let var = Rt(*var).evaluate(ctx).await?.unwrap();
                 ctx.env_remove(&var);
                 Ok(ScriptEnvIntoMap.into_value().into())
             }

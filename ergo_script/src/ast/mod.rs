@@ -50,7 +50,7 @@ pub enum ArrayPattern<Lit, Bnd> {
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MapPattern<Lit, Bnd> {
-    Item(Bnd, PatT<Lit, Bnd>),
+    Item(Lit, PatT<Lit, Bnd>),
     Rest(PatT<Lit, Bnd>),
 }
 

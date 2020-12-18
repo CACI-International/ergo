@@ -288,6 +288,12 @@ impl Ord for Value {
     }
 }
 
+impl std::borrow::Borrow<Id> for Value {
+    fn borrow(&self) -> &Id {
+        self.id.as_ref()
+    }
+}
+
 /// Calculate the value id for a value given the value type and dependencies.
 pub fn value_id(tp: Option<&Type>, deps: &Dependencies) -> Id {
     let mut h = HashFn::default();
@@ -580,13 +586,13 @@ impl Value {
 
     /// Clear a metadata entry for this value.
     pub fn clear_metadata<T: MetadataKey>(&mut self, key: &T) {
-        self.metadata.remove(&key.id().into());
+        self.metadata.remove(&key.id());
     }
 
     /// Get a metadata entry for this value.
     pub fn get_metadata<T: MetadataKey>(&self, key: &T) -> Option<Ref<T::Value>> {
         self.metadata
-            .get(&key.id().into())
+            .get(&key.id())
             .map(|v| unsafe { Ref::new(v.clone()) })
     }
 

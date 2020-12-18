@@ -569,9 +569,8 @@ mod test {
                         Err("map length mismatch".into())
                     } else {
                         for (k, e) in entries.iter() {
-                            let v = m
-                                .remove(&types::String::from(*k).into())
-                                .ok_or("missing expected key")?;
+                            let k: Value = types::String::from(*k).into();
+                            let v = m.remove(&k).ok_or("missing expected key")?;
                             val_match(v, e.clone()).await?;
                         }
                         Ok(())

@@ -3,7 +3,7 @@
 use abi_stable::StableAbi;
 
 /// A u128 wrapper.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, StableAbi)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, StableAbi)]
 #[repr(C, align(16))]
 pub struct U128([u64; 2]);
 
@@ -66,5 +66,29 @@ impl AsMut<u128> for U128 {
 impl std::hash::Hash for U128 {
     fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
         h.write_u128(self.value())
+    }
+}
+
+impl std::borrow::Borrow<u128> for U128 {
+    fn borrow(&self) -> &u128 {
+        &*self
+    }
+}
+
+impl std::borrow::BorrowMut<u128> for U128 {
+    fn borrow_mut(&mut self) -> &mut u128 {
+        &mut *self
+    }
+}
+
+impl PartialOrd for U128 {
+    fn partial_cmp(&self, other: &U128) -> Option<std::cmp::Ordering> {
+        self.value().partial_cmp(&other.value())
+    }
+}
+
+impl Ord for U128 {
+    fn cmp(&self, other: &U128) -> std::cmp::Ordering {
+        self.value().cmp(&other.value())
     }
 }

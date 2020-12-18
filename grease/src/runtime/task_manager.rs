@@ -77,7 +77,7 @@ pub trait TaskLocal: Eraseable + StableAbi {
 
 /// Get a task local value.
 pub fn get_task_local<T: TaskLocal>() -> Option<TaskLocalRef<T>> {
-    let key = T::task_local_key().into();
+    let key = T::task_local_key();
     TASK_LOCAL
         .with(move |m| m.lock().get(&key).cloned())
         .map(|v| unsafe { TaskLocalRef::new(v) })
