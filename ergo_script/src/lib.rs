@@ -242,11 +242,11 @@ mod test {
     #[test]
     fn match_expr() -> Result<(), String> {
         script_eval_to(
-            "match [1,2,3] { {^keys} = :keys, [a,b] = :a, [a,b,c] = :a }",
+            "match [1,2,3] { {^keys} -> :keys, [a,b] -> :a, [a,b,c] -> :a }",
             SRString("1"),
         )?;
         script_eval_to(
-            "match [1,2,3] { a = :a, [a,b,c] = :b }",
+            "match [1,2,3] { a -> :a, [a,b,c] -> :b }",
             SRArray(&[SRString("1"), SRString("2"), SRString("3")]),
         )?;
         Ok(())
@@ -254,13 +254,13 @@ mod test {
 
     #[test]
     fn match_failure() -> Result<(), String> {
-        script_result_fail("match {a=[1,2]} { {b} = :b, [a,b] = :b }")
+        script_result_fail("match {a=[1,2]} { {b} -> :b, [a,b] -> :b }")
     }
 
     #[test]
     fn forced_match() -> Result<(), String> {
-        script_eval_to("match {a=[1,2]} { {b} = :b, [a,b] = :b }; ()", SRUnit)?;
-        script_fail("!match {a=[1,2]} { {b} = :b, [a,b] = :b }")?;
+        script_eval_to("match {a=[1,2]} { {b} -> :b, [a,b] -> :b }; ()", SRUnit)?;
+        script_fail("!match {a=[1,2]} { {b} -> :b, [a,b] -> :b }")?;
         Ok(())
     }
 
@@ -430,7 +430,7 @@ mod test {
 
         #[test]
         fn array_undecidable() -> Result<(), String> {
-            script_result_fail("match [1,2,3] { [^_,^_] = doh }")?;
+            script_result_fail("match [1,2,3] { [^_,^_] -> doh }")?;
             script_result_fail("[^_,a,^_] = [1,2,3]; :a")?;
             Ok(())
         }

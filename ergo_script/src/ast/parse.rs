@@ -77,7 +77,7 @@ mod pattern {
 
     /// An array item pattern.
     fn array_item<'a>() -> Parser<'a, Source<ArrayPattern<Expr, Expr>>> {
-        !function_delim()
+        !binding_delim()
             * (sym(Token::Caret).opt() + pattern()).map(|(c, p)| match c {
                 Some(c) => (c, p).into_source().map(|(_, p)| ArrayPattern::Rest(p)),
                 None => p.source().with(ArrayPattern::Item(p)),
@@ -349,7 +349,7 @@ mod expression {
         let m_space = || if literal { space() } else { spacenl() };
         let m_req_space = || if literal { req_space() } else { req_spacenl() };
         let tok = tag("fn");
-        let end_tok = function_delim();
+        let end_tok = binding_delim();
         let pat = m_req_space() * pattern::command_pattern() - m_space() - end_tok;
         let rest = m_space() * expression(true);
         (tok + pat + rest.expect("fn argument")).map(|res| {
@@ -365,7 +365,7 @@ mod expression {
     fn match_expr<'a>(literal: bool) -> Parser<'a, Expr> {
         let m_space = || if literal { req_space() } else { req_spacenl() };
         let tok = tag("match");
-        let item = pattern::pattern() - space() - sym(Token::Equal) - space() + expression(true);
+        let item = pattern::pattern() - space() - binding_delim() - space() + expression(true);
         let rest = m_space() * arg() - spacenl() + block_syntax(item);
         (tok + rest.expect("match arguments")).map(|res| {
             res.into_source().map(|(_, vs)| {
@@ -539,8 +539,8 @@ fn delim<'a>() -> Parser<'a, ()> {
     space() * one_of([Token::Newline, Token::Comma, Token::Semicolon].as_ref()) * spacenl()
 }
 
-/// A function parameter delimiter.
-fn function_delim<'a>() -> Parser<'a, Source<()>> {
+/// A parameter delimiter in binding.
+fn binding_delim<'a>() -> Parser<'a, Source<()>> {
     tag("->")
 }
 

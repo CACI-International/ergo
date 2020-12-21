@@ -1,5 +1,5 @@
 command = fn cmd ^args -> {
     match :cmd {
-        =return = args:0
+        =return -> args:0
     }
 }
