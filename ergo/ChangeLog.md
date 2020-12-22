@@ -10,6 +10,8 @@
 * Correct closure lookup.
   * When a closure-bound value evaluated to a string in command position, it was
     looked up twice (incorrectly).
+* Support doc comments (starting with `## `).
+* Change `match` syntax to use `->` instead of `=` between case and body.
 
 ## 1.0.0-beta.7  -- 2020-12-08
 * Add `-e`/`--expression` flags to evaluate the arguments as an expression

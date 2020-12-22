@@ -449,10 +449,60 @@ mod expression {
         function(literal) | match_expr(literal) | if_expr(literal)
     }
 
+    /// A single doc comment.
+    pub fn doc_comment<'a>() -> Parser<'a, Source<String>> {
+        Parser::new(|a, s| {
+            if let Some(t) = a.get(s) {
+                if let Token::DocComment(st) = &**t {
+                    Ok((t.clone().with(st.clone()), s + 1))
+                } else {
+                    Err(pom::result::ErrorDelayed::Mismatch {
+                        message: pom::result::ErrorMessage::new(move || {
+                            format!("expected string, found {}", t)
+                        }),
+                        position: s,
+                    })
+                }
+            } else {
+                Err(pom::result::ErrorDelayed::Incomplete)
+            }
+        })
+    }
+
+    /// Multiple contiguous doc comments, ignoring whitespace.
+    pub fn doc_comment_block<'a>() -> Parser<'a, Source<String>> {
+        (doc_comment() - spacenl()).repeat(1..).map(|docs| {
+            docs.into_source().map(|docs| {
+                let s = docs
+                    .into_iter()
+                    .map(Source::unwrap)
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                s.trim().to_owned()
+            })
+        })
+    }
+
     /// A single expression.
     pub fn expression<'a>(literal: bool) -> Parser<'a, Expr> {
-        call(move || force_expr() | kw_expr(literal) | set() | unset() | command_pipes(literal))
-            .cache()
+        let doc = doc_comment_block().opt();
+        let e = call(move || {
+            force_expr() | kw_expr(literal) | set() | unset() | command_pipes(literal)
+        })
+        .cache();
+        (doc + e).map(|(doc, mut e)| match doc {
+            None => e,
+            Some(doc) => {
+                // If expression is a Set, put the doc comment on the value of the set rather than
+                // the set expression itself.
+                if let Expression::Set(_, expr) = &mut *e {
+                    *expr = doc.map(|s| Expression::DocComment(s, expr.clone())).into();
+                    e
+                } else {
+                    doc.map(move |s| Expression::DocComment(s, e.into()))
+                }
+            }
+        })
     }
 }
 
@@ -1464,6 +1514,51 @@ mod test {
                             src(Expression::String("d".into())).into(),
                         ))])),
                     ],
+                ),
+            )
+        }
+
+        #[test]
+        fn doc_comment() -> Result {
+            assert(
+                &[
+                    DocComment(" my doc".into()),
+                    Newline,
+                    Whitespace,
+                    DocComment("".into()),
+                    Newline,
+                    DocComment("more doc".into()),
+                    Newline,
+                    DocComment("".into()),
+                    Newline,
+                    String("val".into()),
+                ],
+                Expression::DocComment(
+                    "my doc\n\nmore doc".into(),
+                    src(Expression::String("val".into())).into(),
+                ),
+            )
+        }
+
+        #[test]
+        fn doc_comment_set() -> Result {
+            assert(
+                &[
+                    DocComment("my doc".into()),
+                    Newline,
+                    String("a".into()),
+                    Whitespace,
+                    Equal,
+                    Whitespace,
+                    String("b".into()),
+                ],
+                Expression::Set(
+                    pat("a"),
+                    src(Expression::DocComment(
+                        "my doc".into(),
+                        src(Expression::String("b".into())).into(),
+                    ))
+                    .into(),
                 ),
             )
         }

@@ -63,6 +63,8 @@ impl<I: Iterator> Iterator for LookaheadIterator<I> {
 pub enum Token {
     /// A string, either from quoted or unquoted words.
     String(String),
+    /// A doc comment block.
+    DocComment(String),
     OpenBracket,
     CloseBracket,
     OpenCurly,
@@ -90,6 +92,12 @@ impl fmt::Display for Token {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Token::String(s) => write!(f, "{}", s),
+            Token::DocComment(s) => {
+                for line in s.split("\n") {
+                    writeln!(f, "## {}", line)?;
+                }
+                Ok(())
+            }
             Token::OpenBracket => write!(f, "["),
             Token::CloseBracket => write!(f, "]"),
             Token::OpenCurly => write!(f, "{{"),
@@ -165,15 +173,34 @@ impl<I: Iterator<Item = char>> Iterator for Tokens<I> {
             self.source.location.length = 1;
             // Comments
             if c == '#' {
-                while let Some(c) = self.iter.peek() {
-                    if *c != '\n' {
-                        self.iter.next();
-                        self.source.location.length += 1;
-                    } else {
-                        break;
+                // Doc comment
+                if self.iter.peek_match(&['#',' ']) {
+                    self.iter.next();
+                    self.iter.next();
+                    self.source.location.length += 2;
+
+                    let mut s = String::new();
+                    while let Some(c) = self.iter.peek() {
+                        if *c != '\n' {
+                            s.push(*c);
+                            self.iter.next();
+                            self.source.location.length += 1;
+                        } else {
+                            break;
+                        }
                     }
+                    Some(Ok(self.source.clone().with(Token::DocComment(s))))
+                } else {
+                    while let Some(c) = self.iter.peek() {
+                        if *c != '\n' {
+                            self.iter.next();
+                            self.source.location.length += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    self.next()
                 }
-                self.next()
             } else {
                 // The remaining parsing will always result in some token based on the consumed
                 // character(s).
@@ -410,6 +437,34 @@ mod test {
                 Token::Newline,
             ],
         )
+    }
+
+    #[test]
+    fn doc_comments() -> Result<(), Source<Error>> {
+        assert_tokens(
+            "## This is a doc comment\nhello world",
+            &[
+                Token::DocComment("This is a doc comment".into()),
+                Token::Newline,
+                Token::String("hello".into()),
+                Token::Whitespace,
+                Token::String("world".into()),
+            ],
+        )?;
+        assert_tokens(
+            "## This is a doc comment\n## more doc comment\n  ##  and more\nhello",
+            &[
+                Token::DocComment("This is a doc comment".into()),
+                Token::Newline,
+                Token::DocComment("more doc comment".into()),
+                Token::Newline,
+                Token::Whitespace,
+                Token::DocComment(" and more".into()),
+                Token::Newline,
+                Token::String("hello".into()),
+            ],
+        )?;
+        Ok(())
     }
 
     fn assert_tokens(s: &str, expected: &[Token]) -> Result<(), Source<Error>> {

@@ -18,8 +18,8 @@ use abi_stable::{
 use ergo_runtime::source::{FileSource, IntoSource, Source};
 use ergo_runtime::Result as EResult;
 use ergo_runtime::{
-    types, ContextEnv, ContextExt, EvalResult, FunctionArguments, FunctionCall, ResultIterator,
-    Runtime, ScriptEnv, UncheckedFunctionArguments,
+    metadata, types, ContextEnv, ContextExt, EvalResult, FunctionArguments, FunctionCall,
+    ResultIterator, Runtime, ScriptEnv, UncheckedFunctionArguments,
 };
 use futures::future::{BoxFuture, FutureExt};
 use grease::{
@@ -1395,9 +1395,13 @@ fn compile_env_into_expr(ctx: &mut Runtime, local_env: Vec<Expr>, expr: Expr) ->
                 Ok(None)
             } else if let Expression::Compiled(v) = e.as_ref().unwrap() {
                 match &v.value {
-                    Ok(v) => self.ctx.env_get(v.as_ref().unwrap()).map(|v| Ok(Some(v))).unwrap_or_else(|| {
-                        Err(Error::MissingBinding(v.as_ref().unwrap().clone()).into())
-                    }),
+                    Ok(v) => self
+                        .ctx
+                        .env_get(v.as_ref().unwrap())
+                        .map(|v| Ok(Some(v)))
+                        .unwrap_or_else(|| {
+                            Err(Error::MissingBinding(v.as_ref().unwrap().clone()).into())
+                        }),
                     Err(e) => Ok(Some(Err(e))),
                 }
             } else {
@@ -1579,6 +1583,18 @@ fn compile_env_into_expr(ctx: &mut Runtime, local_env: Vec<Expr>, expr: Expr) ->
                     If(cond.into(), if_true.into(), if_false.map(Box::from))
                 }
                 Force(v) => Force(do_expr(ctx, *v)?.into()),
+                DocComment(s, v) => {
+                    let mut v = do_expr(ctx, *v)?;
+                    if let Compiled(CompiledExpression {
+                        value: Ok(value), ..
+                    }) = &mut *v
+                    {
+                        value.set_metadata(&metadata::Doc, types::String::from(s).into());
+                        v.unwrap()
+                    } else {
+                        DocComment(s, v.into())
+                    }
+                }
                 Compiled(v) => Compiled(v),
             })
         })
@@ -1960,6 +1976,11 @@ impl Rt<Expression> {
                         Err(val) => ctx.value_by_content(val, false).await
                     }
                 }).await.transpose_err_with_context("in forced value")
+            }
+            DocComment(s, val) => {
+                let mut val = Rt(*val).evaluate(ctx).await?.unwrap();
+                val.set_metadata(&metadata::Doc, types::String::from(s).into());
+                Ok(val)
             }
             Compiled(v) => v.value.map(Source::unwrap)
         }

@@ -23,6 +23,7 @@ pub enum Expression {
     Match(Box<Expr>, Vec<(Pat, Expr)>),
     If(Box<Expr>, Box<Expr>, Option<Box<Expr>>),
     Force(Box<Expr>),
+    DocComment(String, Box<Expr>),
     Compiled(CompiledExpression),
 }
 
@@ -158,6 +159,9 @@ pub fn expr_dependencies(e: &Expr) -> grease::value::Dependencies {
             }
         }
         Force(e) => {
+            deps += expr_dependencies(e);
+        }
+        DocComment(_, e) => {
             deps += expr_dependencies(e);
         }
         Compiled(CompiledExpression { value, .. }) => match value {
