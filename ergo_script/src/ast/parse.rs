@@ -28,21 +28,21 @@ mod pattern {
 
     /// A pattern.
     pub fn pattern<'a>() -> Parser<'a, Pat> {
-        call(|| {
-            let any = tag("_").map(|s| s.with(Pattern::Any));
-            let binding = bind_key().map(|e| e.source().with(Pattern::Binding(e)));
-
-            map() | array() | literal() | any | binding
-        })
+        predicate() | pattern_arg()
     }
 
     /// A command pattern.
     pub fn command_pattern<'a>() -> Parser<'a, CmdPat> {
-        list(array_item(), req_space()).map(|args| args.into_source())
+        list(array_item(true), req_space()).map(|args| args.into_source())
     }
 
+    /// A binding key.
+    ///
+    /// A key may be a bare string, or `:` followed by any expression.
     pub fn bind_key<'a>() -> Parser<'a, Expr> {
-        expression::arg_no_eq()
+        !binding_delim()
+            * (word().map(|s| s.map(Expression::String))
+                | sym(Token::Colon) * expression::arg_no_eq())
     }
 
     /// A literal pattern.
@@ -53,7 +53,7 @@ mod pattern {
 
     /// An array pattern.
     fn array<'a>() -> Parser<'a, Pat> {
-        array_syntax(array_item()).map(|e| e.into_source().map(Pattern::Array))
+        array_syntax(array_item(false)).map(|e| e.into_source().map(Pattern::Array))
     }
 
     /// A map pattern.
@@ -76,13 +76,50 @@ mod pattern {
     }
 
     /// An array item pattern.
-    fn array_item<'a>() -> Parser<'a, Source<ArrayPattern<Expr, Expr>>> {
+    fn array_item<'a>(whitespace_bounded: bool) -> Parser<'a, Source<ArrayPattern<Expr, Expr>>> {
+        let pat = if whitespace_bounded {
+            pattern_arg()
+        } else {
+            pattern()
+        };
+
         !binding_delim()
-            * (sym(Token::Caret).opt() + pattern()).map(|(c, p)| match c {
+            * (sym(Token::Caret).opt() + pat).map(|(c, p)| match c {
                 Some(c) => (c, p).into_source().map(|(_, p)| ArrayPattern::Rest(p)),
                 None => p.source().with(ArrayPattern::Item(p)),
             })
     }
+
+    /// A pattern element that syntactically has no spaces.
+    fn pattern_arg<'a>() -> Parser<'a, Pat> {
+        call(|| {
+            let any = tag("_").map(|s| s.with(Pattern::Any));
+            let binding = bind_key().map(|e| e.source().with(Pattern::Binding(e)));
+            let pred = sym(Token::OpenParen) * spacenl() * predicate()
+                - spacenl()
+                - sym(Token::CloseParen);
+
+            map() | array() | literal() | any | binding | pred
+        })
+    }
+
+    /// A predicate pattern.
+    fn predicate<'a>() -> Parser<'a, Pat> {
+        (expression::arg_no_eq() - req_space() + pattern_arg()).map(|m| {
+            m.into_source()
+                .map(|(e, p)| Pattern::Predicate(e, p.into()))
+        })
+    }
+
+    /*
+    /// A predicate pattern using a colon.
+    fn predicate_colon<'a>() -> Parser<'a, Pat> {
+        (expression::arg_no_index(true) - sym(Token::Colon) + pattern()).map(|m| {
+            m.into_source()
+                .map(|(e, p)| Pattern::Predicate(e, p.into()))
+        })
+    }
+    */
 }
 
 /// Expression parsing.
@@ -156,7 +193,8 @@ mod expression {
         call(|| optional_forced(index(true, false))).cache()
     }
 
-    fn arg_no_index<'a>(eq_allowed: bool) -> Parser<'a, Expr> {
+    /// An argument without indexing.
+    pub fn arg_no_index<'a>(eq_allowed: bool) -> Parser<'a, Expr> {
         call(move || {
             nested(eq_allowed)
                 | (if eq_allowed { eqword() } else { word() }).map(|s| s.map(Expression::String))
@@ -687,7 +725,7 @@ mod test {
         #[test]
         fn binding_ref() -> Result {
             assert(
-                &[Colon, String("a".into())],
+                &[Colon, Colon, String("a".into())],
                 Pattern::Binding(src(Expression::Get(str_expr("a").into()))),
             )
         }
@@ -765,6 +803,37 @@ mod test {
                     )])))),
                     src(ArrayPattern::Item(src(Pattern::Binding(str_expr("a"))))),
                     src(ArrayPattern::Rest(src(Pattern::Binding(str_expr("rest"))))),
+                ]),
+            )
+        }
+
+        #[test]
+        fn predicate() -> Result {
+            assert(
+                &[String("a".into()), Whitespace, String("b".into())],
+                Pattern::Predicate(str_expr("a"), src(Pattern::Binding(str_expr("b"))).into()),
+            )
+        }
+
+        #[test]
+        fn command_predicate() -> Result {
+            assert_parse(
+                &[
+                    String("a".into()),
+                    Whitespace,
+                    OpenParen,
+                    String("b".into()),
+                    Whitespace,
+                    String("c".into()),
+                    CloseParen,
+                ],
+                |_| command_pattern(),
+                src(vec![
+                    src(ArrayPattern::Item(src(Pattern::Binding(str_expr("a"))))),
+                    src(ArrayPattern::Item(src(Pattern::Predicate(
+                        str_expr("b"),
+                        src(Pattern::Binding(str_expr("c"))).into(),
+                    )))),
                 ]),
             )
         }
@@ -1272,7 +1341,13 @@ mod test {
                 Expression::Set(pat("a"), src(Expression::String("a".into())).into()),
             )?;
             assert(
-                &[Colon, String("a".to_owned()), Equal, String("a".to_owned())],
+                &[
+                    Colon,
+                    Colon,
+                    String("a".to_owned()),
+                    Equal,
+                    String("a".to_owned()),
+                ],
                 Expression::Set(
                     src(Pattern::Binding(src(Expression::Get(
                         src(Expression::String("a".into())).into(),
@@ -1282,7 +1357,7 @@ mod test {
                 ),
             )?;
             assert(
-                &[Colon, String("a".into()), Equal, String("b".into())],
+                &[Colon, Colon, String("a".into()), Equal, String("b".into())],
                 Expression::Set(
                     src(Pattern::Binding(src(Expression::Get(
                         src(Expression::String("a".into())).into(),
@@ -1301,7 +1376,7 @@ mod test {
                 Expression::Unset(src(Expression::String("a".into())).into()),
             )?;
             assert(
-                &[Colon, String("a".into()), Equal],
+                &[Colon, Colon, String("a".into()), Equal],
                 Expression::Unset(
                     src(Expression::Get(src(Expression::String("a".into())).into())).into(),
                 ),

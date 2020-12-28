@@ -316,7 +316,7 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                                     match Errored::ignore(apply_value(ctx, ws, FunctionArguments::new(
                                             vec![Source::builtin(types::String::from(PRELUDE_ARG).into())],
                                             Default::default()
-                                        ).unchecked(), false)).await {
+                                        ).unchecked())).await {
                                         Ok(v) => {
                                             // Prelude must be a map.
                                             let (v_source, v) = v.take();
@@ -391,7 +391,7 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                 apply_value(ctx, loaded, FunctionArguments::new(
                         vec![Source::builtin(types::String::from(WORKSPACE_FALLBACK_ARG).into())],
                         Default::default()
-                        ).unchecked(), false).await?
+                        ).unchecked()).await?
             } else {
                 loaded
             };
@@ -400,7 +400,7 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
             if !ctx.args.is_empty() {
                 let args = std::mem::take(&mut ctx.args);
 
-                apply_value(ctx, loaded, args.unchecked(), false).await
+                apply_value(ctx, loaded, args.unchecked()).await
             } else {
                 ctx.unused_arguments()?;
                 Ok(loaded)
@@ -663,6 +663,7 @@ fn pattern_bindings_basic<L, B: Clone>(pat: &PatT<L, B>) -> Vec<Source<B>> {
                     }
                 }
             }
+            Predicate(_, pat) => remaining.push(pat),
             _ => (),
         }
     }
@@ -735,6 +736,17 @@ fn compile_pattern<'a>(
                     }
                     Map(pats_new)
                 }
+                Predicate(pred, pat) => {
+                    let pred = Rt(pred).evaluate_ext(ctx, true).await;
+                    let pred = match pred {
+                        Ok(v) => v
+                            .map_async(|v| resolve_value(ctx, v))
+                            .await
+                            .transpose_with_context("while evaluating pattern predicate"),
+                        Err(e) => Err(e),
+                    };
+                    Predicate(pred, compile_pattern(ctx, *pat).await?.into())
+                }
             })
         })
         .await
@@ -743,11 +755,16 @@ fn compile_pattern<'a>(
     .boxed()
 }
 
-pub async fn apply_pattern(pat: PatCompiled, val: Option<Source<Value>>) -> EResult<ScriptEnv> {
+pub async fn apply_pattern(
+    ctx: &mut Runtime,
+    pat: PatCompiled,
+    val: Option<Source<Value>>,
+) -> EResult<ScriptEnv> {
     let mut ret = ScriptEnv::new();
     let mut errs = Vec::new();
 
     _apply_pattern(
+        ctx,
         &mut ret,
         &mut errs,
         pat,
@@ -762,6 +779,7 @@ pub async fn apply_pattern(pat: PatCompiled, val: Option<Source<Value>>) -> ERes
 }
 
 fn _apply_pattern<'a>(
+    ctx: &'a mut Runtime,
     env: &'a mut ScriptEnv,
     errs: &'a mut Vec<grease::Error>,
     pat: PatCompiled,
@@ -853,7 +871,7 @@ fn _apply_pattern<'a>(
                     Ok(v) => v,
                 };
 
-                match pattern_array(&inner, &vals).await {
+                match pattern_array(ctx, &inner, &vals).await {
                     Ok(mut n_env) => {
                         env.append(&mut n_env);
                     }
@@ -955,7 +973,7 @@ fn _apply_pattern<'a>(
                                 },
                                 None => None,
                             };
-                            _apply_pattern(env, errs, pat, result).await;
+                            _apply_pattern(ctx, env, errs, pat, result).await;
                         }
                         MapPattern::Rest(pat) => {
                             if let Some((src, _)) = rest_pattern.replace((isource.clone(), pat)) {
@@ -970,6 +988,7 @@ fn _apply_pattern<'a>(
                 // Match rest pattern with remaining values
                 if let Some((src, rest)) = rest_pattern {
                     _apply_pattern(
+                        ctx,
                         env,
                         errs,
                         rest,
@@ -992,6 +1011,37 @@ fn _apply_pattern<'a>(
                     }
                 }
             }
+            Predicate(pred, pat) => match pred {
+                Err(e) => errs.push(source.with("within predicate").context_for_error(e)),
+                Ok(pred) => {
+                    let val = match val {
+                        Some(v) => {
+                            let v = v.map(|v| v.binding);
+                            let src = pred.source();
+                            // Apply predicate to value, then match pattern to result
+                            let v = apply_value(
+                                ctx,
+                                pred,
+                                FunctionArguments::new(vec![v], Default::default()).unchecked(),
+                            )
+                            .await;
+                            match v {
+                                Err(e) => {
+                                    errs.push(
+                                        source
+                                            .with("while applying predicate")
+                                            .context_for_error(e),
+                                    );
+                                    None
+                                }
+                                Ok(v) => Some(src.with(PatternValues::singular(v.unwrap()))),
+                            }
+                        }
+                        None => None,
+                    };
+                    _apply_pattern(ctx, env, errs, *pat, val).await;
+                }
+            },
         }
     }
     .boxed()
@@ -1005,13 +1055,14 @@ fn is_fixed_point<L, B>(pat: &Pattern<L, B>) -> bool {
 }
 
 async fn pattern_array(
+    ctx: &mut Runtime,
     pats: &[Source<ArrayPattern<grease::value::Id, EvalResult>>],
     vals: &[Option<Source<PatternValues>>],
 ) -> Result<ScriptEnv, Vec<grease::Error>> {
     let mut ret = ScriptEnv::new();
     let mut errs = Vec::new();
 
-    _pattern_array(&mut ret, &mut errs, pats, vals).await;
+    _pattern_array(ctx, &mut ret, &mut errs, pats, vals).await;
     if errs.is_empty() {
         Ok(ret)
     } else {
@@ -1020,6 +1071,7 @@ async fn pattern_array(
 }
 
 fn _pattern_array<'a>(
+    ctx: &'a mut Runtime,
     env: &'a mut ScriptEnv,
     errs: &'a mut Vec<grease::Error>,
     pats: &'a [Source<ArrayPattern<grease::value::Id, EvalResult>>],
@@ -1049,7 +1101,7 @@ fn _pattern_array<'a>(
                 ArrayPattern::Item(p) => {
                     if let Some(v) = vals.get(vali) {
                         vali += 1;
-                        _apply_pattern(env, errs, p.clone(), v.clone()).await;
+                        _apply_pattern(ctx, env, errs, p.clone(), v.clone()).await;
                     } else {
                         errs.push(
                             psource
@@ -1061,8 +1113,9 @@ fn _pattern_array<'a>(
                 }
                 ArrayPattern::Rest(p) => {
                     let rest_end =
-                        pattern_array_rest(env, errs, &pats[pati..], &vals[vali..]).await;
+                        pattern_array_rest(ctx, env, errs, &pats[pati..], &vals[vali..]).await;
                     _apply_pattern(
+                        ctx,
                         env,
                         errs,
                         p.clone(),
@@ -1091,6 +1144,7 @@ fn _pattern_array<'a>(
 }
 
 fn pattern_array_rest<'a>(
+    ctx: &'a mut Runtime,
     env: &'a mut ScriptEnv,
     errs: &'a mut Vec<grease::Error>,
     pats: &'a [Source<ArrayPattern<grease::value::Id, EvalResult>>],
@@ -1109,7 +1163,7 @@ fn pattern_array_rest<'a>(
                     // If we have a fixed point pattern, try to match at different locations
                     let mut vali = 0;
                     while vali < vals.len() {
-                        match pattern_array(&pats, &vals[vali..]).await {
+                        match pattern_array(ctx, &pats, &vals[vali..]).await {
                             Ok(mut n_env) => {
                                 env.append(&mut n_env);
                                 return vals[..vali].into_iter().cloned().collect();
@@ -1128,7 +1182,7 @@ fn pattern_array_rest<'a>(
                     None
                 } else {
                     // Go forward to try to find a fixed point
-                    match pattern_array_rest(env, errs, &pats[1..], &vals[..]).await {
+                    match pattern_array_rest(ctx, env, errs, &pats[1..], &vals[..]).await {
                         None => None,
                         Some(values) => {
                             if values.is_empty() {
@@ -1152,7 +1206,7 @@ fn pattern_array_rest<'a>(
                                         val = Some(v);
                                     }
                                 }
-                                _apply_pattern(env, errs, p.clone(), Some(val.unwrap())).await;
+                                _apply_pattern(ctx, env, errs, p.clone(), Some(val.unwrap())).await;
                                 Some(ret)
                             }
                         }
@@ -1169,6 +1223,7 @@ fn pattern_array_rest<'a>(
 }
 
 pub async fn apply_command_pattern(
+    ctx: &mut Runtime,
     pat: CmdPatT<grease::value::Id, EvalResult>,
     mut args: FunctionArguments,
 ) -> Result<ScriptEnv, Vec<grease::Error>> {
@@ -1211,6 +1266,7 @@ pub async fn apply_command_pattern(
         // Get non-positional pattern bindings
         let non_pos_bindings = if let Some(non_pos_arg) = non_pos_args.into_iter().next() {
             apply_pattern(
+                ctx,
                 non_pos_arg,
                 Some(kw.into_source().map(|kw| {
                     types::Map(
@@ -1237,7 +1293,7 @@ pub async fn apply_command_pattern(
         };
         let non_pos_bindings = non_pos_bindings.map_err(|e| vec![e]);
         // Merge with positional pattern bindings, if applicable
-        let pos_bindings = pattern_array(&pos_args, &vals).await;
+        let pos_bindings = pattern_array(ctx, &pos_args, &vals).await;
         match (non_pos_bindings, pos_bindings) {
             (Ok(mut a), Ok(mut b)) => {
                 a.append(&mut b);
@@ -1268,6 +1324,27 @@ fn lookup(ctx: &Runtime, k: Value) -> EResult<Value> {
     }
 }
 
+async fn resolve_value(ctx: &Runtime, v: Value) -> EResult<Value> {
+    let vctx = ctx.clone();
+    v.type_and_then_value(
+        move |tp, v| async move {
+            match_value!(v, typed &tp => {
+                // Lookup string in environment, and apply result to remaining arguments
+                types::String => |k| lookup(&vctx, k.into()),
+                => |v| Ok(v)
+            })
+        },
+        depends![{ ergo_runtime::namespace_id!(ergo::env_string_get) }],
+    )
+    .await
+}
+
+async fn resolve_source_value(ctx: &Runtime, v: Source<Value>) -> EvalResult {
+    v.map_async(|v| resolve_value(ctx, v))
+        .await
+        .transpose_with_context("while resolving value")
+}
+
 /// Apply the value to the given arguments.
 ///
 /// If `env_lookup` is true and `v` is a `String`, it will be looked up in the environment.
@@ -1275,30 +1352,11 @@ pub fn apply_value(
     ctx: &mut Runtime,
     v: Source<Value>,
     args: UncheckedFunctionArguments,
-    env_lookup: bool,
 ) -> BoxFuture<EvalResult> {
     async move {
         let v_source = v.source();
 
-        let vctx = ctx.clone();
-
         v.map_async(|v| async {
-            let v = if env_lookup {
-                v.type_and_then_value(
-                    move |tp, v| async move {
-                        match_value!(v, typed &tp => {
-                            // Lookup string in environment, and apply result to remaining arguments
-                            types::String => |k| lookup(&vctx, k.into()),
-                            => |v| Ok(v)
-                        })
-                    },
-                    depends![{ergo_runtime::namespace_id!(ergo::env_string_get)}],
-                )
-                .await?
-            } else {
-                v
-            };
-
             let mut ctx = ctx.clone();
 
             let deps = depends![{ergo_runtime::namespace_id!(ergo::apply)}, ^&args];
@@ -1633,6 +1691,9 @@ fn compile_env_into_expr(ctx: &mut Runtime, local_env: Vec<Expr>, expr: Expr) ->
                         .transpose_ok()
                     })
                     .collect_result()?),
+                Predicate(pred, pat) => {
+                    Predicate(do_expr_ext(ctx, pred, true)?, do_pat(ctx, *pat)?.into())
+                }
             })
         })
         .transpose_with_context("in pattern")
@@ -1762,7 +1823,8 @@ impl Rt<Expression> {
                     let bindings = pattern_bindings(&pat_compiled);
                     let v = v.unwrap_or(e_source.with(make_value!({ let ret: Result<(),_> = Err(grease::Error::aborted()); ret }).into()));
                     let deps = depends![^pattern_dependencies_comp(&pat_compiled), *v];
-                    let pat_result = apply_pattern(pat_compiled, Some(v)).shared();
+                    let mut pctx = ctx.empty();
+                    let pat_result = async move { apply_pattern(&mut pctx, pat_compiled, Some(v)).await }.shared();
                     ctx.env_extend(bindings.into_iter().map(|(key, d)| {
                         let (source, k) = key.take();
                         let pat_result = pat_result.clone();
@@ -1786,7 +1848,8 @@ impl Rt<Expression> {
                         otherwise => otherwise
                     };
                 } else {
-                    ctx.env_extend(apply_pattern(pat_compiled, v).await?);
+                    let env = apply_pattern(ctx, pat_compiled, v).await?;
+                    ctx.env_extend(env);
                 }
                 ret
             }
@@ -1841,11 +1904,16 @@ impl Rt<Expression> {
                     return Err(grease::Error::aggregate(errs));
                 }
 
+                let f = if cmd_lookup {
+                    resolve_source_value(ctx, f).await?
+                } else {
+                    f
+                };
+
                 apply_value(
                     ctx,
                     f,
                     FunctionArguments::new(vals, kw_vals).unchecked(),
-                    cmd_lookup,
                 )
                 .await
                 .map(Source::unwrap) // TODO: use the source?
@@ -1887,7 +1955,7 @@ impl Rt<Expression> {
 
                         let args = std::mem::take(&mut fctx.args);
 
-                        match apply_command_pattern(pat.clone(), args).await {
+                        match apply_command_pattern(&mut ctx, pat.clone(), args).await {
                             Ok(bindings) => {
                                 ctx.env_scoped(bindings, |ctx| {
                                     Rt(e).evaluate(ctx).boxed()
@@ -1925,7 +1993,7 @@ impl Rt<Expression> {
                 let mut ctx = ctx.empty();
                 Ok(Value::dyn_new(async move {
                     for (p, e) in pats {
-                        if let Ok(bindings) = apply_pattern(p, Some(val.clone())).await {
+                        if let Ok(bindings) = apply_pattern(&mut ctx, p, Some(val.clone())).await {
                             return Ok(ctx
                                 .env_scoped(bindings, |ctx| Rt(e).evaluate(ctx).boxed())
                                 .await

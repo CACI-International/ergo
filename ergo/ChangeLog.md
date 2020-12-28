@@ -12,6 +12,18 @@
     looked up twice (incorrectly).
 * Support doc comments (starting with `## `).
 * Change `match` syntax to use `->` instead of `=` between case and body.
+* Change pattern syntax to require `:` prior to arbitrary expressions.
+  * This means that `a` and `:a` are identical patterns, but now `:a` as a
+    pattern (i.e. binding to the value bound to `a`) muts be expressed as `::a`.
+  * An easy way to think of it is that all pattern bindings (in set expressions,
+    function parameters, and match expressions) are expressed the same way they
+    are accessed:
+    ```
+    :a = something
+    access :a
+    ```
+    Except that a literal string `s` in a pattern is shorthand for `:s`.
+* Add support for pattern predicates.
 
 ## 1.0.0-beta.7  -- 2020-12-08
 * Add `-e`/`--expression` flags to evaluate the arguments as an expression

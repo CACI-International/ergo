@@ -68,7 +68,7 @@ pub fn script_context(
 pub async fn final_value(ctx: &mut Runtime, mut val: Source<grease::Value>) -> EvalResult {
     // Apply any functions (with no arguments).
     while val.grease_type().await? == &types::Function::grease_type() {
-        val = runtime::apply_value(ctx, val, Default::default(), false).await?;
+        val = runtime::apply_value(ctx, val, Default::default()).await?;
     }
     Ok(val)
 }
@@ -145,6 +145,11 @@ mod test {
     }
 
     #[test]
+    fn set_with_equals() -> Result<(), String> {
+        script_eval_to("a = \"1=2\"", SRMap(&[("a", SRString("1=2"))]))
+    }
+
+    #[test]
     fn block_set_shorthand() -> Result<(), String> {
         script_eval_to(
             "a = 1\nb = 2\n{c=3,a,b}",
@@ -158,13 +163,13 @@ mod test {
 
     #[test]
     fn block_set_ref() -> Result<(), String> {
-        script_eval_to("a = b\n{:a = 1}", SRMap(&[("b", SRString("1"))]))
+        script_eval_to("a = b\n{::a = 1}", SRMap(&[("b", SRString("1"))]))
     }
 
     #[test]
     fn block_set_dedup() -> Result<(), String> {
         script_eval_to(
-            "a = something\nb = something\n{:a = ();:b = ()}",
+            "a = something\nb = something\n{::a = ();::b = ()}",
             SRMap(&[("something", SRUnit)]),
         )
     }
@@ -172,7 +177,7 @@ mod test {
     #[test]
     fn block_set_arbitrary() -> Result<(), String> {
         script_eval_to(
-            "a = b; :a = c; arr = [:b,1]; :arr = d; ::arr = e; map = {k=v}; :map = f",
+            "a = b; ::a = c; arr = [:b,1]; ::arr = d; :::arr = e; map = {k=v}; ::map = f",
             SRAny,
         )
     }
@@ -181,6 +186,14 @@ mod test {
     fn comment() -> Result<(), String> {
         script_eval_to(
             "# comment comment comment\na = something\n:a",
+            SRString("something"),
+        )
+    }
+
+    #[test]
+    fn doc_comment() -> Result<(), String> {
+        script_eval_to(
+            "## doc comment comment comment\na = something\n:a",
             SRString("something"),
         )
     }
@@ -234,8 +247,8 @@ mod test {
                 ("a", SRString("hi")),
             ]),
         )?;
-        script_eval_to("a = 5; :a = 10; f = fn -> ::a; (f)", SRString("10"))?;
-        script_fail("a = 5; :a = 10; f = fn -> b = 4; ::b")?;
+        script_eval_to("a = 5; ::a = 10; f = fn -> ::a; (f)", SRString("10"))?;
+        script_fail("a = 5; ::a = 10; f = fn -> b = 4; ::b")?;
         Ok(())
     }
 
@@ -480,6 +493,26 @@ mod test {
         fn map_mismatch() -> Result<(), String> {
             script_result_fail("{a,b,c} = {a=1,b=2}; :a")?;
             script_result_fail("{a,^keys,^keys2} = {a=1}; :a")?;
+            Ok(())
+        }
+
+        #[test]
+        fn predicate() -> Result<(), String> {
+            script_eval_to("a = fn v -> v:key; m = {key = hi}; !a =hi = :m; ()", SRUnit)?;
+            script_eval_to(
+                "a = fn v -> v:key; m = {key = hi}; !a b = :m; :b",
+                SRString("hi"),
+            )?;
+            script_fail("a = fn v -> v:key; m = {key = hi}; !a =bye = :m; ()")?;
+            script_fail("a = fn v -> v:key; m = {notkey = hi}; !a =hi = :m; ()")?;
+            Ok(())
+        }
+
+        #[test]
+        fn match_predicate() -> Result<(), String> {
+            script_eval_to("a = fn {key} -> :key; b = fn {key2} -> :key2; match {key = k} { a v -> :v, b v -> :v }", SRString("k"))?;
+            script_eval_to("a = fn {key} -> :key; b = fn {key2} -> :key2; match {key2 = k2} { a v -> :v, b v -> :v }", SRString("k2"))?;
+            script_result_fail("a = fn {key} -> :key; b = fn {key2} -> :key2; match {key3 = k3} { a v -> :v, b v -> :v }")?;
             Ok(())
         }
     }

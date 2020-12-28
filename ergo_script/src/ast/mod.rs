@@ -41,6 +41,7 @@ pub enum Pattern<Lit, Bnd> {
     Binding(Bnd),
     Array(Vec<Source<ArrayPattern<Lit, Bnd>>>),
     Map(Vec<Source<MapPattern<Lit, Bnd>>>),
+    Predicate(Bnd, Box<PatT<Lit, Bnd>>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -210,14 +211,18 @@ where
                 let p = p.as_ref().unwrap();
                 deps += depends![std::mem::discriminant(p)];
                 match p {
-                    MapPattern::Item(_, p) => {
-                        deps += pattern_dependencies(p, literal_deps, binding_deps)
+                    MapPattern::Item(k, p) => {
+                        deps +=
+                            literal_deps(k) + pattern_dependencies(p, literal_deps, binding_deps)
                     }
                     MapPattern::Rest(p) => {
                         deps += pattern_dependencies(p, literal_deps, binding_deps)
                     }
                 }
             }
+        }
+        Predicate(v, p) => {
+            deps += binding_deps(v) + pattern_dependencies(p, literal_deps, binding_deps)
         }
     }
     deps
