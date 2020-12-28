@@ -1,6 +1,6 @@
 //! Error module.
 
-use ergo_runtime::{ergo_function, types, ContextExt, FunctionArguments};
+use ergo_runtime::{ergo_function, traits, types, ContextExt, FunctionArguments};
 use futures::future::TryFutureExt;
 use grease::{
     depends, make_value,
@@ -54,12 +54,9 @@ If it _does_ error, `handler` is applied to the error string and whatever it ret
 
         ctx.unused_arguments()?;
 
-        let handler = ctx.source_value_as::<types::Function>(handler);
-        let handler = handler.await?.unwrap();
+        let handler = traits::delay_call(ctx, handler).await?;
 
-        let call_site = ctx.call_site.clone();
-        let deps = depends![handler, value];
-        let handler = types::Portable::portable(handler, ctx);
+        let deps = depends![*handler.value, value];
 
         Value::dyn_new(
             async move {
@@ -70,12 +67,10 @@ If it _does_ error, `handler` is applied to the error string and whatever it ret
                 let e = e.to_string();
                 async move {
                     Ok(handler
-                        .await?
                         .call(
                             FunctionArguments::positional(vec![
                                 value_source.with(types::String::from(e).into())
-                            ]),
-                            call_site,
+                            ]).unchecked(),
                         )
                         .await?
                         .unwrap()

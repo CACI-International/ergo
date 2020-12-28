@@ -627,19 +627,25 @@ where
 
 impl<'a, T, U> IntoSource for std::collections::BTreeMap<T, U>
 where
-    T: Ord,
+    T: IntoSource,
+    T::Output: Ord,
     U: IntoSource,
 {
-    type Output = std::collections::BTreeMap<T, Source<U::Output>>;
+    type Output = std::collections::BTreeMap<Source<T::Output>, Source<U::Output>>;
 
     fn into_source(self) -> Source<Self::Output> {
         let (value, rest): (Vec<_>, Vec<_>) = self
             .into_iter()
             .map(|(k, v)| {
+                let k = k.into_source();
                 let v = v.into_source();
-                let source = v.source.0.clone();
-                let loc = v.location.clone();
-                ((k, v), (loc, SourceFactoryRef(source)))
+                let loc = &k.location + &v.location;
+                let ksource = k.source.0.clone();
+                let vsource = v.source.0.clone();
+                (
+                    (k, v),
+                    (loc, SourceFactoryRef(ksource) + SourceFactoryRef(vsource)),
+                )
             })
             .unzip();
         let (locs, srcs): (Vec<_>, Vec<_>) = rest.into_iter().unzip();
@@ -656,19 +662,25 @@ where
 
 impl<'a, T, U> IntoSource for grease::bst::BstMap<T, U>
 where
-    T: Ord,
+    T: IntoSource,
+    T::Output: Ord,
     U: IntoSource,
 {
-    type Output = grease::bst::BstMap<T, Source<U::Output>>;
+    type Output = grease::bst::BstMap<Source<T::Output>, Source<U::Output>>;
 
     fn into_source(self) -> Source<Self::Output> {
         let (value, rest): (Vec<_>, Vec<_>) = self
             .into_iter()
             .map(|(k, v)| {
+                let k = k.into_source();
                 let v = v.into_source();
-                let source = v.source.0.clone();
-                let loc = v.location.clone();
-                ((k, v), (loc, SourceFactoryRef(source)))
+                let loc = &k.location + &v.location;
+                let ksource = k.source.0.clone();
+                let vsource = v.source.0.clone();
+                (
+                    (k, v),
+                    (loc, SourceFactoryRef(ksource) + SourceFactoryRef(vsource)),
+                )
             })
             .unzip();
         let (locs, srcs): (Vec<_>, Vec<_>) = rest.into_iter().unzip();

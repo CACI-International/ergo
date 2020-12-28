@@ -1,7 +1,7 @@
 //! Ergo script loading and execution.
 
 pub use ergo_runtime::source::{FileSource, Source, StringSource};
-use ergo_runtime::{types, EvalResult, Runtime, ScriptEnv};
+use ergo_runtime::{traits, types, EvalResult, Runtime, ScriptEnv};
 use grease::types::GreaseType;
 
 mod ast;
@@ -68,7 +68,7 @@ pub fn script_context(
 pub async fn final_value(ctx: &mut Runtime, mut val: Source<grease::Value>) -> EvalResult {
     // Apply any functions (with no arguments).
     while val.grease_type().await? == &types::Function::grease_type() {
-        val = runtime::apply_value(ctx, val, Default::default()).await?;
+        val = traits::call(ctx, val, Default::default()).await?;
     }
     Ok(val)
 }

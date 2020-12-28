@@ -18,8 +18,8 @@ use abi_stable::{
 use ergo_runtime::source::{FileSource, IntoSource, Source};
 use ergo_runtime::Result as EResult;
 use ergo_runtime::{
-    metadata, types, ContextEnv, ContextExt, EvalResult, FunctionArguments, FunctionCall,
-    ResultIterator, Runtime, ScriptEnv, UncheckedFunctionArguments,
+    metadata, traits, types, ContextEnv, ContextExt, EvalResult, FunctionArguments, FunctionCall,
+    ResultIterator, Runtime, ScriptEnv,
 };
 use futures::future::{BoxFuture, FutureExt};
 use grease::{
@@ -34,7 +34,6 @@ use log::{debug, trace};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path;
-use std::str::FromStr;
 
 /// Script type indicating that the env should be returned as a map.
 #[derive(Clone, Copy, Debug, GreaseType, Hash)]
@@ -313,7 +312,7 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
                                     };
 
                                     // Try to access prelude, but allow failures
-                                    match Errored::ignore(apply_value(ctx, ws, FunctionArguments::new(
+                                    match Errored::ignore(traits::call(ctx, ws, FunctionArguments::new(
                                             vec![Source::builtin(types::String::from(PRELUDE_ARG).into())],
                                             Default::default()
                                         ).unchecked())).await {
@@ -388,7 +387,7 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
             // If resolved to an ancestor workspace, run arguments on
             // the result of `[loaded] command`.
             let loaded = if was_workspace {
-                apply_value(ctx, loaded, FunctionArguments::new(
+                traits::call(ctx, loaded, FunctionArguments::new(
                         vec![Source::builtin(types::String::from(WORKSPACE_FALLBACK_ARG).into())],
                         Default::default()
                         ).unchecked()).await?
@@ -400,7 +399,7 @@ pub fn load_script<'a>(ctx: &'a mut FunctionCall) -> BoxFuture<'a, EvalResult> {
             if !ctx.args.is_empty() {
                 let args = std::mem::take(&mut ctx.args);
 
-                apply_value(ctx, loaded, args.unchecked()).await
+                traits::call(ctx, loaded, args.unchecked()).await
             } else {
                 ctx.unused_arguments()?;
                 Ok(loaded)
@@ -1019,7 +1018,7 @@ fn _apply_pattern<'a>(
                             let v = v.map(|v| v.binding);
                             let src = pred.source();
                             // Apply predicate to value, then match pattern to result
-                            let v = apply_value(
+                            let v = traits::call(
                                 ctx,
                                 pred,
                                 FunctionArguments::new(vec![v], Default::default()).unchecked(),
@@ -1343,71 +1342,6 @@ async fn resolve_source_value(ctx: &Runtime, v: Source<Value>) -> EvalResult {
     v.map_async(|v| resolve_value(ctx, v))
         .await
         .transpose_with_context("while resolving value")
-}
-
-/// Apply the value to the given arguments.
-///
-/// If `env_lookup` is true and `v` is a `String`, it will be looked up in the environment.
-pub fn apply_value(
-    ctx: &mut Runtime,
-    v: Source<Value>,
-    args: UncheckedFunctionArguments,
-) -> BoxFuture<EvalResult> {
-    async move {
-        let v_source = v.source();
-
-        v.map_async(|v| async {
-            let mut ctx = ctx.clone();
-
-            let deps = depends![{ergo_runtime::namespace_id!(ergo::apply)}, ^&args];
-
-            // Eagerly evaluate application
-            v.and_then_value(move |v| async move {
-                match_value!(v => {
-                    types::Function => |val| {
-                        let mut fcallctx = FunctionCall::new(&mut ctx, args.into(), v_source);
-                        let f = val.await?;
-                        let f = f.as_ref();
-                        let ret = f.call(&mut fcallctx).await;
-                        if ret.is_err() {
-                            fcallctx.args.clear();
-                        }
-                        // TODO is it appropriate to lose this source info?
-                        ret.map(Source::unwrap)?
-                    }
-                    types::Array => |val| {
-                        let mut fcallctx = FunctionCall::new(&mut ctx, args.into(), v_source);
-                        let ind = fcallctx.args.next().ok_or("no index provided")?;
-                        fcallctx.unused_arguments()?;
-
-                        let ind = fcallctx.source_value_as::<types::String>(ind).await?.await.transpose_ok()?;
-                        ind.map_async(|index| async move { match usize::from_str(index.as_ref()) {
-                            Err(_) => Err(fcallctx.call_site.with(Error::NonIntegerIndex).into()),
-                            Ok(ind) => val.await.and_then(|v| v.0.get(ind).cloned().ok_or_else(|| Error::MissingArrayIndex(ind).into()))
-                        }
-                        }).await.transpose_err_with_context("while indexing array")?
-                    },
-                    types::Map => |val| {
-                        let mut fcallctx = FunctionCall::new(&mut ctx, args.into(), v_source);
-                        let ind = fcallctx.args.next().ok_or("no key provided")?;
-                        fcallctx.unused_arguments()?;
-
-                        ind.map_async(|index| async move {
-                                val.await.and_then(|v| v.0.get(&index).cloned().ok_or_else(|| Error::MissingMapIndex(index).into()))
-                        }).await.transpose_err_with_context("while indexing map")?
-                    },
-                    => |v| {
-                        Err(Error::NonCallableExpression(v))?
-                    }
-                }).await
-            }, deps)
-            .await
-        })
-        .await
-        .map(|v| v.map_err(|e| e.error()))
-        .transpose_with_context("while applying value")
-    }
-    .boxed()
 }
 
 /// Compiles environment accesses into the expression.
@@ -1910,7 +1844,7 @@ impl Rt<Expression> {
                     f
                 };
 
-                apply_value(
+                traits::call(
                     ctx,
                     f,
                     FunctionArguments::new(vals, kw_vals).unchecked(),

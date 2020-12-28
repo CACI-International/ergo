@@ -255,39 +255,3 @@ macro_rules! ergo_function {
         })
     };
 }
-
-/// A function which can be called using only function arguments and a call site source.
-#[derive(GreaseType)]
-pub struct PortableFunction(grease::value::Ref<Function>, crate::Runtime);
-
-impl PortableFunction {
-    /// Call the function with the given arguments and call site source location.
-    pub async fn call(
-        &self,
-        args: crate::FunctionArguments,
-        call_site: crate::source::Source<()>,
-    ) -> crate::EvalResult {
-        let f = &self.0;
-        f.call(&mut crate::FunctionCall::new(
-            &mut self.1.clone(),
-            args,
-            call_site,
-        ))
-        .await
-    }
-}
-
-/// Portable function extension trait.
-pub trait Portable {
-    /// Wrap a function's context into a portable function to be called later.
-    fn portable(self, ctx: &mut crate::Runtime) -> TypedValue<PortableFunction>;
-}
-
-impl Portable for TypedValue<Function> {
-    fn portable(self, ctx: &mut crate::Runtime) -> TypedValue<PortableFunction> {
-        let mut c = ctx.clone();
-        c.global_env.clear();
-        c.env.clear();
-        self.map(|v| PortableFunction(v, c))
-    }
-}

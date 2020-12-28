@@ -1,7 +1,7 @@
 //! Functions over collections.
 
 use abi_stable::std_types::RVec;
-use ergo_runtime::{ergo_function, types, ContextExt, FunctionArguments};
+use ergo_runtime::{ergo_function, traits, types, ContextExt, FunctionArguments};
 use futures::future::{ok, FutureExt, TryFutureExt};
 use grease::{depends, make_value, match_value, value::Value};
 
@@ -32,30 +32,26 @@ array.",
 
         ctx.unused_arguments()?;
 
-        let func = ctx.source_value_as::<types::Function>(func);
-        let func = func.await?;
+        let func = traits::delay_call(ctx, func).await?;
 
         let vals = ctx.source_value_as::<types::Array>(vals);
         let vals = vals.await?;
 
-        let deps = depends![*func, *orig, *vals];
+        let deps = depends![*func.value, *orig, *vals];
 
-        let task = ctx.task.clone();
-        let func = func.map(|v| types::Portable::portable(v, ctx));
         Value::dyn_new(
             async move {
-                let (func_source, func) = func.take();
                 let (vals_source, vals) = vals.take();
-                let (func, vals) = task.join(func, vals).await?;
-                let val = vals.owned().0.into_iter().fold(ok(orig).boxed(), |acc, v| {
-                    let f = &func;
-                    let src = &vals_source;
-                    let fsrc = &func_source;
+                let vals = vals.await?;
+                let val = vals.owned().0.into_iter().fold(ok(orig).boxed(), move |acc, v| {
+                    let src = vals_source.clone();
+                    let func = func.clone();
                     acc.and_then(move |accv| {
-                        f.call(
-                            FunctionArguments::positional(vec![accv, src.clone().with(v)]),
-                            fsrc.clone(),
-                        )
+                        let func = func.clone();
+                        let src = src.clone();
+                        async move {
+                            func.call(FunctionArguments::positional(vec![accv, src.clone().with(v)]).unchecked()).await
+                        }
                     })
                     .boxed()
                 });
@@ -80,21 +76,18 @@ Returns a new array where each element is the result of applying `<function>` on
 
         ctx.unused_arguments()?;
 
-        let func = ctx.source_value_as::<types::Function>(func);
-        let func = func.await?;
+        let func = traits::delay_call(ctx, func).await?;
 
         let arr = ctx.source_value_as::<types::Array>(arr);
         let arr = arr.await?;
 
         let task = ctx.task.clone();
-        let func = func.map(|v| types::Portable::portable(v, ctx));
-        make_value!([*func,*arr] {
-            let (func_source, func) = func.take();
+        make_value!([*func.value,*arr] {
             let (arr_source, arr) = arr.take();
-            let (func,arr) = task.join(func,arr).await?;
+            let arr = arr.await?;
             let arr = task.join_all(arr.owned().0
                 .into_iter()
-                .map(|d| func.call(FunctionArguments::positional(vec![arr_source.clone().with(d)]), func_source.clone())));
+                .map(|d| func.call(FunctionArguments::positional(vec![arr_source.clone().with(d)]).unchecked())));
 
             Ok(types::Array(arr.await?.into_iter().map(|v| v.unwrap()).collect()))
         }).into()

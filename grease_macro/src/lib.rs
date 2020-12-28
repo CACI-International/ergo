@@ -384,8 +384,11 @@ fn grease_trait_definition(trt: ItemTrait) -> TokenStream {
     let ref_generics = trt.generics.clone();
     let (impl_generics, type_generics, where_clause) = ref_generics.split_for_impl();
 
+    let mut ref_attrs = vec![];
+    ref_attrs.push(parse_quote! { #[derive(Clone)] });
+
     let ref_struct = ItemStruct {
-        attrs: Vec::new(),
+        attrs: ref_attrs,
         vis: trt.vis,
         struct_token: syn::token::Struct {
             span: trt.trait_token.span,

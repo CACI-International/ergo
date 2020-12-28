@@ -145,13 +145,32 @@ impl Default for Traits {
     }
 }
 
+#[derive(Debug)]
 enum TraitInner<T> {
     Ref(trt::Ref<T>),
-    Fut(futures::future::BoxFuture<'static, crate::Result<trt::Ref<T>>>),
+    Fut(futures::future::Shared<futures::future::BoxFuture<'static, crate::Result<trt::Ref<T>>>>),
 }
 
+impl<T> Clone for TraitInner<T> {
+    fn clone(&self) -> Self {
+        match self {
+            TraitInner::Ref(v) => TraitInner::Ref(v.clone()),
+            TraitInner::Fut(f) => TraitInner::Fut(f.clone()),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct Trait<T> {
     inner: TraitInner<T>,
+}
+
+impl<T> Clone for Trait<T> {
+    fn clone(&self) -> Self {
+        Trait {
+            inner: self.inner.clone(),
+        }
+    }
 }
 
 impl<T> Trait<T> {
@@ -163,7 +182,7 @@ impl<T> Trait<T> {
 
     fn new_fut(fut: futures::future::BoxFuture<'static, crate::Result<trt::Ref<T>>>) -> Self {
         Trait {
-            inner: TraitInner::Fut(fut),
+            inner: TraitInner::Fut(fut.shared()),
         }
     }
 }

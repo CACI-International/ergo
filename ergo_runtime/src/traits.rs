@@ -1,5 +1,6 @@
 //! Common grease traits used within ergo.
 
+mod call;
 mod display;
 mod into;
 mod nested;
@@ -7,6 +8,7 @@ mod stored;
 mod type_name;
 mod value_by_content;
 
+pub use call::{call, delay_call, Call, CallImpl};
 pub use display::{display, Display, DisplayImpl};
 pub use into::{into, into_sourced, IntoTyped, IntoTypedImpl};
 pub use nested::{force_value_nested, Nested, NestedImpl};
@@ -16,6 +18,7 @@ pub use value_by_content::{value_by_content, ValueByContent, ValueByContentImpl}
 
 /// Add trait implementations to the runtime.
 pub fn traits(traits: &mut grease::runtime::Traits) {
+    call::traits(traits);
     display::traits(traits);
     into::traits(traits);
     nested::traits(traits);
