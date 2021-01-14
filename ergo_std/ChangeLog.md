@@ -5,6 +5,13 @@
   * Deadlocks are no longer possible, however other functions must indicate
     whether they want a task to be considered active across specific await
     points.
+* Add a bunch of new functions:
+  * `script:dir` to get the currently executing script's directory
+  * `script:path` to get the currently executing script's path
+  * `script:load-path` to get the current load-path
+  * `path:name` to get the final component of a path
+  * `value:dynamic` to create an explicitly-dynamic value
+  * `match` to replace the previously parsed match expression
 
 ## 1.0.0-beta.7  -- 2020-12-08
 * No changes!

@@ -11,8 +11,9 @@ use grease::{
 pub fn module() -> Value {
     crate::grease_string_map! {
         "A map of path manipulation functions:"
-        "new": "Create a new, unique, and non-existent path." = new_fn(),
         "join": "Join path components into a path." = join_fn(),
+        "name": "Get the name (final component) of a path." = name_fn(),
+        "new": "Create a new, unique, and non-existent path." = new_fn(),
         "parent": "Get the parent of a path." = parent_fn(),
         "relative": "Get a path relative to another." = relative_fn(),
         "split": "Split a path into components." = split_fn()
@@ -77,7 +78,7 @@ Return a Path that is the result of joining the individual path components toget
                 deps += depends![*sv];
                 args.push(
                     sv.map_async(|v| async move {
-                        match_value!(peek v => {
+                        match_value!(delay v => {
                             types::String => |s| JoinComponent::String(s),
                             PathBuf => |s| JoinComponent::Path(s),
                             => |_| Err("all arguments must be strings or paths")?
@@ -174,6 +175,35 @@ Fails if the given path does not have a parent (is a root).",
             Ok(PathBuf::from(path.as_ref().as_ref().parent().ok_or("path does not have a parent")?.to_owned()))
         }).into()
     }).into()
+}
+
+fn name_fn() -> Value {
+    ergo_function!(
+        std::path::name,
+        r"Returns the name (final component) of the given path.
+
+Arguments: <Path>
+
+Returns the component as a String.
+Fails if the given path ends in `..`.",
+        |ctx, args| {
+            let path = args.next().ok_or("no path provided")?;
+
+            args.unused_arguments()?;
+
+            let path = ctx.source_value_as::<PathBuf>(path);
+            let path = path.await?.unwrap();
+
+            make_value!([path] {
+                let path = path.await?;
+                Ok(types::String::from(path.as_ref().as_ref().file_name()
+                        .ok_or("path does not have a final component")?
+                        .to_string_lossy().to_owned()))
+            })
+            .into()
+        }
+    )
+    .into()
 }
 
 fn relative_fn() -> Value {

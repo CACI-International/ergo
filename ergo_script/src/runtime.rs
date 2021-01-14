@@ -845,7 +845,7 @@ impl Evaluator {
                             Ok(v) => {
                                 let (v_source, v) = v.take();
                                 let mut push_original = false;
-                                match_value!(v.clone() => {
+                                match_value!(peek v.clone() => {
                                     types::Merge => |inner| {
                                         let (inner_source, inner) = inner.await?.0.clone().take();
                                         match_value!(inner => {
@@ -922,7 +922,7 @@ impl Evaluator {
                                         Ok(v) => {
                                             let v = v.unwrap();
                                             let mut push_original = false;
-                                            match_value!(v.clone() => {
+                                            match_value!(peek v.clone() => {
                                                 types::Merge => |inner| {
                                                     let (inner_source, inner) = inner.await?.0.clone().take();
                                                     match_value!(inner => {
@@ -971,7 +971,7 @@ impl Evaluator {
                                         Err(e) => results.push(Err(e)),
                                         Ok(v) => {
                                             let (v_source, v) = v.take();
-                                            match_value!(v => {
+                                            match_value!(peek v => {
                                                 types::Merge => |inner| {
                                                     let (inner_source, inner) = inner.await?.0.clone().take();
                                                     match_value!(inner => {

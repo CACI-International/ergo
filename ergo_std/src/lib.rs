@@ -8,6 +8,8 @@ mod exec;
 mod fs;
 mod io;
 mod log;
+#[path = "match.rs"]
+mod match_;
 mod net;
 mod path;
 mod script;
@@ -59,6 +61,7 @@ The library's map includes:"
         "fs": "Filesystem manipulations." = fs::module(),
         "io": "Program IO functions." = io::module(),
         "log": "The log function, to log values to the runtime log." = log::function(ctx),
+        "match": "The match function, to attempt multiple bindings of a value." = match_::function(),
         "net": "Network functionality." = net::module(),
         "path": "Path creation and manipulation." = path::module(),
         "script": "Script runtime functions." = script::module(),

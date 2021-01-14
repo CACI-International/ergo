@@ -308,7 +308,7 @@ macro_rules! ergo_function {
                 $crate::future::FutureExt::boxed(
                     async move {
                         let mut $args: $crate::Arguments = {
-                            let args = $ctx.source_value_as::<$crate::types::Args>(__ergo_function_arg).await?.unwrap();
+                            let args = $crate::ContextExt::source_value_as::<$crate::types::Args>($ctx, __ergo_function_arg).await?.unwrap();
                             args.await?.owned().args.into()
                         };
                         Ok($body)

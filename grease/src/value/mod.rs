@@ -810,9 +810,12 @@ macro_rules! match_value_type {
 /// The macro evaluates to a `impl Future<Output = grease::Result<T>>`, where `T` is the case return
 /// type. Thus, the try operator (`?`) may be used within case expressions.
 ///
-/// If `peek` is prepended, the macro evaluates to a `impl Future<Output = grease::Result<impl
+/// If `delay` is prepended, the macro evaluates to a `impl Future<Output = grease::Result<impl
 /// Future<Output = grease::Result<T>>>>`, evaluating the match in the outer future if the type is
 /// available synchronously.
+///
+/// If `peek` is prepended, the macro uses `peek_type` instead of `grease_type` and if the type is
+/// not immediately available the else case is used.
 ///
 /// If the macro is called with the form `match_value!([val], typed [type] => ...)`, the branches
 /// are executed immediately and the value is returned without a future or result wrapper.
@@ -827,6 +830,15 @@ macro_rules! match_value {
         }
     };
     ( peek $value:expr => $branches:tt ) => {
+        async {
+            match $value.peek_type() {
+                None => Ok($crate::match_value!(@else $value => $branches)),
+                Some(Err(e)) => return Err(e),
+                Some(Ok(tp)) => Ok($crate::match_value!($value, typed tp => $branches))
+            }
+        }
+    };
+    ( delay $value:expr => $branches:tt ) => {
         {
             let match_value__value = $value.clone();
             $value.with_type(move |tp| {
@@ -835,6 +847,12 @@ macro_rules! match_value {
                     Ok($crate::match_value!(match_value__value, typed &tp => $branches))
                 }
             })
+        }
+    };
+    ( @else $value:expr => { $( $t:ty => |$bind:pat| $e:expr $(,)? )+ => |$elsebind:pat| $else:expr } ) => {
+        {
+            let $elsebind = $value;
+            $else
         }
     };
     ( $value:expr , typed $ty:expr => { $( $t:ty => |$bind:pat| $e:expr $(,)? )+ => |$elsebind:pat| $else:expr } ) => {

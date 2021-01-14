@@ -23,6 +23,7 @@ pub fn module() -> Value {
             "get": "Get the documentation of a value." = doc_get_fn(),
             "set": "Set the documentation of a value." = doc_set_fn()
         },
+        "dynamic": "Force a value to be dynamically-typed." = dyn_fn(),
         "meta": "Value metadata manipulation." = crate::grease_string_map! {
             r"A map of metadata functions.
 Arbitrary values can be attached as metadata to other values, keyed by the identity of a third key value.
@@ -219,6 +220,22 @@ Arguments: <value> <doc: String>",
 
         val.set_metadata(&Doc, doc);
         val
+    })
+    .into()
+}
+
+fn dyn_fn() -> Value {
+    ergo_function!(independent std::value::dynamic,
+    r"Return a dynamically-typed value which evaluates to the given value.
+
+Arguments: <value>",
+    |ctx, args| {
+        let val = args.next().ok_or("no value argument")?.unwrap();
+
+        args.unused_arguments()?;
+
+        let deps = depends![val];
+        Value::dyn_new(async move { Ok(val.into_any_value()) }, deps)
     })
     .into()
 }

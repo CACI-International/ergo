@@ -40,7 +40,7 @@ impl Test {
         let mut script = Script::load(source)?;
         script.top_level_env(self.env.clone());
         let task = self.rt.task.clone();
-        task.block_on(script.evaluate(&self.rt))
+        dbg!(task.block_on(script.evaluate(&self.rt)))
     }
 
     pub fn eval_success(&self, script: &str) -> Source<grease::Value> {
