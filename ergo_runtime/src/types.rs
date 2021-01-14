@@ -5,6 +5,7 @@
 //! implementors.
 
 use crate::metadata::Doc;
+use crate::Source;
 use abi_stable::{
     sabi_trait,
     sabi_trait::prelude::*,
@@ -152,57 +153,123 @@ impl Map {
     }
 }
 
-/// Script function type.
+/// Script type for values that require a single value to produce a new value.
+///
+/// This is most importantly used to functions, where the input value is an `Args` or `PatternArgs`
+/// value.
 #[derive(GreaseType, StableAbi)]
 #[repr(C)]
-pub struct Function(FunctionAbi_TO<'static, RBox<()>>);
+pub struct Unbound(UnboundAbi_TO<'static, RBox<()>>);
 
 #[sabi_trait]
-trait FunctionAbi: Send + Sync {
+trait UnboundAbi: Send + Sync {
     #[sabi(last_prefix_field)]
-    fn call<'a>(&'a self, ctx: &'a mut crate::FunctionCall) -> BoxFuture<'a, crate::EvalResultAbi>;
+    fn bind<'a>(
+        &'a self,
+        ctx: &'a mut crate::Runtime,
+        arg: Source<Value>,
+    ) -> BoxFuture<'a, crate::ResultAbi<Value>>;
 }
 
-impl<F> FunctionAbi for F
+impl<F> UnboundAbi for F
 where
-    F: for<'a> Fn(&'a mut crate::FunctionCall) -> futures::future::BoxFuture<'a, crate::EvalResult>
+    F: for<'a> Fn(
+            &'a mut crate::Runtime,
+            Source<Value>,
+        ) -> futures::future::BoxFuture<'a, crate::Result<Value>>
         + Send
         + Sync
         + 'static,
 {
-    fn call<'a>(&'a self, ctx: &'a mut crate::FunctionCall) -> BoxFuture<'a, crate::EvalResultAbi> {
-        BoxFuture::new(async move { self(ctx).await.into() })
+    fn bind<'a>(
+        &'a self,
+        ctx: &'a mut crate::Runtime,
+        arg: Source<Value>,
+    ) -> BoxFuture<'a, crate::ResultAbi<Value>> {
+        BoxFuture::new(async move { self(ctx, arg).await.into() })
     }
 }
 
-impl Function {
-    /// Create a new function with the given implementation.
-    pub fn new<F>(f: F, deps: Dependencies, doc: Option<TypedValue<String>>) -> TypedValue<Self>
+impl Unbound {
+    /// Create a new unbound value with the given implementation.
+    pub fn new<F>(bind: F, deps: Dependencies, doc: Option<TypedValue<String>>) -> TypedValue<Self>
     where
         F: for<'a> Fn(
-                &'a mut crate::FunctionCall,
-            ) -> futures::future::BoxFuture<'a, crate::EvalResult>
+                &'a mut crate::Runtime,
+                Source<Value>,
+            ) -> futures::future::BoxFuture<'a, crate::Result<Value>>
             + Send
             + Sync
             + 'static,
     {
         let mut v =
-            TypedValue::constant_deps(Function(FunctionAbi_TO::from_value(f, TU_Opaque)), deps);
+            TypedValue::constant_deps(Unbound(UnboundAbi_TO::from_value(bind, TU_Opaque)), deps);
         if let Some(doc) = doc {
             v.set_metadata(&Doc, doc);
         }
         v
     }
 
-    /// Call the function.
-    pub async fn call(&self, ctx: &mut crate::FunctionCall<'_>) -> crate::EvalResult {
-        self.0.call(ctx).await.into()
+    /// Bind the value.
+    pub async fn bind(&self, ctx: &mut crate::Runtime, arg: Source<Value>) -> crate::Result<Value> {
+        self.0.bind(ctx, arg).await.into()
     }
 }
 
-impl std::fmt::Debug for Function {
+impl std::fmt::Debug for Unbound {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "Function ({:p})", self.0.obj.sabi_erased_ref())
+        write!(f, "Unbound ({:p})", self.0.obj.sabi_erased_ref())
+    }
+}
+
+/// A value to merge.
+#[derive(Clone, GreaseType, StableAbi)]
+#[repr(C)]
+pub struct Merge(pub Source<Value>);
+
+impl From<Merge> for TypedValue<Merge> {
+    fn from(v: Merge) -> Self {
+        let deps = depends![*v.0];
+        Self::constant_deps(v, deps)
+    }
+}
+
+/// A key for maps to indicate to what to bind any remaining values.
+#[derive(Clone, GreaseType, StableAbi)]
+#[repr(C)]
+pub struct BindRest;
+
+impl From<BindRest> for TypedValue<BindRest> {
+    fn from(v: BindRest) -> Self {
+        Self::constant_deps(v, depends![crate::namespace_id!(ergo::bind_rest)])
+    }
+}
+
+/// Arguments in a function call.
+#[derive(Clone, GreaseType, StableAbi)]
+#[repr(C)]
+pub struct Args {
+    pub args: crate::UncheckedArguments,
+}
+
+impl From<Args> for TypedValue<Args> {
+    fn from(v: Args) -> Self {
+        let deps: grease::value::Dependencies = (&v.args).into();
+        Self::constant_deps(v, deps)
+    }
+}
+
+/// Arguments in a bind function call.
+#[derive(Clone, GreaseType, StableAbi)]
+#[repr(C)]
+pub struct BindArgs {
+    pub args: crate::UncheckedArguments,
+}
+
+impl From<BindArgs> for TypedValue<BindArgs> {
+    fn from(v: BindArgs) -> Self {
+        let deps: grease::value::Dependencies = (&v.args).into();
+        Self::constant_deps(v, deps)
     }
 }
 
@@ -234,12 +301,18 @@ macro_rules! namespace_id {
 /// return EvalResult directly, and should evaluate to a Value.
 #[macro_export]
 macro_rules! ergo_function {
-    ( independent $( $l:ident )::+, $doc:literal, $( $m:ident ),* |$ctx:ident| $body:expr ) => {
-        $crate::types::Function::new(
-            move |$ctx| {
+    ( independent $( $l:ident )::+, $doc:literal, $( $m:ident ),* |$ctx:ident, $args:ident| $body:expr ) => {
+        $crate::types::Unbound::new(
+            move |$ctx,__ergo_function_arg| {
                 $( let $m = $m.clone(); )*
                 $crate::future::FutureExt::boxed(
-                    async move { Ok($ctx.call_site.clone().with($body)) }
+                    async move {
+                        let mut $args: $crate::Arguments = {
+                            let args = $ctx.source_value_as::<$crate::types::Args>(__ergo_function_arg).await?.unwrap();
+                            args.await?.owned().args.into()
+                        };
+                        Ok($body)
+                    }
                 )
             },
             ::grease::depends![$crate::namespace_id!($( $l )::+)],
@@ -247,8 +320,8 @@ macro_rules! ergo_function {
         )
     };
 
-    ( $( $l:ident )::+, $doc:literal, $( $m:ident ),* |$ctx:ident| $body:expr ) => {
-        $crate::ergo_function!(independent $( $l )::+, $doc, $( $m ),* |$ctx| {
+    ( $( $l:ident )::+, $doc:literal, $( $m:ident ),* |$ctx:ident, $args:ident| $body:expr ) => {
+        $crate::ergo_function!(independent $( $l )::+, $doc, $( $m ),* |$ctx,$args| {
             let val: ::grease::value::Value = $body;
             let new_deps = ::grease::depends![$crate::namespace_id!($( $l )::+), val.id()];
             val.set_dependencies(new_deps)

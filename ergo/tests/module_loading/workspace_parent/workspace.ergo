@@ -1,1 +1,1 @@
-prelude = { val = workspace_parent }
+:prelude = { :val = workspace_parent }

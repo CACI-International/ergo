@@ -57,8 +57,8 @@ fn stdin_fn() -> Value {
 
 Arguments: (none)
 Returns a ByteStream that, when read, takes exclusive access of the process standard input.",
-        |ctx| {
-            ctx.unused_arguments()?;
+        |ctx, args| {
+            args.unused_arguments()?;
 
             // Derive identity from random integer; stdin may contain anything.
             make_value!([rand::random::<u64>()] {
@@ -78,10 +78,10 @@ fn stdout_fn() -> Value {
 Arguments: <ByteStream>
 When the returned unit value is evaluated, takes exclusive access of the process standard output (pausing logging) and writes
 the ByteStream to it.",
-    |ctx| {
-        let data = ctx.args.next().ok_or("'data' missing")?;
+    |ctx,args| {
+        let data = args.next().ok_or("'data' missing")?;
 
-        ctx.unused_arguments()?;
+        args.unused_arguments()?;
 
         let data = ctx.into_sourced::<types::ByteStream>(data);
         let data = data.await?.unwrap();
@@ -109,10 +109,10 @@ fn stderr_fn() -> Value {
 Arguments: <ByteStream>
 When the returned unit value is evaluated, writes the ByteStream to the process standard error. This does not have any
 exlusive access guarantees like `stdin` and `stdout`.",
-    |ctx| {
-        let data = ctx.args.next().ok_or("'data' missing")?;
+    |ctx,args| {
+        let data = args.next().ok_or("'data' missing")?;
 
-        ctx.unused_arguments()?;
+        args.unused_arguments()?;
 
         let data = ctx.into_sourced::<types::ByteStream>(data);
         let data = data.await?.unwrap();

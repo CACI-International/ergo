@@ -1,7 +1,7 @@
 //! Functions over collections.
 
 use abi_stable::std_types::RVec;
-use ergo_runtime::{ergo_function, traits, types, ContextExt, FunctionArguments};
+use ergo_runtime::{ergo_function, traits, types, Arguments, ContextExt};
 use futures::future::{ok, FutureExt, TryFutureExt};
 use grease::{depends, make_value, match_value, value::Value};
 
@@ -25,14 +25,14 @@ The function will be applied on each value in the array from first to last, spec
 `f <current value> <array value>`. The value the function produces will be the `<current value>` used in the next call.
 The final value will be the last `<current value>`, which may be the `<base value>` if there are no elements in the
 array.",
-    |ctx| {
-        let func = ctx.args.next().ok_or("fold function not provided")?;
-        let orig = ctx.args.next().ok_or("fold base value not provided")?;
-        let vals = ctx.args.next().ok_or("fold values not provided")?;
+    |ctx,args| {
+        let func = args.next().ok_or("fold function not provided")?;
+        let orig = args.next().ok_or("fold base value not provided")?;
+        let vals = args.next().ok_or("fold values not provided")?;
 
-        ctx.unused_arguments()?;
+        args.unused_arguments()?;
 
-        let func = traits::delay_call(ctx, func).await?;
+        let func = traits::delay_bind(ctx, func).await?;
 
         let vals = ctx.source_value_as::<types::Array>(vals);
         let vals = vals.await?;
@@ -50,7 +50,9 @@ array.",
                         let func = func.clone();
                         let src = src.clone();
                         async move {
-                            func.call(FunctionArguments::positional(vec![accv, src.clone().with(v)]).unchecked()).await
+                            func.bind(src.clone().with(types::Args {
+                                args: Arguments::positional(vec![accv, src.clone().with(v)]).unchecked()
+                            }.into())).await
                         }
                     })
                     .boxed()
@@ -70,13 +72,13 @@ fn map_fn() -> Value {
 
 Arguments: <function> <array>
 Returns a new array where each element is the result of applying `<function>` on the corresponding element in `<array>`.",
-    |ctx| {
-        let func = ctx.args.next().ok_or("map function not provided")?;
-        let arr = ctx.args.next().ok_or("map array not provided")?;
+    |ctx,args| {
+        let func = args.next().ok_or("map function not provided")?;
+        let arr = args.next().ok_or("map array not provided")?;
 
-        ctx.unused_arguments()?;
+        args.unused_arguments()?;
 
-        let func = traits::delay_call(ctx, func).await?;
+        let func = traits::delay_bind(ctx, func).await?;
 
         let arr = ctx.source_value_as::<types::Array>(arr);
         let arr = arr.await?;
@@ -87,7 +89,11 @@ Returns a new array where each element is the result of applying `<function>` on
             let arr = arr.await?;
             let arr = task.join_all(arr.owned().0
                 .into_iter()
-                .map(|d| func.call(FunctionArguments::positional(vec![arr_source.clone().with(d)]).unchecked())));
+                .map(|d| func.bind(
+                            arr_source.clone().with(types::Args {
+                                args: Arguments::positional(vec![arr_source.clone().with(d)]).unchecked()
+                            }.into())
+                        )));
 
             Ok(types::Array(arr.await?.into_iter().map(|v| v.unwrap()).collect()))
         }).into()
@@ -102,10 +108,10 @@ Arguments: <map>
 Returns an array where each element is a map with `key` and `value` set to a key-value pair in `<map>`.
 
 For example, `entries {a=1,b=2}` evalutes to `[{key=a,value=1},{key=b,value=2}]`.",
-    |ctx| {
-        let value = ctx.args.next().ok_or("map not provided")?;
+    |ctx,args| {
+        let value = args.next().ok_or("map not provided")?;
 
-        ctx.unused_arguments()?;
+        args.unused_arguments()?;
 
         let map = ctx.source_value_as::<types::Map>(value);
         let map = map.await?.unwrap();
@@ -133,11 +139,11 @@ fn has_fn() -> Value {
         r"Return whether a map or array has a specific index.
 
 Arguments: <map-or-array> <index>",
-        |ctx| {
-            let value = ctx.args.next().ok_or("value not provided")?.unwrap();
-            let index = ctx.args.next().ok_or("index not provided")?;
+        |ctx, args| {
+            let value = args.next().ok_or("value not provided")?.unwrap();
+            let index = args.next().ok_or("index not provided")?;
 
-            ctx.unused_arguments()?;
+            args.unused_arguments()?;
 
             use ergo_runtime::context_ext::AsContext;
             let ctx: grease::runtime::Context = ctx.as_context().clone();
@@ -169,11 +175,11 @@ fn get_fn() -> Value {
 
 Arguments: <map-or-array> <index>
 Unlike normal indexing, this returns `()` if the index does not exist.",
-    |ctx| {
-        let value = ctx.args.next().ok_or("value not provided")?.unwrap();
-        let index = ctx.args.next().ok_or("index not provided")?;
+    |ctx,args| {
+        let value = args.next().ok_or("value not provided")?.unwrap();
+        let index = args.next().ok_or("index not provided")?;
 
-        ctx.unused_arguments()?;
+        args.unused_arguments()?;
 
         use ergo_runtime::context_ext::AsContext;
         let ctx: grease::runtime::Context = ctx.as_context().clone();
@@ -208,20 +214,20 @@ mod test {
     ergo_script::test! {
         fn entries(t) {
             // This test only has one entry to not rely on ordering.
-            t.assert_content_eq("self:collection:entries {a = 1}", "[{key = a, value = 1}]");
+            t.assert_content_eq("self:collection:entries {:a = 1}", "[{:key = a, :value = 1}]");
         }
     }
 
     ergo_script::test! {
         fn fold(t) {
-            t.assert_content_eq("self:collection:fold (fn r a -> [:a,^:r]) [init] [a,b,c]", "[c,b,a,init]");
+            t.assert_content_eq("self:collection:fold (fn :r :a -> [:a,^:r]) [init] [a,b,c]", "[c,b,a,init]");
         }
     }
 
     ergo_script::test! {
         fn get(t) {
-            t.assert_content_eq("self:collection:get {a = 1} a", "1");
-            t.assert_content_eq("self:collection:get {a = 1} b", "()");
+            t.assert_content_eq("self:collection:get {:a = 1} a", "1");
+            t.assert_content_eq("self:collection:get {:a = 1} b", "()");
             t.assert_content_eq("self:collection:get [a] 0", "a");
             t.assert_content_eq("self:collection:get [a] 1", "()");
         }
@@ -229,8 +235,8 @@ mod test {
 
     ergo_script::test! {
         fn has(t) {
-            t.assert_content_eq("if (self:collection:has {a = 1} a) t f", "t");
-            t.assert_content_eq("if (self:collection:has {a = 1} b) t f", "f");
+            t.assert_content_eq("if (self:collection:has {:a = 1} a) t f", "t");
+            t.assert_content_eq("if (self:collection:has {:a = 1} b) t f", "f");
             t.assert_content_eq("if (self:collection:has [a] 0) t f", "t");
             t.assert_content_eq("if (self:collection:has [a] 1) t f", "f");
         }
@@ -238,7 +244,7 @@ mod test {
 
     ergo_script::test! {
         fn map(t) {
-            t.assert_content_eq("self:collection:map (fn a -> { mapped = :a }) [2,3]", "[{mapped = 2},{mapped = 3}]");
+            t.assert_content_eq("self:collection:map (fn :a -> { :mapped = :a }) [2,3]", "[{:mapped = 2},{:mapped = 3}]");
         }
     }
 }

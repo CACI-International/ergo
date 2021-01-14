@@ -3,11 +3,11 @@
 use ergo_runtime::source::Source;
 use std::fmt;
 
-const MAX_TOKEN_LENGTH: u8 = 3;
+const MAX_TOKEN_LOOKAHEAD: u8 = 2;
 
 struct LookaheadIterator<I: Iterator> {
     inner: I,
-    lookahead: [Option<I::Item>; MAX_TOKEN_LENGTH as usize],
+    lookahead: [Option<I::Item>; MAX_TOKEN_LOOKAHEAD as usize],
     next: u8,
 }
 
@@ -18,7 +18,7 @@ impl<I: Iterator> LookaheadIterator<I> {
             lookahead: Default::default(),
             next: 0,
         };
-        for i in 0..(MAX_TOKEN_LENGTH as usize) {
+        for i in 0..(MAX_TOKEN_LOOKAHEAD as usize) {
             ret.lookahead[i] = ret.inner.next();
         }
         ret
@@ -29,15 +29,15 @@ impl<I: Iterator> LookaheadIterator<I> {
     }
 
     pub fn peek_at(&self, to: usize) -> Option<&I::Item> {
-        debug_assert!(to < MAX_TOKEN_LENGTH as usize);
-        self.lookahead[(self.next as usize + to) % MAX_TOKEN_LENGTH as usize].as_ref()
+        debug_assert!(to < MAX_TOKEN_LOOKAHEAD as usize);
+        self.lookahead[(self.next as usize + to) % MAX_TOKEN_LOOKAHEAD as usize].as_ref()
     }
 
     pub fn peek_match(&self, rest: &[I::Item]) -> bool
     where
         I::Item: PartialEq,
     {
-        debug_assert!(rest.len() <= MAX_TOKEN_LENGTH as usize);
+        debug_assert!(rest.len() <= MAX_TOKEN_LOOKAHEAD as usize);
         for i in 0..rest.len() {
             if !self.peek_at(i).map(|v| v == &rest[i]).unwrap_or(false) {
                 return false;
@@ -53,69 +53,233 @@ impl<I: Iterator> Iterator for LookaheadIterator<I> {
     fn next(&mut self) -> Option<Self::Item> {
         let ret = std::mem::replace(&mut self.lookahead[self.next as usize], self.inner.next());
         self.next += 1;
-        self.next %= MAX_TOKEN_LENGTH;
+        self.next %= MAX_TOKEN_LOOKAHEAD;
         ret
     }
+}
+
+/// Tokens relevant to expression interpretation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SymbolicToken {
+    /// A string, either from quoted or unquoted words.
+    String(String),
+    /// A doc comment block.
+    DocComment(String),
+    Equal,
+    Caret,
+    Colon,
+    Bang,
+    Arrow,
+    Pipe,
+    PipeLeft,
+    PipeRight,
+}
+
+/// Tokens which are parsed in pairs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PairedToken {
+    Paren,
+    Curly,
+    Bracket,
 }
 
 /// Script tokens.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Token {
-    /// A string, either from quoted or unquoted words.
-    String(String),
-    /// A doc comment block.
-    DocComment(String),
-    OpenBracket,
-    CloseBracket,
-    OpenCurly,
-    CloseCurly,
-    OpenParen,
-    CloseParen,
+    Symbol(SymbolicToken),
+    Pair {
+        which: PairedToken,
+        open: bool,
+    },
     Comma,
     Semicolon,
-    Equal,
-    Caret,
-    Colon,
-    Bang,
-    Pipe,
-    PipeLeft,
-    PipeRight,
     Newline,
     /// One or more whitespace characters (except newlines).
     Whitespace,
 }
 
-/// A token with source information.
-pub type Tok = Source<Token>;
+impl Token {
+    pub fn string<S: Into<String>>(s: S) -> Self {
+        Token::Symbol(SymbolicToken::String(s.into()))
+    }
 
-impl fmt::Display for Token {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    pub fn doc_comment<S: Into<String>>(s: S) -> Self {
+        Token::Symbol(SymbolicToken::DocComment(s.into()))
+    }
+
+    pub fn equal() -> Self {
+        Token::Symbol(SymbolicToken::Equal)
+    }
+
+    pub fn caret() -> Self {
+        Token::Symbol(SymbolicToken::Caret)
+    }
+
+    pub fn colon() -> Self {
+        Token::Symbol(SymbolicToken::Colon)
+    }
+
+    pub fn bang() -> Self {
+        Token::Symbol(SymbolicToken::Bang)
+    }
+
+    pub fn arrow() -> Self {
+        Token::Symbol(SymbolicToken::Arrow)
+    }
+
+    pub fn open_paren() -> Self {
+        Token::Pair {
+            which: PairedToken::Paren,
+            open: true,
+        }
+    }
+
+    pub fn close_paren() -> Self {
+        Token::Pair {
+            which: PairedToken::Paren,
+            open: false,
+        }
+    }
+
+    pub fn open_curly() -> Self {
+        Token::Pair {
+            which: PairedToken::Curly,
+            open: true,
+        }
+    }
+
+    pub fn close_curly() -> Self {
+        Token::Pair {
+            which: PairedToken::Curly,
+            open: false,
+        }
+    }
+
+    pub fn open_bracket() -> Self {
+        Token::Pair {
+            which: PairedToken::Bracket,
+            open: true,
+        }
+    }
+
+    pub fn close_bracket() -> Self {
+        Token::Pair {
+            which: PairedToken::Bracket,
+            open: false,
+        }
+    }
+
+    pub fn pipe() -> Self {
+        Token::Symbol(SymbolicToken::Pipe)
+    }
+
+    pub fn pipe_left() -> Self {
+        Token::Symbol(SymbolicToken::PipeLeft)
+    }
+
+    pub fn pipe_right() -> Self {
+        Token::Symbol(SymbolicToken::PipeRight)
+    }
+
+    pub fn implies_value_when_before(&self) -> bool {
         match self {
-            Token::String(s) => write!(f, "{}", s),
-            Token::DocComment(s) => {
+            Token::Symbol(SymbolicToken::PipeRight)
+            | Token::Symbol(SymbolicToken::String(_))
+            | Token::Pair { open: false, .. } => true,
+            _ => false,
+        }
+    }
+
+    pub fn implies_value_when_after(&self) -> bool {
+        match self {
+            Token::Symbol(SymbolicToken::PipeLeft)
+            | Token::Symbol(SymbolicToken::String(_))
+            | Token::Symbol(SymbolicToken::Colon)
+            | Token::Symbol(SymbolicToken::Bang)
+            | Token::Pair { open: true, .. } => true,
+            _ => false,
+        }
+    }
+}
+
+impl fmt::Display for SymbolicToken {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use SymbolicToken::*;
+        match self {
+            String(s) => write!(f, "{}", s),
+            DocComment(s) => {
                 for line in s.split("\n") {
                     writeln!(f, "## {}", line)?;
                 }
                 Ok(())
             }
-            Token::OpenBracket => write!(f, "["),
-            Token::CloseBracket => write!(f, "]"),
-            Token::OpenCurly => write!(f, "{{"),
-            Token::CloseCurly => write!(f, "}}"),
-            Token::OpenParen => write!(f, "("),
-            Token::CloseParen => write!(f, ")"),
+            Equal => write!(f, "="),
+            Caret => write!(f, "^"),
+            Colon => write!(f, ":"),
+            Bang => write!(f, "!"),
+            Arrow => write!(f, "->"),
+            Pipe => write!(f, "|"),
+            PipeLeft => write!(f, "<|"),
+            PipeRight => write!(f, "|>"),
+        }
+    }
+}
+
+impl fmt::Display for PairedToken {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            PairedToken::Paren => write!(f, "parenthesis"),
+            PairedToken::Bracket => write!(f, "square bracket"),
+            PairedToken::Curly => write!(f, "curly bracket"),
+        }
+    }
+}
+
+impl fmt::Display for Token {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Token::Symbol(t) => write!(f, "{}", t),
+            Token::Pair {
+                which: PairedToken::Paren,
+                open,
+            } => {
+                if *open {
+                    write!(f, "(")
+                } else {
+                    write!(f, ")")
+                }
+            }
+            Token::Pair {
+                which: PairedToken::Bracket,
+                open,
+            } => {
+                if *open {
+                    write!(f, "[")
+                } else {
+                    write!(f, "]")
+                }
+            }
+            Token::Pair {
+                which: PairedToken::Curly,
+                open,
+            } => {
+                if *open {
+                    write!(f, "{{")
+                } else {
+                    write!(f, "}}")
+                }
+            }
             Token::Comma => write!(f, ","),
             Token::Semicolon => write!(f, ";"),
-            Token::Equal => write!(f, "="),
-            Token::Caret => write!(f, "^"),
-            Token::Colon => write!(f, ":"),
-            Token::Bang => write!(f, "!"),
-            Token::Pipe => write!(f, "|"),
-            Token::PipeLeft => write!(f, "<|"),
-            Token::PipeRight => write!(f, "|>"),
             Token::Newline => write!(f, "\n"),
             Token::Whitespace => write!(f, " "),
         }
+    }
+}
+
+impl PartialEq<Source<Self>> for PairedToken {
+    fn eq(&self, other: &Source<Self>) -> bool {
+        self == &**other
     }
 }
 
@@ -165,7 +329,7 @@ where
 }
 
 impl<I: Iterator<Item = char>> Iterator for Tokens<I> {
-    type Item = Result<Tok, Source<Error>>;
+    type Item = Result<Source<Token>, Source<Error>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.iter.next().and_then(|c| {
@@ -189,7 +353,7 @@ impl<I: Iterator<Item = char>> Iterator for Tokens<I> {
                             break;
                         }
                     }
-                    Some(Ok(self.source.clone().with(Token::DocComment(s))))
+                    Some(Ok(self.source.clone().with(Token::doc_comment(s))))
                 } else {
                     while let Some(c) = self.iter.peek() {
                         if *c != '\n' {
@@ -229,7 +393,7 @@ impl<I: Iterator<Item = char>> Iterator for Tokens<I> {
                             // Normal character
                             } else {
                                 if c == '"' {
-                                    return Some(Ok(self.source.clone().with(Token::String(s))));
+                                    return Some(Ok(self.source.clone().with(Token::string(s))));
                                 } else if c == '\\' {
                                     escape = true;
                                 } else {
@@ -257,53 +421,57 @@ impl<I: Iterator<Item = char>> Iterator for Tokens<I> {
                     }
                     // Special characters
                     else if c == '[' {
-                        Ok(Token::OpenBracket)
+                        Ok(Token::open_bracket())
                     } else if c == ']' {
-                        Ok(Token::CloseBracket)
+                        Ok(Token::close_bracket())
                     } else if c == '{' {
-                        Ok(Token::OpenCurly)
+                        Ok(Token::open_curly())
                     } else if c == '}' {
-                        Ok(Token::CloseCurly)
+                        Ok(Token::close_curly())
                     } else if c == '(' {
-                        Ok(Token::OpenParen)
+                        Ok(Token::open_paren())
                     } else if c == ')' {
-                        Ok(Token::CloseParen)
+                        Ok(Token::close_paren())
                     } else if c == ',' {
                         Ok(Token::Comma)
                     } else if c == ';' {
                         Ok(Token::Semicolon)
                     } else if c == '=' {
-                        Ok(Token::Equal)
+                        Ok(Token::equal())
                     } else if c == '^' {
-                        Ok(Token::Caret)
+                        Ok(Token::caret())
                     } else if c == ':' {
-                        Ok(Token::Colon)
+                        Ok(Token::colon())
                     } else if c == '!' {
-                        Ok(Token::Bang)
+                        Ok(Token::bang())
+                    } else if c == '-' && self.iter.peek_match(&['>']) {
+                        self.iter.next();
+                        self.source.location.length += 1;
+                        Ok(Token::arrow())
                     } else if c == '|' {
                         Ok(if self.iter.peek_match(&['>']) {
                             self.iter.next();
                             self.source.location.length += 1;
-                            Token::PipeRight
-                        } else { Token::Pipe })
+                            Token::pipe_right()
+                        } else { Token::pipe() })
                     } else if c == '<' && self.iter.peek_match(&['|']) {
                         self.iter.next();
                         self.source.location.length += 1;
-                        Ok(Token::PipeLeft)
-                    }
-                    // Words
-                    else {
+                        Ok(Token::pipe_left())
+                    } else {
+                        // Words
                         let mut s = String::new();
                         s.push(c);
                         while let Some(c) = self.iter.peek() {
-                            if c.is_whitespace() || "[](){},;=^|:!".contains(*c) || self.iter.peek_match(&['<','|']) {
+                            if c.is_whitespace() || "[](){},;=^|:!".contains(*c) || self.iter.peek_match(&['<','|'])
+                                || self.iter.peek_match(&['-','>']) {
                                 break;
                             } else {
                                 s.push(self.iter.next().unwrap());
                                 self.source.location.length += 1;
                             }
                         }
-                        Ok(Token::String(s))
+                        Ok(Token::string(s))
                     };
                 Some(match tokentype {
                     Ok(t) => Ok(self.source.clone().with(t)),
@@ -321,23 +489,24 @@ mod test {
     #[test]
     fn symbols() -> Result<(), Source<Error>> {
         assert_tokens(
-            "[]{}(),;=^:!|<||>\n",
+            "[]{}(),;=^:!->|<||>\n",
             &[
-                Token::OpenBracket,
-                Token::CloseBracket,
-                Token::OpenCurly,
-                Token::CloseCurly,
-                Token::OpenParen,
-                Token::CloseParen,
+                Token::open_bracket(),
+                Token::close_bracket(),
+                Token::open_curly(),
+                Token::close_curly(),
+                Token::open_paren(),
+                Token::close_paren(),
                 Token::Comma,
                 Token::Semicolon,
-                Token::Equal,
-                Token::Caret,
-                Token::Colon,
-                Token::Bang,
-                Token::Pipe,
-                Token::PipeLeft,
-                Token::PipeRight,
+                Token::equal(),
+                Token::caret(),
+                Token::colon(),
+                Token::bang(),
+                Token::arrow(),
+                Token::pipe(),
+                Token::pipe_left(),
+                Token::pipe_right(),
                 Token::Newline,
             ],
         )
@@ -360,13 +529,13 @@ mod test {
     #[test]
     fn strings() -> Result<(), Source<Error>> {
         assert_tokens(
-            "hello \"world[]{}():!,;=^|\" \"escape\\\"quote\\n\"",
+            "hello \"world[]{}():!,;=^|<||>->\" \"escape\\\"quote\\n\"",
             &[
-                Token::String("hello".to_owned()),
+                Token::string("hello"),
                 Token::Whitespace,
-                Token::String("world[]{}():!,;=^|".to_owned()),
+                Token::string("world[]{}():!,;=^|<||>->"),
                 Token::Whitespace,
-                Token::String("escape\"quote\n".to_owned()),
+                Token::string("escape\"quote\n"),
             ],
         )
     }
@@ -374,42 +543,44 @@ mod test {
     #[test]
     fn string_ends() -> Result<(), Source<Error>> {
         assert_tokens(
-            "a[b]c{d}e(f)g:h,i;j^k=l\nm n|o<|p|>q!",
+            "a[b]c{d}e(f)g:h,i;j^k=l\nm n|o<|p|>q!r->",
             &[
-                Token::String("a".to_owned()),
-                Token::OpenBracket,
-                Token::String("b".to_owned()),
-                Token::CloseBracket,
-                Token::String("c".to_owned()),
-                Token::OpenCurly,
-                Token::String("d".to_owned()),
-                Token::CloseCurly,
-                Token::String("e".to_owned()),
-                Token::OpenParen,
-                Token::String("f".to_owned()),
-                Token::CloseParen,
-                Token::String("g".to_owned()),
-                Token::Colon,
-                Token::String("h".to_owned()),
+                Token::string("a"),
+                Token::open_bracket(),
+                Token::string("b"),
+                Token::close_bracket(),
+                Token::string("c"),
+                Token::open_curly(),
+                Token::string("d"),
+                Token::close_curly(),
+                Token::string("e"),
+                Token::open_paren(),
+                Token::string("f"),
+                Token::close_paren(),
+                Token::string("g"),
+                Token::colon(),
+                Token::string("h"),
                 Token::Comma,
-                Token::String("i".to_owned()),
+                Token::string("i"),
                 Token::Semicolon,
-                Token::String("j".to_owned()),
-                Token::Caret,
-                Token::String("k".to_owned()),
-                Token::Equal,
-                Token::String("l".to_owned()),
+                Token::string("j"),
+                Token::caret(),
+                Token::string("k"),
+                Token::equal(),
+                Token::string("l"),
                 Token::Newline,
-                Token::String("m".to_owned()),
+                Token::string("m"),
                 Token::Whitespace,
-                Token::String("n".to_owned()),
-                Token::Pipe,
-                Token::String("o".to_owned()),
-                Token::PipeLeft,
-                Token::String("p".to_owned()),
-                Token::PipeRight,
-                Token::String("q".to_owned()),
-                Token::Bang,
+                Token::string("n"),
+                Token::pipe(),
+                Token::string("o"),
+                Token::pipe_left(),
+                Token::string("p"),
+                Token::pipe_right(),
+                Token::string("q"),
+                Token::bang(),
+                Token::string("r"),
+                Token::arrow(),
             ],
         )
     }
@@ -432,7 +603,7 @@ mod test {
             "# This is a comment\n: #This is also a comment\n#One last comment",
             &[
                 Token::Newline,
-                Token::Colon,
+                Token::colon(),
                 Token::Whitespace,
                 Token::Newline,
             ],
@@ -444,24 +615,24 @@ mod test {
         assert_tokens(
             "## This is a doc comment\nhello world",
             &[
-                Token::DocComment("This is a doc comment".into()),
+                Token::doc_comment("This is a doc comment"),
                 Token::Newline,
-                Token::String("hello".into()),
+                Token::string("hello"),
                 Token::Whitespace,
-                Token::String("world".into()),
+                Token::string("world"),
             ],
         )?;
         assert_tokens(
             "## This is a doc comment\n## more doc comment\n  ##  and more\nhello",
             &[
-                Token::DocComment("This is a doc comment".into()),
+                Token::doc_comment("This is a doc comment"),
                 Token::Newline,
-                Token::DocComment("more doc comment".into()),
+                Token::doc_comment("more doc comment"),
                 Token::Newline,
                 Token::Whitespace,
-                Token::DocComment(" and more".into()),
+                Token::doc_comment(" and more"),
                 Token::Newline,
-                Token::String("hello".into()),
+                Token::string("hello"),
             ],
         )?;
         Ok(())
@@ -477,6 +648,7 @@ mod test {
         .into_iter()
         .map(|t| t.unwrap())
         .collect();
+        dbg!(&toks);
         assert!(toks == expected);
         Ok(())
     }

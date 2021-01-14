@@ -78,16 +78,18 @@ Examples:
 `format "hello {}" world` => `"hello world"`
 `format "hello {name}" ^{name = billy}` => `"hello billy"`
 `format "{}, {a}, {}, {0}, and {{{}}}" ^{a = alice} bob cal daisy` => `"bob, alice, cal, bob, and {daisy}"`"#,
-    |ctx| {
-        let format_str = ctx.args.next().ok_or("no format string provided")?;
+    |ctx, args| {
+        let format_str = args.next().ok_or("no format string provided")?;
         let source = format_str.source();
         let format_str = {
             let s = ctx.source_value_as::<types::String>(format_str);
             s.await?.await.unwrap()?
         };
 
-        let pos_args: Vec<_> = ctx.args.by_ref().collect();
-        let kw_args = std::mem::take(&mut ctx.args.non_positional);
+        let pos_args: Vec<_> = args.by_ref().collect();
+        let kw_args = std::mem::take(&mut args.non_positional);
+
+        args.unused_arguments()?;
 
         let mut fragments = Fragments::default();
 
@@ -180,10 +182,10 @@ fn from_fn() -> Value {
 Arguments: <value: Into<String>>
 
 Returns the result of converting the value into a string.",
-    |ctx| {
-        let value = ctx.args.next().ok_or("value not provided")?;
+    |ctx, args| {
+        let value = args.next().ok_or("value not provided")?;
 
-        ctx.unused_arguments()?;
+        args.unused_arguments()?;
 
         let v = ctx.into_sourced::<types::String>(value);
         v.await?.unwrap().into()
@@ -198,11 +200,11 @@ fn split_fn() -> Value {
 Arguments: <pattern: String> <str: String>
 
 Returns an Array of Strings representing the segments of `str` separated by `pattern`.",
-    |ctx| {
-        let pat = ctx.args.next().ok_or("split pattern not provided")?;
-        let s = ctx.args.next().ok_or("string not provided")?;
+    |ctx, args| {
+        let pat = args.next().ok_or("split pattern not provided")?;
+        let s = args.next().ok_or("string not provided")?;
 
-        ctx.unused_arguments()?;
+        args.unused_arguments()?;
 
         let pat = ctx.source_value_as::<types::String>(pat);
         let pat = pat.await?.unwrap();
@@ -226,10 +228,10 @@ fn trim_fn() -> Value {
         r"Trim whitespace from the beginning and end of a string.
 
 Arguments: <String>",
-        |ctx| {
-            let s = ctx.args.next().ok_or("string not provided")?;
+        |ctx, args| {
+            let s = args.next().ok_or("string not provided")?;
 
-            ctx.unused_arguments()?;
+            args.unused_arguments()?;
 
             let s = ctx.source_value_as::<types::String>(s);
             let s = s.await?.unwrap();
@@ -253,14 +255,14 @@ mod test {
             t.assert_value_eq("self:string:format \"hello {}\" world", &String::from("hello world"));
             t.assert_value_eq("self:string:format \"{1}{}{2}{0}\" a b c d", &String::from("baca"));
             t.assert_value_eq(
-                "self:string:format \"{my_named_arg} {}\" ^{my_named_arg = howdy} hi",
+                "self:string:format \"{my_named_arg} {}\" (:my_named_arg = howdy) hi",
                 &String::from("howdy hi"),
             );
             t.assert_value_eq("self:string:format \"{{{{}}\"", &String::from("{{}"));
             t.assert_script_fail("self:string:format \"{\"");
             t.assert_script_fail("self:string:format \"}\"");
             t.assert_script_fail("self:string:format \"{}\"");
-            t.assert_script_fail("self:string:format \"{named}\" ^{not-named=1}");
+            t.assert_script_fail("self:string:format \"{named}\" ^{:not-named=1}");
             t.assert_script_fail("self:string:format \"{{{}}\" a");
         }
     }

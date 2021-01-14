@@ -1,6 +1,6 @@
 //! Error module.
 
-use ergo_runtime::{ergo_function, traits, types, ContextExt, FunctionArguments};
+use ergo_runtime::{ergo_function, traits, types, Arguments, ContextExt};
 use futures::future::TryFutureExt;
 use grease::{
     depends, make_value,
@@ -22,10 +22,10 @@ fn throw_fn() -> Value {
 
 Arguments: <error: String>
 The returned value will be unit-typed and will immediately error with the given error message.",
-        |ctx| {
-            let message = ctx.args.next().ok_or("no message provided")?;
+        |ctx, args| {
+            let message = args.next().ok_or("no message provided")?;
 
-            ctx.unused_arguments()?;
+            args.unused_arguments()?;
 
             let message = ctx.source_value_as::<types::String>(message);
             let message = message.await?.unwrap();
@@ -48,13 +48,13 @@ fn catch_fn() -> Value {
 Arguments: <handler: Function> <value>
 The returned value is dynamically-typed, and will return the result of `<value>` if it does not error.
 If it _does_ error, `handler` is applied to the error string and whatever it returns will be the result.",
-        |ctx| {
-        let handler = ctx.args.next().ok_or("no handler provided")?;
-        let (value_source, value) = ctx.args.next().ok_or("no value provided")?.take();
+        |ctx,args| {
+        let handler = args.next().ok_or("no handler provided")?;
+        let (value_source, value) = args.next().ok_or("no value provided")?.take();
 
-        ctx.unused_arguments()?;
+        args.unused_arguments()?;
 
-        let handler = traits::delay_call(ctx, handler).await?;
+        let handler = traits::delay_bind(ctx, handler).await?;
 
         let deps = depends![*handler.value, value];
 
@@ -67,10 +67,12 @@ If it _does_ error, `handler` is applied to the error string and whatever it ret
                 let e = e.to_string();
                 async move {
                     Ok(handler
-                        .call(
-                            FunctionArguments::positional(vec![
-                                value_source.with(types::String::from(e).into())
-                            ]).unchecked(),
+                        .bind(
+                            value_source.clone().with(types::Args {
+                                args: Arguments::positional(vec![
+                                    value_source.with(types::String::from(e).into())
+                                ]).unchecked()
+                            }.into())
                         )
                         .await?
                         .unwrap()

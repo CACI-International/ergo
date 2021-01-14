@@ -209,6 +209,10 @@ mod map {
             }
         }
 
+        pub fn iter_mut(&mut self) -> IterMut<K, V> {
+            IterMut { inner: self.iter() }
+        }
+
         pub fn append(&mut self, other: &mut Self)
         where
             K: Ord,
@@ -416,6 +420,15 @@ mod map {
     }
 
     #[derive(Debug)]
+    pub struct IterMut<'a, K, V>
+    where
+        K: 'a,
+        V: 'a,
+    {
+        inner: Iter<'a, K, V>,
+    }
+
+    #[derive(Debug)]
     pub struct IntoIter<K, V> {
         node: Option<Pin<Box<Node<K, V>>>>,
         len: usize,
@@ -455,6 +468,26 @@ mod map {
     }
 
     impl<'a, K, V> std::iter::FusedIterator for Iter<'a, K, V> {}
+
+    impl<'a, K, V> Iterator for IterMut<'a, K, V> {
+        type Item = (&'a mut K, &'a mut V);
+
+        fn next(&mut self) -> Option<Self::Item> {
+            self.inner.next().map(|v| unsafe { std::mem::transmute(v) })
+        }
+
+        fn size_hint(&self) -> (usize, Option<usize>) {
+            self.inner.size_hint()
+        }
+    }
+
+    impl<'a, K, V> ExactSizeIterator for IterMut<'a, K, V> {
+        fn len(&self) -> usize {
+            self.inner.len()
+        }
+    }
+
+    impl<'a, K, V> std::iter::FusedIterator for IterMut<'a, K, V> {}
 
     impl<K, V> Iterator for IntoIter<K, V> {
         type Item = (K, V);
@@ -686,6 +719,12 @@ mod set {
             }
         }
 
+        pub fn iter_mut(&mut self) -> IterMut<T> {
+            IterMut {
+                inner: self.inner.iter_mut(),
+            }
+        }
+
         pub fn remove<Q>(&mut self, key: &Q) -> bool
         where
             T: std::borrow::Borrow<Q>,
@@ -802,6 +841,13 @@ mod set {
         pub inner: super::map::Iter<'a, T, ()>,
     }
 
+    pub struct IterMut<'a, T>
+    where
+        T: 'a,
+    {
+        pub inner: super::map::IterMut<'a, T, ()>,
+    }
+
     pub struct IntoIter<T> {
         pub inner: super::map::IntoIter<T, ()>,
     }
@@ -825,6 +871,26 @@ mod set {
     }
 
     impl<'a, T> std::iter::FusedIterator for Iter<'a, T> {}
+
+    impl<'a, T> Iterator for IterMut<'a, T> {
+        type Item = &'a mut T;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            self.inner.next().map(|v| v.0)
+        }
+
+        fn size_hint(&self) -> (usize, Option<usize>) {
+            self.inner.size_hint()
+        }
+    }
+
+    impl<'a, T> ExactSizeIterator for IterMut<'a, T> {
+        fn len(&self) -> usize {
+            self.inner.len()
+        }
+    }
+
+    impl<'a, T> std::iter::FusedIterator for IterMut<'a, T> {}
 
     impl<T> Iterator for IntoIter<T> {
         type Item = T;

@@ -308,14 +308,14 @@ Note that `complete` _won't_ cause an error to occur if `exit-status` is used in
 Also note that if `complete` throws an error, it will include the stdout or stderr values if they are unused in the
 script.
 ",
-    |ctx| {
-        let cmd = ctx.args.next().ok_or("no command provided")?;
+    |ctx,cargs| {
+        let cmd = cargs.next().ok_or("no command provided")?;
 
         let cmd = ctx.into_sourced::<CommandString>(cmd);
         let cmd = cmd.await?.unwrap();
 
         let mut args = Vec::default();
-        while let Some(arg) = ctx.args.next() {
+        while let Some(arg) = cargs.next() {
             args.push(
                 {
                     let arg = ctx.into_sourced::<CommandString>(arg);
@@ -324,7 +324,7 @@ script.
             );
         }
 
-        let env = match ctx.args.kw("env") {
+        let env = match cargs.kw("env") {
             Some(v) => {
                 let env = ctx.source_value_as::<types::Map>(v);
                 Some(env.await?)
@@ -332,7 +332,7 @@ script.
             None => None
         };
 
-        let dir = match ctx.args.kw("pwd") {
+        let dir = match cargs.kw("pwd") {
             Some(v) => {
                 let pwd = ctx.into_sourced::<PathBuf>(v);
                 Some(pwd.await?.unwrap())
@@ -341,7 +341,7 @@ script.
             None => None
         };
 
-        let stdin = match ctx.args.kw("stdin") {
+        let stdin = match cargs.kw("stdin") {
             Some(v) => {
                 let stdin = ctx.into_sourced::<types::ByteStream>(v);
                 Some(stdin.await?.unwrap())
@@ -349,7 +349,7 @@ script.
             None => None
         };
 
-        ctx.unused_arguments()?;
+        cargs.unused_arguments()?;
 
         let mut deps = depends![cmd, ^@args];
         let mut unordered_deps = Vec::new();
@@ -514,10 +514,10 @@ script.
 
         crate::grease_string_map! {
             "Outputs from an `exec` call."
-            "stdout": "The standard output byte stream." = rt.imbue_error_context(stdout.into(), "while evaluating stdout of exec command"),
-            "stderr": "The standard error byte stream." = rt.imbue_error_context(stderr.into(), "while evaluating stderr of exec command"),
-            "exit-status": "The exit status, which may be used in boolean contexts to check for successful exit." = rt.imbue_error_context(exit_status.into(), "while evaluating exit_status of exec command"),
-            "complete": "A unit value for the successful completion of the launched program." = rt.imbue_error_context(run_command.into(), "while evaluating result of exec command")
+            "stdout": "The standard output byte stream." = stdout.into(),
+            "stderr": "The standard error byte stream." = stderr.into(),
+            "exit-status": "The exit status, which may be used in boolean contexts to check for successful exit." = exit_status.into(),
+            "complete": "A unit value for the successful completion of the launched program." = run_command.into()
         }
     })
     .into()
@@ -565,7 +565,7 @@ grease::grease_traits_fn! {
 }
 
 // Only run these tests on unix, where we assume the existence of some programs.
-#[cfg(all(test,unix))]
+#[cfg(all(test, unix))]
 mod test {
     ergo_script::test! {
         fn exec(t) {

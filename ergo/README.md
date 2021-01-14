@@ -102,3 +102,4 @@ Within a script, the following are defined:
   * This will allow loaded plugins to be properly dropped rather than leaked.
 * Change linting to occur as a side effect (as this is the only way to properly
   lint everything when nested functions are used).
+* Improve std::fs file not found errors (print the file!).

@@ -11,19 +11,35 @@
   * When a closure-bound value evaluated to a string in command position, it was
     looked up twice (incorrectly).
 * Support doc comments (starting with `## `).
-* Change `match` syntax to use `->` instead of `=` between case and body.
-* Change pattern syntax to require `:` prior to arbitrary expressions.
-  * This means that `a` and `:a` are identical patterns, but now `:a` as a
-    pattern (i.e. binding to the value bound to `a`) muts be expressed as `::a`.
-  * An easy way to think of it is that all pattern bindings (in set expressions,
-    function parameters, and match expressions) are expressed the same way they
-    are accessed:
+* Major syntax and runtime updates:
+  * Remove use of `pom`, opt for a custom parser.
+  * Remove `match` as a built-in parsed expression (it will be added to `std`).
+  * Remove patterns as an AST concept. Everything is parsed as expressions,
+    including bind targets (`[target] = ...` and `[target] -> ...`).
+  * In bind targets:
+    * `a = b` is parsed as a bind equality (which will
+      bind a value to both `a` and `b`), 
+    * `!a` will cause `a` to be parsed like a normal expression,
+    * `:a` is parsed as a set expression (which will then bind to a value)
+  * Support calling a function with no arguments using a trailing `:`:
+    `a:` is the same as `(a)`.
+  * Support bind expressions as `if` conditionals (`if (:a = b) :a other`),
+    where the branch is chosen based on if the binding succeeds.
+  * Change function definition to be generalized to any bindings, and `fn` is
+    just a function which will binds to call arguments.
+  * Add `pat` as a function which will bind to bind-call arguments (i.e.
+    arguments from within a binding context):
     ```
-    :a = something
-    access :a
+    a = pat :v -> ...
+    # Now we can use `a` within a binding.
+    a :x = 1
     ```
-    Except that a literal string `s` in a pattern is shorthand for `:s`.
-* Add support for pattern predicates.
+    versus
+    ```
+    a = fn :v -> ...
+    # The following will error.
+    a :x = 1
+    ```
 
 ## 1.0.0-beta.7  -- 2020-12-08
 * Add `-e`/`--expression` flags to evaluate the arguments as an expression

@@ -12,9 +12,9 @@ Arguments: value [value...]
 Returns a value that is identical to the final value, but identified as if it depends on the previous values. When
 executed, the returned value will execute each of the prior values in order and deeply (i.e., the indices of arrays and
 maps will be evaluated concurrently).",
-    |ctx| {
-        let mut val = ctx.args.next().ok_or("no values provided")?;
-        while let Some(next) = ctx.args.next() {
+    |ctx, args| {
+        let mut val = args.next().ok_or("no values provided")?;
+        while let Some(next) = args.next() {
             // TODO attribute errors to the correct Source
             val = next.map(|n| {
                 val.map(|v| {
@@ -28,7 +28,7 @@ maps will be evaluated concurrently).",
             });
         }
 
-        ctx.unused_arguments()?;
+        args.unused_arguments()?;
 
         val.unwrap()
     })

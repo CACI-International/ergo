@@ -570,29 +570,46 @@ impl<T: IntoSource, U: IntoSource> IntoSource for (T, U) {
     }
 }
 
+fn into_source_iter<R, T, I>(v: T) -> Source<R>
+where
+    T: IntoIterator<Item = I>,
+    I: IntoSource,
+    R: Extend<Source<I::Output>> + Default,
+{
+    let (value, rest): (_, Vec<_>) = v
+        .into_iter()
+        .map(|t| {
+            let s = t.into_source();
+            let source = s.source.0.clone();
+            let loc = s.location.clone();
+            (s, (loc, SourceFactoryRef(source)))
+        })
+        .unzip();
+
+    let (locs, srcs): (Vec<_>, Vec<_>) = rest.into_iter().unzip();
+    let location = locs.into_iter().sum();
+    let source = srcs.into_iter().sum();
+
+    Source {
+        value,
+        location,
+        source,
+    }
+}
+
 impl<T: IntoSource> IntoSource for Vec<T> {
     type Output = Vec<Source<T::Output>>;
 
     fn into_source(self) -> Source<Self::Output> {
-        let (value, rest): (Vec<_>, Vec<_>) = self
-            .into_iter()
-            .map(|t| {
-                let s = t.into_source();
-                let source = s.source.0.clone();
-                let loc = s.location.clone();
-                (s, (loc, SourceFactoryRef(source)))
-            })
-            .unzip();
+        into_source_iter(self)
+    }
+}
 
-        let (locs, srcs): (Vec<_>, Vec<_>) = rest.into_iter().unzip();
-        let location = locs.into_iter().sum();
-        let source = srcs.into_iter().sum();
+impl<T: IntoSource> IntoSource for std::collections::VecDeque<T> {
+    type Output = std::collections::VecDeque<Source<T::Output>>;
 
-        Source {
-            value,
-            location,
-            source,
-        }
+    fn into_source(self) -> Source<Self::Output> {
+        into_source_iter(self)
     }
 }
 
@@ -603,25 +620,7 @@ where
     type Output = Vec<Source<<&'a T as IntoSource>::Output>>;
 
     fn into_source(self) -> Source<Self::Output> {
-        let (value, rest): (Vec<_>, Vec<_>) = self
-            .into_iter()
-            .map(|t| {
-                let s = t.into_source();
-                let source = s.source.0.clone();
-                let loc = s.location.clone();
-                (s, (loc, SourceFactoryRef(source)))
-            })
-            .unzip();
-
-        let (locs, srcs): (Vec<_>, Vec<_>) = rest.into_iter().unzip();
-        let location = locs.into_iter().sum();
-        let source = srcs.into_iter().sum();
-
-        Source {
-            value,
-            location,
-            source,
-        }
+        into_source_iter(self)
     }
 }
 
@@ -755,15 +754,25 @@ impl<T, U> From<(Source<T>, Source<U>)> for Source<(Source<T>, Source<U>)> {
 
 const TAB_WIDTH: usize = 4;
 
-impl<T: fmt::Display> fmt::Display for Source<T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let mut start = None;
-        let mut end = None;
-        let mut startline = None;
+struct DisplayInfoDetail {
+    pub start: (usize, usize),
+    pub end: (usize, usize),
+    pub startline: String,
+}
 
+struct DisplayInfo {
+    pub name: Option<String>,
+    pub detail: Result<DisplayInfoDetail, String>,
+}
+
+impl<T> Source<T> {
+    fn display_info(&self) -> DisplayInfo {
         if let RSome(source) = &self.source.0 {
-            write!(f, "{}", source.name())?;
-            match source.read() {
+            let mut start = None;
+            let mut end = None;
+            let mut startline = None;
+
+            let detail = match source.read() {
                 RResult::ROk(reader) => {
                     let mut src = BufReader::new(reader);
 
@@ -799,63 +808,113 @@ impl<T: fmt::Display> fmt::Display for Source<T> {
                     };
 
                     match error {
-                        Some(e) => write!(f, ": {}\n[error: {}]", &self.value, e),
+                        Some(e) => Err(e),
                         None => {
                             let start = start.unwrap();
                             let end = end.unwrap();
                             let startline = startline.unwrap();
-                            let mut linechars = startline.chars();
-                            let mut underline = String::new();
-                            let mut put_underline = |c, alt_c| {
-                                if let Some('\t') = linechars.next() {
-                                    underline.push(c);
-                                    for _ in 1..TAB_WIDTH {
-                                        underline.push(alt_c);
-                                    }
-                                } else {
-                                    underline.push(c);
-                                }
-                            };
-                            for _ in 1..start.1 {
-                                put_underline(' ', ' ');
-                            }
-                            put_underline('^', '-');
-                            let endchar = if start.0 == end.0 {
-                                end.1
-                            } else {
-                                startline.chars().count()
-                            };
-                            for _ in start.1..endchar {
-                                put_underline('-', '-');
-                            }
 
-                            let mut display_startline = String::new();
-                            for c in startline.chars() {
-                                if c == '\t' {
-                                    display_startline.extend(" ".repeat(TAB_WIDTH).chars());
-                                } else {
-                                    display_startline.push(c);
-                                }
-                            }
-
-                            write!(
-                                f,
-                                " ({}:{}-{}:{}): {}\n{}\n{}",
-                                start.0,
-                                start.1,
-                                end.0,
-                                end.1,
-                                &self.value,
-                                display_startline,
-                                underline
-                            )
+                            Ok(DisplayInfoDetail {
+                                start,
+                                end,
+                                startline,
+                            })
                         }
                     }
                 }
-                RResult::RErr(e) => write!(f, ": {}\n[error reading source: {}]", &self.value, e),
+                RResult::RErr(e) => Err(e.into()),
+            };
+
+            DisplayInfo {
+                name: Some(source.name().into()),
+                detail,
             }
         } else {
-            write!(f, "[no source]: {}", &self.value)
+            DisplayInfo {
+                name: None,
+                detail: Err("no source".into()),
+            }
+        }
+    }
+}
+
+impl DisplayInfoDetail {
+    fn underline(&self) -> String {
+        let mut linechars = self.startline.chars();
+        let mut underline = String::new();
+        let mut put_underline = |c, alt_c| {
+            if let Some('\t') = linechars.next() {
+                underline.push(c);
+                for _ in 1..TAB_WIDTH {
+                    underline.push(alt_c);
+                }
+            } else {
+                underline.push(c);
+            }
+        };
+        for _ in 1..self.start.1 {
+            put_underline(' ', ' ');
+        }
+        put_underline('^', '-');
+        let endchar = if self.start.0 == self.end.0 {
+            self.end.1
+        } else {
+            self.startline.chars().count()
+        };
+        for _ in self.start.1..endchar {
+            put_underline('-', '-');
+        }
+
+        underline
+    }
+
+    fn startline(&self) -> String {
+        let mut display_startline = String::new();
+        for c in self.startline.chars() {
+            if c == '\t' {
+                display_startline.extend(" ".repeat(TAB_WIDTH).chars());
+            } else {
+                display_startline.push(c);
+            }
+        }
+        display_startline
+    }
+
+    fn loc(&self) -> String {
+        if self.start.0 == self.end.0 {
+            if self.start.1 == self.end.1 {
+                format!("{}:{}", self.start.0, self.start.1)
+            } else {
+                format!("{}:{}-{}", self.start.0, self.start.1, self.end.1)
+            }
+        } else {
+            format!(
+                "{}:{}-{}:{}",
+                self.start.0, self.start.1, self.end.0, self.end.1,
+            )
+        }
+    }
+}
+
+impl<T: fmt::Display> fmt::Display for Source<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let info = self.display_info();
+        match info.name {
+            Some(n) => {
+                write!(f, "{}", n)?;
+                match info.detail {
+                    Err(e) => write!(f, ": {}\n[source error: {}]", &self.value, e),
+                    Ok(detail) => write!(
+                        f,
+                        " ({}): {}\n{}\n{}",
+                        detail.loc(),
+                        &self.value,
+                        detail.startline(),
+                        detail.underline()
+                    ),
+                }
+            }
+            None => write!(f, "[no source]: {}", &self.value),
         }
     }
 }
@@ -863,5 +922,28 @@ impl<T: fmt::Display> fmt::Display for Source<T> {
 impl<T: PartialEq> PartialEq<T> for Source<T> {
     fn eq(&self, other: &T) -> bool {
         &self.value == other
+    }
+}
+
+impl<T> Source<T> {
+    /// Display a source inline.
+    ///
+    /// This only displays related line numbers, you should ensure that the value's source name is
+    /// displayed by other means.
+    pub fn display_inline(&self) -> Inline<'_, T> {
+        Inline(self)
+    }
+}
+
+/// Displays a source inline (only displaying line numbers).
+pub struct Inline<'a, T>(&'a Source<T>);
+
+impl<'a, T: fmt::Display> fmt::Display for Inline<'a, T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let info = self.0.display_info();
+        match info.detail {
+            Err(e) => write!(f, "{} [source error: {}]", &self.0.value, e),
+            Ok(detail) => write!(f, "{} at {}", &self.0.value, detail.loc()),
+        }
     }
 }

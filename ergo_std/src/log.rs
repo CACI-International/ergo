@@ -21,9 +21,11 @@ The next argument gives the string to log to the appropriate output verbosity le
 
 Note that like other functions, these logging functions don't occur immediately, but rather return a
 unit-typed value that, when evaluated, will log to the output.",
-    log |ctx| {
-        let op = ctx.args.next().ok_or("no command given")?;
-        let arg = ctx.args.next().ok_or("no argument given")?;
+    log |ctx, args| {
+        let op = args.next().ok_or("no command given")?;
+        let arg = args.next().ok_or("no argument given")?;
+
+        args.unused_arguments()?;
 
         let op = ctx.source_value_as::<types::String>(op);
         let op = op.await?.await.transpose_ok()?;

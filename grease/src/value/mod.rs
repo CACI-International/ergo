@@ -554,6 +554,26 @@ impl Value {
         }.boxed()
     }
 
+    /// Try to convert this Value to a TypedValue immediately.
+    ///
+    /// If the value is dynamically typed, it is evaluated to get the type.
+    /// If the conversion fails, the given function is used to get an Error from the type.
+    pub async fn typed_immediate<T: GreaseType, F, Fut>(
+        self,
+        on_error: F,
+    ) -> crate::Result<TypedValue<T>>
+    where
+        F: FnOnce(&Type) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = Error> + Send,
+    {
+        let tp = self.grease_type().await?;
+        if tp == &T::grease_type() {
+            Ok(unsafe { TypedValue::from_value(self) })
+        } else {
+            Err(on_error(tp).await)
+        }
+    }
+
     /// Try to convert this Value by reference to a TypedValue reference.
     ///
     /// This will only return Some if the type is immediately known (i.e. not dynamic).

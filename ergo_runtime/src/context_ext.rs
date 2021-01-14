@@ -73,6 +73,33 @@ pub trait ContextExt: AsContext {
         .boxed()
     }
 
+    fn source_value_as_immediate<T: GreaseType + 'static>(
+        &self,
+        v: Source<Value>,
+    ) -> BoxFuture<'static, Result<Source<TypedValue<T>>>> {
+        let (source, v) = v.take();
+        let s = source.clone();
+        let ctx = self.as_context().clone();
+        v.typed_immediate::<T, _, _>(move |t| {
+            let ctx = ctx.clone();
+            let t = t.clone();
+            async move {
+                let expected = match ctx.type_name(&T::grease_type()).await {
+                    Err(e) => return e,
+                    Ok(v) => v,
+                };
+                let found = match ctx.type_name(&t).await {
+                    Err(e) => return e,
+                    Ok(v) => v,
+                };
+                s.with(format!("expected {}, found {}", expected, found))
+                    .into_grease_error()
+            }
+        })
+        .map(move |r| r.map(move |v| source.with(v)))
+        .boxed()
+    }
+
     fn force_value_nested<'a>(&'a self, v: Value) -> BoxFuture<'a, Result<()>> {
         crate::traits::force_value_nested(self.as_context(), v).boxed()
     }

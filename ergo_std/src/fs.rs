@@ -53,10 +53,10 @@ The glob pattern is similar to unix-style globs, where:
 
 The pattern is checked relative to the script directory, however specifying any path as part of the pattern (paths can
 have glob patterns) will result in a search using that path.",
-    |ctx| {
-        let pattern = ctx.args.next().ok_or("no glob pattern provided")?;
+    |ctx,args| {
+        let pattern = args.next().ok_or("no glob pattern provided")?;
 
-        ctx.unused_arguments()?;
+        args.unused_arguments()?;
 
         let pattern_source = pattern.source();
         let pattern = ctx.into_sourced::<types::String>(pattern);
@@ -129,11 +129,11 @@ Arguments: <from: Path> <to: Path>
 If the destination is an existing directory, `from` is copied with the same basename into that directory.
 All destination directories are automatically created.
 If `from` is a directory, it is recursively copied.",
-    |ctx| {
-        let from = ctx.args.next().ok_or("'from' missing")?;
-        let to = ctx.args.next().ok_or("'to' missing")?;
+    |ctx,args| {
+        let from = args.next().ok_or("'from' missing")?;
+        let to = args.next().ok_or("'to' missing")?;
 
-        ctx.unused_arguments()?;
+        args.unused_arguments()?;
 
         let from = ctx.source_value_as::<PathBuf>(from);
         let from = from.await?.unwrap();
@@ -162,10 +162,10 @@ fn exists_fn() -> Value {
 
 Arguments: <Path>
 Returns a boolean indicating whether the path exists (as either a file or directory).",
-        |ctx| {
-            let path = ctx.args.next().ok_or("'path' missing")?;
+        |ctx, args| {
+            let path = args.next().ok_or("'path' missing")?;
 
-            ctx.unused_arguments()?;
+            args.unused_arguments()?;
 
             let path = ctx.source_value_as::<PathBuf>(path);
             let path = path.await?.unwrap();
@@ -186,10 +186,10 @@ fn create_dir_fn() -> Value {
 
 Arguments: <Path>
 Returns a unit-typed value that creates the directory and ancestors if they do not exist.",
-        |ctx| {
-            let path = ctx.args.next().ok_or("'path' missing")?;
+        |ctx, args| {
+            let path = args.next().ok_or("'path' missing")?;
 
-            ctx.unused_arguments()?;
+            args.unused_arguments()?;
 
             let path = ctx.source_value_as::<PathBuf>(path);
             let path = path.await?.unwrap();
@@ -220,11 +220,11 @@ fn unarchive_fn() -> Value {
 Arguments: <archive: Path> <destination: Path>
 `archive` may be a path to a directory, zip file or tar archive, where the tar archive can optionally be compressed with
 gzip, bzip2, or lzma (xz). The archive contents are extracted into `destination` as a directory.",
-    |ctx| {
-        let from = ctx.args.next().ok_or("'from' missing")?;
-        let to = ctx.args.next().ok_or("'to' missing")?;
+    |ctx,args| {
+        let from = args.next().ok_or("'from' missing")?;
+        let to = args.next().ok_or("'to' missing")?;
 
-        ctx.unused_arguments()?;
+        args.unused_arguments()?;
 
         let from = ctx.source_value_as::<PathBuf>(from);
         let (from_source, from) = from.await?.take();
@@ -313,11 +313,11 @@ fn sha1_fn() -> Value {
 
 Arguments: <file: Path> <sum: String>
 Returns a boolean indicating whether `sum` is the sha1 sum of the contents of `file`.",
-        |ctx| {
-            let path = ctx.args.next().ok_or("no file provided to sha1")?;
-            let sum = ctx.args.next().ok_or("no checksum provided")?;
+        |ctx, args| {
+            let path = args.next().ok_or("no file provided to sha1")?;
+            let sum = args.next().ok_or("no checksum provided")?;
 
-            ctx.unused_arguments()?;
+            args.unused_arguments()?;
 
             let path = ctx.source_value_as::<PathBuf>(path);
             let path = path.await?.unwrap();
@@ -347,10 +347,10 @@ fn track_fn() -> Value {
 Arguments: <Path-or-String>
 Returns a Path that is identified by the contents of the file to which the argument refers. The path must exist and
 refer to a file.",
-    |ctx| {
-        let path = ctx.args.next().ok_or("no file provided to track")?;
+    |ctx,args| {
+        let path = args.next().ok_or("no file provided to track")?;
 
-        ctx.unused_arguments()?;
+        args.unused_arguments()?;
 
         let path = path
             .map_async(|p|
@@ -460,10 +460,10 @@ fn remove_fn() -> Value {
 
 Arguments: <Path>
 If the path does not exist, nothing happens.",
-        |ctx| {
-            let path = ctx.args.next().ok_or("'path' missing")?;
+        |ctx, args| {
+            let path = args.next().ok_or("'path' missing")?;
 
-            ctx.unused_arguments()?;
+            args.unused_arguments()?;
 
             let path = ctx.source_value_as::<PathBuf>(path);
             let path = path.await?.unwrap();
@@ -492,10 +492,10 @@ fn read_fn() -> Value {
 
 Arguments: <Path>
 Returns a ByteStream of the file's contents.",
-        |ctx| {
-            let path = ctx.args.next().ok_or("'path' missing")?;
+        |ctx, args| {
+            let path = args.next().ok_or("'path' missing")?;
 
-            ctx.unused_arguments()?;
+            args.unused_arguments()?;
 
             let path = ctx.source_value_as::<PathBuf>(path);
             let path = path.await?.unwrap();
@@ -518,11 +518,11 @@ fn write_fn() -> Value {
 
 Arguments: <Path> <ByteStream>
 Creates or overwrites the file with the bytes from the ByteStream.",
-        |ctx| {
-            let path = ctx.args.next().ok_or("'path' missing")?;
-            let data = ctx.args.next().ok_or("'data' missing")?;
+        |ctx, args| {
+            let path = args.next().ok_or("'path' missing")?;
+            let data = args.next().ok_or("'data' missing")?;
 
-            ctx.unused_arguments()?;
+            args.unused_arguments()?;
 
             let path = ctx.source_value_as::<PathBuf>(path);
             let path = path.await?.unwrap();

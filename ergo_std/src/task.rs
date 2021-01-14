@@ -8,7 +8,9 @@ use abi_stable::{
 use ergo_runtime::{ergo_function, types, ContextExt};
 use grease::error::UniqueErrorSources;
 use grease::future::eager::Eager;
-use grease::runtime::{LogTask, RecordingWork, ScopeTaskLocal, TaskLocal, TaskLocalRef, TaskPermit};
+use grease::runtime::{
+    LogTask, RecordingWork, ScopeTaskLocal, TaskLocal, TaskLocalRef, TaskPermit,
+};
 use grease::task_local_key;
 use grease::value::{Errored, Value};
 use std::str::FromStr;
@@ -34,11 +36,11 @@ When a value running in a task waits on another task, it is considered inactive.
 work in the runtime progress tracking. An active task takes up `task-count` slots out of the total permitted number of
 concurrent tasks at a single time (as configured in the runtime). If there are not enough slots, the task will wait
 until more become available. If the requested number is greater than the maximum, it will be limited to the maximum.",
-    |ctx| {
-        let desc = ctx.args.next().ok_or("no task description")?;
-        let val = ctx.args.next().ok_or("no argument to task")?.unwrap();
+    |ctx, args| {
+        let desc = args.next().ok_or("no task description")?;
+        let val = args.next().ok_or("no argument to task")?.unwrap();
 
-        let task_count = if let Some(v) = ctx.args.kw("task-count") {
+        let task_count = if let Some(v) = args.kw("task-count") {
             let v = ctx.source_value_as::<types::String>(v);
             let v = v.await?.await.transpose_ok()?;
             v.map(|v| u32::from_str(v.as_ref()).map_err(|_| "expected unsigned integer")).transpose_err()
@@ -47,13 +49,13 @@ until more become available. If the requested number is greater than the maximum
             0
         };
 
-        let work_id = if let Some(v) = ctx.args.kw("track-work-by") {
+        let work_id = if let Some(v) = args.kw("track-work-by") {
             v.id()
         } else {
             val.id()
         };
 
-        ctx.unused_arguments()?;
+        args.unused_arguments()?;
 
         let desc = ctx.source_value_as::<types::String>(desc);
         let desc = desc.await?.unwrap();
@@ -162,7 +164,7 @@ enum ParentTaskState {
 ///
 /// While this is retained, the attributed task is considered active.
 pub struct ActiveTask {
-    task: TaskLocalRef<ParentTask>
+    task: TaskLocalRef<ParentTask>,
 }
 
 impl Drop for ActiveTask {
@@ -181,7 +183,10 @@ pub struct Run<Fut>(Fut);
 impl<Fut: std::future::Future> std::future::Future for Run<Fut> {
     type Output = Fut::Output;
 
-    fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context) -> std::task::Poll<Fut::Output> {
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context,
+    ) -> std::task::Poll<Fut::Output> {
         let task = ParentTask::task_local().expect("ParentTask not set");
         let _active = {
             {
@@ -190,11 +195,14 @@ impl<Fut: std::future::Future> std::future::Future for Run<Fut> {
                     match &mut *guard {
                         ParentTaskState::Active(n, _, _, _) => {
                             *n += 1;
-                            break
+                            break;
                         }
                         ParentTaskState::ActivePending(p) => {
                             // Safety: p is a BoxFuture, it will not move
-                            match std::future::Future::poll(unsafe { std::pin::Pin::new_unchecked(p) }, cx) {
+                            match std::future::Future::poll(
+                                unsafe { std::pin::Pin::new_unchecked(p) },
+                                cx,
+                            ) {
                                 std::task::Poll::Pending => return std::task::Poll::Pending,
                                 std::task::Poll::Ready(task_permit) => {
                                     *guard = ParentTaskState::Active(
@@ -203,7 +211,7 @@ impl<Fut: std::future::Future> std::future::Future for Run<Fut> {
                                         task.work.lock().start(),
                                         task_permit,
                                     );
-                                    break
+                                    break;
                                 }
                             }
                         }
@@ -211,10 +219,15 @@ impl<Fut: std::future::Future> std::future::Future for Run<Fut> {
                             *guard = ParentTaskState::ActivePending(
                                 // Safety: the inner state is cleared prior to being dropped, and holds the reference to the task manager.
                                 unsafe {
-                                    std::mem::transmute::<grease::future::BoxFuture<'_, _>, grease::future::BoxFuture<'static, _>>(
-                                        grease::future::BoxFuture::new(task.task_manager.task_acquire(task.task_count))
+                                    std::mem::transmute::<
+                                        grease::future::BoxFuture<'_, _>,
+                                        grease::future::BoxFuture<'static, _>,
+                                    >(
+                                        grease::future::BoxFuture::new(
+                                            task.task_manager.task_acquire(task.task_count),
+                                        ),
                                     )
-                                }
+                                },
                             );
                         }
                     }
@@ -243,7 +256,7 @@ impl ParentTask {
             log,
             work,
             task_manager,
-            state: RMutex::new(ParentTaskState::Inactive)
+            state: RMutex::new(ParentTaskState::Inactive),
         }
     }
 
@@ -253,7 +266,7 @@ impl ParentTask {
     pub fn remain_active() -> Option<ActiveTask> {
         let task = match Self::task_local() {
             None => return None,
-            Some(task) => task
+            Some(task) => task,
         };
         {
             let mut guard = task.state.lock();

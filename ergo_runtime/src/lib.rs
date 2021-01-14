@@ -86,7 +86,8 @@ pub struct Runtime {
     /// always be accessible from being wrapped in capture environments. It also makes
     /// clearing the environment when loading separate scripts easier.
     global_env: ScriptEnv,
-    env: RVec<ScriptEnv>,
+    env: RVec<RArc<RMutex<ScriptEnv>>>,
+    env_set: ROption<RArc<RMutex<ScriptEnv>>>,
     pub loading: RArc<RMutex<RVec<PathBuf>>>,
     pub load_cache: RArc<RMutex<BstMap<PathBuf, EvalResultAbi>>>,
     initial_load_path: RVec<PathBuf>,
@@ -120,64 +121,6 @@ impl context_ext::AsContext for Runtime {
     }
 }
 
-/// Script function call context.
-#[derive(StableAbi)]
-#[repr(C)]
-pub struct FunctionCall<'a> {
-    runtime: &'a mut Runtime,
-    pub args: FunctionArguments,
-    pub call_site: Source<()>,
-}
-
-impl<'a> FunctionCall<'a> {
-    /// Create a new FunctionCall context.
-    pub fn new(ctx: &'a mut Runtime, args: FunctionArguments, call_site: Source<()>) -> Self {
-        FunctionCall {
-            runtime: ctx,
-            args,
-            call_site,
-        }
-    }
-}
-
-impl std::ops::Deref for FunctionCall<'_> {
-    type Target = Runtime;
-
-    fn deref(&self) -> &Self::Target {
-        self.runtime
-    }
-}
-
-impl std::ops::DerefMut for FunctionCall<'_> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.runtime
-    }
-}
-
-impl context_ext::AsContext for FunctionCall<'_> {
-    fn as_context(&self) -> &Context {
-        self.runtime.as_context()
-    }
-}
-
-/// Function call arguments interface.
-#[derive(Debug, StableAbi)]
-#[repr(C)]
-pub struct UncheckedFunctionArguments {
-    /// Positional arguments in this vec are in reverse order; use Iterator to access them.
-    pub positional: RVec<Source<Value>>,
-    pub non_positional: BstMap<Source<Value>, Source<Value>>,
-}
-
-/// Function call arguments.
-///
-/// Checks whether all arguments have been consumed when dropped.
-#[derive(Debug, Default, StableAbi)]
-#[repr(C)]
-pub struct FunctionArguments {
-    inner: UncheckedFunctionArguments,
-}
-
 impl Runtime {
     /// Create a new runtime.
     pub fn new(
@@ -189,6 +132,7 @@ impl Runtime {
             context,
             global_env,
             env: Default::default(),
+            env_set: ROption::RNone,
             loading: RArc::new(RMutex::new(Default::default())),
             load_cache: RArc::new(RMutex::new(Default::default())),
             mod_path: ROption::RNone,
@@ -200,35 +144,53 @@ impl Runtime {
         }
     }
 
-    /// Get the current scoped environment.
-    fn env_current(&mut self) -> &mut ScriptEnv {
-        self.env
-            .last_mut()
-            .expect("invalid env access; no environment stack")
+    /// Call a function on the current scoped environment.
+    pub fn env_current<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut ScriptEnv) -> R,
+    {
+        let mut guard = self
+            .env
+            .last()
+            .expect("invalid env access; no environment")
+            .lock();
+        f(&mut *guard)
+    }
+
+    fn env_current_set<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut ScriptEnv) -> R,
+    {
+        let mut guard = self
+            .env_set
+            .as_ref()
+            .expect("invalid env access; no environment")
+            .lock();
+        f(&mut *guard)
     }
 
     /// Insert a binding into the current scoped environment.
-    pub fn env_insert<T: Into<EvalResult>>(&mut self, k: Value, v: T) {
-        self.env_current().insert(k.into(), v.into().into());
+    pub fn env_insert<T: Into<EvalResult>>(&self, k: Value, v: T) {
+        self.env_current_set(|c| c.insert(k, v.into().into()));
     }
 
     /// Extend the current scoped environment.
     pub fn env_extend<T: IntoIterator<Item = (Value, EvalResultAbi)>>(&mut self, v: T) {
-        self.env_current()
-            .extend(v.into_iter().map(|(k, v)| (k, v.into())));
+        self.env_current_set(|c| c.extend(v.into_iter().map(|(k, v)| (k, v.into()))));
     }
 
-    /// Remove a binding from the current scoped environment.
-    pub fn env_remove<Q: ?Sized>(&mut self, k: &Q) -> Option<EvalResult>
-    where
-        Value: std::borrow::Borrow<Q>,
-        Q: Ord,
-    {
-        self.env_current().remove(k).map(|v| v.into())
+    /// Get the current set environment.
+    ///
+    /// Panics if no environment is set (with `env_set_to_current`).
+    pub fn env_to_set(&self) -> RArc<RMutex<ScriptEnv>> {
+        self.env_set
+            .as_ref()
+            .expect("invalid env access; no environment set")
+            .clone()
     }
 
     /// Get a binding from the current environment.
-    pub fn env_get<Q: ?Sized>(&self, k: &Q) -> Option<std::result::Result<&Source<Value>, &Error>>
+    pub fn env_get<Q: ?Sized>(&self, k: &Q) -> Option<EvalResult>
     where
         Value: std::borrow::Borrow<Q>,
         Q: Ord,
@@ -236,17 +198,63 @@ impl Runtime {
         self.env
             .iter()
             .rev()
-            .find_map(|m| m.get(k))
-            .or_else(|| self.global_env.get(k))
-            .map(|v| v.as_ref().into_result())
+            .find_map(|m| m.lock().get(k).map(|v| v.clone()))
+            .or_else(|| self.global_env.get(k).map(|v| v.clone()))
+            .map(|v| v.into_result())
     }
 
     /// Flatten the current environment.
     pub fn env_flatten(&self) -> ScriptEnv {
         self.env.iter().fold(Default::default(), |mut e, m| {
-            e.append(&mut m.clone());
+            e.append(&mut m.lock().clone());
             e
         })
+    }
+
+    /// Call the given function in a new scoped environment.
+    pub fn env_scoped<'b, F, R>(&'b mut self, f: F) -> BoxFuture<'b, (R, ScriptEnv)>
+    where
+        F: for<'a> FnOnce(&'a mut Self) -> BoxFuture<'a, R> + Send + 'b,
+        Self: Send,
+    {
+        async move {
+            self.env.push(RArc::new(RMutex::new(Default::default())));
+            let ret = f(self).await;
+            let env = self.env.pop().expect("env push/pop is not balanced");
+            let env = match RArc::try_unwrap(env) {
+                Ok(v) => v.into_inner(),
+                Err(e) => e.lock().clone(),
+            };
+            (ret, env)
+        }
+        .boxed()
+    }
+
+    /// Use the current environment scope as the env set target.
+    pub fn env_set_to_current<'b, F, R>(&'b mut self, f: F) -> BoxFuture<'b, R>
+    where
+        F: for<'a> FnOnce(&'a mut Self) -> BoxFuture<'a, R> + Send + 'b,
+        Self: Send,
+    {
+        async move {
+            let prev_env_set = self
+                .env_set
+                .replace(self.env.last().expect("no environment set").clone());
+            let ret = f(self).await;
+            self.env_set = prev_env_set;
+            ret
+        }
+        .boxed()
+    }
+
+    /// Return an env containing all the env set targets.
+    pub fn env_set_gather<'b, F, R>(&'b mut self, f: F) -> BoxFuture<'b, (R, ScriptEnv)>
+    where
+        // instead of 'static, F should be 'b and 'a: 'b, but there's no way to constrain 'a
+        F: for<'a> FnOnce(&'a mut Self) -> BoxFuture<'a, R> + Send + 'static,
+        Self: Send,
+    {
+        self.env_scoped(move |ctx| ctx.env_set_to_current(f))
     }
 
     /// Store a value for the duration of the runtime's lifetime.
@@ -287,7 +295,7 @@ impl Runtime {
     /// Clear the local environment in a new copy of the runtime.
     pub fn empty(&self) -> Self {
         Runtime {
-            env: rvec![Default::default()],
+            env: rvec![RArc::new(RMutex::new(Default::default()))],
             ..self.clone()
         }
     }
@@ -316,59 +324,21 @@ impl Runtime {
     }
 }
 
-impl FunctionCall<'_> {
-    /// Return whether there were unused non-positional arguments, and add errors for each unused
-    /// argument to the context errors.
-    pub fn unused_non_positional(&mut self) -> std::result::Result<(), Error> {
-        let kw = std::mem::take(&mut self.args.non_positional);
-        if kw.is_empty() {
-            Ok(())
-        } else {
-            Err(Error::aggregate(kw.into_iter().map(|(k, v)| {
-                crate::source::IntoSource::into_source((k.source(), v.source()))
-                    .with(error::UnexpectedNonPositionalArgument)
-                    .into()
-            })))
-        }
-    }
-
-    /// Return whether there were unused positional arguments, and add errors for each unused
-    /// argument to the context errors.
-    pub fn unused_positional(&mut self) -> std::result::Result<(), Error> {
-        if self.args.is_empty() {
-            Ok(())
-        } else {
-            let mut vec: Vec<Error> = Vec::new();
-            while let Some(v) = self.args.next() {
-                vec.push(v.with(error::UnexpectedPositionalArguments).into());
-            }
-            Err(Error::aggregate(vec))
-        }
-    }
-
-    /// Return whether there were unused arguments (of any kind), and add errors for each unused
-    /// argument to the context errors.
-    pub fn unused_arguments(&mut self) -> std::result::Result<(), Error> {
-        match (self.unused_positional(), self.unused_non_positional()) {
-            (Err(a), Err(b)) => Err(Error::aggregate(vec![a, b])),
-            (Err(a), _) => Err(a),
-            (_, Err(b)) => Err(b),
-            _ => Ok(()),
-        }
-    }
-
-    /// Add the error context into the given value, using the function call site.
-    pub fn imbue_error_context<S: ToString>(&self, v: Value, err: S) -> Value {
-        self.call_site.clone().with(err).imbue_error_context(v)
-    }
+/// Command arguments interface.
+#[derive(Clone, Debug, StableAbi)]
+#[repr(C)]
+pub struct UncheckedArguments {
+    /// Positional arguments in this vec are in reverse order; use Iterator to access them.
+    pub positional: RVec<Source<Value>>,
+    pub non_positional: BstMap<Source<Value>, Source<Value>>,
 }
 
-impl UncheckedFunctionArguments {
+impl UncheckedArguments {
     fn new(
         positional: Vec<Source<Value>>,
         non_positional: BTreeMap<Source<Value>, Source<Value>>,
     ) -> Self {
-        UncheckedFunctionArguments {
+        UncheckedArguments {
             positional: positional.into_iter().rev().collect(),
             non_positional: non_positional.into_iter().collect(),
         }
@@ -398,15 +368,55 @@ impl UncheckedFunctionArguments {
         self.positional.clear();
         self.non_positional.clear()
     }
+
+    /// Return whether there were unused non-positional arguments, and add errors for each unused
+    /// argument to the context errors.
+    pub fn unused_non_positional(&mut self) -> Result<()> {
+        let kw = std::mem::take(&mut self.non_positional);
+        if kw.is_empty() {
+            Ok(())
+        } else {
+            Err(Error::aggregate(kw.into_iter().map(|(k, v)| {
+                crate::source::IntoSource::into_source((k.source(), v.source()))
+                    .with(error::UnexpectedNonPositionalArgument)
+                    .into()
+            })))
+        }
+    }
+
+    /// Return whether there were unused positional arguments, and add errors for each unused
+    /// argument to the context errors.
+    pub fn unused_positional(&mut self) -> Result<()> {
+        if self.positional.is_empty() {
+            Ok(())
+        } else {
+            let mut vec: Vec<Error> = Vec::new();
+            while let Some(v) = self.next() {
+                vec.push(v.with(error::UnexpectedPositionalArguments).into());
+            }
+            Err(Error::aggregate(vec))
+        }
+    }
+
+    /// Return whether there were unused arguments (of any kind), and add errors for each unused
+    /// argument to the context errors.
+    pub fn unused_arguments(&mut self) -> Result<()> {
+        match (self.unused_positional(), self.unused_non_positional()) {
+            (Err(a), Err(b)) => Err(Error::aggregate(vec![a, b])),
+            (Err(a), _) => Err(a),
+            (_, Err(b)) => Err(b),
+            _ => Ok(()),
+        }
+    }
 }
 
-impl Default for UncheckedFunctionArguments {
+impl Default for UncheckedArguments {
     fn default() -> Self {
         Self::new(Default::default(), Default::default())
     }
 }
 
-impl Iterator for UncheckedFunctionArguments {
+impl Iterator for UncheckedArguments {
     type Item = Source<Value>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -418,8 +428,8 @@ impl Iterator for UncheckedFunctionArguments {
     }
 }
 
-impl From<&UncheckedFunctionArguments> for grease::value::Dependencies {
-    fn from(args: &UncheckedFunctionArguments) -> Self {
+impl From<&UncheckedArguments> for grease::value::Dependencies {
+    fn from(args: &UncheckedArguments) -> Self {
         Self::ordered(
             args.positional
                 .iter()
@@ -438,13 +448,22 @@ impl From<&UncheckedFunctionArguments> for grease::value::Dependencies {
     }
 }
 
-impl FunctionArguments {
+/// Command arguments.
+///
+/// Checks whether all arguments have been consumed when dropped.
+#[derive(Clone, Debug, Default, StableAbi)]
+#[repr(C)]
+pub struct Arguments {
+    inner: UncheckedArguments,
+}
+
+impl Arguments {
     pub fn new(
         positional: Vec<Source<Value>>,
         non_positional: BTreeMap<Source<Value>, Source<Value>>,
     ) -> Self {
-        FunctionArguments {
-            inner: UncheckedFunctionArguments::new(positional, non_positional),
+        Arguments {
+            inner: UncheckedArguments::new(positional, non_positional),
         }
     }
 
@@ -452,12 +471,12 @@ impl FunctionArguments {
         Self::new(positional, Default::default())
     }
 
-    pub fn unchecked(mut self) -> UncheckedFunctionArguments {
+    pub fn unchecked(mut self) -> UncheckedArguments {
         std::mem::take(&mut self.inner)
     }
 }
 
-impl Iterator for FunctionArguments {
+impl Iterator for Arguments {
     type Item = Source<Value>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -469,64 +488,35 @@ impl Iterator for FunctionArguments {
     }
 }
 
-impl std::ops::Deref for FunctionArguments {
-    type Target = UncheckedFunctionArguments;
+impl std::ops::Deref for Arguments {
+    type Target = UncheckedArguments;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
     }
 }
 
-impl std::ops::DerefMut for FunctionArguments {
+impl std::ops::DerefMut for Arguments {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner
     }
 }
 
-impl Drop for FunctionArguments {
+impl Drop for Arguments {
     /// Asserts that the function arguments have all been consumed prior to being dropped.
     fn drop(&mut self) {
         assert!(self.inner.is_empty() && self.inner.non_positional.is_empty());
     }
 }
 
-impl From<UncheckedFunctionArguments> for FunctionArguments {
-    fn from(inner: UncheckedFunctionArguments) -> Self {
-        FunctionArguments { inner }
+impl From<UncheckedArguments> for Arguments {
+    fn from(inner: UncheckedArguments) -> Self {
+        Arguments { inner }
     }
 }
 
-pub trait GetEnv {
-    fn get_env(&mut self) -> &mut RVec<ScriptEnv>;
-}
-
-impl GetEnv for Runtime {
-    fn get_env(&mut self) -> &mut RVec<ScriptEnv> {
-        &mut self.env
+impl From<&Arguments> for grease::value::Dependencies {
+    fn from(args: &Arguments) -> Self {
+        (&args.inner).into()
     }
 }
-
-impl GetEnv for FunctionCall<'_> {
-    fn get_env(&mut self) -> &mut RVec<ScriptEnv> {
-        &mut self.env
-    }
-}
-
-pub trait ContextEnv: GetEnv {
-    /// Call the given function in a new, scoped environment.
-    fn env_scoped<'b, F, R>(&'b mut self, env: ScriptEnv, f: F) -> BoxFuture<'b, (R, ScriptEnv)>
-    where
-        F: for<'a> FnOnce(&'a mut Self) -> BoxFuture<'a, R> + Send + 'b,
-        Self: Send,
-    {
-        async move {
-            self.get_env().push(env);
-            let ret = f(self).await;
-            let env = self.get_env().pop().expect("env push/pop is not balanced");
-            (ret, env)
-        }
-        .boxed()
-    }
-}
-
-impl<T: GetEnv> ContextEnv for T {}

@@ -29,8 +29,8 @@ Returns a new Path which has a fixed identity (all calls to this function return
 since the returned value is semantically identified as a new path; the actual path doesn't matter.
 
 This is often used for intermediate values where external programs generate the values as files.",
-    |ctx| {
-        ctx.unused_arguments()?;
+    |ctx, args| {
+        args.unused_arguments()?;
 
         let store = ctx.store.item(item_name!("path")).item(item_name!("new"));
 
@@ -68,12 +68,12 @@ fn join_fn() -> Value {
 Arguments: [component: Path-or-String...]
 
 Return a Path that is the result of joining the individual path components together.",
-        |ctx| {
+        |ctx, cargs| {
             let mut args = Vec::new();
 
             let mut deps = depends![];
 
-            while let Some(sv) = ctx.args.next() {
+            while let Some(sv) = cargs.next() {
                 deps += depends![*sv];
                 args.push(
                     sv.map_async(|v| async move {
@@ -98,14 +98,10 @@ Return a Path that is the result of joining the individual path components toget
                 );
             }
 
-            ctx.unused_arguments()?;
+            cargs.unused_arguments()?;
 
             if args.is_empty() {
-                return Err(ctx
-                    .call_site
-                    .clone()
-                    .with("at least one path component is required")
-                    .into_grease_error());
+                return Err("at least one path component is required".into());
             }
 
             let task = ctx.task.clone();
@@ -135,10 +131,10 @@ Arguments: <Path>
 
 Returns an Array of Strings, where each element in the array is a (in-order, from least to most specific) component of
 the argument.",
-    |ctx| {
-        let to_split = ctx.args.next().ok_or("no path to split")?;
+    |ctx, args| {
+        let to_split = args.next().ok_or("no path to split")?;
 
-        ctx.unused_arguments()?;
+        args.unused_arguments()?;
 
         let to_split = ctx.source_value_as::<PathBuf>(to_split);
         let to_split = to_split.await?.unwrap();
@@ -165,10 +161,10 @@ fn parent_fn() -> Value {
 
 Arguments: <Path>
 Fails if the given path does not have a parent (is a root).",
-    |ctx| {
-        let path = ctx.args.next().ok_or("no path provided")?;
+    |ctx, args| {
+        let path = args.next().ok_or("no path provided")?;
 
-        ctx.unused_arguments()?;
+        args.unused_arguments()?;
 
         let path = ctx.source_value_as::<PathBuf>(path);
         let path = path.await?.unwrap();
@@ -187,11 +183,11 @@ fn relative_fn() -> Value {
 Arguments: <base: Path> <child: Path>
 
 Returns a path that is composed of the components of `child` that are children of `base`.",
-    |ctx| {
-        let base = ctx.args.next().ok_or("no base path")?;
-        let path = ctx.args.next().ok_or("no path")?;
+    |ctx, args| {
+        let base = args.next().ok_or("no base path")?;
+        let path = args.next().ok_or("no path")?;
 
-        ctx.unused_arguments()?;
+        args.unused_arguments()?;
 
         let base = ctx.source_value_as::<PathBuf>(base);
         let base = base.await?.unwrap();

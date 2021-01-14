@@ -24,13 +24,11 @@ pub fn get_fn() -> Value {
 Arguments: <environment variable name: String>
 If the environment variable is not set, returns `()`. Otherwise returns the value of the environment variable as a
 string, where the string is identified by the environment variable's content.",
-    |ctx| {
-        let name = ctx
-            .args
-            .next()
+    |ctx,args| {
+        let name = args.next()
             .ok_or("environment variable name not provided")?;
 
-        ctx.unused_arguments()?;
+        args.unused_arguments()?;
 
         let name = ctx.source_value_as::<types::String>(name);
         let name = name.await?.unwrap();
@@ -78,10 +76,10 @@ pub fn path_search_fn() -> Value {
 
 Arguments: <name: String>
 If the value is not found, an error occurs. Otherwise the path of the resolved file is returned.",
-        |ctx| {
-            let name = ctx.args.next().ok_or("no search argument provided")?;
+        |ctx,args| {
+            let name = args.next().ok_or("no search argument provided")?;
 
-            ctx.unused_arguments()?;
+            args.unused_arguments()?;
 
             let name = ctx.source_value_as::<types::String>(name);
             let name = name.await?.unwrap();

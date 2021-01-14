@@ -7,8 +7,8 @@
 
 use abi_stable::{
     rvec,
-    std_types::{RArc, RBoxError, RVec},
-    StableAbi,
+    std_types::{RArc, RBox, RBoxError, RVec},
+    DynTrait, StableAbi,
 };
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
@@ -59,6 +59,41 @@ pub fn downcast_ref<'a, T: std::error::Error + 'static>(
             .downcast_ref::<RBoxError>()
             .and_then(|e| e.downcast_ref::<T>())
     })
+}
+
+/// Return whether all errors within the given error satisfy the predicate.
+///
+/// If err is an `Error`, this checks multiple nested errors as well.
+/// If err has a source and the predicate returns false, the source is checked.
+pub fn all<F>(err: &(dyn std::error::Error + 'static), f: F) -> bool
+where
+    F: Fn(&(dyn std::error::Error + 'static)) -> bool + Clone,
+{
+    if f(err) {
+        true
+    } else {
+        if let Some(src) = err.source() {
+            all(src, f)
+        } else if let Some(err) = downcast_ref::<InnerError>(err) {
+            match err {
+                InnerError::Nested(errs) => {
+                    for e in errs {
+                        if !all(e.as_ref(), f.clone()) {
+                            return false;
+                        }
+                    }
+                    true
+                }
+                _ => false,
+            }
+        } else if let Some(err) = downcast_ref::<ErrorContext>(err) {
+            std::error::Error::source(err)
+                .map(|src| all(src, f))
+                .unwrap_or(false)
+        } else {
+            false
+        }
+    }
 }
 
 /// Grease errors may be aborted, new errors, or nested sets of errors.
@@ -231,19 +266,30 @@ impl std::iter::FromIterator<Error> for Error {
     }
 }
 
+#[derive(StableAbi)]
+#[repr(C)]
+#[sabi(impl_InterfaceType(Debug, Display, Send, Sync))]
+struct ContextInterface;
+
 #[derive(Debug)]
-struct ErrorContext<T> {
+struct ErrorContext {
     err: Error,
-    context: T,
+    context: DynTrait<'static, RBox<()>, ContextInterface>,
 }
 
-impl<T> ErrorContext<T> {
-    pub fn new(err: Error, context: T) -> Self {
-        ErrorContext { err, context }
+impl ErrorContext {
+    pub fn new<T: std::fmt::Debug + std::fmt::Display + Send + Sync + 'static>(
+        err: Error,
+        context: T,
+    ) -> Self {
+        ErrorContext {
+            err,
+            context: DynTrait::from_any_value(context, ContextInterface),
+        }
     }
 }
 
-impl<T: std::fmt::Display> std::fmt::Display for ErrorContext<T> {
+impl std::fmt::Display for ErrorContext {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         writeln!(f, "{}", self.err)?;
         write!(f, "note: {}", self.context)?;
@@ -251,7 +297,7 @@ impl<T: std::fmt::Display> std::fmt::Display for ErrorContext<T> {
     }
 }
 
-impl<T: std::fmt::Display + std::fmt::Debug> std::error::Error for ErrorContext<T> {
+impl std::error::Error for ErrorContext {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         Some(self.err.error_ref())
     }

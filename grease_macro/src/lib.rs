@@ -310,6 +310,7 @@ fn grease_trait_definition(trt: ItemTrait) -> TokenStream {
     let fields = funcs.iter().map(|(ident, rcvr, args, ret)| {
         let mut fn_args = Vec::new();
         if rcvr == &ReceiverType::Reference {
+            fn_args.push(quote! { &'a ::grease::value::Value });
             fn_args.push(quote! { &'a ::grease::types::Type });
             fn_args.push(quote! { &'a ::grease::type_erase::Erased });
         } else if rcvr == &ReceiverType::Owned {
@@ -413,7 +414,7 @@ fn grease_trait_definition(trt: ItemTrait) -> TokenStream {
         let arg_names = args.iter().map(|(name, _)| name);
         let args = args.iter().map(|(name, ty)| quote! { #name: #ty });
         let call_v = if rcvr == &ReceiverType::Reference {
-            quote! { grease_trait_self_value.grease_type().await?, grease_trait_self_value.clone().await?.as_ref(), }
+            quote! { &grease_trait_self_value, grease_trait_self_value.grease_type().await?, grease_trait_self_value.clone().await?.as_ref(), }
         } else if rcvr == &ReceiverType::Owned {
             quote! { grease_trait_self_value, }
         } else {
@@ -634,12 +635,13 @@ fn do_grease_trait_impl(
         }
 
         if rcvr == &ReceiverType::Reference {
+            fn_args.insert(0, quote! { SELF_VALUE: &'a ::grease::value::Value });
             fn_args.insert(
-                0,
+                1,
                 quote! { SELF_TYPE: &'a ::grease::types::Type }
             );
             fn_args.insert(
-                1,
+                2,
                 quote! { grease_trait__erased: &'a ::grease::type_erase::Erased },
             );
             self_bind = Some(if untyped {

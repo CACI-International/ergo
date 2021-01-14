@@ -25,16 +25,16 @@ Keyword Arguments:
 * <headers: Map>: A map of Strings to Strings where key-value pairs are header names and values to set for the request.
 
 Returns a unit-typed value which downloads the file referenced by `url` to the given `target`.",
-    |ctx| {
-        let url = ctx.args.next().ok_or("no url provided")?;
-        let path = ctx.args.next().ok_or("no path provided")?;
+    |ctx,args| {
+        let url = args.next().ok_or("no url provided")?;
+        let path = args.next().ok_or("no path provided")?;
 
         let url = ctx.source_value_as::<types::String>(url);
         let url = url.await?.unwrap();
         let path = ctx.source_value_as::<PathBuf>(path);
         let path = path.await?.unwrap();
 
-        let headers = match ctx.args.kw("headers") {
+        let headers = match args.kw("headers") {
             None => None,
             Some(v) => Some({
                 let v = ctx.source_value_as::<types::Map>(v);
@@ -42,7 +42,7 @@ Returns a unit-typed value which downloads the file referenced by `url` to the g
             }),
         };
 
-        ctx.unused_arguments()?;
+        args.unused_arguments()?;
 
         let mut deps = depends![url, path];
         if let Some(v) = &headers {

@@ -1,14 +1,15 @@
 //! Base environment.
 
 use super::runtime::load_script;
-use ergo_runtime::{namespace_id, types};
+use ergo_runtime::{namespace_id, types, ContextExt, Source};
+use futures::FutureExt;
 use grease::{
     depends,
-    value::{TypedValue, Value},
+    value::{IntoValue, TypedValue, Value},
 };
 
 /// Documentation for the load function.
-pub const LOAD_DOCUMENTATION: &'static str = r"Load a script, with optional additional arguments to call the result with.
+pub const LOAD_DOCUMENTATION: &'static str = r"Load a script, with optional additional arguments with which to call the result.
 
 The first argument, if present, must be a string or path.
 
@@ -47,10 +48,52 @@ Note that workspaces do not load preludes (though one could still explicitly loa
 
 /// Return the load function.
 pub fn load() -> Value {
-    types::Function::new(
-        load_script,
-        depends![namespace_id!(load)],
+    types::Unbound::new(
+        |ctx, v| {
+            async move {
+                let (src, args_val) = ctx.source_value_as::<types::Args>(v).await?.take();
+                let args = args_val.await?.owned().args.into();
+                load_script(ctx, src.with(args)).await.map(Source::unwrap)
+            }
+            .boxed()
+        },
+        depends![namespace_id!(ergo::load)],
         Some(TypedValue::constant(LOAD_DOCUMENTATION.into())),
+    )
+    .into()
+}
+
+/// A binding function returning an Args.
+pub fn bind_args_to_args() -> Value {
+    types::Unbound::new(
+        |ctx, v| {
+            async move {
+                let args_val = ctx.source_value_as::<types::BindArgs>(v).await?.unwrap();
+                let args = args_val.await?.owned().args;
+                Ok(types::Args { args }.into_value())
+            }
+            .boxed()
+        },
+        depends![namespace_id!(ergo::fn)],
+        Some(TypedValue::constant(
+            "The 'fn' binding function, which takes all BindArgs and returns an Args to be bound."
+                .into(),
+        )),
+    )
+    .into()
+}
+
+/// A binding function returning a BindArgs.
+pub fn bind_args_to_bind_args() -> Value {
+    types::Unbound::new(
+        |ctx, v| {
+            async move { Ok(ctx.source_value_as::<types::BindArgs>(v).await?.unwrap().into()) }.boxed()
+        },
+        depends![namespace_id!(ergo::pat)],
+        Some(TypedValue::constant(
+            "The 'pat' binding function, which takes all BindArgs and returns a BindArgs to be bound."
+                .into(),
+        )),
     )
     .into()
 }

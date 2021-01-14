@@ -7,10 +7,9 @@ use ergo_runtime::{
     metadata::{Doc, Runtime},
     types, ContextExt,
 };
-use futures::future::FutureExt;
 use grease::{
     depends, item_name,
-    value::{IntoValue, TypedValue, Value},
+    value::{IntoValue, Value},
 };
 
 pub fn module() -> Value {
@@ -44,10 +43,10 @@ Arguments: <value>
 
 Returns a new value which has the same type and result as the given value, but has an identity derived from the result
 (typically by forcing the value and any inner values).",
-    |ctx| {
-        let val = ctx.args.next().ok_or("value not provided")?;
+    |ctx, args| {
+        let val = args.next().ok_or("value not provided")?;
 
-        ctx.unused_arguments()?;
+        args.unused_arguments()?;
 
         let (source, val) = val.take();
         let val = ctx.value_by_content(val, true);
@@ -65,10 +64,10 @@ Arguments: <value>
 Returns a value identical to the argument, however possibly loads the value from a persisted store rather than
 evaluating it. If not yet persisted, when the returned value is evaluated it will evaluate the inner value and persist
 it.",
-    |ctx| {
-        let to_cache = ctx.args.next().ok_or("no argument to cache")?.unwrap();
+    |ctx, args| {
+        let to_cache = args.next().ok_or("no argument to cache")?.unwrap();
 
-        ctx.unused_arguments()?;
+        args.unused_arguments()?;
 
         let store = ctx.store.item(item_name!("cache"));
         let log = ctx.log.sublog("cache");
@@ -143,16 +142,16 @@ Keyword Arguments:
 
 Returns a value identical to the argument, but with a different identity. If `depends` is not set, the value will have
 a fixed identity derived from nothing else.",
-    |ctx| {
-        let val = ctx.args.next().ok_or("no argument to variable")?.unwrap();
+    |ctx, args| {
+        let val = args.next().ok_or("no argument to variable")?.unwrap();
 
-        let deps = if let Some(v) = ctx.args.kw("depends") {
+        let deps = if let Some(v) = args.kw("depends") {
             depends![*v]
         } else {
             Default::default()
         };
 
-        ctx.unused_arguments()?;
+        args.unused_arguments()?;
 
         val.set_dependencies(deps)
     })
@@ -160,41 +159,33 @@ a fixed identity derived from nothing else.",
 }
 
 fn debug_fn() -> Value {
-    types::Function::new(
-        |ctx| {
-            async move {
-                let val = ctx.args.next().ok_or("value not provided")?;
-
-                ctx.unused_arguments()?;
-
-                let name = match val.grease_type_immediate() {
-                    Some(tp) => {
-                        let tp = ctx.type_name(tp);
-                        tp.await?
-                    }
-                    None => "<dynamic>".into(),
-                };
-
-                ctx.log.debug(
-                    val.as_ref()
-                        .map(|v| format!("type: {}, id: {}", name, v.id()))
-                        .to_string(),
-                );
-
-                Ok(val)
-            }
-            .boxed()
-        },
-        depends![ergo_runtime::namespace_id!(std::value::debug)],
-        Some(TypedValue::constant(
+    ergo_function!(independent std::value::debug,
             r"Print a value's type (if immediately available) and identity to the debug log.
 
 Arguments: <value>
 
-Returns the argument exactly as-is. The logging occurs immediately."
-                .into(),
-        )),
-    )
+Returns the argument exactly as-is. The logging occurs immediately.",
+    |ctx, args| {
+        let val = args.next().ok_or("value not provided")?;
+
+        args.unused_arguments()?;
+
+        let name = match val.grease_type_immediate() {
+            Some(tp) => {
+                let tp = ctx.type_name(tp);
+                tp.await?
+            }
+            None => "<dynamic>".into(),
+        };
+
+        ctx.log.debug(
+            val.as_ref()
+                .map(|v| format!("type: {}, id: {}", name, v.id()))
+                .to_string(),
+        );
+
+        val.unwrap()
+    })
     .into()
 }
 
@@ -203,10 +194,10 @@ fn doc_get_fn() -> Value {
     r"Get the documentation for a value.
 
 Arguments: <value>",
-    |ctx| {
-        let val = ctx.args.next().ok_or("no argument to doc")?;
+    |ctx, args| {
+        let val = args.next().ok_or("no argument to doc")?;
 
-        ctx.unused_arguments()?;
+        args.unused_arguments()?;
 
         Doc::get(ctx, &val).into()
     })
@@ -218,11 +209,11 @@ fn doc_set_fn() -> Value {
     r"Set the documentation for a value.
 
 Arguments: <value> <doc: String>",
-    |ctx| {
-        let mut val = ctx.args.next().ok_or("no value argument")?.unwrap();
-        let doc = ctx.args.next().ok_or("no documentation argument")?;
+    |ctx, args| {
+        let mut val = args.next().ok_or("no value argument")?.unwrap();
+        let doc = args.next().ok_or("no documentation argument")?;
 
-        ctx.unused_arguments()?;
+        args.unused_arguments()?;
 
         let doc = ctx.source_value_as::<types::String>(doc).await?.unwrap();
 
@@ -237,11 +228,11 @@ fn meta_get_fn() -> Value {
     r"Get metadata of a value.
 
 Arguments: <value> <metadata key>",
-    |ctx| {
-        let val = ctx.args.next().ok_or("no value argument")?.unwrap();
-        let key = ctx.args.next().ok_or("no metadata key provided")?.unwrap();
+    |ctx, args| {
+        let val = args.next().ok_or("no value argument")?.unwrap();
+        let key = args.next().ok_or("no metadata key provided")?.unwrap();
 
-        ctx.unused_arguments()?;
+        args.unused_arguments()?;
 
         match val.get_metadata(&Runtime { key: key.id() }) {
             Some(v) => v.as_ref().clone(),
@@ -256,12 +247,12 @@ fn meta_set_fn() -> Value {
     r"Set metadata of a value.
 
 Arguments: <value> <metadata key> <metadata value>",
-    |ctx| {
-        let mut val = ctx.args.next().ok_or("no value argument")?.unwrap();
-        let key = ctx.args.next().ok_or("no metadata key provided")?.unwrap();
-        let meta = ctx.args.next().map(|v| v.unwrap());
+    |ctx, args| {
+        let mut val = args.next().ok_or("no value argument")?.unwrap();
+        let key = args.next().ok_or("no metadata key provided")?.unwrap();
+        let meta = args.next().map(|v| v.unwrap());
 
-        ctx.unused_arguments()?;
+        args.unused_arguments()?;
 
         let key = Runtime { key: key.id() };
 
