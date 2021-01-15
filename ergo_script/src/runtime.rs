@@ -105,7 +105,8 @@ fn is_plugin(f: &path::Path) -> bool {
 /// Load and execute a script given the function call arguments.
 pub fn load_script<'a>(ctx: &'a mut Runtime, args: Source<Arguments>) -> BoxFuture<'a, EvalResult> {
     async move {
-        let (source, mut args) = args.take();
+        let (source, args) = args.take();
+        let mut args = args.unchecked();
         let target = args.peek();
 
         fn script_path_exists<'a, P: 'a + AsRef<path::Path>>(
@@ -386,7 +387,7 @@ pub fn load_script<'a>(ctx: &'a mut Runtime, args: Source<Arguments>) -> BoxFutu
 
             // If there are remaining arguments apply them immediately.
             if !args.is_empty() {
-                traits::bind(ctx, loaded, source.clone().with(types::Args { args: args.unchecked() }.into_value())).await
+                traits::bind(ctx, loaded, source.clone().with(types::Args { args }.into_value())).await
             } else {
                 args.unused_arguments()?;
                 Ok(loaded)
@@ -1088,9 +1089,6 @@ impl Evaluator {
                                     }
                                 }
                             }
-                            if had_unset {
-                                dbg!(env);
-                            }
                         });
 
                         // If the result is a success, error on unset bindings.
@@ -1119,7 +1117,6 @@ impl Evaluator {
                             let env = env.clone();
                             let k = k.clone();
                             async move {
-                                dbg!("SETTING VALUE");
                                 env.lock().insert(k, Ok(v).into());
                                 Ok(types::Unit.into_value())
                             }.boxed()

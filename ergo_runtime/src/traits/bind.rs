@@ -106,16 +106,29 @@ grease_traits_fn! {
     {
         extern "C" fn id_eq_f<'a>(
             _trait_data: &'a grease::type_erase::Erased,
-            _ctx: &'a grease::runtime::Context,
+            ctx: &'a grease::runtime::Context,
             v: &'a Value,
-            _tp: &'a Type,
+            tp: &'a Type,
             _data: &'a Erased,
             _rt: &'a mut Runtime,
             arg: Source<Value>) ->
             grease::future::BoxFuture<'a, grease::error::RResult<Value>> {
             grease::future::BoxFuture::new(async move {
                 if v.id() != arg.id() {
-                    grease::error::RResult::RErr(arg.source().with("mismatched value id").into_grease_error())
+                    let (arg_source, arg) = arg.take();
+                    match_value!(peek arg => {
+                        types::Args => |_| {
+                            let name = type_name(ctx, tp).await?;
+                            Err(arg_source.with(format!("cannot call value with type {}", name)).into_grease_error())?
+                        }
+                        types::BindArgs => |_| {
+                            let name = type_name(ctx, tp).await?;
+                            Err(arg_source.with(format!("cannot call value in binding with type {}", name)).into_grease_error())?
+                        }
+                        => |_| {
+                            Err(arg_source.with("mismatched value id").into_grease_error())?
+                        }
+                    }).await.into()
                 } else {
                     grease::error::RResult::ROk(types::Unit.into_value())
                 }

@@ -276,10 +276,10 @@ mod test {
 
     #[test]
     fn if_bind_expr() -> Result<(), String> {
-        script_eval_to("if (string = string) 1 2", SRString("1"))?;
-        script_eval_to("if (:a = 1) :a 2", SRString("1"))?;
-        script_eval_to("if (string = other) 1 2", SRString("2"))?;
-        script_eval_to("if (string = other) 1", SRUnit)?;
+        script_eval_to("if (!string = string) 1 2", SRString("1"))?;
+        script_eval_to("if (a = 1) :a 2", SRString("1"))?;
+        script_eval_to("if (!string = other) 1 2", SRString("2"))?;
+        script_eval_to("if (!string = other) 1", SRUnit)?;
         Ok(())
     }
 
@@ -391,7 +391,7 @@ mod test {
         #[test]
         fn literal() -> Result<(), String> {
             script_eval_to("() = ()", SRMap(&[]))?;
-            script_eval_to("hello = hello", SRMap(&[]))?;
+            script_eval_to("!hello = hello", SRMap(&[]))?;
             script_eval_to("[1,2,3] = [1,2,3]", SRMap(&[]))?;
             script_eval_to("{:a=b} = {:a=b}", SRMap(&[]))?;
             script_eval_to(":something = {:a=b}; !:something = {:a=b}; ()", SRUnit)?;
@@ -400,7 +400,7 @@ mod test {
 
         #[test]
         fn literal_mismatch() -> Result<(), String> {
-            script_fail("hello = goodbye")?;
+            script_fail("!hello = goodbye")?;
             script_fail("[1,2,3] = [1,2,3,4]")?;
             script_fail("{:a=1} = {:a=b}")?;
             Ok(())

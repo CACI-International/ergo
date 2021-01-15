@@ -109,6 +109,7 @@ struct ParseContext {
     pub allow_merge: bool,
     pub binding: bool,
     pub bind_equal: bool,
+    pub string_to_set: bool,
 }
 
 impl Default for ParseContext {
@@ -117,6 +118,7 @@ impl Default for ParseContext {
             allow_merge: true,
             binding: false,
             bind_equal: false,
+            string_to_set: false,
         }
     }
 }
@@ -144,17 +146,31 @@ impl ParseContext {
             ..*self
         }
     }
+
+    pub fn string_to_set(&self, string_to_set: bool) -> Self {
+        ParseContext {
+            string_to_set,
+            ..*self
+        }
+    }
 }
 
 fn to_expression<E>(
-    ctx: ParseContext,
+    mut ctx: ParseContext,
     t: Source<Tree>,
 ) -> Result<Source<Expression>, Source<Error<E>>> {
     let (source, t) = t.take();
+    // string_to_set should only affect direct descendants
+    let string_to_set = ctx.string_to_set;
+    ctx = ctx.string_to_set(false);
     match t {
         Tree::String(s) => {
             if ctx.binding && s == "_" {
                 Ok(source.with(Expression::BindAny))
+            } else if string_to_set {
+                Ok(source
+                    .clone()
+                    .with(Expression::Set(source.with(Expression::String(s)).into())))
             } else {
                 Ok(source.with(Expression::String(s)))
             }
@@ -201,7 +217,7 @@ fn to_expression<E>(
             } else {
                 let ctx = ctx.allow_merge(false);
                 Ok(source.with(Expression::Bind(
-                    to_expression(ctx.binding(true), *a)?.into(),
+                    to_expression(ctx.binding(true).string_to_set(true), *a)?.into(),
                     to_expression(ctx.bind_equal(ctx.binding), *b)?.into(),
                 )))
             }
@@ -396,6 +412,13 @@ mod test {
     }
 
     #[test]
+    fn bind_string_set() {
+        assert_single("a = b", Bind(src(Set(s("a"))), s("b")));
+        assert_single(":a = b", Bind(src(Set(s("a"))), s("b")));
+        assert_single("!a = b", Bind(s("a"), s("b")));
+    }
+
+    #[test]
     fn bind_command() {
         assert_single(
             "cmd a = cmd b",
@@ -538,11 +561,11 @@ mod test {
     #[test]
     fn if_bind() {
         assert_single(
-            "if (a=b) c d",
+            "if (!a=b) c d",
             IfBind(src(Bind(s("a"), s("b"))), s("c"), Some(s("d"))),
         );
         assert_single(
-            "if (a=b) c",
+            "if (!a=b) c",
             IfBind(src(Bind(s("a"), s("b"))), s("c"), None),
         );
     }

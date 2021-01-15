@@ -23,6 +23,11 @@
     * `:a` is parsed as a set expression (which will then bind to a value)
   * Support calling a function with no arguments using a trailing `:`:
     `a:` is the same as `(a)`.
+  * Commands and arrays now correctly create new scopes, just like blocks.
+  * Support setting keyword arguments in commands with bindings:
+    ```
+    cmd (:kw = something)
+    ```
   * Support bind expressions as `if` conditionals (`if (:a = b) :a other`),
     where the branch is chosen based on if the binding succeeds.
   * Change function definition to be generalized to any bindings, and `fn` is
