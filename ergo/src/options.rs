@@ -62,7 +62,7 @@ pub struct Opts {
     pub clean: bool,
 
     #[structopt(short, long)]
-    /// Check for common syntax mistakes without executing the final value.
+    /// Check for common syntax mistakes while executing the script.
     pub lint: bool,
 
     #[structopt(short, long)]

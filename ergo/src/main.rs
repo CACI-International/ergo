@@ -272,10 +272,6 @@ fn run(opts: Opts) -> Result<String, String> {
     // We *must* keep the context around because it holds onto plugins, which may have functions referenced in values.
     // Likewise, our return from this function is "flattened" to strings to ensure any references to plugins are used when the plugins are still loaded.
 
-    if opts.lint {
-        return Ok(Default::default());
-    }
-
     // Get doc value, prior to forcing resulting functions.
     // This way users can document the entire function and retrieve that documentation easily.
     let value_to_execute = if opts.doc {

@@ -1,6 +1,6 @@
 # ergo_std changelog
 
-## Unrelease
+## 1.0.0-beta.8  -- 2020-01-15
 * Fix deadlock occurring from task execution.
   * Deadlocks are no longer possible, however other functions must indicate
     whether they want a task to be considered active across specific await

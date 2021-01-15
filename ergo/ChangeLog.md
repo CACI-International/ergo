@@ -1,6 +1,6 @@
 # ergo changelog
 
-## Unreleased
+## 1.0.0-beta.8  -- 2021-01-15
 * Fix some bugs and improve output UI.
   * Don't count/display abort errors.
   * Fix rendering reset.
@@ -45,6 +45,7 @@
     # The following will error.
     a :x = 1
     ```
+* Apply linting while executing values.
 
 ## 1.0.0-beta.7  -- 2020-12-08
 * Add `-e`/`--expression` flags to evaluate the arguments as an expression
