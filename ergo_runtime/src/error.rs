@@ -1,5 +1,8 @@
 //! Errors returned as part of the runtime.
 
+use abi_stable::StableAbi;
+use grease::error::{grease_error_uuid, BoxGreaseError, GreaseError};
+
 /// The error returned when a function does not accept a specific non-positional argument.
 #[derive(Debug)]
 pub struct UnexpectedNonPositionalArgument;
@@ -30,9 +33,10 @@ impl std::error::Error for UnexpectedPositionalArguments {}
 ///
 /// For instance, an error from evaluating a function after binding its arguments should not be
 /// recoverable (since functions themselves are `crate::types::Unbound`).
-#[derive(Debug)]
+#[derive(Debug, StableAbi)]
+#[repr(C)]
 pub struct BindError {
-    pub error: grease::Error,
+    error: BoxGreaseError,
 }
 
 impl std::fmt::Display for BindError {
@@ -41,22 +45,26 @@ impl std::fmt::Display for BindError {
     }
 }
 
-impl std::error::Error for BindError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(self.error.error_ref())
+impl GreaseError for BindError {
+    fn grease_error_id() -> grease::uuid::Uuid {
+        grease_error_uuid(b"ergo::bind_error")
+    }
+
+    fn source(&self) -> Vec<&BoxGreaseError> {
+        vec![&self.error]
     }
 }
 
 impl BindError {
     /// Wrap the given error as a bind error.
     pub fn wrap(error: grease::Error) -> grease::Error {
-        BindError { error }.into()
+        grease::Error::new(BindError {
+            error: BoxGreaseError::new(error),
+        })
     }
 
-    /// Check whether the given error is composed only of BindErrors.
-    pub fn only_within(error: &grease::Error) -> bool {
-        grease::error::all(error.error_ref(), |e| {
-            grease::error::downcast_ref::<Self>(e).is_some()
-        })
+    /// Check whether the given error is composed only of bind errors.
+    pub fn only_bind_errors(error: &grease::Error) -> bool {
+        error.all(|e| e.downcast_ref::<BindError>().is_some())
     }
 }

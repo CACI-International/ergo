@@ -559,8 +559,8 @@ impl From<String> for Error {
 
 impl PartialEq<grease::Error> for Error {
     fn eq(&self, err: &grease::Error) -> bool {
-        if let Some(src) = err.error_ref().source() {
-            if let Some(e) = grease::error::downcast_ref::<Self>(src) {
+        if let &[src] = grease::error::GreaseError::source(err).as_slice() {
+            if let Some(e) = src.downcast_ref_external::<Self>() {
                 return e == self;
             }
         }
@@ -1059,7 +1059,7 @@ impl Evaluator {
                                 ctx.env_scoped(move |ctx| {
                                     async move {
                                         let bind = ctx.env_set_to_current(|ctx| self.evaluate(ctx, bind)).await?;
-                                        traits::bind(ctx, bind, v).await.map_err(ergo_runtime::error::BindError::wrap)?;
+                                        traits::bind(ctx, bind, v).await.map_err(|e| ergo_runtime::error::BindError::wrap(e))?;
                                         self.evaluate(ctx, e).await
                                     }.boxed()
                                 }).await.0.map(Source::unwrap)
@@ -1075,7 +1075,7 @@ impl Evaluator {
 
                         let result = match result_e {
                             Err(e) => Err(e),
-                            Ok(e) => traits::bind(ctx, bind, e).await.map_err(ergo_runtime::error::BindError::wrap)
+                            Ok(e) => traits::bind(ctx, bind, e).await.map_err(|e| ergo_runtime::error::BindError::wrap(e))
                         };
 
                         // Replace unset values with aborted errors.
@@ -1155,7 +1155,7 @@ impl Evaluator {
                         ctx.env_scoped(move |ctx| async move {
                             let result = match Errored::ignore(self.evaluate(ctx, *cond_bind)).await {
                                 Ok(_) => true,
-                                Err(e) => if ergo_runtime::error::BindError::only_within(&e) {
+                                Err(e) => if ergo_runtime::error::BindError::only_bind_errors(&e) {
                                     false
                                 } else {
                                     return Err(e);

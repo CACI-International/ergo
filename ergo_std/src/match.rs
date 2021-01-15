@@ -31,7 +31,7 @@ which does not result in a binding error.",
             for b in bindings {
                 match Errored::ignore(b.bind(val.clone())).await {
                     Ok(v) => return Ok(v.unwrap().into_any_value()),
-                    Err(e) => if BindError::only_within(&e) {
+                    Err(e) => if BindError::only_bind_errors(&e) {
                         continue
                     } else {
                         return Err(e)
@@ -50,6 +50,7 @@ mod test {
         fn match_expr(t) {
             t.assert_content_eq("self:match [1,2,3] ({^:keys} -> :keys) ([:a,:b] -> :a) ([:a,:b,:c] -> :c)", "3");
             t.assert_content_eq("self:match [1,2,3] (:a -> :a) ([:a,:b,:c] -> :b)", "[1,2,3]");
+            t.assert_content_eq("self:match str (a -> a) (str -> success)", "success");
         }
     }
 
