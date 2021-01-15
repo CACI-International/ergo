@@ -1088,6 +1088,9 @@ impl Evaluator {
                                     }
                                 }
                             }
+                            if had_unset {
+                                dbg!(env);
+                            }
                         });
 
                         // If the result is a success, error on unset bindings.
@@ -1116,6 +1119,7 @@ impl Evaluator {
                             let env = env.clone();
                             let k = k.clone();
                             async move {
+                                dbg!("SETTING VALUE");
                                 env.lock().insert(k, Ok(v).into());
                                 Ok(types::Unit.into_value())
                             }.boxed()

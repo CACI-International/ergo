@@ -100,7 +100,7 @@ pub async fn into<T: GreaseType + StableAbi + Send + Sync + 'static>(
 grease_traits_fn! {
     // Anything -> bool (true)
     {
-        extern "C" fn to_bool<'a>(_ctx: &'a grease::runtime::Context, v: Value) ->
+        extern "C" fn to_bool<'a>(_data: &'a grease::type_erase::Erased, _ctx: &'a grease::runtime::Context, v: Value) ->
             grease::future::BoxFuture<'a, grease::error::RResult<Value>> {
             grease::future::BoxFuture::new(async move {
                 grease::error::RResult::ROk(v.then(TypedValue::constant(true).into()))
@@ -109,6 +109,7 @@ grease_traits_fn! {
         traits.add_generator_by_trait_for_trait::<IntoTyped<bool>>(|_traits, _type| {
             ROption::RSome(IntoTypedImpl::<bool> {
                 into_typed: unsafe { FnPtr::new(to_bool) },
+                grease_trait_data: Default::default(),
                 _phantom0: Default::default(),
             })
         });
@@ -116,7 +117,7 @@ grease_traits_fn! {
 
     // Identity: T -> T
     {
-        extern "C" fn id_f<'a>(_ctx: &'a grease::runtime::Context, v: Value) ->
+        extern "C" fn id_f<'a>(_data: &'a grease::type_erase::Erased, _ctx: &'a grease::runtime::Context, v: Value) ->
             grease::future::BoxFuture<'a, grease::error::RResult<Value>> {
             grease::future::BoxFuture::new(async move {
                 grease::error::RResult::ROk(v)
@@ -128,6 +129,7 @@ grease_traits_fn! {
                 if tp == &trait_types[0] {
                     return ROption::RSome(Erased::new(IntoTypedImpl::<()> {
                         into_typed: unsafe { FnPtr::new(id_f) },
+                        grease_trait_data: Default::default(),
                         _phantom0: Default::default(),
                     }));
                 }

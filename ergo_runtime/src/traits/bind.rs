@@ -25,6 +25,15 @@ pub trait Bind {
     async fn bind(&self, ctx: &mut Runtime, arg: Source<Value>) -> Value;
 }
 
+/// Create a bind error result for the given value.
+pub async fn bind_error<T>(ctx: &grease::runtime::Context, v: Source<Value>) -> crate::Result<T> {
+    let (src, v) = v.take();
+    let name = type_name(ctx, v.grease_type().await?).await?;
+    Err(src
+        .with(format!("cannot bind to value with type '{}'", name))
+        .into_grease_error())
+}
+
 /// Bind a value to an argument.
 pub async fn bind(ctx: &mut Runtime, v: Source<Value>, arg: Source<Value>) -> EvalResult {
     delay_bind(ctx, v).await?.bind(arg).await
@@ -95,8 +104,14 @@ grease_traits_fn! {
     // Blanket implementation with id equality.
     // Sufficient for unit, string, and others.
     {
-        extern "C" fn id_eq_f<'a>(_ctx: &'a grease::runtime::Context, v: &'a Value, _tp: &'a Type,
-            _data: &'a Erased, _rt: &'a mut Runtime, arg: Source<Value>) ->
+        extern "C" fn id_eq_f<'a>(
+            _trait_data: &'a grease::type_erase::Erased,
+            _ctx: &'a grease::runtime::Context,
+            v: &'a Value,
+            _tp: &'a Type,
+            _data: &'a Erased,
+            _rt: &'a mut Runtime,
+            arg: Source<Value>) ->
             grease::future::BoxFuture<'a, grease::error::RResult<Value>> {
             grease::future::BoxFuture::new(async move {
                 if v.id() != arg.id() {
@@ -110,6 +125,7 @@ grease_traits_fn! {
             if trt.id == Bind::grease_trait().id {
                 ROption::RSome(Erased::new(BindImpl {
                     bind: unsafe { FnPtr::new(id_eq_f) },
+                    grease_trait_data: Default::default(),
                 }))
             } else {
                 ROption::RNone
@@ -247,10 +263,7 @@ grease_traits_fn! {
                     ).await?;
                     types::Unit.into_value()
                 }
-                => |v| {
-                    let name = type_name(ctx, v.grease_type().await?).await?;
-                    Err(call_site.with(format!("cannot bind to value with type '{}'", name)).into_grease_error())?
-                }
+                => |v| bind_error(ctx, call_site.with(v)).await?
             }).await?
         }
     }
@@ -321,10 +334,7 @@ grease_traits_fn! {
                     ).await?;
                     types::Unit.into_value()
                 },
-                => |v| {
-                    let name = type_name(ctx, v.grease_type().await?).await?;
-                    Err(call_site.with(format!("cannot bind to value with type '{}'", name)).into_grease_error())?
-                }
+                => |v| bind_error(ctx, call_site.with(v)).await?
             }).await?
         }
     }

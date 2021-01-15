@@ -153,8 +153,7 @@ impl std::fmt::Debug for Erased {
 /// That is, trivial data represents the data semantically within a sequence of bytes.
 ///
 /// Note this differs from Copy because Copy implies copy semantics, which may not necessarily be
-/// present/desirable for all trivial types. Though it is true that all Copy types are Trivial (and
-/// such a blanket implementation exists).
+/// present/desirable for all trivial types. Though it is true that all Copy types can be trivial.
 ///
 /// # Safety
 /// Trivial types _must_ have consistent padding bytes, if any. Otherwise the guarantees of
@@ -180,6 +179,8 @@ unsafe impl Trivial for u32 {}
 unsafe impl Trivial for i32 {}
 unsafe impl Trivial for u64 {}
 unsafe impl Trivial for i64 {}
+unsafe impl Trivial for u128 {}
+unsafe impl Trivial for i128 {}
 unsafe impl Trivial for usize {}
 unsafe impl Trivial for isize {}
 

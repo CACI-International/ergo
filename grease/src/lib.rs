@@ -113,6 +113,7 @@ pub use grease_macro::grease_trait_impl;
 ///     closure::FnPtr,
 ///     future::BoxFuture,
 ///     runtime::{Context,Traits},
+///     type_erase::Erased,
 ///     types::{GreaseType,Type},
 ///     grease_trait, grease_traits_fn,
 ///     Value
@@ -125,14 +126,15 @@ pub use grease_macro::grease_trait_impl;
 ///
 /// grease_traits_fn!{
 ///     {
-///         extern "C" fn always_true<'a>(_ctx: &'a Context, _val: &'a Value, _tp: &'a Type, _v: &'a grease::Erased)
+///         extern "C" fn always_true<'a>(_data: &'a Erased, _ctx: &'a Context, _val: &'a Value, _tp: &'a Type, _v: &'a grease::Erased)
 ///             -> BoxFuture<'a, grease::error::RResult<bool>>
 ///         {
 ///             BoxFuture::new(async move { grease::error::RResult::ROk(true) })
 ///         }
 ///         traits.add_generator_by_trait_for_trait::<ToBool>(|_traits,_type| {
 ///             ROption::RSome(ToBoolImpl {
-///                 to_bool: unsafe { FnPtr::new(always_true) }
+///                 to_bool: unsafe { FnPtr::new(always_true) },
+///                 grease_trait_data: Default::default()
 ///             })
 ///         });
 ///     }

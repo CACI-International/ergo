@@ -16,6 +16,8 @@ mod script;
 mod seq;
 mod string;
 pub mod task;
+#[path = "type.rs"]
+mod type_;
 mod value;
 
 pub use exec::ExitStatus;
@@ -68,6 +70,7 @@ The library's map includes:"
         "seq": "The seq function, to create sequential dependencies." = seq::function(),
         "string": "String creation and manipulation." = string::module(),
         "task": "The task function, to evaluate a value as a concurrent task." = task::function(),
+        "type": "Type creation and checkin." = type_::module(),
         "value": "Value manipulation functions." = value::module()
     }))
 }

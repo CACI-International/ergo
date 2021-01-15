@@ -12,6 +12,9 @@
   * `path:name` to get the final component of a path
   * `value:dynamic` to create an explicitly-dynamic value
   * `match` to replace the previously parsed match expression
+* Add the `type` module, with the following functions:
+  * `new` to create new types from an interface definition
+  * `Any`/`Unit`/`String`/`Path`/`Map`/`Array`/`Function` to match each type
 
 ## 1.0.0-beta.7  -- 2020-12-08
 * No changes!

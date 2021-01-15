@@ -317,11 +317,10 @@ where
         //   Colon Suffix
         //   Caret Prefix
         //   PipeLeft (Right assoc)
-        //   PipeRight (Left assoc)
-        //   Bang Expression Prefix (again)
+        //   Pipe/PipeRight (Left assoc)
+        //   Bang Expression Prefix
         //   Arrow (Right assoc)
         //   Equal (Left assoc)
-        //   Bang Expression Prefix
         //   Caret Expression Prefix
 
         type Toks = [Source<TreeOrSymbol>];

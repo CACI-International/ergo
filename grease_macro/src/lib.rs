@@ -337,12 +337,23 @@ fn grease_trait_definition(trt: ItemTrait) -> TokenStream {
             colon_token: Some(Default::default()),
             ty: parse_quote! {
                     grease::closure::FnPtr<
-                        for<'a> extern "C" fn(&'a ::grease::runtime::Context, #(#fn_args),*)
+                        for<'a> extern "C" fn(&'a ::grease::type_erase::Erased, &'a ::grease::runtime::Context, #(#fn_args),*)
                             -> ::grease::future::BoxFuture<'a, ::grease::error::RResult<#ret>>
                     >
             },
         }
     });
+
+    // Add grease trait data field
+    let fields = fields.chain(std::iter::once({
+        syn::Field {
+            attrs: Default::default(),
+            vis: parse_quote! { pub },
+            ident: parse_quote! { grease_trait_data },
+            colon_token: Some(Default::default()),
+            ty: parse_quote! { ::grease::type_erase::Erased },
+        }
+    }));
 
     let fields = fields.chain(generic_types.iter().enumerate().map(|(n, t)| {
         let name = syn::Ident::new(&format!("_phantom{}", n), t.span());
@@ -422,7 +433,8 @@ fn grease_trait_definition(trt: ItemTrait) -> TokenStream {
         };
         quote! {
             pub async fn #ident(&mut self, #v #(#args),*) -> ::grease::error::Result<#ret> {
-                (self.inner.as_ref().await?.#ident.as_fn())(&self.ctx, #call_v #(#arg_names),*).await.into_result()
+                let inner = self.inner.as_ref().await?;
+                (inner.#ident.as_fn())(&inner.grease_trait_data, &self.ctx, #call_v #(#arg_names),*).await.into_result()
             }
         }
     });
@@ -675,7 +687,8 @@ fn do_grease_trait_impl(
 
         quote_spanned! { name.span() =>
             #[allow(improper_ctypes_definitions)]
-            extern "C" fn #name #impl_generics(#[allow(non_snake_case,unused)] CONTEXT: &'a ::grease::runtime::Context, #(#fn_args),*)
+            extern "C" fn #name #impl_generics(#[allow(non_snake_case,unused)] TRAIT_DATA: &'a ::grease::type_erase::Erased,
+                #[allow(non_snake_case,unused)] CONTEXT: &'a ::grease::runtime::Context, #(#fn_args),*)
                 -> ::grease::future::BoxFuture<'a, ::grease::error::RResult<#ret>>
             #where_clause
             {
@@ -694,7 +707,11 @@ fn do_grease_trait_impl(
         }
     });
 
-    let field_sets = func_sets.chain(generic_args.iter().enumerate().map(|(n, t)| {
+    let val_set = func_sets.chain(std::iter::once(
+        parse_quote! { grease_trait_data: Default::default() },
+    ));
+
+    let field_sets = val_set.chain(generic_args.iter().enumerate().map(|(n, t)| {
         let name = syn::Ident::new(&format!("_phantom{}", n), t.span());
         parse_quote! {
             #name: Default::default()
