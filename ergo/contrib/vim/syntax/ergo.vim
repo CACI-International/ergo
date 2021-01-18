@@ -5,7 +5,7 @@ if exists("b:current_syntax")
 	finish
 endif
 
-syn keyword ergoKeys fn match if
+syn keyword ergoKeys pat fn if
 syn match ergoIndex /:/
 syn match ergoMerge /\^/
 syn match ergoSugar /\(|>\?\|<|\)/

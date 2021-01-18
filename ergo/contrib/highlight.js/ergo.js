@@ -4,7 +4,7 @@ Language: Ergo
 function ergo_lang(hljs) {
     return {
         name: "Ergo",
-        keywords: "fn match if",
+        keywords: "fn pat if",
         contains: [
             hljs.COMMENT(/#/, /$/),
             hljs.QUOTE_STRING_MODE,
