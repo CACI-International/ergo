@@ -6,11 +6,17 @@ function ergo_lang(hljs) {
         name: "Ergo",
         keywords: "fn pat if",
         contains: [
-            hljs.COMMENT(/#/, /$/),
+            hljs.COMMENT(/#/, /$/, {
+                contains: [
+                    {
+                        className: 'doc', begin: /## /, end: /$/
+                    }
+                ]
+            }),
             hljs.QUOTE_STRING_MODE,
             {
-                className: 'type',
-                begin: /(:|\^)/
+                className: 'operator',
+                begin: /(:|\^|!)/
             },
             {
                 className: 'keyword',

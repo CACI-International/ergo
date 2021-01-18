@@ -84,6 +84,8 @@ The syntax changes should not require too much effort to enact. In particular:
   looks like `fn [[args]] -> [[expression]]`), but it does mean that function
   arguments all need `:` preceding them, just like binding patterns:
   `fn a b ^rest -> ...` should now be `fn :a :b ^:rest -> ...`.
+  * This also means that if you had a function _without_ arguments (`fn ->
+    ...`), this needs to be changed to either `(fn) -> ...` or `fn: -> ...`.
 * Patterns no longer support the `=[expression]` form for literal comparison.
   Instead, strings are literals by default, and any other literal value can be
   preceded by a `!`: `!` in patterns means to interpret the following expression
