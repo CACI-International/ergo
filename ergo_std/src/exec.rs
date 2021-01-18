@@ -349,6 +349,14 @@ script.
             None => None
         };
 
+        let retain_terminal = match cargs.kw("retain-terminal") {
+            Some(v) => {
+                let v = ctx.into_sourced::<bool>(v);
+                Some(v.await?.unwrap())
+            }
+            None => None
+        };
+
         cargs.unused_arguments()?;
 
         let mut deps = depends![cmd, ^@args];
@@ -388,6 +396,9 @@ script.
             if let Some(v) = &stdin {
                 vals.push(v.clone().into());
             }
+            if let Some(v) = &retain_terminal {
+                vals.push(v.clone().into());
+            }
             ctx.task.join_all(vals).await?;
 
             let mut command = Command::new(cmd.forced_value().0.as_ref());
@@ -417,8 +428,14 @@ script.
 
             log.debug(format!("spawning child process: {:?}", command));
 
-            // Disown process group so signals don't go to children.
-            disown_pgroup(&mut command);
+            let retain_terminal = match retain_terminal {
+                Some(v) => *v.forced_value().as_ref(),
+                None => false,
+            };
+            if !retain_terminal {
+                // Disown process group so signals don't go to children.
+                disown_pgroup(&mut command);
+            }
 
             let mut child = command.spawn()?;
 
