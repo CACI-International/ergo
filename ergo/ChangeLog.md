@@ -47,6 +47,54 @@
     ```
 * Apply linting while executing values.
 
+### Migration Guide
+The syntax changes should not require too much effort to enact. In particular:
+* In patterns, `a = ...` is a shortcut for `:a = ...`, so this simple case need
+  not be changed in scripts.
+* In patterns, any nested bindings will need a preceding `:` now. This will
+  affect nested array and map patterns:
+  * `[a,b]` should now be `[:a,:b]`.
+  * `{a}` is still fine (and is the same as `{:a = :a}`), and likewise because
+    of the above shortcut `{a = b}` in a pattern can be changed to either `{:a =
+    :b}` or `{a = :b}`.
+* __Important__: Nested array and map patterns used to be delayed (i.e., the
+  source array/map value wouldn't be destructured until one of the nested
+  elements was accessed). This is now _not_ the case; patterns are applied
+  immediately, and thus any destructuring will occur immediately. This was done
+  to simplify the behavior, though with more thorough design with regard to
+  other pattern functions, it may change back to being delayed in the future.
+  For now, if you were relying on this behavior to be delayed, you should access
+  elements directly by index, e.g. `map:key` (which is still delayed).
+* `match` is now a function in the standard library, so what was before
+  ```
+  match [[value]] { [[pattern]] = [[expression]], [[pattern2]] = [[expression2]], ...}
+  ```
+  should now be
+  ```
+  std:match [[value]] ([[pattern]] -> [[expression]]) ([[pattern2]] -> [[expression2]]) ...
+  # Or, to keep things line-separated
+  std:match [[value]] ^[
+      [[pattern]] -> [[expression]]
+      [[pattern2]] -> [[expression2]]
+  ]
+  ```
+  Note that the pattern/expression pairs are just normal functions (which is why
+  `match` can itself be a function).
+* `fn` is now a binding function. Syntactically this doesn't mean much (it still
+  looks like `fn [[args]] -> [[expression]]`), but it does mean that function
+  arguments all need `:` preceding them, just like binding patterns:
+  `fn a b ^rest -> ...` should now be `fn :a :b ^:rest -> ...`.
+* Patterns no longer support the `=[expression]` form for literal comparison.
+  Instead, strings are literals by default, and any other literal value can be
+  preceded by a `!`: `!` in patterns means to interpret the following expression
+  as if it were a normal expression, not applying the special interpretation
+  rules of pattern bindings. Note that this mainly changes the interpretation of
+  `:v`: in a binding, `:v` means to set `v` in the current scope, whereas `!:v`
+  means to use the value in `:v`.
+* In patterns, commands are interpreted as bind commands. Previously, `(a b c) =
+  1` would match the literal output of `(a b c)`. Now, you need `!(a b c) = 1`
+  to achieve the same effect. It's unlikely this was used much at all though...
+
 ## 1.0.0-beta.7  -- 2020-12-08
 * Add `-e`/`--expression` flags to evaluate the arguments as an expression
   without preceding `ergo`.
