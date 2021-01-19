@@ -498,7 +498,7 @@ where
 
                 let b = part(b)?;
                 let mut td = suffix_op(a, syms, part, join.clone())?;
-                let new_t = (td.pop_front().unwrap(), t)
+                let new_t = (td.pop_back().unwrap(), t)
                     .into_source()
                     .map(|(v, t)| join(t.unwrap(), v));
                 td.push_back(new_t);
@@ -592,29 +592,48 @@ where
         }
 
         fn pipe_right<E>(toks: &mut Toks) -> TResult<E> {
-            left_bin_op(
-                toks,
-                |v| v.is_rightward_pipe(),
-                pipe_left,
-                |o, a, b| {
-                    let a = a.into_source().map(|v| Tree::Parens(v.into()));
-                    let mut ret = b;
-                    match o {
-                        TreeOrSymbol::Symbol(SymbolicToken::Pipe) => ret.push_back(a),
-                        TreeOrSymbol::Symbol(SymbolicToken::PipeRight) => ret.push_front(a),
-                        TreeOrSymbol::PipeRightColon => {
-                            let front_b = ret.pop_front().unwrap();
-                            ret.push_front(
-                                (a, front_b)
-                                    .into_source()
-                                    .map(|(a, front_b)| Tree::Parens(vec![a, front_b])),
-                            );
-                        }
-                        _ => panic!("unexpected token"),
+            let next = pipe_left;
+
+            let split = toks.iter().rposition(|t| t.is_rightward_pipe());
+            if let Some(pos) = split {
+                let (a, b) = toks.split_at_mut(pos);
+                let (t, b) = b.split_at_mut(1);
+                let t = unsafe { t.get_unchecked_mut(0) }.as_mut().map(|t| t.take());
+
+                if a.is_empty() {
+                    return Err(t.with(Error::BinaryMissingPrevious));
+                } else if b.is_empty() {
+                    return Err(t.with(Error::BinaryMissingNext));
+                }
+
+                let (t_source, t) = t.take();
+
+                let a = pipe_right(a)?.into_source().map(|v| Tree::Parens(v.into()));
+                match t {
+                    TreeOrSymbol::Symbol(SymbolicToken::Pipe) => {
+                        let mut ret = next(b)?;
+                        ret.push_back(a);
+                        Ok(ret)
                     }
-                    ret
-                },
-            )
+                    TreeOrSymbol::Symbol(SymbolicToken::PipeRight) => {
+                        let mut ret = next(b)?;
+                        ret.push_front(a);
+                        Ok(ret)
+                    }
+                    TreeOrSymbol::PipeRightColon => {
+                        let mut toks: Vec<_> = std::iter::once(a.map(TreeOrSymbol::Tree))
+                            .chain(std::iter::once(
+                                t_source.with(TreeOrSymbol::Symbol(SymbolicToken::Colon)),
+                            ))
+                            .chain(b.iter_mut().map(|sv| sv.as_mut().map(|v| v.take())))
+                            .collect();
+                        next(&mut toks)
+                    }
+                    _ => panic!("unexpected token"),
+                }
+            } else {
+                next(toks)
+            }
         }
 
         fn bang_prefix_group<E>(toks: &mut Toks) -> TResult<E> {
@@ -820,6 +839,7 @@ mod test {
         assert_same("a:", "(a)");
         assert_same("a:b:c", "((a b) c)");
         assert_same(":a:b::c:", "(((:a b) :c))");
+        assert_same("a b:c d:e:", "a (b c) ((d e))");
     }
 
     #[test]
@@ -837,6 +857,7 @@ mod test {
     fn pipe_colon() {
         assert_same("a b |>:c d", "((a b) c) d");
         assert_same("a b:<| c d", "a (b (c d))");
+        assert_same("a b |>:c:d", "((a b) c) d");
     }
 
     #[test]
