@@ -87,8 +87,6 @@ Within a script, the following are defined:
 * Extend the Ctrl-C behavior to better cancel/stop execution.
   * Right now it only cancels tasks.
 * Persist command timing information for better estimates.
-* Allow functions to get call-site variables? Convenient for things like
-  `script-dir`.
 * Add value dependency tree print to help debug consistency issues.
 * Support `collection:map` over map values.
 * Change `path:new` to have identity based on source file and occurrence/seed

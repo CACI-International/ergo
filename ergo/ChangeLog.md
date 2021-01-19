@@ -45,6 +45,8 @@
     # The following will error.
     a :x = 1
     ```
+  * Merge expressions are always immediate (previously array merges produced
+    delayed values).
 * Apply linting while executing values.
 
 ### Migration Guide
@@ -96,6 +98,8 @@ The syntax changes should not require too much effort to enact. In particular:
 * In patterns, commands are interpreted as bind commands. Previously, `(a b c) =
   1` would match the literal output of `(a b c)`. Now, you need `!(a b c) = 1`
   to achieve the same effect. It's unlikely this was used much at all though...
+* Array merges now occur immediately, so any code relying on their previous
+  delayed behavior will need to be updated.
 
 ## 1.0.0-beta.7  -- 2020-12-08
 * Add `-e`/`--expression` flags to evaluate the arguments as an expression
