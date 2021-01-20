@@ -62,23 +62,24 @@ test-dist = path:join :script-dir influx-test
 }
 ```
 
+## Documentation
+All values can have associated docstrings, which can be accessed with the `-d`
+argument. This argument implies `-p`, using your system pager to print the
+documentation. If `PAGER` is not set in the environment, this defaults to `less
+-F`.
+
+Unfortunately, it seems like older Mac versions have a buggy `less` which will
+not work correctly with this flag. You can either:
+* set `PAGER` to not use `-F`,
+* set `PAGER` as `more -F` (which on mac is actually `less` in `LESS_IS_MORE` mode, but seems
+  to work),
+* install a newer version of `less` with brew and set `PAGER` to that, or
+* add `-p` to _disable_ paging when displaying the documentation.
+
 ## Script Resolution
 Project-mode is detected by the presence of a `workspace.ergo` file/directory
 somewhere in the parent hierarchy. That directory is where project top-level
 scripts reside.
-
-Within a script, the following are defined:
-* `script-dir`: this is the directory that contains the currently-executing
-  script.
-* `load-path`: an array of paths that are
-  used when resolving `ergo` calls to load external scripts. In any given script,
-  it will by default contain the `script-dir` directory. An accompanything
-  `share/ergo/lib` directory is also used if the location of the `ergo` binary
-  is in a sibling `bin` directory. The application's user-local directory will
-  also be added:
-  * __Linux__: `$XDG_CONFIG_HOME/ergo/lib` or `$HOME/.local/share/ergo/lib`
-  * __macOS__: `$HOME/Library/Application Support/ergo/lib`
-  * __Windows__: `{FOLDERID_LocalAppData}\ergo\data\lib`
 
 ## Development Notes
 
