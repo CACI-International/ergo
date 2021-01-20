@@ -48,6 +48,7 @@
   * Merge expressions are always immediate (previously array merges produced
     delayed values).
 * Apply linting while executing values.
+* Remove `script-dir` and `load-path`.
 
 ### Migration Guide
 The syntax changes should not require too much effort to enact. In particular:
@@ -100,6 +101,7 @@ The syntax changes should not require too much effort to enact. In particular:
   to achieve the same effect. It's unlikely this was used much at all though...
 * Array merges now occur immediately, so any code relying on their previous
   delayed behavior will need to be updated.
+* Instead of `:script-dir`, use `(std:script:dir)` (it's a function).
 
 ## 1.0.0-beta.7  -- 2020-12-08
 * Add `-e`/`--expression` flags to evaluate the arguments as an expression

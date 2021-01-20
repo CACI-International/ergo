@@ -100,3 +100,4 @@ Within a script, the following are defined:
   * This will allow loaded plugins to be properly dropped rather than leaked.
 * Improve std::fs file not found errors (print the file!).
 * Support unicode output in `exec` streams (for convenient printing).
+* Support generating documentation recursively (inspecting markdown links).
