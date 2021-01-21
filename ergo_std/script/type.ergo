@@ -1,0 +1,95 @@
+## Create an enumeration type.
+## 
+## Arguments: (String name) (Map variants)
+## 
+## Enumeration (sum) types have one of a closed set of inner types.
+## The first argument should be the unique name of the type (as would be passed to [new](self:new)).
+## The second argument should be a map of the variant keys and expectected types. For example:
+## ```
+## MapResult = enum MapResult {
+##   Ok = type:Map
+##   Error = type:String
+## }
+## ok = MapResult:Ok {...}
+## err = MapResult:Error "oh no"
+## !:MapResult = :ok
+## !:MapResult = :err
+## MapResult:Ok :m = :ok
+## ```
+## The variant values should be values supporting function calls and binding/pattern calls.
+enum = fn (type:String :name) (type:Map :variants) -> {
+    # Create new type for enum
+    tp = type:new :name (:a -> match :a ^[
+        fn :which ^:args ^{^:kwargs} -> { ::which = variants::which ^:args ^:kwargs }
+        pat :which ^:args ^{^:kwargs} -> { ::which = variants::which ^!:args ^!:kwargs } -> ()
+    ])
+    # Create map interface for enum variants
+    key-to-accessor = fn :key -> :a -> match :a ^[
+        fn ^:args ^{^:kwargs} -> tp :key ^:args ^:kwargs
+        pat ^:args ^{^:kwargs} -> tp !:key ^!:args ^!:kwargs -> ()
+    ]
+    accessor = !collection:fold (fn :m :e -> {^:m, :(e key) = key-to-accessor e:key}) {} <| collection:entries :variants
+    # Wrap the accessor to add a way to check for `tp` using it.
+    :a -> match :a ^[
+        fn :arg -> accessor :arg
+        pat :tgt -> :v -> { !:tp = :v; !:tgt = :v }
+        :v -> { !:tp = :v }
+    ]
+}
+
+^{
+    basic-type = fn :check -> :a -> match :a ^[
+        :check
+        fn (check :m) -> :m
+        (check _) -> ()
+    ]
+    
+    ## Match maps with specific keys and value types.
+    ## 
+    ## Arguments: (Map map)
+    ## 
+    ## `map` should contain the expected keys and their corresponding value types.
+    MapValues = fn (type:Map :fields) -> basic-type (pat :out -> (!:fields = :x) -> { !:out = :x })
+
+    ## Match maps where all keys match a specific type and all values match a specific type.
+    ## 
+    ## Arguments: (Function key-type) (Function value-type)
+    MapOf = fn (type:Function :keys) (type:Function :values) -> {
+        basic-type (pat :out -> type:Map :m -> { !collection:map (fn {key = !:keys, value = !:values} -> ()) <| collection:entries :m; !:out = :m })
+    }
+
+    ## Match arrays with specific value types (and length).
+    ## 
+    ## Arguments: (Array array)
+    ## 
+    ## `array` should contain the expected value types for each entry in the array.
+    ArrayValues = fn (type:Array :tps) -> basic-type (pat :out -> (!:tps = :x) -> { !:out = :x })
+
+    ## Match arrays where all values match a specific type.
+    ## 
+    ## Arguments: (Function type)
+    ArrayOf = fn (type:Function :tp) -> {
+        basic-type (pat :out -> type:Array :a -> { !collection:map (fn !:tp -> ()) :a; !:out = :a })
+    }
+
+    {MapValues, MapOf, ArrayValues, ArrayOf}
+}
+
+## Create a structured type.
+## 
+## Arguments: (String name) (Map fields)
+## 
+## Structured (product) types are a set of keyed values.
+## Note this merely makes a new type with a `MapValues` type checker.
+## 
+## The first argument should be the unique name of the type (as would be passed to [new](self:new)).
+## The second argument should be a map of the field keys and expectected types. For example:
+## ```
+## StringPair = struct StringPair {
+##     first = type:String
+##     second = type:String
+## }
+## pair = StringPair { first = hello, second = world }
+## StringPair {first,second} = :pair
+## ```
+struct = fn (type:String :name) (type:Map :fields) -> type:new :name <| MapValues :fields

@@ -3,6 +3,9 @@
 ## Unreleased
 * Fix an issue where `match` incorrectly detected bind errors when a binding in
   the body of a case failed.
+* Add `enum`, `struct`, `MapValues`, `MapOf`, `ArrayValues`, and `ArrayOf` to
+  `type` module.
+* Add `matches` convenience function.
 
 ## 1.0.0-beta.8  -- 2020-01-15
 * Fix deadlock occurring from task execution.

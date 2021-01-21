@@ -1,0 +1,29 @@
+plugin = ergo plugin
+
+## Create a value that will evaluate to the first argument which successfully binds.
+## 
+## Arguments: <binding cases>...
+## This is a shortcut for `:a -> match :a <cases>`.
+matches = fn ^:cases -> :a -> !plugin:match :a ^:cases
+
+copydoc = matches ^[
+    fn :a :b -> plugin:value:doc:set :b (plugin:value:doc:get :a)
+    fn :a merge :b -> plugin:value:doc:set :b (plugin:string:format "{}\n{}" (plugin:value:doc:get :a) (plugin:value:doc:get :b))
+]
+
+copydoc :plugin merge {
+    ## * matches: Create a value which matches the given bindings.
+    {
+        ^:plugin
+        type = copydoc plugin:type merge {
+            ## * enum: Create an enumerated type.
+            ## * struct: Create a structured type.
+            ## * MapValues: Match a map with specific value types.
+            ## * MapOf: Match a map with single key and value types.
+            ## * ArrayValues: Match an array with specific value types.
+            ## * ArrayOf: Match an array of a single type.
+            {^plugin:type, ^ergo type}
+        }
+        matches
+    }
+}

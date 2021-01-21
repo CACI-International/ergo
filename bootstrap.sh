@@ -27,4 +27,4 @@ mkdir -p dist/bin
 mkdir -p dist/share/ergo/lib
 cp $DIR/target/$TYPE/ergo dist/bin/ergo
 cp -r $DIR/ergo_std/script dist/share/ergo/lib/std
-cp $DIR/target/$TYPE/libergo_std.$DYEXT dist/share/ergo/lib/std.ergo
+cp $DIR/target/$TYPE/libergo_std.$DYEXT dist/share/ergo/lib/std/plugin.ergo
