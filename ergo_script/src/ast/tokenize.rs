@@ -338,10 +338,9 @@ impl<I: Iterator<Item = char>> Iterator for Tokens<I> {
             // Comments
             if c == '#' {
                 // Doc comment
-                if self.iter.peek_match(&['#',' ']) {
+                if self.iter.peek_match(&['#']) {
                     self.iter.next();
-                    self.iter.next();
-                    self.source.location.length += 2;
+                    self.source.location.length += 1;
 
                     let mut s = String::new();
                     while let Some(c) = self.iter.peek() {
@@ -613,7 +612,7 @@ mod test {
     #[test]
     fn doc_comments() -> Result<(), Source<Error>> {
         assert_tokens(
-            "## This is a doc comment\nhello world",
+            "##This is a doc comment\nhello world",
             &[
                 Token::doc_comment("This is a doc comment"),
                 Token::Newline,
@@ -623,14 +622,14 @@ mod test {
             ],
         )?;
         assert_tokens(
-            "## This is a doc comment\n## more doc comment\n  ##  and more\nhello",
+            "##This is a doc comment\n##more doc comment\n  ##  and more\nhello",
             &[
                 Token::doc_comment("This is a doc comment"),
                 Token::Newline,
                 Token::doc_comment("more doc comment"),
                 Token::Newline,
                 Token::Whitespace,
-                Token::doc_comment(" and more"),
+                Token::doc_comment("  and more"),
                 Token::Newline,
                 Token::string("hello"),
             ],

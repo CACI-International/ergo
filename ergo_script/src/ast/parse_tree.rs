@@ -742,7 +742,7 @@ mod test {
     #[test]
     fn doc_comment() {
         assert_single(
-            "# some comment\n## doc comment\n",
+            "# some comment\n##doc comment\n",
             DocComment("doc comment".into()),
         );
     }

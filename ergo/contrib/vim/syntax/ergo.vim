@@ -5,8 +5,8 @@ if exists("b:current_syntax")
 	finish
 endif
 
-set iskeyword=$,%,&,',45-57,63-90,95-122,126,~
-syn keyword ergoFunctions pat fn
+set iskeyword=$,%,&,',*,+,45-57,63-90,95-122,126,~
+syn keyword ergoFunctions ergo pat fn
 syn keyword ergoConditional if
 syn match ergoGetSet /:/
 syn match ergoMerge /\^/
@@ -19,7 +19,7 @@ syn match ergoSugarColon contained /:/
 syn match ergoDataDelimiter /[\[\]{}]/
 syn region ergoQuotedString start=/\(\\\)\@<!"/ skip=/\\[\\"]/ end=/"/
 syn match ergoComment contains=ergoDocComment /#.*$/
-syn match ergoDocComment /## .*$/
+syn match ergoDocComment /##.*$/
 
 let b:current_syntax = "ergo"
 

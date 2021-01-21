@@ -37,7 +37,7 @@ where
     type Item = Result<Source<Expression>, Source<Error<E>>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut doc_comment = String::new();
+        let mut doc_comment_lines = Vec::new();
         loop {
             match self.trees.next() {
                 None => break None,
@@ -46,15 +46,46 @@ where
                     let (source, t) = t.take();
                     match t {
                         Tree::DocComment(s) => {
-                            doc_comment.push_str(&s);
-                            doc_comment.push('\n');
+                            doc_comment_lines.push(s);
                         }
                         o => {
                             let e = match to_expression(self.ctx, source.with(o)) {
                                 Ok(v) => v,
                                 Err(e) => break Some(Err(e)),
                             };
-                            let doc_comment = doc_comment.trim().to_owned();
+                            let doc_comment = {
+                                let mut doc_comment_lines = doc_comment_lines.into_iter();
+                                let mut doc_comment = String::new();
+
+                                // Use whitespace of first line of doc comment to determine trimmable
+                                // whitespace from subsequent lines.
+                                let mut leading_ws_offset = 0;
+                                while let Some(line) = doc_comment_lines.next() {
+                                    match line.find(|c: char| !c.is_whitespace()) {
+                                        None => continue,
+                                        Some(offset) => {
+                                            leading_ws_offset = offset;
+                                            doc_comment
+                                                .push_str(unsafe { line.get_unchecked(offset..) });
+                                            break;
+                                        }
+                                    }
+                                }
+
+                                // Get remaining lines and trim leading whitespace if necessary.
+                                while let Some(line) = doc_comment_lines.next() {
+                                    doc_comment.push('\n');
+                                    let offset = std::cmp::min(
+                                        leading_ws_offset,
+                                        line.find(|c: char| !c.is_whitespace()).unwrap_or(0),
+                                    );
+                                    doc_comment.push_str(unsafe { line.get_unchecked(offset..) });
+                                }
+
+                                // We already have done the equivalent of trim_start, so just need
+                                // to trim_end.
+                                doc_comment.trim_end().to_owned()
+                            };
                             break Some(Ok(if !doc_comment.is_empty() {
                                 // If a doc comment precedes a bind expression, apply it to the value.
                                 // Otherwise apply it to whatever value it precedes.
@@ -618,8 +649,8 @@ mod test {
     #[test]
     fn doc_comment() {
         assert_single(
-            "##  my doc\n ## \n## more doc\n##\nval",
-            DocComment("my doc\n\nmore doc".into(), s("val")),
+            "## my doc\n ##\n##   docs\n##more doc\n##\nval",
+            DocComment("my doc\n\n  docs\nmore doc".into(), s("val")),
         );
     }
 
