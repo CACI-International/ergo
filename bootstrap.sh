@@ -17,12 +17,14 @@ fi
 (cd $DIR; cargo build -p ergo -p ergo_std $FLAGS)
 
 DYEXT=so
-if [ "$OSTYPE" == "darwin"* ]; then
+if [[ "$OSTYPE" == "darwin"* ]]; then
 	DYEXT=dylib
 fi
 
+rm -r dist
 
 mkdir -p dist/bin
 mkdir -p dist/share/ergo/lib
 cp $DIR/target/$TYPE/ergo dist/bin/ergo
+cp -r $DIR/ergo_std/script dist/share/ergo/lib/std
 cp $DIR/target/$TYPE/libergo_std.$DYEXT dist/share/ergo/lib/std.ergo
