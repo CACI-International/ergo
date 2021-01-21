@@ -250,17 +250,21 @@ impl Error {
         if errs.len() == 1 {
             errs.into_iter().next().unwrap()
         } else {
+            let errs: RVec<_> = errs
+                .into_iter()
+                .map(|mut e| match &mut e.inner {
+                    InnerError::Aborted => rvec![],
+                    InnerError::New(_) => rvec![RArc::new(BoxGreaseError::new(e))],
+                    InnerError::Nested(es) => std::mem::take(es),
+                })
+                .flatten()
+                .collect();
             Error {
-                inner: InnerError::Nested(
-                    errs.into_iter()
-                        .map(|mut e| match &mut e.inner {
-                            InnerError::Aborted => rvec![],
-                            InnerError::New(_) => rvec![RArc::new(BoxGreaseError::new(e))],
-                            InnerError::Nested(es) => std::mem::take(es),
-                        })
-                        .flatten()
-                        .collect(),
-                ),
+                inner: if errs.is_empty() {
+                    InnerError::Aborted
+                } else {
+                    InnerError::Nested(errs)
+                },
             }
         }
     }

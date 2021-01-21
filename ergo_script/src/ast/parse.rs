@@ -9,6 +9,7 @@ use ergo_runtime::Source;
 /// This is used as an iterator, producing Expr as individual items in a script.
 pub struct Parser<TreeIter> {
     trees: TreeIter,
+    ctx: ParseContext,
 }
 
 impl<T, E> From<T> for Parser<T::IntoIter>
@@ -18,7 +19,14 @@ where
     fn from(iter: T) -> Self {
         Parser {
             trees: iter.into_iter(),
+            ctx: Default::default(),
         }
+    }
+}
+
+impl<I> Parser<I> {
+    fn with_context(trees: I, ctx: ParseContext) -> Self {
+        Parser { trees, ctx }
     }
 }
 
@@ -42,7 +50,7 @@ where
                             doc_comment.push('\n');
                         }
                         o => {
-                            let e = match to_expression(ParseContext::default(), source.with(o)) {
+                            let e = match to_expression(self.ctx, source.with(o)) {
                                 Ok(v) => v,
                                 Err(e) => break Some(Err(e)),
                             };
@@ -83,6 +91,8 @@ pub enum Error<TreeError> {
     BadCaret,
     /// An if expression has an invalid number of arguments.
     MalformedIf,
+    /// A doc comment was in an invalid position.
+    BadDocComment,
 }
 
 impl<E: fmt::Display> fmt::Display for Error<E> {
@@ -91,6 +101,10 @@ impl<E: fmt::Display> fmt::Display for Error<E> {
             Error::TreeParse(t) => write!(f, "{}", t),
             Error::BadCaret => write!(f, "cannot merge values here"),
             Error::MalformedIf => write!(f, "if expression must have 2 or 3 arguments"),
+            Error::BadDocComment => write!(
+                f,
+                "doc comments can only be at the top-level or within blocks or brackets"
+            ),
         }
     }
 }
@@ -297,17 +311,18 @@ fn to_expression<E>(
                 }
             }
         }
-        Tree::Curly(inner) => inner
-            .into_iter()
-            .map(|v| to_expression(ctx.allow_merge(true).bind_equal(false), v))
-            .collect::<Result<Vec<_>, _>>()
-            .map(|v| source.with(Expression::Block(v))),
-        Tree::Bracket(inner) => inner
-            .into_iter()
-            .map(|v| to_expression(ctx.allow_merge(true), v))
-            .collect::<Result<Vec<_>, _>>()
-            .map(|v| source.with(Expression::Array(v))),
-        _ => panic!("invalid parsing"),
+        Tree::Curly(inner) => Parser::with_context(
+            inner.into_iter().map(Ok),
+            ctx.allow_merge(true).bind_equal(false),
+        )
+        .collect::<Result<Vec<_>, _>>()
+        .map(|v| source.with(Expression::Block(v))),
+        Tree::Bracket(inner) => {
+            Parser::with_context(inner.into_iter().map(Ok), ctx.allow_merge(true))
+                .collect::<Result<Vec<_>, _>>()
+                .map(|v| source.with(Expression::Array(v)))
+        }
+        Tree::DocComment(_) => Err(source.with(Error::BadDocComment)),
     }
 }
 
