@@ -66,4 +66,16 @@ mod test {
             t.assert_script_fail("!self:match {:a=[1,2]} ({b} -> :b) ([:a,:b] -> :b)");
         }
     }
+
+    ergo_script::test! {
+        fn match_case_body_failure(t) {
+            t.assert_fail("self:match 1 (1 -> self:error:throw NO) (1 -> 1)");
+        }
+    }
+
+    ergo_script::test! {
+        fn match_case_body_bind_failure(t) {
+            t.assert_fail("self:match 1 (1 -> {!x = y}) (1 -> 1)");
+        }
+    }
 }

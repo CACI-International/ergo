@@ -9,6 +9,7 @@ use crate::constants::{
     DIR_NAME, EXTENSION, PLUGIN_ENTRY, PRELUDE_ARG, WORKSPACE_FALLBACK_ARG, WORKSPACE_NAME,
 };
 use abi_stable::std_types::{ROption, RResult};
+use ergo_runtime::error::BindError;
 use ergo_runtime::source::{FileSource, Source};
 use ergo_runtime::Result as EResult;
 use ergo_runtime::{
@@ -1059,8 +1060,8 @@ impl Evaluator {
                                 ctx.env_scoped(move |ctx| {
                                     async move {
                                         let bind = ctx.env_set_to_current(|ctx| self.evaluate(ctx, bind)).await?;
-                                        traits::bind(ctx, bind, v).await.map_err(|e| ergo_runtime::error::BindError::wrap(e))?;
-                                        self.evaluate(ctx, e).await
+                                        traits::bind(ctx, bind, v).await.map_err(BindError::wrap)?;
+                                        self.evaluate(ctx, e).await.map_err(BindError::unwrap)
                                     }.boxed()
                                 }).await.0.map(Source::unwrap)
                             }
@@ -1070,12 +1071,12 @@ impl Evaluator {
                     Bind(bind, e) => {
                         // evaluate `e` first, so that any bindings in `bind` aren't in the
                         // environment
-                        let result_e = self.evaluate(ctx, *e).await;
+                        let result_e = self.evaluate(ctx, *e).await.map_err(BindError::unwrap);
                         let bind = ctx.env_set_to_current(|ctx| self.evaluate(ctx, *bind)).await?;
 
                         let result = match result_e {
                             Err(e) => Err(e),
-                            Ok(e) => traits::bind(ctx, bind, e).await.map_err(|e| ergo_runtime::error::BindError::wrap(e))
+                            Ok(e) => traits::bind(ctx, bind, e).await.map_err(BindError::wrap)
                         };
 
                         // Replace unset values with aborted errors.
@@ -1155,7 +1156,7 @@ impl Evaluator {
                         ctx.env_scoped(move |ctx| async move {
                             let result = match Errored::ignore(self.evaluate(ctx, *cond_bind)).await {
                                 Ok(_) => true,
-                                Err(e) => if ergo_runtime::error::BindError::only_bind_errors(&e) {
+                                Err(e) => if BindError::only_bind_errors(&e) {
                                     false
                                 } else {
                                     return Err(e);

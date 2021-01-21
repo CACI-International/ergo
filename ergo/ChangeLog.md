@@ -1,5 +1,9 @@
 # ergo changelog
 
+## Unreleased
+* Fix incorrect parsing of indexing in e.g. `a |>:b:c`.
+* Fix incorrect parsing of trailing colon in e.g. `a b:c:`.
+
 ## 1.0.0-beta.8  -- 2021-01-15
 * Fix some bugs and improve output UI.
   * Don't count/display abort errors.

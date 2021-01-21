@@ -130,24 +130,26 @@ impl BoxGreaseError {
 
     /// Return whether all errors within this error satisfy the predicate.
     ///
-    /// If this error does not satisfy the predicate, checks whether all sources satisfy the
-    /// predicate.
+    /// If the predicate returns None, checks whether all sources satisfy the predicate.
     pub fn all<F>(&self, f: F) -> bool
     where
-        F: Fn(&Self) -> bool + Clone,
+        F: Fn(&Self) -> Option<bool> + Clone,
     {
-        if !f(self) {
-            let sources = self.source();
-            if sources.is_empty() {
-                return false;
-            }
-            for src in sources {
-                if !src.all(f.clone()) {
+        match f(self) {
+            None => {
+                let sources = self.source();
+                if sources.is_empty() {
                     return false;
                 }
+                for src in sources {
+                    if !src.all(f.clone()) {
+                        return false;
+                    }
+                }
+                true
             }
+            Some(v) => v,
         }
-        true
     }
 }
 
@@ -334,7 +336,7 @@ impl Error {
     /// If there are no sources (this is an aborted error), returns false.
     pub fn all<F>(&self, f: F) -> bool
     where
-        F: Fn(&BoxGreaseError) -> bool + Clone,
+        F: Fn(&BoxGreaseError) -> Option<bool> + Clone,
     {
         let sources = GreaseError::source(self);
         if sources.is_empty() {

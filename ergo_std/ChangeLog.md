@@ -1,5 +1,9 @@
 # ergo_std changelog
 
+## Unreleased
+* Fix an issue where `match` incorrectly detected bind errors when a binding in
+  the body of a case failed.
+
 ## 1.0.0-beta.8  -- 2020-01-15
 * Fix deadlock occurring from task execution.
   * Deadlocks are no longer possible, however other functions must indicate
