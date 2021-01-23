@@ -1,44 +1,5 @@
-## Create an enumeration type.
-## 
-## Arguments: (String name) (Map variants)
-## 
-## Enumeration (sum) types have one of a closed set of inner types.
-## The first argument should be the unique name of the type (as would be passed to [new](self:new)).
-## The second argument should be a map of the variant keys and expectected types. For example:
-## ```
-## MapResult = enum MapResult {
-##   Ok = type:Map
-##   Error = type:String
-## }
-## ok = MapResult:Ok {...}
-## err = MapResult:Error "oh no"
-## !:MapResult = :ok
-## !:MapResult = :err
-## MapResult:Ok :m = :ok
-## ```
-## The variant values should be values supporting function calls and binding/pattern calls.
-enum = fn (type:String :name) (type:Map :variants) -> {
-    # Create new type for enum
-    tp = type:new :name (:a -> match :a ^[
-        fn :which ^:args ^{^:kwargs} -> { ::which = variants::which ^:args ^:kwargs }
-        pat :which ^:args ^{^:kwargs} -> { ::which = variants::which ^!:args ^!:kwargs } -> ()
-    ])
-    # Create map interface for enum variants
-    key-to-accessor = fn :key -> :a -> match :a ^[
-        fn ^:args ^{^:kwargs} -> tp :key ^:args ^:kwargs
-        pat ^:args ^{^:kwargs} -> tp !:key ^!:args ^!:kwargs -> ()
-    ]
-    accessor = !collection:fold (fn :m :e -> {^:m, :(e key) = key-to-accessor e:key}) {} <| collection:entries :variants
-    # Wrap the accessor to add a way to check for `tp` using it.
-    :a -> match :a ^[
-        fn :arg -> accessor :arg
-        pat :tgt -> :v -> { !:tp = :v; !:tgt = :v }
-        :v -> { !:tp = :v }
-    ]
-}
-
 ^{
-    basic-type = fn :check -> :a -> match :a ^[
+    basic-type = fn :check -> :a -> !match :a ^[
         :check
         fn (check :m) -> :m
         (check _) -> ()
@@ -73,6 +34,45 @@ enum = fn (type:String :name) (type:Map :variants) -> {
     }
 
     {MapValues, MapOf, ArrayValues, ArrayOf}
+}
+
+## Create an enumeration type.
+## 
+## Arguments: (String name) (Map variants)
+## 
+## Enumeration (sum) types have one of a closed set of inner types.
+## The first argument should be the unique name of the type (as would be passed to [new](self:new)).
+## The second argument should be a map of the variant keys and expectected types. For example:
+## ```
+## MapResult = enum MapResult {
+##   Ok = type:Map
+##   Error = type:String
+## }
+## ok = MapResult:Ok {...}
+## err = MapResult:Error "oh no"
+## !:MapResult = :ok
+## !:MapResult = :err
+## MapResult:Ok :m = :ok
+## ```
+## The variant values should be values supporting function calls and binding/pattern calls.
+enum = fn (type:String :name) (type:Map :variants) -> {
+    # Create new type for enum
+    tp = type:new :name (:a -> !match :a ^[
+        fn :which ^:args ^{^:kwargs} -> { ::which = variants::which ^:args ^:kwargs }
+        pat :which ^:args ^{^:kwargs} -> { ::which = variants::which ^!:args ^!:kwargs } -> ()
+    ])
+    # Create map interface for enum variants
+    key-to-accessor = fn :key -> :a -> !match :a ^[
+        fn ^:args ^{^:kwargs} -> tp :key ^:args ^:kwargs
+        pat ^:args ^{^:kwargs} -> tp !:key ^!:args ^!:kwargs -> ()
+    ]
+    accessor = !collection:fold (fn :m :e -> {^:m, :(e key) = key-to-accessor e:key}) {} <| collection:entries :variants
+    # Wrap the accessor to add a way to check for `tp` using it.
+    :a -> !match :a ^[
+        fn :arg -> accessor :arg
+        pat :tgt -> :v -> { !:tp = :v; !:tgt = :v }
+        :v -> { !:tp = :v }
+    ]
 }
 
 ## Create a structured type.

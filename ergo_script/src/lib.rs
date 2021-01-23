@@ -55,6 +55,7 @@ pub fn script_context(
         insert(constants::PROGRAM_NAME, base::load());
         insert("fn", base::bind_args_to_args());
         insert("pat", base::bind_args_to_bind_args());
+        insert("index", base::bind_args_to_index());
     }
 
     cb.build().map(|mut ctx| {
@@ -251,11 +252,16 @@ mod test {
     }
 
     #[test]
+    fn function_no_args() -> Result<(), String> {
+        script_eval_to("f = fn: -> a; f:", SRString("a"))
+    }
+
+    #[test]
     fn function_capture() -> Result<(), String> {
         script_eval_to(":f = { :a = 100; _ -> :a }; :a = 5; f:", SRString("100"))?;
         script_fail(":f = _ -> :b; f:")?;
         script_eval_to(
-            ":f = fn :a -> { :b = [:a,something]; fn: -> {b,a} }; ((f hi))",
+            ":f = fn :a -> { :b = [:a,something]; fn: -> {b,a} }; (f hi):",
             SRMap(&[
                 ("b", SRArray(&[SRString("hi"), SRString("something")])),
                 ("a", SRString("hi")),

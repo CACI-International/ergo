@@ -1,1 +1,1 @@
-:prelude = { :value = prelude_load }
+prelude = { value = prelude_load }

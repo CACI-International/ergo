@@ -14,9 +14,11 @@ pub enum Tree {
     DocComment(String),
     Bang(Box<Source<Tree>>),
     Caret(Box<Source<Tree>>),
-    Colon(Box<Source<Tree>>),
+    ColonPrefix(Box<Source<Tree>>),
+    ColonSuffix(Box<Source<Tree>>),
     Equal(Box<Source<Tree>>, Box<Source<Tree>>),
     Arrow(Box<Source<Tree>>, Box<Source<Tree>>),
+    Colon(Box<Source<Tree>>, Box<Source<Tree>>),
     Parens(TreeVec),
     Curly(TreeVec),
     Bracket(TreeVec),
@@ -193,22 +195,13 @@ where
                         let mut src = None;
                         let t = match p {
                             PairedToken::Paren => {
-                                let inner = self.group()?;
-                                loop {
-                                    // If inner is an arrow or equal, the parens just imply grouping.
-                                    if inner.len() == 1 {
-                                        let f = inner.first().unwrap();
-                                        match AsRef::as_ref(f) {
-                                            Tree::Arrow(_, _) | Tree::Equal(_, _) => {
-                                                let (s, inner) =
-                                                    inner.into_iter().next().unwrap().take();
-                                                src = Some(s);
-                                                break inner;
-                                            }
-                                            _ => (),
-                                        }
-                                    }
-                                    break Tree::Parens(inner);
+                                let grp = self.group()?;
+                                if grp.len() == 1 {
+                                    let (inner_src, inner) = grp.into_iter().next().unwrap().take();
+                                    src = Some(inner_src);
+                                    inner
+                                } else {
+                                    Tree::Parens(grp)
                                 }
                             }
                             PairedToken::Curly => {
@@ -220,10 +213,11 @@ where
                                         let (source, v) = v.take();
                                         match v {
                                             Tree::String(s) => {
-                                                let colon =
-                                                    Box::from(source.clone().with(Tree::Colon(
+                                                let colon = Box::from(source.clone().with(
+                                                    Tree::ColonPrefix(
                                                         source.clone().with(Tree::String(s)).into(),
-                                                    )));
+                                                    ),
+                                                ));
                                                 source
                                                     .with(Tree::Equal(colon.clone(), colon.clone()))
                                             }
@@ -521,7 +515,7 @@ where
                 toks,
                 |t| t.is_front_colon(),
                 to_treedeque,
-                |_, t| Tree::Colon(t.into()),
+                |_, t| Tree::ColonPrefix(t.into()),
             )
         }
 
@@ -536,7 +530,7 @@ where
                     let bc = b.pop_front().unwrap();
                     let c = (ac, bc)
                         .into_source()
-                        .map(|(a, b)| Tree::Parens(vec![a, b]));
+                        .map(|(a, b)| Tree::Colon(a.into(), b.into()));
                     ret.push_back(c);
                     ret.extend(b);
                     ret
@@ -549,7 +543,7 @@ where
                 toks,
                 |t| t.is_back_colon(),
                 colon,
-                |_, t| Tree::Parens(vec![t]),
+                |_, t| Tree::ColonSuffix(t.into()),
             )
         }
 
@@ -573,7 +567,7 @@ where
                 bang_caret_prefixes,
                 |o, a, b| {
                     let mut ret = a;
-                    let b = b.into_source().map(|v| Tree::Parens(v.into()));
+                    let b = to_tree(b);
                     match o {
                         TreeOrSymbol::Symbol(SymbolicToken::PipeLeft) => ret.push_back(b),
                         TreeOrSymbol::ColonPipeLeft => {
@@ -581,7 +575,7 @@ where
                             ret.push_back(
                                 (back_a, b)
                                     .into_source()
-                                    .map(|(back_a, b)| Tree::Parens(vec![back_a, b])),
+                                    .map(|(back_a, b)| Tree::Colon(back_a.into(), b.into())),
                             );
                         }
                         _ => panic!("unexpected token"),
@@ -608,7 +602,7 @@ where
 
                 let (t_source, t) = t.take();
 
-                let a = pipe_right(a)?.into_source().map(|v| Tree::Parens(v.into()));
+                let a = to_tree(pipe_right(a)?);
                 match t {
                     TreeOrSymbol::Symbol(SymbolicToken::Pipe) => {
                         let mut ret = next(b)?;
@@ -725,11 +719,17 @@ mod test {
 
     use Tree::*;
 
-    fn src<T>(e: T) -> Source<T> {
-        Source::builtin(e)
+    fn src<T, R>(e: T) -> R
+    where
+        R: From<Source<T>>,
+    {
+        Source::builtin(e).into()
     }
 
-    fn s(s: &str) -> Source<Tree> {
+    fn s<R>(s: &str) -> R
+    where
+        R: From<Source<Tree>>,
+    {
         src(String(s.into()))
     }
 
@@ -750,7 +750,7 @@ mod test {
     #[test]
     fn parens() {
         assert_single("a b", Parens(vec![s("a"), s("b")]));
-        assert_single("((a))", Parens(vec![src(Parens(vec![s("a")]))]));
+        assert_single("((a))", String("a".into()));
     }
 
     #[test]
@@ -795,84 +795,89 @@ mod test {
 
     #[test]
     fn bang() {
-        assert_single("!a", Bang(s("a").into()));
-        assert_single(
-            "!a b c",
-            Bang(src(Parens(vec![s("a"), s("b"), s("c")])).into()),
-        );
-        assert_single(
-            "a !b c",
-            Parens(vec![s("a"), src(Bang(s("b").into())), s("c")]),
-        );
+        assert_single("!a", Bang(s("a")));
+        assert_single("!a b c", Bang(src(Parens(vec![s("a"), s("b"), s("c")]))));
+        assert_single("a !b c", Parens(vec![s("a"), src(Bang(s("b"))), s("c")]));
     }
 
     #[test]
     fn caret() {
-        assert_single("^a", Caret(s("a").into()));
-        assert_single(
-            "^a b c",
-            Caret(src(Parens(vec![s("a"), s("b"), s("c")])).into()),
-        );
-        assert_single(
-            "a ^b c",
-            Parens(vec![s("a"), src(Caret(s("b").into())), s("c")]),
-        );
+        assert_single("^a", Caret(s("a")));
+        assert_single("^a b c", Caret(src(Parens(vec![s("a"), s("b"), s("c")]))));
+        assert_single("a ^b c", Parens(vec![s("a"), src(Caret(s("b"))), s("c")]));
     }
 
     #[test]
     fn colon() {
-        assert_single(":a", Colon(s("a").into()));
+        assert_single(":a", ColonPrefix(s("a")));
         assert_single(
             ":a b c",
-            Parens(vec![src(Colon(s("a").into())), s("b"), s("c")]),
+            Parens(vec![src(ColonPrefix(s("a"))), s("b"), s("c")]),
         );
         assert_single(
             "a :b c",
-            Parens(vec![s("a"), src(Colon(s("b").into())), s("c")]),
+            Parens(vec![s("a"), src(ColonPrefix(s("b"))), s("c")]),
         );
-        assert_single("::a", Colon(src(Colon(s("a").into())).into()));
+        assert_single("::a", ColonPrefix(src(ColonPrefix(s("a")))));
     }
 
     #[test]
-    fn colon_command_sugar() {
-        assert_same("a:b", "(a b)");
-        assert_same("a:", "(a)");
-        assert_same("a:b:c", "((a b) c)");
-        assert_same(":a:b::c:", "(((:a b) :c))");
-        assert_same("a b:c d:e:", "a (b c) ((d e))");
+    fn colon_ops() {
+        assert_single("a:b", Colon(s("a"), s("b")));
+        assert_single("a:", ColonSuffix(s("a")));
+        assert_single("a:b:c", Colon(src(Colon(s("a"), s("b"))), s("c")));
+        assert_single(
+            ":a:b::c:",
+            ColonSuffix(src(Colon(
+                src(Colon(src(ColonPrefix(s("a"))), s("b"))),
+                src(ColonPrefix(s("c"))),
+            ))),
+        );
+        assert_single(
+            "a b:c d:e:",
+            Parens(vec![
+                s("a"),
+                src(Colon(s("b"), s("c"))),
+                src(ColonSuffix(src(Colon(s("d"), s("e"))))),
+            ]),
+        );
     }
 
     #[test]
     fn pipe_sugar() {
         assert_same("a b |> c d", "(a b) c d");
+        assert_same("a |> b c", "a b c");
         assert_same("a b | c d", "c d (a b)");
+        assert_same("a | c d", "c d a");
         assert_same("a b <| c d", "a b (c d)");
+        assert_same("a b <| c", "a b c");
         assert_same(
             "a | b <| c <| d | e |> f <| g | h",
-            "h ((e (b (c (d)) (a))) f (g))",
+            "h ((e (b (c d) a)) f g)",
         );
     }
 
     #[test]
     fn pipe_colon() {
-        assert_same("a b |>:c d", "((a b) c) d");
-        assert_same("a b:<| c d", "a (b (c d))");
-        assert_same("a b |>:c:d", "((a b) c) d");
+        assert_same("a b |>:c d", "(a b):c d");
+        assert_same("a b |>:c | d", "d (a b):c");
+        assert_same("a b:<| c d", "a b:(c d)");
+        assert_same("a b |>:c:d", "(a b):c:d");
     }
 
     #[test]
     fn equal() {
-        assert_single("a = b", Equal(s("a").into(), s("b").into()));
+        assert_single("a = b", Equal(s("a"), s("b")));
     }
 
     #[test]
     fn force_equal() {
-        assert_single("a = b", Equal(s("a").into(), s("b").into()));
+        assert_single("a = b", Equal(s("a"), s("b")));
     }
 
     #[test]
     fn arrow() {
-        assert_single("a -> b", Arrow(s("a").into(), s("b").into()));
+        assert_single("a -> b", Arrow(s("a"), s("b")));
     }
 
     #[test]
@@ -880,16 +885,14 @@ mod test {
         assert_single(
             ":a = a:b :c -> a <| b c",
             Equal(
-                src(Colon(s("a").into())).into(),
+                src(ColonPrefix(s("a"))),
                 src(Arrow(
                     src(Parens(vec![
-                        src(Parens(vec![s("a"), s("b")])),
-                        src(Colon(s("c").into())),
-                    ]))
-                    .into(),
-                    src(Parens(vec![s("a"), src(Parens(vec![s("b"), s("c")]))])).into(),
-                ))
-                .into(),
+                        src(Colon(s("a"), s("b"))),
+                        src(ColonPrefix(s("c"))),
+                    ])),
+                    src(Parens(vec![s("a"), src(Parens(vec![s("b"), s("c")]))])),
+                )),
             ),
         )
     }

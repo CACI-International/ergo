@@ -3,6 +3,38 @@
 ## Unreleased
 * Fix incorrect parsing of indexing in e.g. `a |>:b:c`.
 * Fix incorrect parsing of trailing colon in e.g. `a b:c:`.
+* Improve doc comment parsing by not requiring a space after the initial `##`.
+* Change parsing of parentheses to be purely grouping.
+  * Previously, parentheses implied commands. Now they are strictly for
+    grouping, e.g. `(a)` and `a` parse identically. Commands are inferred
+    based on the presence of arguments. To call a command with no arguments,
+    use the trailing colon, e.g. `a:`.
+  * This makes things work better especially with regard to pipe operators,
+    where you can now use parentheses as the limits of the pipe operator without
+    need for calling a command. For instance, `a b |>:d | e` parses the same as
+    `e ((a b):d)`, and if parentheses imply a call, then it ends up calling the
+    result of `(a b):d`, which is likely not what is desired. Now, that is
+    equivalent to `e (a b):d`, as the extra parentheses around the single value
+    are superfluous.
+  * The interpretation of values within parentheses is now identical to those
+    without; if the value is a single value, it is the result, otherwise if
+    there is more than one value, the first is bound to an `Args` containing the
+    rest to get the result.
+* Make indexing a distinct operation (as opposed to being syntax sugar).
+  * Indexing (infix `:`) is now a distinct operation, binding an `Index`
+    value. In scripts, you may match this with `index :v`. Maps and arrays
+    have been changed to use `Index` rather than `Args` to get values.
+
+### Migration Guide
+Syntax has changed in the following breaking ways:
+* Parentheses are purely grouping, and do not imply a command call. Thus, if you
+  were calling a command with no arguments as `(function)`, it _must_ be changed
+  to `function:`.
+* Indexing is a distinct operation (`a:b` is no longer syntax sugar for `(a
+  b)`). If you were using `:` on values that were not arrays or maps, that
+  must be changed to be parenthesized. If you were using a function
+  call to get map/array values (`map :key`), that must be changed to use the
+  infix `:` instead.
 
 ## 1.0.0-beta.8  -- 2021-01-15
 * Fix some bugs and improve output UI.

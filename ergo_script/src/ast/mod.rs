@@ -17,12 +17,14 @@ pub enum Expression {
     BindAny,
     String(String),
     Array(Vec<Expr>),
+    Map(Vec<Expr>),
     Block(Vec<Expr>),
     Function(Box<Expr>, Box<Expr>),
     Bind(Box<Expr>, Box<Expr>),
     Get(Box<Expr>),
     Set(Box<Expr>),
     BindEqual(Box<Expr>, Box<Expr>),
+    Index(Box<Expr>, Box<Expr>),
     Command(Box<Expr>, Vec<Expr>),
     BindCommand(Box<Expr>, Vec<Expr>),
     If(Box<Expr>, Box<Expr>, Option<Box<Expr>>),
@@ -49,12 +51,12 @@ impl From<&Expression> for grease::value::Dependencies {
             Get(e) | Set(e) | Force(e) | Merge(e) | DocComment(_, e) => {
                 deps += Self::from(&***e);
             }
-            Array(es) | Block(es) => {
+            Array(es) | Map(es) | Block(es) => {
                 for e in es {
                     deps += Self::from(&**e);
                 }
             }
-            Function(a, b) | Bind(a, b) | BindEqual(a, b) => {
+            Function(a, b) | Bind(a, b) | BindEqual(a, b) | Index(a, b) => {
                 deps += Self::from(&***a) + Self::from(&***b);
             }
             Command(cmd, args) | BindCommand(cmd, args) => {
@@ -77,6 +79,26 @@ impl From<&Expression> for grease::value::Dependencies {
     }
 }
 
+impl Expression {
+    /// Create a Map or Block from a set of expressions based on the final expression.
+    pub fn map_or_block(exprs: Vec<Expr>) -> Self {
+        // If the last expression is a Bind or Merge expression (or there are no expressions), create a
+        // Map. Otherwise create a Block.
+        if exprs
+            .last()
+            .map(|v| match &**v {
+                Expression::Bind(_, _) | Expression::Merge(_) => true,
+                _ => false,
+            })
+            .unwrap_or(true)
+        {
+            Expression::Map(exprs)
+        } else {
+            Expression::Block(exprs)
+        }
+    }
+}
+
 /// Load an AST from the given character stream.
 pub fn load(src: Source<()>) -> Result<Expr, grease::Error> {
     let toks = tokenize::Tokens::from(src.open()?);
@@ -87,5 +109,5 @@ pub fn load(src: Source<()>) -> Result<Expr, grease::Error> {
     parser
         .map(|v| v.map_err(|e| grease::Error::from(e)))
         .collect_result::<Vec<_>>()
-        .map(|vec| vec.into_source().map(Expression::Block))
+        .map(|vec| vec.into_source().map(Expression::map_or_block))
 }

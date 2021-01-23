@@ -63,4 +63,5 @@ grease_traits_fn! {
     grease_type_name!(traits, types::BindRest, "BindRest");
     grease_type_name!(traits, types::Args, "Args");
     grease_type_name!(traits, types::BindArgs, "BindArgs");
+    grease_type_name!(traits, types::Index, "Index");
 }

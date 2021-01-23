@@ -56,14 +56,13 @@ impl DelayedBind {
             value,
         } = self.clone();
 
-        let arg_source = arg.source();
         let call_site = (self.value.source(), arg.source()).into_source();
 
         // Eagerly evaluate binding
         Ok(call_site.with(
             value
                 .map_async(move |v| {
-                    let deps = depends![{ crate::namespace_id!(ergo::call) }, *arg];
+                    let deps = depends![{ crate::namespace_id!(ergo::bind) }, *arg];
                     v.and_then_value(
                         move |v| async move { trt.bind(v, &mut ctx, arg).await },
                         deps,
@@ -73,8 +72,7 @@ impl DelayedBind {
                 .transpose_err()
                 .map_err(|e| {
                     let (src, e) = e.take();
-                    let e = src.with("while binding/calling value").context_for_error(e);
-                    arg_source.with("with value").context_for_error(e)
+                    src.with("while binding/calling value").context_for_error(e)
                 })?,
         ))
     }
@@ -251,17 +249,15 @@ grease_traits_fn! {
 
     impl Bind for types::Array {
         async fn bind(&self, ctx: &mut Runtime, arg: Source<Value>) -> Value {
-            let (call_site, arg) = arg.take();
+            let (source, arg) = arg.take();
 
             match_value!(arg => {
-                types::Args => |args| {
-                    // Return value at index
-                    let mut args = args.await?.owned().args;
-                    let ind = args.next().ok_or("no index provided")?;
-                    args.unused_arguments()?;
+                types::Index => |ind| {
+                    let ind = ind.await?.owned().0;
 
+                    // Return value at index
                     let (ind_source, ind) = ctx.source_value_as::<types::String>(ind).await?.await.transpose_ok()?.take();
-                    call_site.with(match usize::from_str(ind.as_ref()) {
+                    source.with(match usize::from_str(ind.as_ref()) {
                         Err(_) => Err(ind_source.with("non-integer index").into_grease_error()),
                         Ok(ind) => self.0.get(ind).cloned().ok_or_else(|| format!("array index does not exist: {}", ind).into())
                     })
@@ -270,13 +266,13 @@ grease_traits_fn! {
                 types::Array => |arr| {
                     let arr = arr.await?;
                     bind_array(ctx, self.0.iter().map(|v| Source::builtin(v.clone())).collect(),
-                        call_site.clone().with(
-                            arr.0.iter().map(|v| call_site.clone().with(v.clone())).collect()
+                        source.clone().with(
+                            arr.0.iter().map(|v| source.clone().with(v.clone())).collect()
                         )
                     ).await?;
                     types::Unit.into_value()
                 }
-                => |v| bind_error(ctx, call_site.with(v)).await?
+                => |v| bind_error(ctx, source.with(v)).await?
             }).await?
         }
     }
@@ -318,36 +314,32 @@ grease_traits_fn! {
 
     impl Bind for types::Map {
         async fn bind(&self, ctx: &mut Runtime, arg: Source<Value>) -> Value {
-            let (call_site, arg) = arg.take();
+            let (source, arg) = arg.take();
 
             match_value!(arg => {
-                types::Args => |args| {
-                    let mut args = args.await?.owned().args;
-                    let ind = args.next().ok_or("no key provided")?;
-                    args.unused_arguments()?;
+                types::Index => |ind| {
+                    let (ind_source, index) = ind.await?.owned().0.take();
 
-                    let (source, index) = ind.take();
-
-                    call_site.with(match self.0.get(&index).cloned() {
+                    source.with(match self.0.get(&index).cloned() {
                         Some(v) => Ok(v),
                         None => {
                             let d = display(CONTEXT, index).await?;
-                            Err(source.with(format!("map index does not exist: {}", d)).into_grease_error())
+                            Err(ind_source.with(format!("map index does not exist: {}", d)).into_grease_error())
                         }
                     }).transpose_err_with_context("while indexing map")?
                 },
                 types::Map => |map| {
                     let map = map.await?;
                     bind_map(ctx, self.0.iter().map(|(k,v)| (Source::builtin(k.clone()), Source::builtin(v.clone()))).collect(),
-                        call_site.clone().with(
+                        source.clone().with(
                             map.0.iter()
-                                .map(|(k,v)| (call_site.clone().with(k.clone()),call_site.clone().with(v.clone())))
+                                .map(|(k,v)| (source.clone().with(k.clone()),source.clone().with(v.clone())))
                                 .collect()
                         )
                     ).await?;
                     types::Unit.into_value()
                 },
-                => |v| bind_error(ctx, call_site.with(v)).await?
+                => |v| bind_error(ctx, source.with(v)).await?
             }).await?
         }
     }
@@ -378,6 +370,14 @@ grease_traits_fn! {
             let (src, args) = ctx.source_value_as::<types::BindArgs>(arg).await?.take();
             let args = args.await?.owned().args;
             bind_args(ctx, &self.args, src.with(args)).await?;
+            types::Unit.into_value()
+        }
+    }
+
+    impl Bind for types::Index {
+        async fn bind(&self, ctx: &mut Runtime, arg: Source<Value>) -> Value {
+            let ind = ctx.source_value_as::<types::Index>(arg).await?.await.transpose_ok()?.unwrap().owned().0;
+            crate::traits::bind(ctx, self.0.clone(), ind).await?;
             types::Unit.into_value()
         }
     }

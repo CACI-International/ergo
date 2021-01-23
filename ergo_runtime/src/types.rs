@@ -273,6 +273,18 @@ impl From<BindArgs> for TypedValue<BindArgs> {
     }
 }
 
+/// The value in an index call.
+#[derive(Clone, GreaseType, StableAbi)]
+#[repr(C)]
+pub struct Index(pub Source<Value>);
+
+impl From<Index> for TypedValue<Index> {
+    fn from(v: Index) -> Self {
+        let deps = depends![*v.0];
+        Self::constant_deps(v, deps)
+    }
+}
+
 /// Create a namespace id from the given namespaced name.
 ///
 /// Example usage:

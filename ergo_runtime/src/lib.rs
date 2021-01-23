@@ -408,6 +408,11 @@ impl UncheckedArguments {
             _ => Ok(()),
         }
     }
+
+    /// Create an Arguments, which checks for all values being consumed.
+    pub fn checked(self) -> Arguments {
+        self.into()
+    }
 }
 
 impl Default for UncheckedArguments {

@@ -150,11 +150,18 @@ impl<E: std::error::Error + 'static> std::error::Error for Error<E> {
 }
 
 #[derive(Clone, Copy, Debug)]
+enum StringImplies {
+    Get,
+    Set,
+    None,
+}
+
+#[derive(Clone, Copy, Debug)]
 struct ParseContext {
     pub allow_merge: bool,
     pub binding: bool,
     pub bind_equal: bool,
-    pub string_to_set: bool,
+    pub string_implies: StringImplies,
 }
 
 impl Default for ParseContext {
@@ -163,7 +170,7 @@ impl Default for ParseContext {
             allow_merge: true,
             binding: false,
             bind_equal: false,
-            string_to_set: false,
+            string_implies: StringImplies::None,
         }
     }
 }
@@ -192,9 +199,9 @@ impl ParseContext {
         }
     }
 
-    pub fn string_to_set(&self, string_to_set: bool) -> Self {
+    pub fn string_implies(&self, string_implies: StringImplies) -> Self {
         ParseContext {
-            string_to_set,
+            string_implies,
             ..*self
         }
     }
@@ -205,19 +212,20 @@ fn to_expression<E>(
     t: Source<Tree>,
 ) -> Result<Source<Expression>, Source<Error<E>>> {
     let (source, t) = t.take();
-    // string_to_set should only affect direct descendants
-    let string_to_set = ctx.string_to_set;
-    ctx = ctx.string_to_set(false);
+    // string_implies should only affect direct descendants
+    let string_implies = ctx.string_implies;
+    ctx = ctx.string_implies(StringImplies::None);
     match t {
         Tree::String(s) => {
             if ctx.binding && s == "_" {
                 Ok(source.with(Expression::BindAny))
-            } else if string_to_set {
-                Ok(source
-                    .clone()
-                    .with(Expression::Set(source.with(Expression::String(s)).into())))
             } else {
-                Ok(source.with(Expression::String(s)))
+                let s = source.clone().with(Expression::String(s));
+                Ok(match string_implies {
+                    StringImplies::Set => source.with(Expression::Set(s.into())),
+                    StringImplies::Get => source.with(Expression::Get(s.into())),
+                    StringImplies::None => s,
+                })
             }
         }
         Tree::Bang(t) => {
@@ -243,7 +251,7 @@ fn to_expression<E>(
                 Err(source.with(Error::BadCaret))
             }
         }
-        Tree::Colon(t) => {
+        Tree::ColonPrefix(t) => {
             let ctx = ctx.allow_merge(false);
             if ctx.binding {
                 Ok(source.with(Expression::Set(
@@ -252,6 +260,13 @@ fn to_expression<E>(
             } else {
                 Ok(source.with(Expression::Get(to_expression(ctx, *t)?.into())))
             }
+        }
+        Tree::Colon(a, b) => {
+            let ctx = ctx.allow_merge(false);
+            Ok(source.with(Expression::Index(
+                to_expression(ctx.string_implies(StringImplies::Get), *a)?.into(),
+                to_expression(ctx, *b)?.into(),
+            )))
         }
         Tree::Equal(a, b) => {
             if ctx.bind_equal {
@@ -262,7 +277,7 @@ fn to_expression<E>(
             } else {
                 let ctx = ctx.allow_merge(false);
                 Ok(source.with(Expression::Bind(
-                    to_expression(ctx.binding(true).string_to_set(true), *a)?.into(),
+                    to_expression(ctx.binding(true).string_implies(StringImplies::Set), *a)?.into(),
                     to_expression(ctx.bind_equal(ctx.binding), *b)?.into(),
                 )))
             }
@@ -274,9 +289,24 @@ fn to_expression<E>(
                 to_expression(ctx.binding(false), *b)?.into(),
             )))
         }
+        Tree::ColonSuffix(f) => {
+            let f = to_expression(
+                ctx.binding(false)
+                    .allow_merge(false)
+                    .string_implies(StringImplies::Get),
+                *f,
+            )?;
+            if ctx.binding {
+                Ok(source.with(Expression::BindCommand(f.into(), vec![])))
+            } else {
+                Ok(source.with(Expression::Command(f.into(), vec![])))
+            }
+        }
         Tree::Parens(inner) => {
             if inner.len() == 0 {
                 Ok(source.with(Expression::Empty))
+            } else if inner.len() == 1 {
+                to_expression(ctx.allow_merge(false), inner.into_iter().next().unwrap())
             } else {
                 let mut inner = inner.into_iter();
                 let f = inner.next().unwrap();
@@ -325,12 +355,12 @@ fn to_expression<E>(
                         )))
                     }
                 } else {
-                    // If first value is a string, infer colon.
-                    let mut f = f;
-                    if let Tree::String(_) = &*f {
-                        f = f.source().with(Tree::Colon(f.into()));
-                    }
-                    let f = to_expression(ctx.binding(false).allow_merge(false), f)?;
+                    let f = to_expression(
+                        ctx.binding(false)
+                            .allow_merge(false)
+                            .string_implies(StringImplies::Get),
+                        f,
+                    )?;
                     let rest = inner
                         .map(|v| to_expression(ctx.allow_merge(true), v))
                         .collect::<Result<Vec<_>, _>>()?;
@@ -342,12 +372,14 @@ fn to_expression<E>(
                 }
             }
         }
-        Tree::Curly(inner) => Parser::with_context(
-            inner.into_iter().map(Ok),
-            ctx.allow_merge(true).bind_equal(false),
-        )
-        .collect::<Result<Vec<_>, _>>()
-        .map(|v| source.with(Expression::Block(v))),
+        Tree::Curly(inner) => {
+            let exprs = Parser::with_context(
+                inner.into_iter().map(Ok),
+                ctx.allow_merge(true).bind_equal(false),
+            )
+            .collect::<Result<Vec<_>, _>>()?;
+            Ok(source.with(Expression::map_or_block(exprs)))
+        }
         Tree::Bracket(inner) => {
             Parser::with_context(inner.into_iter().map(Ok), ctx.allow_merge(true))
                 .collect::<Result<Vec<_>, _>>()
@@ -421,9 +453,9 @@ mod test {
 
     #[test]
     fn command_no_args() {
-        assert_single("(f)", Command(src(Get(s("f"))), vec![]));
+        assert_single("f:", Command(src(Get(s("f"))), vec![]));
         assert_single(
-            "((mod f))",
+            "(mod f):",
             Command(src(Command(src(Get(s("mod"))), vec![s("f")])), vec![]),
         );
     }
@@ -451,7 +483,7 @@ mod test {
     #[test]
     fn bind() {
         assert_single(
-            ":a=(echo)",
+            ":a= echo:",
             Bind(src(Set(s("a"))), src(Command(src(Get(s("echo"))), vec![]))),
         );
         assert_single("::a=a", Bind(src(Set(src(Get(s("a"))))), s("a")));
@@ -504,7 +536,7 @@ mod test {
         assert_single(
             "{a,:b=:c,!(:d=:e),:f=(:g=:h)} = v",
             Bind(
-                src(Block(vec![
+                src(Map(vec![
                     src(Bind(src(Set(s("a"))), src(Set(s("a"))))),
                     src(Bind(src(Set(s("b"))), src(Set(s("c"))))),
                     src(Bind(src(Set(s("d"))), src(Set(s("e"))))),
@@ -559,9 +591,25 @@ mod test {
     }
 
     #[test]
+    fn map() {
+        assert_single(
+            "{ a, :c = hello }",
+            Map(vec![
+                src(Bind(src(Set(s("a"))), src(Get(s("a"))))),
+                src(Bind(src(Set(s("c"))), s("hello"))),
+            ]),
+        );
+        assert_single("{}", Map(vec![]));
+        assert_single(
+            "{a}",
+            Map(vec![src(Bind(src(Set(s("a"))), src(Get(s("a")))))]),
+        );
+    }
+
+    #[test]
     fn block() {
         assert_single(
-            "{ a\n () \n:c = (echo)\n}",
+            "{ a\n () \n:c = echo:\n()}",
             Block(vec![
                 src(Bind(src(Set(s("a"))), src(Get(s("a"))))),
                 src(Empty),
@@ -569,6 +617,7 @@ mod test {
                     src(Set(s("c"))),
                     src(Command(src(Get(s("echo"))), vec![])),
                 )),
+                src(Empty),
             ]),
         );
     }
@@ -625,7 +674,7 @@ mod test {
     fn merge_block() {
         assert_single(
             "{^{:a=b}}",
-            Block(vec![merge(src(Block(vec![src(Bind(
+            Map(vec![merge(src(Map(vec![src(Bind(
                 src(Set(s("a"))),
                 s("b"),
             ))])))]),
@@ -640,7 +689,7 @@ mod test {
                 src(Get(s("a"))),
                 vec![
                     merge(src(Array(vec![s("b")]))),
-                    merge(src(Block(vec![src(Bind(src(Set(s("c"))), s("d")))]))),
+                    merge(src(Map(vec![src(Bind(src(Set(s("c"))), s("d")))]))),
                 ],
             ),
         );

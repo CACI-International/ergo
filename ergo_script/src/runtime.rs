@@ -303,10 +303,9 @@ pub fn load_script<'a>(ctx: &'a mut Runtime, args: Source<Arguments>) -> BoxFutu
                                     };
 
                                     // Try to access prelude, but allow failures
-                                    match Errored::ignore(traits::bind(ctx, ws, source.clone().with(types::Args { args: Arguments::new(
-                                            vec![Source::builtin(types::String::from(PRELUDE_ARG).into())],
-                                            Default::default()
-                                        ).unchecked() }.into_value()))).await {
+                                    match Errored::ignore(traits::bind(ctx, ws, source.clone().with(types::Index(
+                                            Source::builtin(types::String::from(PRELUDE_ARG).into())
+                                        ).into_value()))).await {
                                         Ok(v) => {
                                             // Prelude must be a map.
                                             let (v_source, v) = v.take();
@@ -376,12 +375,11 @@ pub fn load_script<'a>(ctx: &'a mut Runtime, args: Source<Arguments>) -> BoxFutu
             let loaded_context = source.clone().with(format!("loaded from '{}'", p.display()));
 
             // If resolved to an ancestor workspace, run arguments on
-            // the result of `[loaded] command`.
+            // the result of `[loaded]:command`.
             let loaded = if was_workspace {
-                traits::bind(ctx, loaded, source.clone().with(types::Args { args: Arguments::new(
-                    vec![Source::builtin(types::String::from(WORKSPACE_FALLBACK_ARG).into())],
-                    Default::default()
-                ).unchecked()}.into_value())).await?
+                traits::bind(ctx, loaded, source.clone().with(types::Index(
+                    Source::builtin(types::String::from(WORKSPACE_FALLBACK_ARG).into())
+                ).into_value())).await?
             } else {
                 loaded
             };
@@ -669,6 +667,20 @@ impl Evaluator {
                         .await
                         .0?
                     }
+                    Map(es) => {
+                        ctx.env_scoped(|ctx| {
+                            async move {
+                                let mut r = Vec::new();
+                                for e in es {
+                                    r.push(self.compile_env_into(ctx, e).await);
+                                }
+                                r.into_iter().collect_result().map(Map)
+                            }
+                            .boxed()
+                        })
+                        .await
+                        .0?
+                    }
                     Block(es) => {
                         ctx.env_scoped(|ctx| {
                             async move {
@@ -753,6 +765,11 @@ impl Evaluator {
                         let a = self.compile_env_into(ctx, *a).await?;
                         let b = self.compile_env_into(ctx, *b).await?;
                         BindEqual(a.into(), b.into())
+                    }
+                    Index(a, b) => {
+                        let a = self.compile_env_into(ctx, *a).await?;
+                        let b = self.compile_env_into(ctx, *b).await?;
+                        Index(a.into(), b.into())
                     }
                     Command(cmd, args) => {
                         ctx.env_scoped(|ctx| {
@@ -893,6 +910,68 @@ impl Evaluator {
         }.boxed()
     }
 
+    fn evaluate_block<'a>(
+        self,
+        ctx: &'a mut Runtime,
+        es: Vec<Expr>,
+    ) -> BoxFuture<'a, EResult<(Source<Value>, ScriptEnv)>> {
+        async move {
+            let (result, scope) = ctx.env_scoped(move |ctx| {
+                async move {
+                    let mut results = Vec::new();
+                    let mut rest_binding: Option<Source<()>> = None;
+                    for e in es {
+                        match self.evaluate(ctx, e).await {
+                            Err(e) => results.push(Err(e)),
+                            Ok(v) => {
+                                let (v_source, v) = v.take();
+                                match_value!(peek v => {
+                                    types::Merge => |inner| {
+                                        let (inner_source, inner) = inner.await?.0.clone().take();
+                                        match_value!(inner => {
+                                            types::Map => |val| {
+                                                match val.await {
+                                                    Err(e) => results.push(Err(inner_source.with("while merging map").context_for_error(e))),
+                                                    Ok(m) => ctx.env_set_to_current(move |ctx| async move { ctx.env_extend(m.owned().0.into_iter().map(|(k,v)| {
+                                                        (k, Ok(inner_source.clone().with(v)).into())
+                                                    })) }.boxed()).await
+                                                }
+                                            },
+                                            types::Unbound => |v| {
+                                                if let Some(binding_source) = &rest_binding {
+                                                    results.push(Err(binding_source.clone().with("previous rest binding").context_for_error(
+                                                        inner_source.with("cannot have more than one rest binding in map")
+                                                            .into_grease_error())
+                                                    ));
+                                                } else {
+                                                    rest_binding = Some(inner_source.clone());
+                                                    ctx.env_set_to_current(move |ctx| async move {
+                                                        ctx.env_insert(types::BindRest.into_value(), Ok(inner_source.with(v.into())));
+                                                    }.boxed()).await;
+                                                }
+                                            },
+                                            => |v| {
+                                                let name = ctx.type_name(v.grease_type_immediate().unwrap()).await?;
+                                                results.push(Err(inner_source.with(format!("cannot merge value with type {}", name)).into_grease_error()));
+                                            }
+                                        }).await?
+                                    },
+                                    => |v| results.push(Ok(v_source.with(v)))
+                                }).await?;
+                            }
+                        }
+                    }
+                    Ok(results.collect_result::<Vec<_>>()?
+                        .into_iter()
+                        .last()
+                        .unwrap_or(Source::builtin(types::Unit.into_value())))
+                }
+                .boxed()
+            }).await;
+            result.map(move |v| (v, scope))
+        }.boxed()
+    }
+
     pub fn evaluate<'a>(self, ctx: &'a mut Runtime, e: Expr) -> BoxFuture<'a, EvalResult> {
         async move {
             let src = e.source();
@@ -963,81 +1042,15 @@ impl Evaluator {
                         })
                         .await.0
                     }
-                    Block(es) => {
-                        let (val, scope) = ctx.env_scoped(move |ctx| {
-                            async move {
-                                let mut results = Vec::new();
-                                let mut rest_binding: Option<Source<()>> = None;
-                                for e in es {
-                                    match self.evaluate(ctx, e).await {
-                                        Err(e) => results.push(Err(e)),
-                                        Ok(v) => {
-                                            let (v_source, v) = v.take();
-                                            match_value!(peek v => {
-                                                types::Merge => |inner| {
-                                                    let (inner_source, inner) = inner.await?.0.clone().take();
-                                                    match_value!(inner => {
-                                                        types::Map => |val| {
-                                                            match val.await {
-                                                                Err(e) => results.push(Err(inner_source.with("while merging map").context_for_error(e))),
-                                                                Ok(m) => ctx.env_set_to_current(move |ctx| async move { ctx.env_extend(m.owned().0.into_iter().map(|(k,v)| {
-                                                                    (k, Ok(inner_source.clone().with(v)).into())
-                                                                })) }.boxed()).await
-                                                            }
-                                                        },
-                                                        types::Unbound => |v| {
-                                                            if let Some(binding_source) = &rest_binding {
-                                                                results.push(Err(binding_source.clone().with("previous rest binding").context_for_error(
-                                                                    inner_source.with("cannot have more than one rest binding in map")
-                                                                        .into_grease_error())
-                                                                ));
-                                                            } else {
-                                                                rest_binding = Some(inner_source.clone());
-                                                                ctx.env_set_to_current(move |ctx| async move {
-                                                                    ctx.env_insert(types::BindRest.into_value(), Ok(inner_source.with(v.into())));
-                                                                }.boxed()).await;
-                                                            }
-                                                        },
-                                                        => |v| {
-                                                            let name = ctx.type_name(v.grease_type_immediate().unwrap()).await?;
-                                                            results.push(Err(inner_source.with(format!("cannot merge value with type {}", name)).into_grease_error()));
-                                                        }
-                                                    }).await?
-                                                },
-                                                => |v| results.push(Ok(v_source.with(v)))
-                                            }).await?;
-                                        }
-                                    }
-                                }
-                                results.collect_result::<Vec<_>>()?
-                                    .into_iter()
-                                    .last()
-                                    .map(Ok)
-                                    .unwrap_or(Ok(src.with(BindExpr.into_value())))
-                            }
-                            .boxed()
-                        }).await;
-
-                        // Possibly return the env scope as a map
-                        let env_map = scope
+                    Map(es) => {
+                        // Return the env scope as a map.
+                        self.evaluate_block(ctx, es).await?.1
                             .into_iter()
                             .map(|(k, v)| v.map(move |v| (k, v.unwrap())).into_result())
-                            .collect_result::<BstMap<_, _>>();
-
-                        // Return result based on final value.
-                        match val {
-                            Err(e) => Err(e),
-                            Ok(val) => {
-                                let val = val.unwrap();
-                                match val.grease_type_immediate() {
-                                    Some(tp) if tp == &BindExpr::grease_type() => {
-                                        env_map.map(|ret| types::Map(ret).into_value(ctx))
-                                    }
-                                    _ => Ok(val),
-                                }
-                            }
-                        }
+                            .collect_result::<BstMap<_, _>>()
+                            .map(|ret| types::Map(ret).into_value(ctx))
                     }
+                    Block(es) => Ok(self.evaluate_block(ctx, es).await?.0.unwrap()),
                     Function(bind, e) => {
                         let (bind, e) = ctx
                             .env_scoped(move |ctx| {
@@ -1139,6 +1152,13 @@ impl Evaluator {
                                 Ok(types::Unit.into_value())
                             }.boxed()
                         }, deps, None).into())
+                    }
+                    Index(a, b) => {
+                        let a = self.evaluate(ctx, *a).await?;
+                        let b = self.evaluate(ctx, *b).await?;
+
+                        traits::bind(ctx, a, src.with(types::Index(b).into_value())).await
+                            .map(Source::unwrap)
                     }
                     Command(cmd, args) => {
                         let (cmd, args) = self.command_args(ctx, *cmd, args).await?;

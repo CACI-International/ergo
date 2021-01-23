@@ -97,3 +97,24 @@ pub fn bind_args_to_bind_args() -> Value {
     )
     .into()
 }
+
+/// A binding function returning an Index.
+pub fn bind_args_to_index() -> Value {
+    types::Unbound::new(
+        |ctx, v| {
+            async move {
+                let args_val = ctx.source_value_as::<types::BindArgs>(v).await?.unwrap();
+                let mut args = args_val.await?.owned().args.checked();
+                let ind_v = args.next().ok_or("missing index argument")?;
+                args.unused_arguments()?;
+                Ok(types::Index(ind_v).into_value())
+            }.boxed()
+        },
+        depends![namespace_id!(ergo::index)],
+        Some(TypedValue::constant(
+            "The 'index' binding function, which takes a single argument and returns an Index to be bound."
+                .into(),
+        )),
+    )
+    .into()
+}
