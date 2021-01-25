@@ -84,8 +84,6 @@ enum TreeOrSymbol {
     Symbol(SymbolicToken),
     ColonPriorFree,
     ColonPostFree,
-    PipeRightColon,
-    ColonPipeLeft,
     Used,
 }
 
@@ -129,13 +127,11 @@ impl TreeOrSymbol {
     }
 
     pub fn is_leftward_pipe(&self) -> bool {
-        self == &TreeOrSymbol::ColonPipeLeft || self.is_symbol(&SymbolicToken::PipeLeft)
+        self.is_symbol(&SymbolicToken::PipeLeft)
     }
 
     pub fn is_rightward_pipe(&self) -> bool {
-        self == &TreeOrSymbol::PipeRightColon
-            || self.is_symbol(&SymbolicToken::Pipe)
-            || self.is_symbol(&SymbolicToken::PipeRight)
+        self.is_symbol(&SymbolicToken::Pipe) || self.is_symbol(&SymbolicToken::PipeRight)
     }
 }
 
@@ -269,23 +265,7 @@ where
             })
             .unwrap_or(false)
         {
-            let mut n = self.tree_or_symbol()?.unwrap();
-
-            // Replace `|>:` and `:<|` with special operators, to make the following parsing easier
-            // and consistent with other binary operator parsing.
-            if let Some(last) = parts.last() {
-                if last.is_symbol(&SymbolicToken::PipeRight) && n.is_symbol(&SymbolicToken::Colon) {
-                    let old = parts.pop().unwrap();
-                    n = (old, n).into_source().with(TreeOrSymbol::PipeRightColon);
-                } else if last.is_symbol(&SymbolicToken::Colon)
-                    && n.is_symbol(&SymbolicToken::PipeLeft)
-                {
-                    let old = parts.pop().unwrap();
-                    n = (old, n).into_source().with(TreeOrSymbol::ColonPipeLeft);
-                }
-            }
-
-            parts.push(n);
+            parts.push(self.tree_or_symbol()?.unwrap());
         }
 
         if parts.is_empty() {
@@ -309,11 +289,11 @@ where
         //   Colon Prefix
         //   Colon (Left assoc)
         //   Colon Suffix
-        //   Caret Prefix
-        //   PipeLeft (Right assoc)
-        //   Pipe/PipeRight (Left assoc)
+        //   Bang/Caret Prefix
         //   Bang Expression Prefix
         //   Arrow (Right assoc)
+        //   PipeLeft (Right assoc macro)
+        //   Pipe/PipeRight (Left assoc macro)
         //   Equal (Left assoc)
         //   Caret Expression Prefix
 
@@ -560,78 +540,8 @@ where
             )
         }
 
-        fn pipe_left<E>(toks: &mut Toks) -> TResult<E> {
-            right_bin_op(
-                toks,
-                |v| v.is_leftward_pipe(),
-                bang_caret_prefixes,
-                |o, a, b| {
-                    let mut ret = a;
-                    let b = to_tree(b);
-                    match o {
-                        TreeOrSymbol::Symbol(SymbolicToken::PipeLeft) => ret.push_back(b),
-                        TreeOrSymbol::ColonPipeLeft => {
-                            let back_a = ret.pop_back().unwrap();
-                            ret.push_back(
-                                (back_a, b)
-                                    .into_source()
-                                    .map(|(back_a, b)| Tree::Colon(back_a.into(), b.into())),
-                            );
-                        }
-                        _ => panic!("unexpected token"),
-                    }
-                    ret
-                },
-            )
-        }
-
-        fn pipe_right<E>(toks: &mut Toks) -> TResult<E> {
-            let next = pipe_left;
-
-            let split = toks.iter().rposition(|t| t.is_rightward_pipe());
-            if let Some(pos) = split {
-                let (a, b) = toks.split_at_mut(pos);
-                let (t, b) = b.split_at_mut(1);
-                let t = unsafe { t.get_unchecked_mut(0) }.as_mut().map(|t| t.take());
-
-                if a.is_empty() {
-                    return Err(t.with(Error::BinaryMissingPrevious));
-                } else if b.is_empty() {
-                    return Err(t.with(Error::BinaryMissingNext));
-                }
-
-                let (t_source, t) = t.take();
-
-                let a = to_tree(pipe_right(a)?);
-                match t {
-                    TreeOrSymbol::Symbol(SymbolicToken::Pipe) => {
-                        let mut ret = next(b)?;
-                        ret.push_back(a);
-                        Ok(ret)
-                    }
-                    TreeOrSymbol::Symbol(SymbolicToken::PipeRight) => {
-                        let mut ret = next(b)?;
-                        ret.push_front(a);
-                        Ok(ret)
-                    }
-                    TreeOrSymbol::PipeRightColon => {
-                        let mut toks: Vec<_> = std::iter::once(a.map(TreeOrSymbol::Tree))
-                            .chain(std::iter::once(
-                                t_source.with(TreeOrSymbol::Symbol(SymbolicToken::Colon)),
-                            ))
-                            .chain(b.iter_mut().map(|sv| sv.as_mut().map(|v| v.take())))
-                            .collect();
-                        next(&mut toks)
-                    }
-                    _ => panic!("unexpected token"),
-                }
-            } else {
-                next(toks)
-            }
-        }
-
         fn bang_prefix_group<E>(toks: &mut Toks) -> TResult<E> {
-            prefixed_initial(toks, &SymbolicToken::Bang, pipe_right, Tree::Bang)
+            prefixed_initial(toks, &SymbolicToken::Bang, bang_caret_prefixes, Tree::Bang)
         }
 
         fn arrow<E>(toks: &mut Toks) -> TResult<E> {
@@ -647,11 +557,88 @@ where
             )
         }
 
+        fn consume<'a>(toks: &'a mut Toks) -> impl Iterator<Item = Source<TreeOrSymbol>> + 'a {
+            toks.iter_mut().map(|v| v.as_mut().map(|v| v.take()))
+        }
+
+        fn pipe_left<E>(toks: &mut Toks) -> TResult<E> {
+            let mut rewritten = Vec::new();
+            let next = arrow;
+
+            let mut to_append: Option<Source<TreeOrSymbol>> = None;
+            let mut remaining = toks;
+            while let Some(pos) = remaining.iter().rposition(|t| t.is_leftward_pipe()) {
+                let (a, b) = remaining.split_at_mut(pos);
+                let (t, b) = b.split_at_mut(1);
+                let t = unsafe { t.get_unchecked_mut(0) }
+                    .as_mut()
+                    .map(|t| t.take())
+                    .unwrap();
+                remaining = a;
+                rewritten.extend(consume(b));
+                if let Some(t) = to_append.take() {
+                    rewritten.push(t);
+                }
+                let b_tree = to_tree(next(&mut rewritten)?).map(TreeOrSymbol::Tree);
+                rewritten.clear();
+                match t {
+                    TreeOrSymbol::Symbol(SymbolicToken::PipeLeft) => {
+                        to_append = Some(b_tree);
+                    }
+                    _ => panic!("unexpected token"),
+                }
+            }
+
+            rewritten.extend(consume(remaining));
+            if let Some(t) = to_append.take() {
+                rewritten.push(t);
+            }
+            next(&mut rewritten)
+        }
+
+        fn pipe_right<E>(toks: &mut Toks) -> TResult<E> {
+            let mut rewritten = Vec::new();
+            let next = pipe_left;
+
+            let mut to_append: Option<Source<TreeOrSymbol>> = None;
+            let mut remaining = toks;
+            while let Some(pos) = remaining.iter().position(|t| t.is_rightward_pipe()) {
+                let (a, b) = remaining.split_at_mut(pos);
+                let (t, b) = b.split_at_mut(1);
+                let t = unsafe { t.get_unchecked_mut(0) }
+                    .as_mut()
+                    .map(|t| t.take())
+                    .unwrap();
+                remaining = b;
+                rewritten.extend(consume(a));
+                if let Some(t) = to_append.take() {
+                    rewritten.push(t);
+                }
+                let a_tree = to_tree(next(&mut rewritten)?).map(TreeOrSymbol::Tree);
+                rewritten.clear();
+                match t {
+                    TreeOrSymbol::Symbol(SymbolicToken::Pipe) => {
+                        to_append = Some(a_tree);
+                    }
+                    TreeOrSymbol::Symbol(SymbolicToken::PipeRight) => {
+                        rewritten.push(a_tree);
+                    }
+                    _ => panic!("unexpected token"),
+                }
+            }
+
+            rewritten.extend(consume(remaining));
+            if let Some(t) = to_append.take() {
+                rewritten.push(t);
+            }
+            next(&mut rewritten)
+        }
+
         fn eq<E>(toks: &mut Toks) -> TResult<E> {
             left_bin_op(
                 toks,
                 |v| v.is_symbol(&SymbolicToken::Equal),
-                arrow,
+                pipe_right,
                 |_, a, b| {
                     single((a, b).into_source().map(|(a, b)| {
                         Tree::Equal(to_tree(a.unwrap()).into(), to_tree(b.unwrap()).into())
@@ -853,8 +840,13 @@ mod test {
         assert_same("a b <| c", "a b c");
         assert_same(
             "a | b <| c <| d | e |> f <| g | h",
-            "h ((e (b (c d) a)) f g)",
+            "h ((e (b (c (d a)))) f g)",
         );
+        assert_same("a b |>:<| c d", "(a b):(c d)");
+        assert_same("a b <|", "a b ()");
+        assert_same("a b |>", "a b");
+        assert_same("<| a b", "a b");
+        assert_same("a b |>:", "(a b):");
     }
 
     #[test]
@@ -883,16 +875,19 @@ mod test {
     #[test]
     fn mixed() {
         assert_single(
-            ":a = a:b :c -> a <| b c",
+            ":a = g <| a:b :c -> a <| b c",
             Equal(
                 src(ColonPrefix(s("a"))),
-                src(Arrow(
-                    src(Parens(vec![
-                        src(Colon(s("a"), s("b"))),
-                        src(ColonPrefix(s("c"))),
-                    ])),
-                    src(Parens(vec![s("a"), src(Parens(vec![s("b"), s("c")]))])),
-                )),
+                src(Parens(vec![
+                    s("g"),
+                    src(Arrow(
+                        src(Parens(vec![
+                            src(Colon(s("a"), s("b"))),
+                            src(ColonPrefix(s("c"))),
+                        ])),
+                        src(Parens(vec![s("a"), src(Parens(vec![s("b"), s("c")]))])),
+                    )),
+                ])),
             ),
         )
     }
@@ -906,7 +901,7 @@ mod test {
 
     #[test]
     fn binary_no_arg() {
-        for op in &["|>", "|", "<|", "->", "="] {
+        for op in &["->", "="] {
             assert_fail(op);
             assert_fail(format!("a {}", op).as_str());
             assert_fail(format!("{} a", op).as_str());

@@ -24,6 +24,10 @@
   * Indexing (infix `:`) is now a distinct operation, binding an `Index`
     value. In scripts, you may match this with `index :v`. Maps and arrays
     have been changed to use `Index` rather than `Args` to get values.
+* Improve parsing of the pipe operators (`|>`, `|`, and `<|`) to make them truly
+  rewrite macros. Previously they were parsed as recursive descent binary
+  operators, which had limitations and special code for certain situations. For
+  instance, `a b |>:<| c d` would not work as expected (but now does).
 
 ### Migration Guide
 Syntax has changed in the following breaking ways:
@@ -35,6 +39,13 @@ Syntax has changed in the following breaking ways:
   must be changed to be parenthesized. If you were using a function
   call to get map/array values (`map :key`), that must be changed to use the
   infix `:` instead.
+* Pipe operators are parsed directly after bind expressions. Previously, they
+  were parsed after function (`a -> b`) expressions. This means that you can use
+  the pipe operators to group a function, however you must be careful if using
+  the rightward operators (`|` and `|>`) in the body of a function, as now that
+  will group things regardless of the `->` (arrow has higher precedence now).
+  For example, `:a -> a b |> c` used to parse the same as `:a -> (a b) c`, but
+  now it will parse as `(:a -> a b) c`.
 
 ## 1.0.0-beta.8  -- 2021-01-15
 * Fix some bugs and improve output UI.
