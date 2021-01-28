@@ -166,3 +166,8 @@ Such a change could be done in a number of ways, including:
   references _without_ changing how the script runtime works, too (i.e. doing
   the above but making sure all script code ends up evaulated prior to forcing
   the final `Value`).
+
+  Also, if everything were delayed in this matter, writing `if` and similar
+  things as functions would be very easy. Otherwise the only way for those to be
+  functions would be to add syntax which essentially does this (takes any
+  expression and makes it a dynamically-typed value which will evaluate it).
