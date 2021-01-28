@@ -1,0 +1,14 @@
+## Open a remote archive file.
+##
+## Arguments: (String url)
+##
+## The url can resolve to anything that `fs:unarchive` accepts.
+## Caches the result, only downloading a particular url once.
+## Returns the unpacked remote archive directory.
+unarchive-remote = fn :url -> value:cache {
+    out = path:new:
+    archive = seq (net:download :bb-url :out) :out
+    unpacked-dir = path:new:
+    remove-out = fs:remove :out
+    seq (fs:unarchive :archive :unpacked-dir) :remove-out :unpacked-dir
+}

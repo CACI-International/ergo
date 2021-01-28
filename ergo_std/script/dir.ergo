@@ -6,12 +6,22 @@ plugin = ergo plugin
 ## This is a shortcut for `:a -> match :a <cases>`.
 matches = fn ^:cases -> :a -> !plugin:match :a ^:cases
 
+net = ergo net
+
+## Load a remote archive.
+##
+## Fetches the archive with `net:unarchive-remote`, and loads the archive from the root directory.
+##
+## Arguments: (String url)
+ergo-remote = fn :url -> ergo <| net:unarchive-remote :url
+
 copydoc = matches ^[
     fn :a :b -> plugin:value:doc:set :b (plugin:value:doc:get :a)
     fn :a merge :b -> plugin:value:doc:set :b (plugin:string:format "{}\n{}" (plugin:value:doc:get :a) (plugin:value:doc:get :b))
 ]
 
 copydoc :plugin merge {
+    ## * ergo-remote: Load an ergo library from a remote url of an archive.
     ## * matches: Create a value which matches the given bindings.
     {
         ^:plugin
@@ -24,6 +34,11 @@ copydoc :plugin merge {
             ## * ArrayOf: Match an array of a single type.
             {^plugin:type, ^ergo type}
         }
+        net = copydoc plugin:net merge {
+            ## * unarchive-remote: Open a remote archive.
+            {^plugin:net, ^:net}
+        }
         matches
+        ergo-remote
     }
 }
