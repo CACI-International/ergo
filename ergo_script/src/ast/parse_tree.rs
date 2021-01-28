@@ -589,11 +589,14 @@ where
                 }
             }
 
-            rewritten.extend(consume(remaining));
-            if let Some(t) = to_append.take() {
-                rewritten.push(t);
+            if !rewritten.is_empty() || to_append.is_some() {
+                rewritten.extend(consume(remaining));
+                if let Some(t) = to_append.take() {
+                    rewritten.push(t);
+                }
+                remaining = &mut rewritten;
             }
-            next(&mut rewritten)
+            next(remaining)
         }
 
         fn pipe_right<E>(toks: &mut Toks) -> TResult<E> {
@@ -627,11 +630,14 @@ where
                 }
             }
 
-            rewritten.extend(consume(remaining));
-            if let Some(t) = to_append.take() {
-                rewritten.push(t);
+            if !rewritten.is_empty() || to_append.is_some() {
+                rewritten.extend(consume(remaining));
+                if let Some(t) = to_append.take() {
+                    rewritten.push(t);
+                }
+                remaining = &mut rewritten;
             }
-            next(&mut rewritten)
+            next(remaining)
         }
 
         fn eq<E>(toks: &mut Toks) -> TResult<E> {
