@@ -139,10 +139,10 @@ grease_traits_fn! {
         unsafe { traits.add_generator(id) };
     }
 
-    // () -> bool (false)
-    impl IntoTyped<bool> for crate::types::Unit {
+    // Unset -> bool (false)
+    impl IntoTyped<bool> for crate::types::Unset {
         async fn into_typed(self) -> Value {
-            Value::from(self).then(TypedValue::constant(false).into())
+            TypedValue::constant(false).into()
         }
     }
 

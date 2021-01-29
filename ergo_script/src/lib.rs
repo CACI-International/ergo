@@ -131,6 +131,7 @@ mod test {
     #[derive(Clone, Debug)]
     enum ScriptResult {
         SRUnit,
+        SRUnset,
         SRString(&'static str),
         SRArray(&'static [ScriptResult]),
         SRMap(&'static [(&'static str, ScriptResult)]),
@@ -216,7 +217,7 @@ mod test {
         script_eval_to("[a,b]:0", SRString("a"))?;
         script_fail("[a,b]:2")?;
         script_eval_to("{:alpha=one,:beta=two}:beta", SRString("two"))?;
-        script_fail("{:alpha=one,:beta=two}:omega")?;
+        script_eval_to("{:alpha=one,:beta=two}:omega", SRUnset)?;
         script_eval_to("{:alpha=[a,{:key=b}]}:alpha:1:key", SRString("b"))?;
         Ok(())
     }
@@ -274,9 +275,9 @@ mod test {
 
     #[test]
     fn if_expr() -> Result<(), String> {
-        script_eval_to(":t = 1; :f = 2; if () :t :f", SRString("2"))?;
+        script_eval_to(":t = 1; :f = 2; if {}:k :t :f", SRString("2"))?;
         script_eval_to(":t = 1; :f = 2; if something :t :f", SRString("1"))?;
-        script_eval_to(":t = 1; :f = 2; if () :t", SRUnit)?;
+        script_eval_to(":t = 1; :f = 2; if {}:k :t", SRUnit)?;
         Ok(())
     }
 
@@ -496,7 +497,7 @@ mod test {
 
         #[test]
         fn map_mismatch() -> Result<(), String> {
-            script_fail("{a,b,c} = {:a=1,:b=2}")?;
+            script_fail("{a,b} = {a=1,b=2,c=3}")?;
             script_fail("{:a,^:keys,^:keys2} = {:a=1}")?;
             Ok(())
         }
@@ -560,6 +561,12 @@ mod test {
                     v.typed::<types::Unit, _, _>(|_| async { panic!("expected unit") })
                         .await
                         .map_err(|e| e.to_string())?
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    Ok(())
+                }
+                SRUnset => {
+                    v.typed_immediate::<types::Unset, _, _>(|_| async { panic!("expected unset") })
                         .await
                         .map_err(|e| e.to_string())?;
                     Ok(())

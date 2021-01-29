@@ -6,6 +6,9 @@
 * Add `enum`, `struct`, `MapValues`, `MapOf`, `ArrayValues`, and `ArrayOf` to
   `type` module.
 * Add `matches` convenience function.
+* Add `net:unarchive-remote` function for fetching and caching a remote archive,
+  and `ergo-remote` convenience function for loading a remote archive.
+* Add `type:Unset` function to match `Unset` types.
 
 ## 1.0.0-beta.8  -- 2020-01-15
 * Fix deadlock occurring from task execution.

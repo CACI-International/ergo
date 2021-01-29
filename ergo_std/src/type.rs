@@ -13,6 +13,7 @@ pub fn module() -> Value {
         "A map of type-related functions:"
         "new": "Create a new type." = new_fn(),
         "Any": "Match any type." = match_any(),
+        "Unset": "Match the unset type (returned by unset values)." = match_unset(),
         "Unit": "Match the unit type." = match_unit(),
         "String": "Match the string type." = match_string(),
         "Path": "Match the path type." = match_path(),
@@ -184,6 +185,10 @@ macro_rules! simple_match_fn {
     }
 }
 
+fn match_unset() -> Value {
+    simple_match_fn!(types::Unset, std::type::Unset, "Matches an Unset value.")
+}
+
 fn match_unit() -> Value {
     simple_match_fn!(types::Unit, std::type::Unit, "Matches a Unit value.")
 }
@@ -215,6 +220,15 @@ mod test {
             t.assert_eq("self:type:Any hello", "hello");
             t.assert_eq("self:type:Any :x = hello; :x", "hello");
             t.assert_success("!self:type:Any = hello");
+        }
+    }
+
+    ergo_script::test! {
+        fn unset(t) {
+            t.assert_script_success("self:type:Unset {}:key");
+            t.assert_script_fail("self:type:Unset str");
+            t.assert_success("self:type:Unset :x = {}:key");
+            t.assert_success("!self:type:Unset = {}:key");
         }
     }
 

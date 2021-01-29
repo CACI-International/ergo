@@ -311,6 +311,7 @@ pub fn load_script<'a>(ctx: &'a mut Runtime, args: Source<Arguments>) -> BoxFutu
                                             let (v_source, v) = v.take();
                                             match_value!(v => {
                                                 types::Map => |v| Some(v_source.with(v).await.transpose_ok()?.map(|v| v.owned().0)),
+                                                types::Unset => |_| None,
                                                 => |_| Err(v_source.with(Error::CannotMerge(
                                                         "prelude did not evaluate to a map".into(),
                                                     )))?
@@ -440,8 +441,6 @@ pub enum Error {
     NoNonPositionalArguments,
     /// Arguments to a function did not match the function definition.
     ArgumentMismatch,
-    /// A binding was left unset.
-    UnsetBinding,
     /// A load failed to find a module.
     LoadFailed {
         was_loading: bool,
@@ -492,7 +491,6 @@ impl fmt::Display for Error {
                 write!(f, "the function does not accept non-positional arguments")
             }
             ArgumentMismatch => write!(f, "argument mismatch in command"),
-            UnsetBinding => write!(f, "binding left unset"),
             LoadFailed {
                 was_loading,
                 was_workspace,
@@ -727,12 +725,12 @@ impl Evaluator {
                             Compiled(inner) => {
                                 let result = self.lookup(ctx, inner.clone());
                                 match result {
-                                    Ok(Ok(v)) => Compiled(v.unwrap()),
-                                    Ok(Err(e)) => {
-                                        if Error::UnsetBinding == e {
+                                    Ok(v) => {
+                                        let v = v?;
+                                        if types::Unset::is_unset(&v) {
                                             Get(v_source.with(Compiled(inner)).into())
                                         } else {
-                                            return Err(e);
+                                            Compiled(v.unwrap())
                                         }
                                     }
                                     Err(_) => {
@@ -757,7 +755,10 @@ impl Evaluator {
                             .compile_env_into(ctx, *v)
                             .await?;
                         if let Compiled(k) = &*v {
-                            ctx.env_insert(k.clone(), Err(Error::UnsetBinding.into()));
+                            ctx.env_insert(
+                                k.clone(),
+                                Ok(v.source().with(types::Unset::new().into())),
+                            );
                         }
                         Set(v.into())
                     }
@@ -840,6 +841,7 @@ impl Evaluator {
                 })
             })
             .await
+            .map(|s| s.map_err(|e: grease::Error| e))
             .transpose_with_context("in expression")
         }
         .boxed()
@@ -1043,10 +1045,16 @@ impl Evaluator {
                         .await.0
                     }
                     Map(es) => {
-                        // Return the env scope as a map.
+                        // Return the env scope as a map, removing any Unset values.
                         self.evaluate_block(ctx, es).await?.1
                             .into_iter()
-                            .map(|(k, v)| v.map(move |v| (k, v.unwrap())).into_result())
+                            .filter_map(|(k, v)| {
+                                if v.as_ref().map(|v| types::Unset::is_unset(v)).unwrap_or(false) {
+                                    None
+                                } else {
+                                    Some(v.map(move |v| (k, v.unwrap())).into_result())
+                                }
+                            })
                             .collect_result::<BstMap<_, _>>()
                             .map(|ret| types::Map(ret).into_value(ctx))
                     }
@@ -1092,27 +1100,7 @@ impl Evaluator {
                             Ok(e) => traits::bind(ctx, bind, e).await.map_err(BindError::wrap)
                         };
 
-                        // Replace unset values with aborted errors.
-                        let mut had_unset = false;
-                        ctx.env_current(|env| {
-                            for (_,v) in env.iter_mut() {
-                                if let RResult::RErr(e) = v {
-                                    if Error::UnsetBinding == *e {
-                                        *v = RResult::RErr(grease::Error::aborted());
-                                        had_unset = true;
-                                    }
-                                }
-                            }
-                        });
-
-                        // If the result is a success, error on unset bindings.
-                        result.and_then(|ret| {
-                            if had_unset {
-                                Err(ret.with(Error::UnsetBinding).into())
-                            } else {
-                                Ok(BindExpr.into_value())
-                            }
-                        })
+                        result.and_then(|_| Ok(BindExpr.into_value()))
                     }
                     Get(v) => {
                         let v = self.warn_string_in_env(false).evaluate(ctx, *v).await?;
@@ -1124,8 +1112,9 @@ impl Evaluator {
                             .map(Source::unwrap)
                     }
                     Set(v) => {
-                        let k = self.warn_string_in_env(false).evaluate(ctx, *v).await?.unwrap();
-                        ctx.env_insert(k.clone(), Err(Error::UnsetBinding.into()));
+                        let (k_source, k) = self.warn_string_in_env(false).evaluate(ctx, *v).await?.take();
+                        ctx.env_insert(k.clone(), Ok(k_source.clone().with(k_source.with("left unset here")
+                                .imbue_error_context(types::Unset::new().into()))));
                         let env = ctx.env_to_set();
                         Ok(types::Unbound::new(move |_, v| {
                             let env = env.clone();

@@ -285,6 +285,24 @@ impl From<Index> for TypedValue<Index> {
     }
 }
 
+/// The type indicating a value is unset.
+#[derive(Clone, GreaseType)]
+pub enum Unset {}
+
+impl Unset {
+    /// Create a new Unset value (which, when evaluated, will error).
+    pub fn new() -> TypedValue<Self> {
+        let mut v: TypedValue<Self> = make_value!(Err("unset value".into()));
+        v.set_metadata(&Doc, make_value!(Ok("<unset>".into())));
+        v
+    }
+
+    /// Return whether the given value is unset.
+    pub fn is_unset(v: &Value) -> bool {
+        v.grease_type_immediate() == Some(&Self::grease_type())
+    }
+}
+
 /// Create a namespace id from the given namespaced name.
 ///
 /// Example usage:

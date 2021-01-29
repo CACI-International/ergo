@@ -1,6 +1,6 @@
 //! The grease Bind trait for setting values.
 
-use super::{display, type_name};
+use super::type_name;
 use crate::{source::IntoSource, types, ContextExt, EvalResult, Runtime, Source};
 use abi_stable::{
     std_types::{ROption, RVec},
@@ -87,7 +87,7 @@ pub async fn delay_bind(ctx: &mut Runtime, v: Source<Value>) -> crate::Result<De
             let ctx = t_ctx.clone();
             async move {
                 let name = type_name(&ctx, &t).await?;
-                Err(format!("cannot call value with type '{}'", name).into())
+                Err(format!("cannot bind value with type '{}'", name).into())
             }
         })
         .await?;
@@ -124,7 +124,7 @@ grease_traits_fn! {
                             Err(arg_source.with(format!("cannot call value in binding with type {}", name)).into_grease_error())?
                         }
                         => |_| {
-                            Err(arg_source.with("mismatched value id").into_grease_error())?
+                            Err(arg_source.with("mismatched value in binding").into_grease_error())?
                         }
                     }).await.into()
                 } else {
@@ -259,7 +259,7 @@ grease_traits_fn! {
                     let (ind_source, ind) = ctx.source_value_as::<types::String>(ind).await?.await.transpose_ok()?.take();
                     source.with(match usize::from_str(ind.as_ref()) {
                         Err(_) => Err(ind_source.with("non-integer index").into_grease_error()),
-                        Ok(ind) => self.0.get(ind).cloned().ok_or_else(|| format!("array index does not exist: {}", ind).into())
+                        Ok(ind) => self.0.get(ind).cloned().ok_or_else(|| format!("array has length {}", self.0.len()).into())
                     })
                     .transpose_err_with_context("while indexing array")?
                 },
@@ -285,11 +285,15 @@ grease_traits_fn! {
         let rest = to.remove(&types::BindRest.into_value());
         let (from_source, mut from) = from.take();
         for (k,to_v) in to.into_iter() {
-            if let Some(from_v) = from.remove(&k) {
-                bind(ctx, to_v, from_v).await?;
+            bind(ctx, to_v, if let Some(from_v) = from.remove(&k) {
+                from_v
             } else {
-                return Err(k.with("no key matches this binding key").into_grease_error());
-            }
+                // If `from` is missing a `to` key, use `Unset`.
+                let mut v: Value = types::Unset::new().into();
+                v = from_source.clone().with("bound map with missing key").imbue_error_context(v);
+                v = k.source().with("missing key").imbue_error_context(v);
+                from_source.clone().with(v)
+            }).await?;
         }
 
         match rest {
@@ -318,15 +322,12 @@ grease_traits_fn! {
 
             match_value!(arg => {
                 types::Index => |ind| {
-                    let (ind_source, index) = ind.await?.owned().0.take();
+                    let index = ind.await?.owned().0.unwrap();
 
-                    source.with(match self.0.get(&index).cloned() {
-                        Some(v) => Ok(v),
-                        None => {
-                            let d = display(CONTEXT, index).await?;
-                            Err(ind_source.with(format!("map index does not exist: {}", d)).into_grease_error())
-                        }
-                    }).transpose_err_with_context("while indexing map")?
+                    match self.0.get(&index).cloned() {
+                        Some(v) => v,
+                        None => source.with("map key does not exist").imbue_error_context(types::Unset::new().into()),
+                    }
                 },
                 types::Map => |map| {
                     let map = map.await?;

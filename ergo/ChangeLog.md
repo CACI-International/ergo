@@ -28,6 +28,9 @@
   rewrite macros. Previously they were parsed as recursive descent binary
   operators, which had limitations and special code for certain situations. For
   instance, `a b |>:<| c d` would not work as expected (but now does).
+* Add `Unset` type and use it when map indexing fails, patterns are unmatched,
+  or map pattern keys are unmatched.
+  * This allows for cleanly dealing with missing/optional map keys.
 
 ### Migration Guide
 Syntax has changed in the following breaking ways:
