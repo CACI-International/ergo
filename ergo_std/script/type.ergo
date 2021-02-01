@@ -36,6 +36,24 @@
     {MapValues, MapOf, ArrayValues, ArrayOf}
 }
 
+## Match a value allowing `Unset` values.
+##
+## Binding Arguments: <target>
+Optional = pat :out -> :v -> !match :v ^[
+    type:Unset -> ()
+    :other -> {!:out = :other}
+]
+
+## Match a value disallowing `Unset` values.
+##
+## This is only useful if the binding argument would normally accept an `Unset` value.
+##
+## Binding Arguments: <target>
+Required = pat :out -> :v -> !match :v ^[
+    type:Unset :x -> !:x # Forcing an unset value will always error.
+    :other -> {!:out = :other}
+]
+
 ## Create an enumeration type.
 ## 
 ## Arguments: (String name) (Map variants)

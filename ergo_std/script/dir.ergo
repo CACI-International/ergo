@@ -7,6 +7,7 @@ plugin = ergo plugin
 matches = fn ^:cases -> :a -> !plugin:match :a ^:cases
 
 net = ergo net
+type = ergo type
 
 ## Load a remote archive.
 ##
@@ -15,30 +16,120 @@ net = ergo net
 ## Arguments: (String url)
 ergo-remote = fn :url -> ergo <| net:unarchive-remote :url
 
+## Return any bound value as-is.
+##
+## Particularly useful as a case in `match` calls.
+pass = :v -> :v
+
+## Default a value in a binding expression.
+##
+## Arguments: <target> as <value>
+##
+## Ensure that `<value>` is evaluated as a normal expression (typically preceded by `!`, though not
+## always necessary if the value doesn't use get/set syntax).
+##
+## If the value bound to the result is `Unset`, the default is used.
+##
+## ## Example
+## ```
+## default :my-value as [] = :maybe-an-array
+## ```
+default = pat :out as :default-value -> :v -> {
+    !:out = !plugin:match :v (plugin:type:Unset -> :default-value) (:other -> :other)
+}
+
+## Run a command that produces an output path, where the path to create is passed as an argument to
+## the given function.
+##
+## Arguments: <function>
+##
+## Returns the output path, relying on the value returned by the function. Execution of that value
+## _must_ make the path valid for future use.
+with-output-path = fn :f -> {
+    file = plugin:path:new:
+    seq (f :file) :file
+}
+
+## Create a recursive function. The passed function will be passed itself as the first argument, and
+## all other arguments will be forwarded.
+##
+## Arguments: <function>
+##
+## Returns a function that calls the passed function, forwarding arguments.
+##
+## When recursively calling the function, you must also pass the function as the first argument.
+## *Avoid recursion when possible*, as it is often difficult to reason about value identities and
+## behavior in the lazily-evaluated runtime.
+recursive = fn :f -> fn ^:args ^{^:kwargs} -> f :f ^:args ^:kwargs
+
+## Import values by index in a binding expression.
+##
+## Arguments: <Map or binding>
+##
+## If passed a map, each key in the map will be used as an index to the bound value, and each value
+## will be bound as if `import` were used.
+## Otherwise, bind the result to the binding expression.
+import = {
+    inner = recursive <| fn :self :descr -> :v -> {
+        !match :descr {
+            plugin:type:Map :m -> plugin:collection:entries :m | plugin:collection:map (fn {key,value} -> { type:Required !(self :self :value) = v::key; () })
+            :other -> { !:other = :v; () }
+        }
+    }
+
+    pat :descr -> inner :descr
+}
+
 copydoc = matches ^[
     fn :a :b -> plugin:value:doc:set :b (plugin:value:doc:get :a)
     fn :a merge :b -> plugin:value:doc:set :b (plugin:string:format "{}\n{}" (plugin:value:doc:get :a) (plugin:value:doc:get :b))
 ]
 
-copydoc :plugin merge {
+extend-index = fn :a :b -> {
+    doc = plugin:string:format "{}\n{}" (plugin:value:doc:get :a) (plugin:value:doc:get :b)
+    require-b = pat :out -> index :i -> { type:Required !:out = b::i }
+    plugin:value:doc:set (!plugin:match :a ^[
+        plugin:type:Map :m -> {^:m,^:b}
+        :other -> matches (require-b :v -> :v) :other
+    ]) :doc
+}
+
+extend-index :plugin {
+    ## * default: Provide a default value for a binding.
     ## * ergo-remote: Load an ergo library from a remote url of an archive.
+    ## * import: Access nested indices of a bound value.
     ## * matches: Create a value which matches the given bindings.
+    ## * pass: Bind to any value, evaluating to the bound value.
+    ## * recursive: Create a recursive function.
     {
-        ^:plugin
-        type = copydoc plugin:type merge {
+        type = extend-index plugin:type {
             ## * enum: Create an enumerated type.
             ## * struct: Create a structured type.
             ## * MapValues: Match a map with specific value types.
             ## * MapOf: Match a map with single key and value types.
             ## * ArrayValues: Match an array with specific value types.
             ## * ArrayOf: Match an array of a single type.
-            {^plugin:type, ^ergo type}
+            ## * Optional: Match an inner value or `Unset` types.
+            ## * Required: Match an inner value, disallowing `Unset` types.
+            :type
         }
-        net = copydoc plugin:net merge {
+        net = extend-index plugin:net {
             ## * unarchive-remote: Open a remote archive.
-            {^plugin:net, ^:net}
+            :net
         }
-        matches
+        match = extend-index plugin:match {
+            ## ## Indices
+            ## * value: Create a value that matches against a binding.
+            { value = :matches }
+        }
+        path = extend-index plugin:path {
+            ## * with-output: Run a command which creates an output Path.
+            { with-output = :with-output-path }
+        }
         ergo-remote
+        pass
+        default
+        recursive
+        import
     }
 }

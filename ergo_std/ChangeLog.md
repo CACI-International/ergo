@@ -5,10 +5,16 @@
   the body of a case failed.
 * Add `enum`, `struct`, `MapValues`, `MapOf`, `ArrayValues`, and `ArrayOf` to
   `type` module.
-* Add `matches` convenience function.
 * Add `net:unarchive-remote` function for fetching and caching a remote archive,
   and `ergo-remote` convenience function for loading a remote archive.
 * Add `type:Unset` function to match `Unset` types.
+* Add `type:Optional` and `type:Required` predicates, checking for `Unset`.
+* Add `default` to specify default values for `Unset` values.
+* Add `import` to easily use a map of keys to bind to indexed values.
+* Add `pass` convenience function, namely for use in `match` cases.
+* Add `recursive` to create recursive functions.
+* Add `match:value` convenience function.
+* Add `path:with-output` to make output paths from commands more ergonomic.
 
 ## 1.0.0-beta.8  -- 2020-01-15
 * Fix deadlock occurring from task execution.
