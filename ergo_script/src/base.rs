@@ -2,7 +2,10 @@
 
 use super::runtime::Error;
 use crate::constants::{DIR_NAME, EXTENSION, PLUGIN_ENTRY, WORKSPACE_NAME};
-use abi_stable::std_types::{ROption, RResult};
+use abi_stable::{
+    external_types::RMutex,
+    std_types::{ROption, RResult},
+};
 use ergo_runtime::{
     namespace_id, source::FileSource, traits, types, ContextExt, EvalResult, Runtime, Source,
 };
@@ -10,10 +13,13 @@ use futures::FutureExt;
 use grease::{
     depends, match_value,
     path::PathBuf,
+    types::GreaseType,
     value::{IntoValue, TypedValue, Value},
 };
 use libloading as dl;
+use std::collections::BTreeMap;
 use std::path;
+use std::sync::Arc;
 
 /// Documentation for the load function.
 pub const LOAD_DOCUMENTATION: &'static str = r"Load a script, with optional additional arguments with which to call the result.
@@ -192,6 +198,19 @@ pub fn load_std() -> Value {
     .into()
 }
 
+#[derive(GreaseType)]
+struct ResolvedWorkspaces {
+    map: Arc<RMutex<BTreeMap<path::PathBuf, Option<path::PathBuf>>>>,
+}
+
+impl Default for ResolvedWorkspaces {
+    fn default() -> Self {
+        ResolvedWorkspaces {
+            map: Arc::new(RMutex::new(Default::default())),
+        }
+    }
+}
+
 /// A value that behaves as if `ergo path/to/ancestor/workspace` was run just prior to binding.
 pub fn load_workspace() -> Value {
     types::Unbound::new(
@@ -204,23 +223,35 @@ pub fn load_workspace() -> Value {
                     (ctx.mod_dir(), false)
                 };
 
-                let within_workspace = check_for_workspace && path_basis.file_name().map(|v| v == WORKSPACE_NAME).unwrap_or(false);
+                let resolved = ctx.shared_state(|| Ok(ResolvedWorkspaces::default()))?;
 
-                let mut ancestors = path_basis.ancestors().peekable();
-                if within_workspace {
-                    while let Some(v) = ancestors.peek().and_then(|a| a.file_name()) {
-                        if v == WORKSPACE_NAME {
-                            ancestors.next();
-                        } else {
-                            break;
+                let path = {
+                    let mut guard = resolved.map.lock();
+                    match guard.get(&path_basis) {
+                        Some(v) => v.clone(),
+                        None => {
+                            let within_workspace = check_for_workspace && path_basis.file_name().map(|v| v == WORKSPACE_NAME).unwrap_or(false);
+
+                            let mut ancestors = path_basis.ancestors().peekable();
+                            if within_workspace {
+                                while let Some(v) = ancestors.peek().and_then(|a| a.file_name()) {
+                                    if v == WORKSPACE_NAME {
+                                        ancestors.next();
+                                    } else {
+                                        break;
+                                    }
+                                }
+                                // Skip one more to drop parent directory of top-most workspace, which would find
+                                // the same workspace as the original.
+                                ancestors.next();
+                            }
+
+                            let result = ancestors.find_map(script_path_exists(WORKSPACE_NAME, false));
+                            guard.insert(path_basis, result.clone());
+                            result
                         }
                     }
-                    // Skip one more to drop parent directory of top-most workspace, which would find
-                    // the same workspace as the original.
-                    ancestors.next();
-                }
-
-                let path = ancestors.find_map(script_path_exists(WORKSPACE_NAME, false)).ok_or("no ancestor workspace found")?;
+                }.ok_or("no ancestor workspace found")?;
 
                 let lib = load_script(ctx, &path).await?;
 
