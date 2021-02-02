@@ -21,14 +21,12 @@ pub mod constants {
     pub const EXTENSION: &'static str = program_name!();
     pub const WORKSPACE_NAME: &'static str = concat!("workspace.", program_name!());
     pub const DIR_NAME: &'static str = concat!("dir.", program_name!());
-    pub const PRELUDE_ARG: &'static str = "prelude";
-    pub const WORKSPACE_FALLBACK_ARG: &'static str = "command";
     pub const PLUGIN_ENTRY: &'static str = concat!("_", program_name!(), "_plugin");
 }
 
 use runtime::*;
 
-pub use base::LOAD_DOCUMENTATION;
+pub use base::{resolve_script_path, LOAD_DOCUMENTATION};
 
 /// A loaded script.
 pub struct Script {
@@ -53,6 +51,8 @@ pub fn script_context(
 
         // Add initial environment functions
         insert(constants::PROGRAM_NAME, base::load());
+        insert("std", base::load_std());
+        insert("workspace", base::load_workspace());
         insert("fn", base::bind_args_to_args());
         insert("pat", base::bind_args_to_bind_args());
         insert("index", base::bind_args_to_index());

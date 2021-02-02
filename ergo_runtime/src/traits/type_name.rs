@@ -1,6 +1,6 @@
 //! The TypeName grease trait and helper utilities.
 
-use crate::types;
+use crate::{types, Source};
 use abi_stable::{std_types::RString, StableAbi};
 use grease::path::PathBuf;
 use grease::types::Type;
@@ -19,6 +19,19 @@ pub async fn type_name(ctx: &grease::runtime::Context, tp: &Type) -> grease::Res
     } else {
         Ok(format!("<{}>", tp.id))
     }
+}
+
+/// Create a type error with the value's type mentioned.
+pub async fn type_error<T>(
+    ctx: &grease::runtime::Context,
+    v: Source<grease::Value>,
+    expected: &str,
+) -> crate::Result<T> {
+    let (src, v) = v.take();
+    let name = type_name(ctx, v.grease_type().await?).await?;
+    Err(src
+        .with(format!("type error: expected {}, got {}", expected, name))
+        .into_grease_error())
 }
 
 /// Define the GreaseTypeName trait for the given rust type.

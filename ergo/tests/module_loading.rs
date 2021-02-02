@@ -63,6 +63,6 @@ typical_test!(directory_ext);
 typical_test!(directory_dir);
 typical_test!(workspace_load);
 typical_test!(workspace_with_dir);
-typical_test!(prelude_load, "prelude_load/subdir/submod");
-typical_test!(workspace_fallback, "workspace_fallback/mod");
+typical_test!(workspace_access, "workspace_access/subdir/mod");
+typical_test!(workspace_command);
 typical_test!(workspace_parent, "workspace_parent/subdir");

@@ -222,32 +222,52 @@ fn run(opts: Opts) -> Result<String, String> {
             .app_err_result("failed to set signal handler")?;
     }
 
-    let mut to_eval = if opts.expression {
-        String::new()
-    } else {
-        String::from(PROGRAM_NAME)
-    };
+    let mut eval_args = String::new();
     let no_args = opts.args.is_empty();
     for arg in opts.args {
-        if !to_eval.is_empty() {
-            to_eval.push(' ');
+        if !eval_args.is_empty() {
+            eval_args.push(' ');
         }
-        to_eval.push_str(&arg);
-    }
-    // Add parenthesis to force function application if there are no arguments.
-    // If opts.expression is set, this makes no arguments become a unit expression.
-    if no_args {
-        to_eval = format!("({})", to_eval);
+        eval_args.push_str(&arg);
     }
 
-    // Replace the first `:` with `|>:` for command-line convenience.
-    if !opts.expression {
-        if let Some(p) = to_eval.find(":") {
-            if to_eval.get(p - 2..p).map(|s| s != "|>").unwrap_or(true) {
-                to_eval.replace_range(p..p + 1, "|>:");
-            }
+    // Ensure load path is set for path resolution done below.
+    ctx.reset_load_path();
+
+    let to_eval = if opts.expression {
+        if no_args {
+            "()".into()
+        } else {
+            eval_args
         }
-    }
+    } else {
+        // When there are no arguments, always call workspace:command function.
+        if no_args {
+            "workspace:command:".into()
+        } else {
+            // When there are arguments:
+            // * Replace the first `:` with `|>:` for convenience.
+            // * Inspect the first effective argument to determine whether to invoke a normal load
+            // or the workspace:command function.
+            let first_arg_end = if let Some(p) = eval_args.find(':') {
+                if eval_args.get(p - 2..p).map(|s| s != "|>").unwrap_or(true) {
+                    eval_args.replace_range(p..p + 1, "|>:");
+                }
+                p
+            } else if let Some(p) = eval_args.find(&[' ', '|', '<', '{', '[', '('][..]) {
+                p
+            } else {
+                eval_args.len()
+            };
+            let first_arg = &eval_args[0..first_arg_end];
+            let function = if ergo_script::resolve_script_path(&ctx, first_arg.as_ref()).is_none() {
+                "workspace:command"
+            } else {
+                PROGRAM_NAME
+            };
+            format!("{} {}", function, eval_args)
+        }
+    };
 
     let source = Source::new(StringSource::new("<command line>", to_eval));
     let loaded = Script::load(source).app_err_result("failed to parse script file")?;

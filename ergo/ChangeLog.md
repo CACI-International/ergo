@@ -31,6 +31,18 @@
 * Add `Unset` type and use it when map indexing fails, patterns are unmatched,
   or map pattern keys are unmatched.
   * This allows for cleanly dealing with missing/optional map keys.
+* Add a global `std` function as shorthand for `(ergo std)`.
+* Change how workspaces are loaded.
+  * There is no special `prelude` key anymore, and it is not specially loaded.
+  * A global `workspace` function is shorthand for `(ergo
+    path/to/ancestor/workspace.ergo)`, and the workspace should be accessed
+    through this.
+  * The `command` key is still special in the workspace, however only because
+    the command-line invocation of `ergo` will use `workspace:command <args>` if
+    `ergo <args>` does not resolve to a file. Otherwise, `ergo` (the load
+    command) will _only_ load a file based on its path and the load path.
+    Previously, it encapsulated the workspace fallback behavior, but this is no
+    longer the case.
 
 ### Migration Guide
 Syntax has changed in the following breaking ways:
@@ -49,6 +61,16 @@ Syntax has changed in the following breaking ways:
   will group things regardless of the `->` (arrow has higher precedence now).
   For example, `:a -> a b |> c` used to parse the same as `:a -> (a b) c`, but
   now it will parse as `(:a -> a b) c`.
+* Workspace access no longer relies on `prelude`. In any script, if you use the
+  global `workspace` function (whether indexing or calling), it will load the
+  nearest ancestor workspace and then index/call it with the arguments (if any).
+  This means anything using values from a `prelude` will now have to either load
+  the prelude explicitly in the scripts (`^workspace:prelude`, for instance), or
+  will have to access values directly in the `workspace`.
+  * This was done to make workspace use more obvious and simple.
+* Workspace fallback behavior (with `command`) is now _only_ a special behavior
+  of the command-line invocation. If you were relying on such behavior in
+  scripts, use `workspace:command <args>` explicitly in the script.
 
 ## 1.0.0-beta.8  -- 2021-01-15
 * Fix some bugs and improve output UI.

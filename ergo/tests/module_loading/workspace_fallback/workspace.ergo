@@ -1,1 +1,0 @@
-:command = fn return ^:args -> args:0

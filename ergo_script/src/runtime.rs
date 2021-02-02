@@ -5,12 +5,8 @@
 //! useful error information can be provided.
 
 use super::ast::{Expr, Expression};
-use crate::constants::{
-    DIR_NAME, EXTENSION, PLUGIN_ENTRY, PRELUDE_ARG, WORKSPACE_FALLBACK_ARG, WORKSPACE_NAME,
-};
-use abi_stable::std_types::{ROption, RResult};
 use ergo_runtime::error::BindError;
-use ergo_runtime::source::{FileSource, Source};
+use ergo_runtime::source::Source;
 use ergo_runtime::Result as EResult;
 use ergo_runtime::{
     metadata, traits, types, Arguments, ContextExt, EvalResult, ResultIterator, Runtime, ScriptEnv,
@@ -20,15 +16,12 @@ use futures::future::{BoxFuture, FutureExt};
 use grease::{
     bst::BstMap,
     depends, match_value,
-    path::PathBuf,
     types::GreaseType,
     value::{Errored, IntoValue, TypedValue, Value},
 };
-use libloading as dl;
-use log::{debug, trace};
+use log::trace;
 use std::collections::BTreeMap;
 use std::fmt;
-use std::path;
 
 /// Script type for bind expressions.
 #[derive(Clone, Copy, Debug, GreaseType, Hash)]
@@ -43,365 +36,6 @@ impl From<BindExpr> for TypedValue<BindExpr> {
 grease::grease_traits_fn! {
     ergo_runtime::grease_type_name!(traits, BindExpr, "bind expression");
     ergo_runtime::traits::ValueByContent::add_impl::<BindExpr>(traits);
-}
-
-/// Look at the file contents to determine if the file is a plugin (dynamic library).
-fn is_plugin(f: &path::Path) -> bool {
-    use std::fs::File;
-    use std::io::Read;
-
-    let mut file = File::open(f).expect("could not open file for reading");
-    if cfg!(target_os = "macos") {
-        let mut magic: [u8; 4] = [0; 4];
-        if file.read_exact(&mut magic).is_err() {
-            return false;
-        }
-        return &magic == &[0xfe, 0xed, 0xfa, 0xce]
-            || &magic == &[0xfe, 0xed, 0xfa, 0xcf]
-            || &magic == &[0xcf, 0xfa, 0xed, 0xfe]
-            || &magic == &[0xce, 0xfa, 0xed, 0xfe]
-            || &magic == &[0xca, 0xfe, 0xba, 0xbe];
-    } else if cfg!(target_os = "windows") {
-        use std::io::{Seek, SeekFrom};
-
-        // DOS header
-        let mut m1: [u8; 2] = [0; 2];
-        if file.read_exact(&mut m1).is_err() {
-            return false;
-        }
-        if &m1 != b"MZ" && &m1 != b"ZM" {
-            return false;
-        }
-
-        // PE header offset
-        if file.seek(SeekFrom::Start(0x3c)).is_err() {
-            return false;
-        }
-        let mut offset: [u8; 4] = [0; 4];
-        if file.read_exact(&mut offset).is_err() {
-            return false;
-        }
-        let offset = u32::from_ne_bytes(offset);
-
-        // PE header
-        if file.seek(SeekFrom::Start(offset as _)).is_err() {
-            return false;
-        }
-        let mut magic: [u8; 4] = [0; 4];
-        if file.read_exact(&mut magic).is_err() {
-            return false;
-        }
-        return &magic == b"PE\0\0";
-    } else if cfg!(target_os = "linux") {
-        let mut magic: [u8; 4] = [0; 4];
-        if let Err(_) = file.read_exact(&mut magic) {
-            return false;
-        }
-        return &magic == b"\x7fELF";
-    } else {
-        panic!("unsupported operating system");
-    }
-}
-
-/// Load and execute a script given the function call arguments.
-pub fn load_script<'a>(ctx: &'a mut Runtime, args: Source<Arguments>) -> BoxFuture<'a, EvalResult> {
-    async move {
-        let (source, args) = args.take();
-        let mut args = args.unchecked();
-        let target = args.peek();
-
-        fn script_path_exists<'a, P: 'a + AsRef<path::Path>>(
-            name: P,
-            try_add_extension: bool,
-        ) -> impl FnMut(&path::Path) -> Option<path::PathBuf> + 'a {
-            move |path| {
-                if try_add_extension {
-                    if let Some(file_name) = name.as_ref().file_name() {
-                        let mut p = file_name.to_owned();
-                        p.push(".");
-                        p.push(EXTENSION);
-                        let path_with_extension = path.join(name.as_ref()).with_file_name(p);
-                        if path_with_extension.exists() {
-                            Some(path_with_extension)
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-                .or_else(|| {
-                    let path_exact = path.join(name.as_ref());
-                    if path_exact.exists() {
-                        Some(path_exact)
-                    } else {
-                        None
-                    }
-                })
-                .and_then(|mut p| {
-                    while p.is_dir() {
-                        // Prefer dir script to workspace
-                        let dir = p.join(DIR_NAME);
-                        if dir.exists() {
-                            p = dir;
-                        } else {
-                            let ws = p.join(WORKSPACE_NAME);
-                            if ws.exists() {
-                                p = ws
-                            } else {
-                                break;
-                            }
-                        }
-                    }
-                    if p.is_file() {
-                        Some(p)
-                    } else {
-                        None
-                    }
-                })
-            }
-        }
-
-        let mut load_path = None;
-        let mut was_workspace = false;
-
-        let to_load: Option<std::path::PathBuf> = match target {
-            None => None,
-            Some(target) => {
-                match_value!(target.clone().unwrap() => {
-                    types::String => |v| Some(<&str>::from(v.await?.as_ref()).into()),
-                    PathBuf => |v| Some(v.await?.owned().into()),
-                    => |_| None
-                }).await?
-            }
-        };
-
-        // If target is a string or path, try to find it in the load path
-        let to_load = match to_load {
-            Some(target_path) => {
-                load_path = Some(target_path.clone());
-
-                // Get current load path
-                let paths: Vec<std::path::PathBuf> = ctx.current_load_path.clone().into_iter().map(|v| v.into()).collect();
-
-                // Try to find path match in load paths
-                paths
-                    .iter()
-                    .map(|v| v.as_path())
-                    .find_map(script_path_exists(target_path, true))
-            },
-            None => None
-        };
-
-        // Look for workspace if path-based lookup failed
-        let to_load = match to_load {
-            Some(v) => {
-                // Consume the target, as it has been used to resolve the module.
-                args.next();
-                Some(v)
-            }
-            None => {
-                was_workspace = true;
-
-                // If the current file is a workspace, allow it to load from parent workspaces.
-                let (path_basis, check_for_workspace) = if let ROption::RSome(v) = &ctx.mod_path {
-                    (v.clone().into(), true)
-                } else {
-                    (ctx.mod_dir(), false)
-                };
-
-                let within_workspace = check_for_workspace && path_basis.file_name().map(|v| v == WORKSPACE_NAME).unwrap_or(false);
-
-                let mut ancestors = path_basis.ancestors().peekable();
-                if within_workspace {
-                    while let Some(v) = ancestors.peek().and_then(|a| a.file_name()) {
-                        if v == WORKSPACE_NAME {
-                            ancestors.next();
-                        } else {
-                            break;
-                        }
-                    }
-                    // Skip one more to drop parent directory of top-most workspace, which would find
-                    // the same workspace as the original.
-                    ancestors.next();
-                }
-
-                ancestors.find_map(script_path_exists(WORKSPACE_NAME, false))
-            }
-        };
-
-        let mut was_loading = false;
-        let to_load = to_load.and_then(|p| {
-            for l_path in ctx.loading.lock().iter() {
-                if l_path.as_ref() == p {
-                    was_loading = true;
-                    break;
-                }
-            }
-            if was_loading {
-                None
-            } else {
-                Some(p)
-            }
-        });
-
-        // Load if some module was found.
-        if let Some(p) = to_load {
-            let p = p.canonicalize().unwrap(); // unwrap because is_file() should guarantee that canonicalize will succeed
-
-            // FIXME if multiple threads are calling load, they may load the same script more than
-            // once. This could be changed into a cache of futures that yield the resulting value,
-            // though we need to clone contexts and the like. This was already attempted once but some
-            // recursive type errors also came up with async blocks.
-            let cache = ctx.load_cache.clone();
-            let loaded = {
-                // Since we are in an async function, we need to access the cache in a somewhat odd
-                // pattern.
-                let cached = {
-                    let cache = cache.lock();
-                    let ret = cache.get(&PathBuf::from(p.clone())).cloned();
-                    if ret.is_none() {
-                        // Exclude path from loading in nested calls.
-                        // This should be done prior to prelude loading in the case where we are loading the
-                        // prelude.
-                        ctx.loading.lock().push(PathBuf::from(p.clone()));
-                    }
-                    ret
-                };
-
-                match cached {
-                    None => {
-                        let plugin = is_plugin(&p);
-
-                        // Only load prelude if this is not a workspace nor a plugin.
-                        let load_prelude = p.file_name().unwrap() != WORKSPACE_NAME && !plugin; // unwrap because p must have a final component
-
-                        let mod_path = p.parent().unwrap(); // unwrap because file must exist in some directory
-
-                        // Load the prelude. The prelude may not exist (without error), however if it does
-                        // exist it must evaluate to a map.
-                        let prelude = if load_prelude {
-                            // Find ancestor workspace, if any, and use it to get the prelude.
-                            if let Some(p) = mod_path.ancestors().find_map(script_path_exists(WORKSPACE_NAME, false)) {
-                                // If ancestor workspace is already being loaded, do not load the prelude.
-                                if ctx.loading.lock().iter().any(|o| o.as_ref() == p) {
-                                    None
-                                } else {
-                                    let load_args = Arguments::positional(vec![
-                                        Source::builtin(PathBuf::from(p.to_owned()).into()),
-                                    ]);
-
-                                    // Load workspace
-                                    let ws = match load_script(ctx, source.clone().with(load_args)).await {
-                                        Ok(ws) => ws,
-                                        Err(e) => {
-                                            ctx.loading.lock().pop();
-                                            return Err(source.with("while running 'ergo [workspace] prelude' to load script").context_for_error(e));
-                                        }
-                                    };
-
-                                    // Try to access prelude, but allow failures
-                                    match Errored::ignore(traits::bind(ctx, ws, source.clone().with(types::Index(
-                                            Source::builtin(types::String::from(PRELUDE_ARG).into())
-                                        ).into_value()))).await {
-                                        Ok(v) => {
-                                            // Prelude must be a map.
-                                            let (v_source, v) = v.take();
-                                            match_value!(v => {
-                                                types::Map => |v| Some(v_source.with(v).await.transpose_ok()?.map(|v| v.owned().0)),
-                                                types::Unset => |_| None,
-                                                => |_| Err(v_source.with(Error::CannotMerge(
-                                                        "prelude did not evaluate to a map".into(),
-                                                    )))?
-                                            }).await?
-                                        }
-                                        Err(_) => {
-                                            debug!("not loading prelude: workspace did not accept prelude argument");
-                                            None
-                                        }
-                                    }
-                                }
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        };
-
-                        let result = if !plugin {
-                            let mut script =
-                                super::Script::load(Source::new(FileSource(p.clone())))?;
-                            let mut top_level_env: ScriptEnv = Default::default();
-                            if let Some(v) = prelude {
-                                let (source, v) = v.take();
-                                top_level_env.extend(
-                                    v.into_iter()
-                                        .map(|(k, v)| (k, Ok(source.clone().with(v)).into())),
-                                );
-                            }
-                            script.top_level_env(top_level_env);
-                            script.file_path(p.clone());
-                            script.evaluate(ctx).await.into()
-                        } else {
-                            let lib = dl::Library::new(&p)?;
-                            let f: dl::Symbol<
-                                extern "C" fn(
-                                    ergo_runtime::plugin::Context,
-                                    &mut Runtime,
-                                )
-                                    -> RResult<Source<Value>, grease::Error>,
-                            > = unsafe { lib.get(PLUGIN_ENTRY.as_bytes()) }?;
-                            let result = f(ergo_runtime::plugin::Context::get(), ctx);
-                            // Leak loaded libraries rather than storing them and dropping them in
-                            // the context, as this can cause issues if the thread pool hasn't shut
-                            // down.
-                            // ctx.lifetime(lib);
-                            std::mem::forget(lib);
-                            result
-                        };
-
-                        let cache = ctx.load_cache.clone();
-                        let mut cache = cache.lock();
-                        cache.insert(PathBuf::from(p.clone()), result.clone());
-                        ctx.loading.lock().pop();
-                        result
-                    }
-                    Some(v) => v,
-                }
-                .into_result()?
-            };
-
-            let loaded_context = source.clone().with(format!("loaded from '{}'", p.display()));
-
-            // If resolved to an ancestor workspace, run arguments on
-            // the result of `[loaded]:command`.
-            let loaded = if was_workspace {
-                traits::bind(ctx, loaded, source.clone().with(types::Index(
-                    Source::builtin(types::String::from(WORKSPACE_FALLBACK_ARG).into())
-                ).into_value())).await?
-            } else {
-                loaded
-            };
-
-            // If there are remaining arguments apply them immediately.
-            if !args.is_empty() {
-                traits::bind(ctx, loaded, source.clone().with(types::Args { args }.into_value())).await
-            } else {
-                args.unused_arguments()?;
-                Ok(loaded)
-            }.map(|v| v.map(|v| loaded_context.imbue_error_context(v)))
-        } else {
-            Err(Error::LoadFailed {
-                was_loading,
-                was_workspace,
-                load_path,
-            }
-            .into())
-        }
-    }
-    .boxed()
 }
 
 /// Script runtime errors.
@@ -444,8 +78,7 @@ pub enum Error {
     /// A load failed to find a module.
     LoadFailed {
         was_loading: bool,
-        was_workspace: bool,
-        load_path: Option<std::path::PathBuf>,
+        load_path: std::path::PathBuf,
     },
     /// An error occured while evaluating a value.
     ValueError(ValueError),
@@ -493,21 +126,12 @@ impl fmt::Display for Error {
             ArgumentMismatch => write!(f, "argument mismatch in command"),
             LoadFailed {
                 was_loading,
-                was_workspace,
                 load_path,
-            } => match (was_loading,was_workspace,load_path) {
-                (true,true,Some(v)) => write!(
-                    f,
-                    "'{}' resolved to a workspace that was in the process of loading (circular dependency avoided)", v.display()
-                ),
-                (true,false,Some(v)) => write!(
+            } => match (was_loading,load_path) {
+                (true,v) => write!(
                     f,
                     "'{}' resolved to a path that was in the process of loading (circular dependency avoided)", v.display()),
-                (true,true,None) => write!(f, "load resolved to a workspace that was in the process of loading (circular dependency avoided)"),
-                (true,false,None) => write!(f, "load resolved to a path that was in the process of loading (circular dependency avoided)"),
-                (false,_,Some(v)) => write!(f, "'{}' failed to load", v.display()),
-                (false,true,None) => write!(f, "failed to load (no workspace found)"),
-                (false,_,None) => write!(f, "failed to load")
+                (false,v) => write!(f, "'{}' failed to load", v.display()),
             },
             ValueError(e) => write!(f, "{}", e.0),
             GenericError(s) => write!(f, "{}", s),
