@@ -374,7 +374,10 @@ fn main() {
     }
 
     // Parse arguments (we handle help flags ourselves)
-    let mut app = Opts::clap().setting(structopt::clap::AppSettings::DisableHelpFlags);
+    let mut app = Opts::clap().settings(&[
+        structopt::clap::AppSettings::DisableHelpFlags,
+        structopt::clap::AppSettings::TrailingVarArg,
+    ]);
     let mut opts = Opts::from_clap(&app.clone().get_matches());
 
     // Additional opts logic.

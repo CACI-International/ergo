@@ -43,6 +43,8 @@
     command) will _only_ load a file based on its path and the load path.
     Previously, it encapsulated the workspace fallback behavior, but this is no
     longer the case.
+* Change command-line parsing to stop parsing flags at the first non-flag
+  argument.
 
 ### Migration Guide
 Syntax has changed in the following breaking ways:
