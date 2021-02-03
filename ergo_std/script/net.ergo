@@ -1,3 +1,5 @@
+^workspace:
+
 ## Open a remote archive file.
 ##
 ## Arguments: (String url)

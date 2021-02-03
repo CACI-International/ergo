@@ -1,3 +1,5 @@
+^workspace:
+
 ^{
     basic-type = fn :check -> :a -> !match :a ^[
         :check
