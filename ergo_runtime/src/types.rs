@@ -337,11 +337,21 @@ macro_rules! ergo_function {
                 $( let $m = $m.clone(); )*
                 $crate::future::FutureExt::boxed(
                     async move {
-                        let mut $args: $crate::Arguments = {
+                        let mut __ergo_function_args: $crate::Arguments = {
                             let args = $crate::ContextExt::source_value_as::<$crate::types::Args>($ctx, __ergo_function_arg).await?.unwrap();
                             args.await?.owned().args.into()
                         };
-                        Ok($body)
+                        let $args = &mut __ergo_function_args;
+                        match async move { Ok($body) }.await {
+                            Ok(v) => {
+                                __ergo_function_args.unused_arguments()?;
+                                Ok(v)
+                            }
+                            Err(e) => {
+                                __ergo_function_args.unchecked();
+                                Err(e)
+                            }
+                        }
                     }
                 )
             },

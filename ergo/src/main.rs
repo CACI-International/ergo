@@ -242,8 +242,10 @@ fn run(opts: Opts) -> Result<String, String> {
         }
     } else {
         // When there are no arguments, always call workspace:command function.
+        // This returns _just_ the function, so that documentation will work as expected, but it
+        // will then be called without arguments (with script::final_value).
         if no_args {
-            "workspace:command:".into()
+            "workspace:command".into()
         } else {
             // When there are arguments:
             // * Replace the first `:` with `|>:` for convenience.
