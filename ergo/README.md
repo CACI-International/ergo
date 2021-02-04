@@ -102,6 +102,10 @@ scripts reside.
 * Improve std::fs file not found errors (print the file!).
 * Support unicode output in `exec` streams (for convenient printing).
 * Support generating documentation recursively (inspecting markdown links).
+* Investigate returning errors as a unique type (must like `Unset`). This would
+  make catching and throwing errors more natural, and would make _caching_
+  errors easy/automatic (more correctly persisting the state), though some
+  design would have to go into handling persistent source information.
 
 ### Optimizations
 There are a few ways to _really_ speed up scripts that should be experimented
@@ -171,3 +175,8 @@ Such a change could be done in a number of ways, including:
   things as functions would be very easy. Otherwise the only way for those to be
   functions would be to add syntax which essentially does this (takes any
   expression and makes it a dynamically-typed value which will evaluate it).
+
+
+Id generation is also a hot spot. If the hashing proves to be too cumbersome, at
+the expense of memory we could store everything _to_ be hashed, and only
+generate the effective identity when necessary.
