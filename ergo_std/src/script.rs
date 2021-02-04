@@ -104,7 +104,7 @@ Arguments: (none)
 Returns a Path.",
         |ctx, args| {
             args.unused_arguments()?;
-            ctx.mod_path.clone().unwrap().into()
+            ctx.mod_path.clone().into_option().ok_or("no script path available")?.into()
         }
     )
     .into()

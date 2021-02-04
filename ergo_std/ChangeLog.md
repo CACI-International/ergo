@@ -1,8 +1,7 @@
 # ergo_std changelog
 
 ## Unreleased
-* Fix an issue where `match` incorrectly detected bind errors when a binding in
-  the body of a case failed.
+### New Features
 * Add `enum`, `struct`, `MapValues`, `MapOf`, `ArrayValues`, and `ArrayOf` to
   `type` module.
 * Add `net:unarchive-remote` function for fetching and caching a remote archive,
@@ -15,6 +14,12 @@
 * Add `recursive` to create recursive functions.
 * Add `match:value` convenience function.
 * Add `path:with-output` to make output paths from commands more ergonomic.
+
+### Bugfixes
+* Fix an issue where `match` incorrectly detected bind errors when a binding in
+  the body of a case failed.
+* Fix a panic when `scrip:path` is called when no path is available (now it will
+  be a runtime error).
 
 ## 1.0.0-beta.8  -- 2020-01-15
 * Fix deadlock occurring from task execution.
