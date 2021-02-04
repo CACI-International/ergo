@@ -18,6 +18,8 @@
 ### Improvements
 * Allow `env:path-search` to take Paths, and simply forward them as the returned
   value for convenience.
+* Make `value:cache` also serve as a runtime cache, and add a `no-persist`
+  option to make it _only_ serve as a runtime cache.
 
 ### Bugfixes
 * Fix an issue where `match` incorrectly detected bind errors when a binding in

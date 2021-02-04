@@ -1,6 +1,6 @@
 //! Value-related intrinsics.
 
-use abi_stable::std_types::RArc;
+use abi_stable::{external_types::RMutex, std_types::RArc};
 use ergo_runtime::{
     context_ext::AsContext,
     ergo_function,
@@ -9,8 +9,11 @@ use ergo_runtime::{
 };
 use grease::{
     depends, item_name,
+    types::GreaseType,
     value::{IntoValue, Value},
 };
+use std::collections::BTreeMap;
+use std::sync::Arc;
 
 pub fn module() -> Value {
     crate::grease_string_map! {
@@ -56,78 +59,104 @@ Returns a new value which has the same type and result as the given value, but h
     .into()
 }
 
+#[derive(GreaseType)]
+struct Cached {
+    map: Arc<RMutex<BTreeMap<u128, Value>>>,
+}
+
+impl Default for Cached {
+    fn default() -> Self {
+        Cached {
+            map: Arc::new(RMutex::new(Default::default())),
+        }
+    }
+}
+
 fn cache_fn() -> Value {
     ergo_function!(independent std::value::cache,
-    r"Persist the given value across runs.
+    r"Cache a value by identity.
 
 Arguments: <value>
 
+By default, caches both at runtime and to persistent storage, to be cached across runs. If the
+`no-persist` keyword-arg is present, it will only cache at runtime.
+
 Returns a value identical to the argument, however possibly loads the value from a persisted store rather than
 evaluating it. If not yet persisted, when the returned value is evaluated it will evaluate the inner value and persist
-it.",
+it. Multiple values with the same id will be normalized to the same single runtime value.",
     |ctx, args| {
         let to_cache = args.next().ok_or("no argument to cache")?.unwrap();
+        let no_persist = args.kw("no-persist").is_some();
 
         args.unused_arguments()?;
 
-        let store = ctx.store.item(item_name!("cache"));
-        let log = ctx.log.sublog("cache");
-
-        let ctx = ctx.as_context().clone();
-
         let id = to_cache.id();
 
-        match to_cache.grease_type_immediate() {
-            Some(tp) => unsafe {
-                Value::with_id(RArc::new(tp.clone()), async move {
-                    let err = match ctx.read_from_store(&store, id).await {
-                        Ok(val) => {
-                            log.debug(format!(
-                                "successfully read cached value for {}",
-                                id
-                            ));
-                            if val.grease_type_immediate() != to_cache.grease_type_immediate() {
-                                "cached value had different value type".into()
-                            } else {
-                                return Ok(val
-                                    .await
-                                    .expect("value should have success value from cache"));
+        let cached = ctx.shared_state(|| Ok(Cached::default()))?;
+
+        let mut guard = cached.map.lock();
+        if !guard.contains_key(&id) {
+            let val = if no_persist {
+                to_cache
+            } else {
+                let store = ctx.store.item(item_name!("cache"));
+                let log = ctx.log.sublog("cache");
+                let ctx = ctx.as_context().clone();
+                match to_cache.grease_type_immediate() {
+                    Some(tp) => unsafe {
+                        Value::with_id(RArc::new(tp.clone()), async move {
+                            let err = match ctx.read_from_store(&store, id).await {
+                                Ok(val) => {
+                                    log.debug(format!(
+                                        "successfully read cached value for {}",
+                                        id
+                                    ));
+                                    if val.grease_type_immediate() != to_cache.grease_type_immediate() {
+                                        "cached value had different value type".into()
+                                    } else {
+                                        return Ok(val
+                                            .await
+                                            .expect("value should have success value from cache"));
+                                    }
+                                }
+                                Err(e) => e,
+                            };
+                            log.debug(format!("failed to read cache value for {}, (re)caching: {}", id, err));
+                            ctx.force_value_nested(to_cache.clone()).await?;
+                            if let Err(e) = ctx.write_to_store(&store, to_cache.clone()).await
+                            {
+                                log.warn(format!("failed to cache value for {}: {}", id, e));
                             }
+                            log.debug(format!("wrote cache value for {}", id));
+                            Ok(to_cache
+                                .await
+                                .expect("error should have been caught previously"))
+                        }, id)
+                    },
+                    None => Value::dyn_with_id(async move {
+                        let err = match ctx.read_from_store(&store, id).await {
+                            Ok(val) => {
+                                log.debug(format!(
+                                    "successfully read cached value for {}",
+                                    id
+                                ));
+                                return Ok(val.into_any_value());
+                            }
+                            Err(e) => e,
+                        };
+                        log.debug(format!("failed to read cache value for {}, (re)caching: {}", id, err));
+                        ctx.force_value_nested(to_cache.clone()).await?;
+                        if let Err(e) = ctx.write_to_store(&store, to_cache.clone()).await
+                        {
+                            log.warn(format!("failed to cache value for {}: {}", id, e));
                         }
-                        Err(e) => e,
-                    };
-                    log.debug(format!("failed to read cache value for {}, (re)caching: {}", id, err));
-                    ctx.force_value_nested(to_cache.clone()).await?;
-                    if let Err(e) = ctx.write_to_store(&store, to_cache.clone()).await
-                    {
-                        log.warn(format!("failed to cache value for {}: {}", id, e));
-                    }
-                    log.debug(format!("wrote cache value for {}", id));
-                    Ok(to_cache
-                        .await
-                        .expect("error should have been caught previously"))
-                }, id)
-            },
-            None => Value::dyn_with_id(async move {
-                let err = match ctx.read_from_store(&store, id).await {
-                    Ok(val) => {
-                        log.debug(format!(
-                            "successfully read cached value for {}",
-                            id
-                        ));
-                        return Ok(val.into_any_value());
-                    }
-                    Err(e) => e,
-                };
-                log.debug(format!("failed to read cache value for {}, (re)caching: {}", id, err));
-                ctx.force_value_nested(to_cache.clone()).await?;
-                if let Err(e) = ctx.write_to_store(&store, to_cache.clone()).await
-                {
-                    log.warn(format!("failed to cache value for {}: {}", id, e));
+                        Ok(to_cache.into_any_value())
+                    }, id)
                 }
-                Ok(to_cache.into_any_value())
-            }, id)
+            };
+            guard.insert(id, val);
         }
+        guard.get(&id).unwrap().clone()
     })
     .into()
 }
