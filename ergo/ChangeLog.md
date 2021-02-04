@@ -1,8 +1,30 @@
 # ergo changelog
 
 ## Unreleased
-* Fix incorrect parsing of indexing in e.g. `a |>:b:c`.
-* Fix incorrect parsing of trailing colon in e.g. `a b:c:`.
+### New Features
+* Make indexing a distinct operation (as opposed to being syntax sugar).
+  * Indexing (infix `:`) is now a distinct operation, binding an `Index`
+    value. In scripts, you may match this with `index :v`. Maps and arrays
+    have been changed to use `Index` rather than `Args` to get values.
+* Add `Unset` type and use it when map indexing fails, patterns are unmatched,
+  or map pattern keys are unmatched.
+  * This allows for cleanly dealing with missing/optional map keys.
+* Add a global `std` function as shorthand for `(ergo std)`.
+* Change how workspaces are loaded.
+  * There is no special `prelude` key anymore, and it is not specially loaded.
+  * A global `workspace` function is shorthand for `(ergo
+    path/to/ancestor/workspace.ergo)`, and the workspace should be accessed
+    through this.
+  * The `command` key is still special in the workspace, however only because
+    the command-line invocation of `ergo` will use `workspace:command <args>` if
+    `ergo <args>` does not resolve to a file. Otherwise, `ergo` (the load
+    command) will _only_ load a file based on its path and the load path.
+    Previously, it encapsulated the workspace fallback behavior, but this is no
+    longer the case.
+* Support negative indices in array indexing (which will index from the end of
+  the array).
+
+### Improvements
 * Improve doc comment parsing by not requiring a space after the initial `##`.
 * Change parsing of parentheses to be purely grouping.
   * Previously, parentheses implied commands. Now they are strictly for
@@ -20,31 +42,18 @@
     without; if the value is a single value, it is the result, otherwise if
     there is more than one value, the first is bound to an `Args` containing the
     rest to get the result.
-* Make indexing a distinct operation (as opposed to being syntax sugar).
-  * Indexing (infix `:`) is now a distinct operation, binding an `Index`
-    value. In scripts, you may match this with `index :v`. Maps and arrays
-    have been changed to use `Index` rather than `Args` to get values.
 * Improve parsing of the pipe operators (`|>`, `|`, and `<|`) to make them truly
   rewrite macros. Previously they were parsed as recursive descent binary
   operators, which had limitations and special code for certain situations. For
   instance, `a b |>:<| c d` would not work as expected (but now does).
-* Add `Unset` type and use it when map indexing fails, patterns are unmatched,
-  or map pattern keys are unmatched.
-  * This allows for cleanly dealing with missing/optional map keys.
-* Add a global `std` function as shorthand for `(ergo std)`.
-* Change how workspaces are loaded.
-  * There is no special `prelude` key anymore, and it is not specially loaded.
-  * A global `workspace` function is shorthand for `(ergo
-    path/to/ancestor/workspace.ergo)`, and the workspace should be accessed
-    through this.
-  * The `command` key is still special in the workspace, however only because
-    the command-line invocation of `ergo` will use `workspace:command <args>` if
-    `ergo <args>` does not resolve to a file. Otherwise, `ergo` (the load
-    command) will _only_ load a file based on its path and the load path.
-    Previously, it encapsulated the workspace fallback behavior, but this is no
-    longer the case.
 * Change command-line parsing to stop parsing flags at the first non-flag
   argument.
+  * This is more convenient than using `--` to end the parsed arguments, and
+    generally makes more sense.
+
+### Bugfixes
+* Fix incorrect parsing of indexing in e.g. `a |>:b:c`.
+* Fix incorrect parsing of trailing colon in e.g. `a b:c:`.
 
 ### Migration Guide
 Syntax has changed in the following breaking ways:

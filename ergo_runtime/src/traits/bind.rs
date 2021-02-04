@@ -257,9 +257,20 @@ grease_traits_fn! {
 
                     // Return value at index
                     let (ind_source, ind) = ctx.source_value_as::<types::String>(ind).await?.await.transpose_ok()?.take();
-                    source.with(match usize::from_str(ind.as_ref()) {
+                    source.with(match isize::from_str(ind.as_ref()) {
                         Err(_) => Err(ind_source.with("non-integer index").into_grease_error()),
-                        Ok(ind) => self.0.get(ind).cloned().ok_or_else(|| format!("array has length {}", self.0.len()).into())
+                        Ok(mut ind) => {
+                            // Negative indices are relative to the end.
+                            if ind < 0 {
+                                ind += self.0.len() as isize;
+                                if ind < 0 {
+                                    // use length to ensure access will fail
+                                    ind = self.0.len() as isize;
+                                }
+                            }
+                            let ind = ind as usize;
+                            self.0.get(ind).cloned().ok_or_else(|| format!("array has length {}", self.0.len()).into())
+                        }
                     })
                     .transpose_err_with_context("while indexing array")?
                 },

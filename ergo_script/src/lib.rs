@@ -223,6 +223,13 @@ mod test {
     }
 
     #[test]
+    fn array_negative_index() -> Result<(), String> {
+        script_eval_to("[a,b]:-1", SRString("b"))?;
+        script_fail("[a,b]:-3")?;
+        Ok(())
+    }
+
+    #[test]
     fn bindings() -> Result<(), String> {
         script_eval_to(":var = something; :var", SRString("something"))?;
         script_eval_to(
