@@ -15,6 +15,10 @@
 * Add `match:value` convenience function.
 * Add `path:with-output` to make output paths from commands more ergonomic.
 
+### Improvements
+* Allow `env:path-search` to take Paths, and simply forward them as the returned
+  value for convenience.
+
 ### Bugfixes
 * Fix an issue where `match` incorrectly detected bind errors when a binding in
   the body of a case failed.

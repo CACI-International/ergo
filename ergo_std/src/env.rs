@@ -1,8 +1,8 @@
 //! Environment variable functions.
 
-use ergo_runtime::{ergo_function, types, ContextExt};
+use ergo_runtime::{ergo_function, traits, types, ContextExt};
 use grease::{
-    make_value,
+    make_value, match_value,
     path::PathBuf,
     value::{TypedValue, Value},
 };
@@ -74,32 +74,39 @@ pub fn path_search_fn() -> Value {
         std::env::path_search,
         r"Find a file in the binary lookup path.
 
-Arguments: <name: String>
-If the value is not found, an error occurs. Otherwise the path of the resolved file is returned.",
-        |ctx,args| {
-            let name = args.next().ok_or("no search argument provided")?;
+Arguments: <name: String or Path>
+If a Path is passed, it will simply be returned as-is.
+If a String is passed, a Path value is returned that, when evaluated, will searched for the string
+in PATH. If not found, an error occurs. Otherwise the path of the resolved file is returned.",
+        |ctx, args| {
+            let arg = args.next().ok_or("no search argument provided")?;
 
             args.unused_arguments()?;
 
-            let name = ctx.source_value_as::<types::String>(name);
-            let name = name.await?.unwrap();
+            let (arg_source, arg) = arg.take();
+            match_value!(arg => {
+                PathBuf => |v| v,
+                types::String => |name| {
+                    let paths = std::env::var_os("PATH")
+                        .map(|path| std::env::split_paths(&path).collect())
+                        .unwrap_or(vec![]);
 
-            let paths = std::env::var_os("PATH")
-                .map(|path| std::env::split_paths(&path).collect())
-                .unwrap_or(vec![]);
+                    make_value!([paths, name] {
+                        let name = name.await?;
 
-            make_value!([paths, name] {
-                let name = name.await?;
+                        for p in paths {
+                            let path = p.join(name.as_ref().as_str());
+                            if path.is_file() {
+                                return Ok(PathBuf::from(path));
+                            }
+                        }
 
-                for p in paths {
-                    let path = p.join(name.as_ref().as_str());
-                    if path.is_file() {
-                        return Ok(PathBuf::from(path));
-                    }
+                        Err(format!("could not find {} in PATH", name.as_ref().as_str()).into())
+                    })
                 }
-
-                Err(format!("could not find {} in PATH", name.as_ref().as_str()).into())
+                => |other| traits::type_error(ctx, arg_source.with(other), "String or Path").await?
             })
+            .await?
             .into()
         }
     )
