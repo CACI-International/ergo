@@ -75,7 +75,7 @@ values in the same manner that `interface` supports.",
                             }, deps)
                         }
                     },
-                    types::BindArgs => |bind_args| {
+                    types::PatternArgs => |bind_args| {
                         let to_bind = traits::bind(ctx, interface, arg_source.with(bind_args.into())).await?;
                         let deps = depends![tp, *to_bind];
                         types::Unbound::new(move |ctx, arg| {
@@ -118,7 +118,7 @@ fn match_any() -> Value {
                         args.unused_arguments()?;
                         v.unwrap()
                     },
-                    types::BindArgs => |bind_args| {
+                    types::PatternArgs => |bind_args| {
                         let mut args = bind_args.await?.owned().args;
                         let v = args.next().ok_or("no value")?;
                         args.unused_arguments()?;
@@ -153,9 +153,9 @@ macro_rules! simple_match_fn {
                             let mut args = args.await?.owned().args;
                             let v = args.next().ok_or("no value")?;
                             args.unused_arguments()?;
-                            ctx.source_value_as::<$t>(v).await?.unwrap().into()
+                            ctx.source_pattern_value_as::<$t>(v).await?.unwrap().into()
                         },
-                        types::BindArgs => |bind_args| {
+                        types::PatternArgs => |bind_args| {
                             let mut args = bind_args.await?.owned().args;
                             let v = args.next().ok_or("no value")?;
                             args.unused_arguments()?;

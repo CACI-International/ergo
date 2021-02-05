@@ -75,7 +75,7 @@ grease_traits_fn! {
     grease_type_name!(traits, types::Merge, "Merge");
     grease_type_name!(traits, types::BindRest, "BindRest");
     grease_type_name!(traits, types::Args, "Args");
-    grease_type_name!(traits, types::BindArgs, "BindArgs");
+    grease_type_name!(traits, types::PatternArgs, "PatternArgs");
     grease_type_name!(traits, types::Index, "Index");
     grease_type_name!(traits, types::Unset, "Unset");
 }

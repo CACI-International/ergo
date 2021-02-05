@@ -1,6 +1,6 @@
 //! The match function.
 
-use ergo_runtime::{ergo_function, error::BindError, traits};
+use ergo_runtime::{ergo_function, error::PatternError, traits};
 use grease::{depends, value::Errored, Value};
 
 pub fn function() -> Value {
@@ -31,7 +31,7 @@ which does not result in a binding error.",
             for b in bindings {
                 match Errored::ignore(b.bind(val.clone())).await {
                     Ok(v) => return Ok(v.unwrap().into_any_value()),
-                    Err(e) => if BindError::only_bind_errors(&e) {
+                    Err(e) => if PatternError::only_pattern_errors(&e) {
                         continue
                     } else {
                         return Err(e)

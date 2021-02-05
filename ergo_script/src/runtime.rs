@@ -5,7 +5,7 @@
 //! useful error information can be provided.
 
 use super::ast::{Expr, Expression};
-use ergo_runtime::error::BindError;
+use ergo_runtime::error::PatternError;
 use ergo_runtime::source::Source;
 use ergo_runtime::Result as EResult;
 use ergo_runtime::{
@@ -193,6 +193,7 @@ impl PartialEq<grease::Error> for Error {
 pub struct Evaluator {
     warn_string_in_env: bool,
     warn_compile_missing_get: bool,
+    bind_allows_pattern_errors: bool,
 }
 
 impl Default for Evaluator {
@@ -200,6 +201,7 @@ impl Default for Evaluator {
         Evaluator {
             warn_string_in_env: true,
             warn_compile_missing_get: false,
+            bind_allows_pattern_errors: false,
         }
     }
 }
@@ -216,6 +218,13 @@ impl Evaluator {
     pub fn warn_compile_missing_get(&self, warn_compile_missing_get: bool) -> Self {
         Evaluator {
             warn_compile_missing_get,
+            ..*self
+        }
+    }
+
+    pub fn bind_allows_pattern_errors(&self, bind_allows_pattern_errors: bool) -> Self {
+        Evaluator {
+            bind_allows_pattern_errors,
             ..*self
         }
     }
@@ -603,6 +612,8 @@ impl Evaluator {
             let src = e.source();
             let rsrc = src.clone();
             let warn_string_in_env = self.warn_string_in_env && ctx.lint;
+            let bind_allows_pattern_errors = self.bind_allows_pattern_errors;
+            self.bind_allows_pattern_errors(false);
             self.warn_string_in_env(true);
             e.map_async(|e| async {
                 use Expression::*;
@@ -705,8 +716,8 @@ impl Evaluator {
                                 ctx.env_scoped(move |ctx| {
                                     async move {
                                         let bind = ctx.env_set_to_current(|ctx| self.evaluate(ctx, bind)).await?;
-                                        traits::bind(ctx, bind, v).await.map_err(BindError::wrap)?;
-                                        self.evaluate(ctx, e).await.map_err(BindError::unwrap)
+                                        traits::bind(ctx, bind, v).await?;
+                                        self.evaluate(ctx, e).await
                                     }.boxed()
                                 }).await.0.map(Source::unwrap)
                             }
@@ -716,12 +727,21 @@ impl Evaluator {
                     Bind(bind, e) => {
                         // evaluate `e` first, so that any bindings in `bind` aren't in the
                         // environment
-                        let result_e = self.evaluate(ctx, *e).await.map_err(BindError::unwrap);
+                        // Don't immediately return an error from e so that we always introduce
+                        // bindings from `bind`, whether they are set or not.
+                        let result_e = self.evaluate(ctx, *e).await.map_err(PatternError::unwrap);
                         let bind = ctx.env_set_to_current(|ctx| self.evaluate(ctx, *bind)).await?;
 
                         let result = match result_e {
                             Err(e) => Err(e),
-                            Ok(e) => traits::bind(ctx, bind, e).await.map_err(BindError::wrap)
+                            Ok(e) => {
+                                let bind_result = traits::bind(ctx, bind, e).await;
+                                if bind_allows_pattern_errors {
+                                    bind_result
+                                } else {
+                                    bind_result.map_err(PatternError::unwrap)
+                                }
+                            }
                         };
 
                         result.and_then(|_| Ok(BindExpr.into_value()))
@@ -782,14 +802,14 @@ impl Evaluator {
                     BindCommand(cmd, args) => {
                         let (cmd, args) = self.command_args(ctx, *cmd, args).await?;
 
-                        traits::bind(ctx, cmd, src.with(types::BindArgs { args }.into_value())).await
+                        traits::bind(ctx, cmd, src.with(types::PatternArgs { args }.into_value())).await
                             .map(Source::unwrap)
                     }
                     IfBind(cond_bind, if_true, if_false) => {
                         ctx.env_scoped(move |ctx| async move {
-                            let result = match Errored::ignore(self.evaluate(ctx, *cond_bind)).await {
+                            let result = match Errored::ignore(self.bind_allows_pattern_errors(true).evaluate(ctx, *cond_bind)).await {
                                 Ok(_) => true,
-                                Err(e) => if BindError::only_bind_errors(&e) {
+                                Err(e) => if PatternError::only_pattern_errors(&e) {
                                     false
                                 } else {
                                     return Err(e);

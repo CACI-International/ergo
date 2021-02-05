@@ -27,27 +27,27 @@ impl std::fmt::Display for UnexpectedPositionalArguments {
 
 impl std::error::Error for UnexpectedPositionalArguments {}
 
-/// A marker indicating an error is a binding error.
+/// A marker indicating an error is a pattern binding error.
 ///
 /// This is intended to wrap errors that are meant to be recoverable.
 ///
-/// For instance, an error from evaluating a function after binding its arguments should not be
+/// For instance, an error from evaluating a function _after_ binding its arguments should _not_ be
 /// recoverable (since functions themselves are `crate::types::Unbound`).
 #[derive(Debug, StableAbi)]
 #[repr(C)]
-pub struct BindError {
+pub struct PatternError {
     error: BoxGreaseError,
 }
 
-impl std::fmt::Display for BindError {
+impl std::fmt::Display for PatternError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         self.error.fmt(f)
     }
 }
 
-impl GreaseError for BindError {
+impl GreaseError for PatternError {
     fn grease_error_id() -> grease::uuid::Uuid {
-        grease_error_uuid(b"ergo::bind_error")
+        grease_error_uuid(b"ergo::pattern_error")
     }
 
     fn source(&self) -> Vec<&BoxGreaseError> {
@@ -55,22 +55,22 @@ impl GreaseError for BindError {
     }
 }
 
-/// A marker to indicate that inner BindErrors should not be considered.
+/// A marker to indicate that inner PatternErrors should not be considered.
 #[derive(Debug, StableAbi)]
 #[repr(C)]
-struct IgnoreBindError {
+struct IgnorePatternError {
     error: BoxGreaseError,
 }
 
-impl std::fmt::Display for IgnoreBindError {
+impl std::fmt::Display for IgnorePatternError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         self.error.fmt(f)
     }
 }
 
-impl GreaseError for IgnoreBindError {
+impl GreaseError for IgnorePatternError {
     fn grease_error_id() -> grease::uuid::Uuid {
-        grease_error_uuid(b"ergo::bind_error::ignore")
+        grease_error_uuid(b"ergo::pattern_error::ignore")
     }
 
     fn source(&self) -> Vec<&BoxGreaseError> {
@@ -78,27 +78,27 @@ impl GreaseError for IgnoreBindError {
     }
 }
 
-impl BindError {
-    /// Wrap the given error as a bind error.
+impl PatternError {
+    /// Wrap the given error as a pattern error.
     pub fn wrap(error: grease::Error) -> grease::Error {
-        grease::Error::new(BindError {
+        grease::Error::new(PatternError {
             error: BoxGreaseError::new(error),
         })
     }
 
-    /// Consider inner bind errors as normal errors when `only_bind_errors` is called.
+    /// Consider inner pattern errors as normal errors when `only_pattern_errors` is called.
     pub fn unwrap(error: grease::Error) -> grease::Error {
-        grease::Error::new(IgnoreBindError {
+        grease::Error::new(IgnorePatternError {
             error: BoxGreaseError::new(error),
         })
     }
 
-    /// Check whether the given error is composed only of bind errors.
-    pub fn only_bind_errors(error: &grease::Error) -> bool {
+    /// Check whether the given error is composed only of pattern errors.
+    pub fn only_pattern_errors(error: &grease::Error) -> bool {
         error.all(|e| {
-            if e.downcast_ref::<BindError>().is_some() {
+            if e.downcast_ref::<PatternError>().is_some() {
                 Some(true)
-            } else if e.downcast_ref::<IgnoreBindError>().is_some() {
+            } else if e.downcast_ref::<IgnorePatternError>().is_some() {
                 Some(false)
             } else {
                 None

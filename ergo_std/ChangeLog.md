@@ -20,6 +20,8 @@
   value for convenience.
 * Make `value:cache` also serve as a runtime cache, and add a `no-persist`
   option to make it _only_ serve as a runtime cache.
+* Add `pattern` option to `error:throw` to indicate the error is a pattern
+  error (which may be ignored by something like `match`).
 
 ### Bugfixes
 * Fix an issue where `match` incorrectly detected bind errors when a binding in

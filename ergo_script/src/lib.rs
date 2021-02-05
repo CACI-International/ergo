@@ -53,9 +53,9 @@ pub fn script_context(
         insert(constants::PROGRAM_NAME, base::load());
         insert("std", base::load_std());
         insert("workspace", base::load_workspace());
-        insert("fn", base::bind_args_to_args());
-        insert("pat", base::bind_args_to_bind_args());
-        insert("index", base::bind_args_to_index());
+        insert("fn", base::pat_args_to_args());
+        insert("pat", base::pat_args_to_pat_args());
+        insert("index", base::pat_args_to_index());
     }
 
     cb.build().map(|mut ctx| {

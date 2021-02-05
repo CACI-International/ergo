@@ -101,11 +101,11 @@ pub fn load() -> Value {
 }
 
 /// A binding function returning an Args.
-pub fn bind_args_to_args() -> Value {
+pub fn pat_args_to_args() -> Value {
     types::Unbound::new(
         |ctx, v| {
             async move {
-                let args_val = ctx.source_value_as::<types::BindArgs>(v).await?.unwrap();
+                let args_val = ctx.source_value_as::<types::PatternArgs>(v).await?.unwrap();
                 let args = args_val.await?.owned().args;
                 Ok(types::Args { args }.into_value())
             }
@@ -113,22 +113,22 @@ pub fn bind_args_to_args() -> Value {
         },
         depends![namespace_id!(ergo::fn)],
         Some(TypedValue::constant(
-            "The 'fn' binding function, which takes all BindArgs and returns an Args to be bound."
+            "The 'fn' binding function, which takes all PatternArgs and returns an Args to be bound."
                 .into(),
         )),
     )
     .into()
 }
 
-/// A binding function returning a BindArgs.
-pub fn bind_args_to_bind_args() -> Value {
+/// A binding function returning a PatternArgs.
+pub fn pat_args_to_pat_args() -> Value {
     types::Unbound::new(
         |ctx, v| {
-            async move { Ok(ctx.source_value_as::<types::BindArgs>(v).await?.unwrap().into()) }.boxed()
+            async move { Ok(ctx.source_value_as::<types::PatternArgs>(v).await?.unwrap().into()) }.boxed()
         },
         depends![namespace_id!(ergo::pat)],
         Some(TypedValue::constant(
-            "The 'pat' binding function, which takes all BindArgs and returns a BindArgs to be bound."
+            "The 'pat' binding function, which takes all PatternArgs and returns a PatternArgs to be bound."
                 .into(),
         )),
     )
@@ -136,11 +136,11 @@ pub fn bind_args_to_bind_args() -> Value {
 }
 
 /// A binding function returning an Index.
-pub fn bind_args_to_index() -> Value {
+pub fn pat_args_to_index() -> Value {
     types::Unbound::new(
         |ctx, v| {
             async move {
-                let args_val = ctx.source_value_as::<types::BindArgs>(v).await?.unwrap();
+                let args_val = ctx.source_value_as::<types::PatternArgs>(v).await?.unwrap();
                 let mut args = args_val.await?.owned().args.checked();
                 let ind_v = args.next().ok_or("missing index argument")?;
                 args.unused_arguments()?;

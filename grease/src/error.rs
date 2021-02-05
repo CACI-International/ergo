@@ -46,19 +46,7 @@ pub struct Error {
     inner: InnerError,
 }
 
-/// A wrapped `Error` which implements `std::error::Error`.
-#[derive(Clone, Debug)]
-pub struct WrappedError {
-    inner: InnerError,
-}
-
 impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}", self.inner)
-    }
-}
-
-impl std::fmt::Display for WrappedError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "{}", self.inner)
     }
@@ -180,13 +168,12 @@ impl std::error::Error for BoxGreaseError {
     }
 }
 
-/// Grease errors may be aborted, new errors, or nested sets of errors.
+/// Grease errors may be aborted or some set of errors.
 #[derive(Clone, Debug, StableAbi)]
 #[repr(u8)]
 enum InnerError {
     Aborted,
-    New(RArc<BoxGreaseError>),
-    Nested(RVec<RArc<BoxGreaseError>>),
+    Errors(RVec<RArc<BoxGreaseError>>),
 }
 
 impl std::fmt::Display for InnerError {
@@ -194,10 +181,13 @@ impl std::fmt::Display for InnerError {
         use InnerError::*;
         match self {
             Aborted => write!(f, "aborted"),
-            New(e) => write!(f, "{}", e),
-            Nested(es) => {
-                for e in es {
-                    writeln!(f, "{}", e)?;
+            Errors(es) => {
+                let mut es = es.iter();
+                if let Some(e) = es.next() {
+                    write!(f, "{}", e)?;
+                }
+                while let Some(e) = es.next() {
+                    write!(f, "\n{}", e)?;
                 }
                 Ok(())
             }
@@ -208,15 +198,9 @@ impl std::fmt::Display for InnerError {
 impl std::error::Error for InnerError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            InnerError::New(e) => Some(e.as_ref()),
+            InnerError::Errors(es) if es.len() == 1 => Some(es.first().unwrap().as_ref()),
             _ => None,
         }
-    }
-}
-
-impl std::error::Error for WrappedError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        self.inner.source()
     }
 }
 
@@ -229,13 +213,13 @@ impl Error {
     /// Create a new error from a BoxGreaseError.
     pub fn new_boxed(v: BoxGreaseError) -> Self {
         Error {
-            inner: InnerError::New(RArc::new(v)),
+            inner: InnerError::Errors(rvec![RArc::new(v)]),
         }
     }
 
     /// Change the error into a type supporting `std::error::Error`.
-    pub fn error(self) -> WrappedError {
-        WrappedError { inner: self.inner }
+    pub fn error(self) -> BoxGreaseError {
+        BoxGreaseError::new(self)
     }
 
     /// Get a reference to the error as an external error.
@@ -254,8 +238,7 @@ impl Error {
                 .into_iter()
                 .map(|mut e| match &mut e.inner {
                     InnerError::Aborted => rvec![],
-                    InnerError::New(_) => rvec![RArc::new(BoxGreaseError::new(e))],
-                    InnerError::Nested(es) => std::mem::take(es),
+                    InnerError::Errors(es) => std::mem::take(es),
                 })
                 .flatten()
                 .collect();
@@ -263,7 +246,7 @@ impl Error {
                 inner: if errs.is_empty() {
                     InnerError::Aborted
                 } else {
-                    InnerError::Nested(errs)
+                    InnerError::Errors(errs)
                 },
             }
         }
@@ -317,15 +300,6 @@ impl Error {
         }
     }
 
-    /// Whether this error is an aggregate error.
-    pub fn is_aggregate(&self) -> bool {
-        if let InnerError::Nested(_) = &self.inner {
-            true
-        } else {
-            false
-        }
-    }
-
     /// Whether this error is an aborted error.
     pub fn is_aborted(&self) -> bool {
         if let InnerError::Aborted = &self.inner {
@@ -364,8 +338,7 @@ impl GreaseError for Error {
     fn source(&self) -> Vec<&BoxGreaseError> {
         match &self.inner {
             InnerError::Aborted => vec![],
-            InnerError::New(v) => vec![v.as_ref()],
-            InnerError::Nested(v) => v.iter().map(|v| v.as_ref()).collect(),
+            InnerError::Errors(es) => es.iter().map(|e| e.as_ref()).collect(),
         }
     }
 }
@@ -382,8 +355,11 @@ where
 {
     fn from(v: T) -> Self {
         let ext: Box<ExternalError> = v.into();
-        match ext.downcast::<WrappedError>() {
-            Ok(v) => Error { inner: v.inner },
+        match ext.downcast::<BoxGreaseError>() {
+            Ok(v) => match v.downcast_ref::<Self>() {
+                Some(e) => e.clone(),
+                None => Error::new_boxed(*v),
+            },
             Err(e) => Error::new_boxed(BoxGreaseError::from_external_box(e)),
         }
     }
@@ -406,11 +382,23 @@ impl std::iter::FromIterator<Error> for Error {
 #[sabi(impl_InterfaceType(Debug, Display, Send, Sync))]
 struct ContextInterface;
 
+/// An error with context.
 #[derive(Debug, StableAbi)]
 #[repr(C)]
-struct ErrorContext {
+pub struct ErrorContext {
     err: BoxGreaseError,
-    context: DynTrait<'static, RBox<()>, ContextInterface>,
+    context: Context,
+}
+
+/// The context of an error.
+#[derive(Debug, StableAbi)]
+#[repr(C)]
+pub struct Context(DynTrait<'static, RBox<()>, ContextInterface>);
+
+impl std::fmt::Display for Context {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
 }
 
 impl ErrorContext {
@@ -420,16 +408,18 @@ impl ErrorContext {
     ) -> Self {
         ErrorContext {
             err: BoxGreaseError::new(err),
-            context: DynTrait::from_any_value(context, ContextInterface),
+            context: Context(DynTrait::from_any_value(context, ContextInterface)),
         }
+    }
+
+    pub fn context(&self) -> &Context {
+        &self.context
     }
 }
 
 impl std::fmt::Display for ErrorContext {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        writeln!(f, "{}", self.err)?;
-        write!(f, "note: {}", self.context)?;
-        Ok(())
+        write!(f, "{}\n{}", self.err, self.context)
     }
 }
 
@@ -449,7 +439,7 @@ struct HashBySource(Error);
 impl HashBySource {
     fn as_ptr(&self) -> *const BoxGreaseError {
         match &self.0.inner {
-            InnerError::New(a) => a.as_ref() as *const BoxGreaseError,
+            InnerError::Errors(es) => es.first().unwrap().as_ref() as *const BoxGreaseError,
             _ => panic!("invalid entry in UniqueErrorSources"),
         }
     }
@@ -484,7 +474,7 @@ impl UniqueErrorSources {
         let mut added = false;
         for err in err.root_errors() {
             match &err.inner {
-                InnerError::New(_) => {
+                InnerError::Errors(es) if es.len() == 1 => {
                     added |= self.0.insert(HashBySource(err));
                 }
                 _ => (),

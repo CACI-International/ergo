@@ -50,6 +50,9 @@
   argument.
   * This is more convenient than using `--` to end the parsed arguments, and
     generally makes more sense.
+* Make pattern errors more accurate. Previously any error while executing
+  pattern expressions were considered pattern errors, but this shouldn't be the
+  case.
 
 ### Bugfixes
 * Fix incorrect parsing of indexing in e.g. `a |>:b:c`.

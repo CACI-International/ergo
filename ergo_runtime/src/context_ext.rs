@@ -46,10 +46,14 @@ pub trait ContextExt: AsContext {
         crate::traits::into_sourced(self.as_context(), v).boxed()
     }
 
-    fn source_value_as<T: GreaseType + 'static>(
+    fn source_value_as_map_error<T: GreaseType + 'static, E>(
         &self,
         v: Source<Value>,
-    ) -> BoxFuture<'static, Result<Source<TypedValue<T>>>> {
+        map_error: E,
+    ) -> BoxFuture<'static, Result<Source<TypedValue<T>>>>
+    where
+        E: FnOnce(grease::Error) -> grease::Error + Send + 'static,
+    {
         let (source, v) = v.take();
         let s = source.clone();
         let ctx = self.as_context().clone();
@@ -65,12 +69,28 @@ pub trait ContextExt: AsContext {
                     Err(e) => return e,
                     Ok(v) => v,
                 };
-                s.with(format!("expected {}, found {}", expected, found))
-                    .into_grease_error()
+                map_error(
+                    s.with(format!("expected {}, found {}", expected, found))
+                        .into_grease_error(),
+                )
             }
         })
         .map(move |r| r.map(move |v| source.with(v)))
         .boxed()
+    }
+
+    fn source_pattern_value_as<T: GreaseType + 'static>(
+        &self,
+        v: Source<Value>,
+    ) -> BoxFuture<'static, Result<Source<TypedValue<T>>>> {
+        self.source_value_as_map_error(v, crate::error::PatternError::wrap)
+    }
+
+    fn source_value_as<T: GreaseType + 'static>(
+        &self,
+        v: Source<Value>,
+    ) -> BoxFuture<'static, Result<Source<TypedValue<T>>>> {
+        self.source_value_as_map_error(v, std::convert::identity)
     }
 
     fn source_value_as_immediate<T: GreaseType + 'static>(

@@ -21,9 +21,11 @@ fn throw_fn() -> Value {
         r"Create a value which, when evaluated, will error.
 
 Arguments: <error: String>
+If the keyword argument `pattern` is present, the error will be marked as a pattern error.
 The returned value will be unit-typed and will immediately error with the given error message.",
         |ctx, args| {
             let message = args.next().ok_or("no message provided")?;
+            let is_pattern_error = args.kw("pattern").is_some();
 
             args.unused_arguments()?;
 
@@ -32,8 +34,11 @@ The returned value will be unit-typed and will immediately error with the given 
 
             make_value!([message] {
                 let message = message.await?;
-                let ret: Result<types::Unit, _> = Err(message.owned().into_string().into());
-                ret
+                let mut e: grease::Error = message.owned().into_string().into();
+                if is_pattern_error {
+                    e = ergo_runtime::error::PatternError::wrap(e);
+                }
+                Result::<types::Unit, _>::Err(e)
             })
             .into()
         }

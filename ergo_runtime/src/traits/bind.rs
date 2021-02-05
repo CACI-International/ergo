@@ -1,7 +1,9 @@
 //! The grease Bind trait for setting values.
 
 use super::type_name;
-use crate::{source::IntoSource, types, ContextExt, EvalResult, Runtime, Source};
+use crate::{
+    error::PatternError, source::IntoSource, types, ContextExt, EvalResult, Runtime, Source,
+};
 use abi_stable::{
     std_types::{ROption, RVec},
     StableAbi,
@@ -29,9 +31,10 @@ pub trait Bind {
 pub async fn bind_error<T>(ctx: &grease::runtime::Context, v: Source<Value>) -> crate::Result<T> {
     let (src, v) = v.take();
     let name = type_name(ctx, v.grease_type().await?).await?;
-    Err(src
-        .with(format!("cannot bind to value with type '{}'", name))
-        .into_grease_error())
+    Err(PatternError::wrap(
+        src.with(format!("cannot bind to value with type '{}'", name))
+            .into_grease_error(),
+    ))
 }
 
 /// Bind a value to an argument.
@@ -119,12 +122,16 @@ grease_traits_fn! {
                             let name = type_name(ctx, tp).await?;
                             Err(arg_source.with(format!("cannot call value with type {}", name)).into_grease_error())?
                         }
-                        types::BindArgs => |_| {
+                        types::PatternArgs => |_| {
                             let name = type_name(ctx, tp).await?;
-                            Err(arg_source.with(format!("cannot call value in binding with type {}", name)).into_grease_error())?
+                            Err(arg_source.with(format!("cannot call value in pattern with type {}", name)).into_grease_error())?
+                        }
+                        types::Index => |_| {
+                            let name = type_name(ctx, tp).await?;
+                            Err(arg_source.with(format!("cannot index value with type {}", name)).into_grease_error())?
                         }
                         => |_| {
-                            Err(arg_source.with("mismatched value in binding").into_grease_error())?
+                            Err(PatternError::wrap(arg_source.with("mismatched value in binding").into_grease_error()))?
                         }
                     }).await.into()
                 } else {
@@ -163,7 +170,7 @@ grease_traits_fn! {
                         types::Merge => |merge| {
                             let merge_val = merge.await?.0.clone();
                             match to.next_back() {
-                                None => Err(t_source.with("undecidable merge").into_grease_error())?,
+                                None => Err(PatternError::wrap(t_source.with("undecidable merge").into_grease_error()))?,
                                 Some(to_v) => {
                                     // Keep taking until we find a match
                                     let mut vals = Vec::new();
@@ -176,7 +183,7 @@ grease_traits_fn! {
                                                     vals.push(from_v);
                                                 }
                                             }
-                                            None => Err(to_v.source().with("no value matches this binding").into_grease_error())?
+                                            None => Err(PatternError::wrap(to_v.source().with("no value matches this binding").into_grease_error()))?
                                         }
                                     }
                                     // Values were pushed in reverse order
@@ -189,7 +196,7 @@ grease_traits_fn! {
                         }
                         => |to_v| {
                             match from.next_back() {
-                                None => Err(t_source.with("no value matches this binding").into_grease_error())?,
+                                None => Err(PatternError::wrap(t_source.with("no value matches this binding").into_grease_error()))?,
                                 Some(from_v) => {
                                     bind(ctx, t_source.with(to_v), from_v).await?;
                                 }
@@ -218,7 +225,7 @@ grease_traits_fn! {
                         }
                         => |to_v| {
                             match from.next() {
-                                None => Err(t_source.with("no value matches this binding").into_grease_error())?,
+                                None => Err(PatternError::wrap(t_source.with("no value matches this binding").into_grease_error()))?,
                                 Some(from_v) => {
                                     bind(ctx, t_source.with(to_v), from_v).await?;
                                 }
@@ -231,7 +238,7 @@ grease_traits_fn! {
                 if !remaining.is_empty() {
                     let mut errs = Vec::new();
                     for v in remaining {
-                        errs.push(v.with("no binding matches this value").into_grease_error());
+                        errs.push(PatternError::wrap(v.with("no binding matches this value").into_grease_error()));
                     }
                     Err(grease::Error::aggregate(errs))
                 } else {
@@ -314,7 +321,7 @@ grease_traits_fn! {
                 } else {
                     let mut errs = Vec::new();
                     for (k,_) in from.into_iter() {
-                        errs.push(k.with("key missing in binding").into_grease_error());
+                        errs.push(PatternError::wrap(k.with("key missing in binding").into_grease_error()));
                     }
                     Err(grease::Error::aggregate(errs))
                 }
@@ -370,16 +377,16 @@ grease_traits_fn! {
 
     impl Bind for types::Args {
         async fn bind(&self, ctx: &mut Runtime, arg: Source<Value>) -> Value {
-            let (src, args) = ctx.source_value_as::<types::Args>(arg).await?.take();
+            let (src, args) = ctx.source_pattern_value_as::<types::Args>(arg).await?.take();
             let args = args.await?.owned().args;
             bind_args(ctx, &self.args, src.with(args)).await?;
             types::Unit.into_value()
         }
     }
 
-    impl Bind for types::BindArgs {
+    impl Bind for types::PatternArgs {
         async fn bind(&self, ctx: &mut Runtime, arg: Source<Value>) -> Value {
-            let (src, args) = ctx.source_value_as::<types::BindArgs>(arg).await?.take();
+            let (src, args) = ctx.source_pattern_value_as::<types::PatternArgs>(arg).await?.take();
             let args = args.await?.owned().args;
             bind_args(ctx, &self.args, src.with(args)).await?;
             types::Unit.into_value()
@@ -388,7 +395,7 @@ grease_traits_fn! {
 
     impl Bind for types::Index {
         async fn bind(&self, ctx: &mut Runtime, arg: Source<Value>) -> Value {
-            let ind = ctx.source_value_as::<types::Index>(arg).await?.await.transpose_ok()?.unwrap().owned().0;
+            let ind = ctx.source_pattern_value_as::<types::Index>(arg).await?.await.transpose_ok()?.unwrap().owned().0;
             crate::traits::bind(ctx, self.0.clone(), ind).await?;
             types::Unit.into_value()
         }

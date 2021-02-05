@@ -259,15 +259,15 @@ impl From<Args> for TypedValue<Args> {
     }
 }
 
-/// Arguments in a bind function call.
+/// Arguments in a pattern function call.
 #[derive(Clone, GreaseType, StableAbi)]
 #[repr(C)]
-pub struct BindArgs {
+pub struct PatternArgs {
     pub args: crate::UncheckedArguments,
 }
 
-impl From<BindArgs> for TypedValue<BindArgs> {
-    fn from(v: BindArgs) -> Self {
+impl From<PatternArgs> for TypedValue<PatternArgs> {
+    fn from(v: PatternArgs) -> Self {
         let deps: grease::value::Dependencies = (&v.args).into();
         Self::constant_deps(v, deps)
     }
