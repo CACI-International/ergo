@@ -611,6 +611,7 @@ impl Evaluator {
         async move {
             let src = e.source();
             let rsrc = src.clone();
+            let mut expr_type: Option<&'static str> = None;
             let warn_string_in_env = self.warn_string_in_env && ctx.lint;
             let bind_allows_pattern_errors = self.bind_allows_pattern_errors;
             self.bind_allows_pattern_errors(false);
@@ -631,6 +632,7 @@ impl Evaluator {
                         Ok(s)
                     },
                     Array(es) => {
+                        expr_type = Some("array");
                         ctx.env_scoped(move |ctx| {
                             async move {
                                 let mut results = Vec::new();
@@ -680,6 +682,7 @@ impl Evaluator {
                         .await.0
                     }
                     Map(es) => {
+                        expr_type = Some("map");
                         // Return the env scope as a map, removing any Unset values.
                         self.evaluate_block(ctx, es).await?.1
                             .into_iter()
@@ -693,8 +696,12 @@ impl Evaluator {
                             .collect_result::<BstMap<_, _>>()
                             .map(|ret| types::Map(ret).into_value(ctx))
                     }
-                    Block(es) => Ok(self.evaluate_block(ctx, es).await?.0.unwrap()),
+                    Block(es) => {
+                        expr_type = Some("block");
+                        Ok(self.evaluate_block(ctx, es).await?.0.unwrap())
+                    },
                     Function(bind, e) => {
+                        expr_type = Some("function");
                         let (bind, e) = ctx
                             .env_scoped(move |ctx| {
                                 async move {
@@ -794,12 +801,14 @@ impl Evaluator {
                             .map(Source::unwrap)
                     }
                     Command(cmd, args) => {
+                        expr_type = Some("call");
                         let (cmd, args) = self.command_args(ctx, *cmd, args).await?;
 
                         traits::bind(ctx, cmd, src.with(types::Args { args }.into_value())).await
                             .map(Source::unwrap)
                     }
                     BindCommand(cmd, args) => {
+                        expr_type = Some("pattern call");
                         let (cmd, args) = self.command_args(ctx, *cmd, args).await?;
 
                         traits::bind(ctx, cmd, src.with(types::PatternArgs { args }.into_value())).await
@@ -858,16 +867,15 @@ impl Evaluator {
                         }, deps))
                     }
                     Force(val) => {
-                        let val = self.evaluate(ctx, *val).await?;
+                        expr_type = Some("forced");
+                        let val = self.evaluate(ctx, *val).await?.unwrap();
 
-                        val.map_async(|val| async {
-                            // If the value is a dynamic value, get the inner value.
-                            // Otherwise return the value by its (shallow) content.
-                            match val.dyn_value().await? {
-                                Ok(inner) => Ok(inner),
-                                Err(val) => ctx.value_by_content(val, false).await
-                            }
-                        }).await.transpose_err_with_context("in forced value")
+                        // If the value is a dynamic value, get the inner value.
+                        // Otherwise return the value by its (shallow) content.
+                        match val.dyn_value().await? {
+                            Ok(inner) => Ok(inner),
+                            Err(val) => ctx.value_by_content(val, false).await
+                        }
                     }
                     Merge(val) => {
                         let val = self.evaluate(ctx, *val).await?;
@@ -883,11 +891,12 @@ impl Evaluator {
                 }
             })
             .await
-            .transpose_with_context("in expression")
-            .map(|v| v.map(|v| rsrc
-                        .with("while evaluating value returned by this expression")
-                        .imbue_error_context(v)
-            ))
+            .transpose_with_context(format!("in {}expression", expr_type.map(|s| format!("{} ", s)).unwrap_or_default()))
+            .map(|v| {
+                v.map(|v| rsrc
+                    .with(format!("while evaluating value returned by {} expression", expr_type.unwrap_or("this")))
+                    .imbue_error_context(v))
+            })
         }
         .boxed()
     }

@@ -20,7 +20,7 @@ mod constants {
 }
 
 use options::*;
-use output::{output, Output};
+use output::{error as error_output, output, Output};
 use script::{Script, StringSource};
 
 trait AppErr {
@@ -74,8 +74,8 @@ impl AppErr for bool {
 }
 
 fn run(opts: Opts) -> Result<String, String> {
-    let mut output =
-        output(opts.format, !opts.stop).app_err("could not create output from requested format");
+    let mut output = output(opts.format, !opts.stop)
+        .app_err_result("could not create output from requested format")?;
     output.set_log_level(opts.log_level);
     let logger = std::sync::Arc::new(std::sync::Mutex::new(output));
 
@@ -284,28 +284,28 @@ fn run(opts: Opts) -> Result<String, String> {
     };
 
     let task = ctx.task.clone();
-    let script_output = task
-        .block_on(grease::value::Errored::observe(
-            on_error.clone(),
-            loaded.evaluate(&ctx),
-        ))
-        .app_err_result("errors(s) while executing script")?;
+    let script_output = task.block_on(grease::value::Errored::observe(
+        on_error.clone(),
+        loaded.evaluate(&ctx),
+    ));
 
     // We *must* keep the context around because it holds onto plugins, which may have functions referenced in values.
     // Likewise, our return from this function is "flattened" to strings to ensure any references to plugins are used when the plugins are still loaded.
 
     // Get doc value, prior to forcing resulting functions.
     // This way users can document the entire function and retrieve that documentation easily.
-    let value_to_execute = if opts.doc {
-        ergo_runtime::metadata::Doc::get(&ctx, &script_output).into()
-    } else {
-        task.block_on(grease::value::Errored::observe(
-            on_error.clone(),
-            script::final_value(&mut ctx, script_output),
-        ))
-        .app_err_result("errors(s) while evaluating final function")?
-        .unwrap()
-    };
+    let doc = opts.doc;
+    let value_to_execute = script_output.and_then(|script_output| {
+        if doc {
+            Ok(ergo_runtime::metadata::Doc::get(&ctx, &script_output).into())
+        } else {
+            task.block_on(grease::value::Errored::observe(
+                on_error.clone(),
+                script::final_value(&mut ctx, script_output),
+            ))
+            .map(Source::unwrap)
+        }
+    });
 
     // Clear context, which removes any unneeded values that may be held.
     //
@@ -313,12 +313,12 @@ fn run(opts: Opts) -> Result<String, String> {
     // peers still exist or not.
     ctx.clear_env();
 
-    let ret = task
-        .block_on(grease::value::Errored::observe(on_error, async {
-            ctx.force_value_nested(value_to_execute.clone()).await?;
-            ctx.display(value_to_execute).await
+    let ret = value_to_execute.and_then(|value| {
+        task.block_on(grease::value::Errored::observe(on_error, async {
+            ctx.force_value_nested(value.clone()).await?;
+            ctx.display(value).await
         }))
-        .map_err(|e: grease::Error| e.to_string());
+    });
 
     // Before the context is destroyed (unloading plugins), clear the thread-local storage in case
     // there are values which were allocated in the plugins.
@@ -338,7 +338,69 @@ fn run(opts: Opts) -> Result<String, String> {
         }
     }
 
-    ret
+    // Write error output to stderr.
+    match ret {
+        Ok(v) => Ok(v),
+        Err(e) => {
+            use grease::error::BoxGreaseError;
+
+            // For each error root, display a certain number of backtrace contexts.
+            fn display_errors<'a>(
+                e: &'a BoxGreaseError,
+                out: &mut Box<term::StderrTerminal>,
+                contexts: &mut Vec<&'a grease::error::Context>,
+                limit: &Option<usize>,
+            ) {
+                let had_context = if let Some(ctx) = e.downcast_ref::<grease::error::ErrorContext>()
+                {
+                    contexts.push(ctx.context());
+                    true
+                } else {
+                    false
+                };
+                let inner = e.source();
+                if inner.is_empty() {
+                    // Root error
+                    out.fg(term::color::RED)
+                        .expect("failed to set output color");
+                    write!(out, "error:").expect("failed to write to stderr");
+                    out.reset().expect("failed to reset output");
+                    writeln!(out, " {}", e).expect("failed to write to stderr");
+                    let write_context = |ctx: &&grease::error::Context| {
+                        out.fg(term::color::BRIGHT_WHITE)
+                            .expect("failed to set output color");
+                        write!(out, "note:").expect("failed to write to stderr");
+                        out.reset().expect("failed to reset output");
+                        writeln!(out, " {}", ctx).expect("failed to write to stderr");
+                    };
+                    match limit.as_ref() {
+                        None => contexts.iter().rev().for_each(write_context),
+                        Some(&limit) => {
+                            contexts.iter().rev().take(limit).for_each(write_context);
+                            if limit < contexts.len() {
+                                writeln!(out, "...omitting {} frame(s)", contexts.len() - limit)
+                                    .expect("failed to write to stderr");
+                            }
+                        }
+                    }
+                } else {
+                    for e in inner {
+                        display_errors(e, out, contexts, limit);
+                    }
+                }
+                if had_context {
+                    contexts.pop();
+                }
+            }
+
+            let mut err = error_output(opts.format)
+                .app_err("could not create error output from requested format");
+
+            let mut contexts = Vec::new();
+            display_errors(&e.error(), &mut err, &mut contexts, &opts.error_limit);
+            Err("one or more errors occurred".into())
+        }
+    }
 }
 
 fn main() {

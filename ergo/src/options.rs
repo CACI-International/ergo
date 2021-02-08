@@ -3,7 +3,7 @@
 use grease::runtime::LogLevel;
 pub use structopt::StructOpt;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum OutputFormat {
     Basic,
     Pretty,
@@ -23,6 +23,15 @@ impl std::str::FromStr for OutputFormat {
     }
 }
 
+fn parse_error_limit(arg: &str) -> Result<Option<usize>, std::num::ParseIntError> {
+    if arg == "none" {
+        Ok(None)
+    } else {
+        use std::str::FromStr;
+        usize::from_str(arg).map(Some)
+    }
+}
+
 #[derive(Debug, StructOpt)]
 /// Effio ergo sum.
 ///
@@ -39,6 +48,12 @@ pub struct Opts {
     ///
     /// May be "auto", "basic", or "pretty".
     pub format: OutputFormat,
+
+    #[structopt(short = "E", long, default_value = "3", parse(try_from_str = parse_error_limit))]
+    /// The number of frames of context to display with each error.
+    ///
+    /// Specify "none" to display all frames.
+    pub error_limit: std::option::Option<usize>,
 
     #[structopt(short, long)]
     /// The maximum number of jobs to run concurrently.

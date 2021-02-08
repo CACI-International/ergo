@@ -21,6 +21,88 @@ pub fn stdout(format: crate::options::OutputFormat) -> Option<OutputType> {
     }
 }
 
+pub fn stderr(format: crate::options::OutputFormat) -> Option<Box<term::StderrTerminal>> {
+    use crate::options::OutputFormat::*;
+    let t = term::stderr();
+    let is_tty = atty::is(atty::Stream::Stderr);
+
+    if t.is_some() && (format == Pretty || (format == Auto && is_tty)) {
+        t
+    } else if format == Basic || format == Auto {
+        Some(Box::new(TextTerm(std::io::stderr())))
+    } else {
+        None
+    }
+}
+
+pub struct TextTerm<T>(T);
+
+impl<T: Write> Write for TextTerm<T> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.flush()
+    }
+}
+
+impl<T: Write> Terminal for TextTerm<T> {
+    type Output = T;
+
+    fn fg(&mut self, _color: term::color::Color) -> term::Result<()> {
+        Ok(())
+    }
+
+    fn bg(&mut self, _color: term::color::Color) -> term::Result<()> {
+        Ok(())
+    }
+
+    fn attr(&mut self, _attr: term::Attr) -> term::Result<()> {
+        Ok(())
+    }
+
+    fn supports_attr(&self, _attr: term::Attr) -> bool {
+        false
+    }
+
+    fn reset(&mut self) -> term::Result<()> {
+        Ok(())
+    }
+
+    fn supports_reset(&self) -> bool {
+        false
+    }
+
+    fn supports_color(&self) -> bool {
+        false
+    }
+
+    fn cursor_up(&mut self) -> term::Result<()> {
+        Err(term::Error::NotSupported)
+    }
+
+    fn delete_line(&mut self) -> term::Result<()> {
+        Err(term::Error::NotSupported)
+    }
+
+    fn carriage_return(&mut self) -> term::Result<()> {
+        Err(term::Error::NotSupported)
+    }
+
+    fn get_ref(&self) -> &Self::Output {
+        &self.0
+    }
+
+    fn get_mut(&mut self) -> &mut Self::Output {
+        &mut self.0
+    }
+
+    fn into_inner(self) -> Self::Output {
+        self.0
+    }
+}
+
 /// A type that supports rendering to a terminal.
 pub trait Render {
     /// Render output to the terminal.
@@ -246,7 +328,7 @@ impl Terminal for RendererInner<'_> {
     forward!(carriage_return(&mut self,) -> term::Result<()>);
 
     fn cursor_up(&mut self) -> term::Result<()> {
-        return Err(term::Error::NotSupported);
+        Err(term::Error::NotSupported)
     }
 
     fn get_ref(&self) -> &Self::Output {

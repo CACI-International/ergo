@@ -19,6 +19,10 @@ pub fn output(format: crate::options::OutputFormat, keep_going: bool) -> Option<
     })
 }
 
+pub fn error(format: crate::options::OutputFormat) -> Option<Box<term::StderrTerminal>> {
+    interface::stderr(format)
+}
+
 pub struct OutputInstance {
     inner: Box<dyn Output + Send>,
 }

@@ -23,6 +23,9 @@
     longer the case.
 * Support negative indices in array indexing (which will index from the end of
   the array).
+* Add `-E`/`--error-limit` flag and default to 3 frames of error context.
+  Pretty-print error tracebacks rather than relying on the error display
+  implementations.
 
 ### Improvements
 * Improve doc comment parsing by not requiring a space after the initial `##`.
@@ -57,6 +60,7 @@
   less where this doesn't work. `more` does work with this flag on mac (and
   actually is less), but using `less` as the default is still probably more
   useful.
+* Improve error messages a little to decrease ambiguity/repetitiveness.
 
 ### Bugfixes
 * Fix incorrect parsing of indexing in e.g. `a |>:b:c`.
