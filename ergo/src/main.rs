@@ -412,7 +412,13 @@ fn main() {
     let result = run(opts);
 
     if paging_enabled {
-        pager::Pager::with_default_pager("less -F").setup();
+        pager::Pager::with_default_pager(if cfg!(target_os = "macos") {
+            // macos less is old and buggy, not working correctly with `-F`
+            "less"
+        } else {
+            "less -F"
+        })
+        .setup();
     }
 
     match result {

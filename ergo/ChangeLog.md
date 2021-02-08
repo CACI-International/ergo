@@ -53,6 +53,10 @@
 * Make pattern errors more accurate. Previously any error while executing
   pattern expressions were considered pattern errors, but this shouldn't be the
   case.
+* Do not use `-F` with less on mac for paging; mac has an old, buggy version of
+  less where this doesn't work. `more` does work with this flag on mac (and
+  actually is less), but using `less` as the default is still probably more
+  useful.
 
 ### Bugfixes
 * Fix incorrect parsing of indexing in e.g. `a |>:b:c`.
