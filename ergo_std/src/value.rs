@@ -7,11 +7,7 @@ use ergo_runtime::{
     metadata::{Doc, Runtime},
     types, ContextExt,
 };
-use grease::{
-    depends, item_name,
-    types::GreaseType,
-    value::{IntoValue, Value},
-};
+use grease::{depends, item_name, types::GreaseType, value::Value};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 

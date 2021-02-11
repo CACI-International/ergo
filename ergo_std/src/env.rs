@@ -22,7 +22,7 @@ pub fn get_fn() -> Value {
     r"Get an environment variable.
 
 Arguments: <environment variable name: String>
-If the environment variable is not set, returns `()`. Otherwise returns the value of the environment variable as a
+If the environment variable is not set, returns `Unset`. Otherwise returns the value of the environment variable as a
 string, where the string is identified by the environment variable's content.",
     |ctx,args| {
         let name = args.next()
@@ -34,7 +34,7 @@ string, where the string is identified by the environment variable's content.",
         let name = name.await?.unwrap();
 
         match std::env::var_os(name.await?.as_ref().as_str()) {
-            None => types::Unit.into(),
+            None => types::Unset::new().into(),
             Some(v) => types::String::from(
                 v.into_string()
                     .map_err(|_| "environment variable value is not valid unicode")?,
