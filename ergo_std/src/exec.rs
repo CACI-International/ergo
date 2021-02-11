@@ -295,6 +295,7 @@ Keyword Arguments:
   set while executing the program.
 * <pwd: Into<Path>>: The working directory to set while executing the program.
 * <stdin: Into<ByteStream>>: The stdin to pipe into the program.
+* <retain-terminal: bool>: If true, the spawned child is kept in the same terminal session.
 
 Programs are by default run without any working directory or environment variables.
 
