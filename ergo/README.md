@@ -106,6 +106,10 @@ scripts reside.
   make catching and throwing errors more natural, and would make _caching_
   errors easy/automatic (more correctly persisting the state), though some
   design would have to go into handling persistent source information.
+* Add a convenience function to turn a map into command-line flags (based on a
+  specification of which flags have required args). This is convenient for
+  things that want to pass flags to a program but also might need to easily
+  inspect/manipulate the flags.
 
 ### Optimizations
 There are a few ways to _really_ speed up scripts that should be experimented
