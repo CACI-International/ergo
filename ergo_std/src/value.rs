@@ -273,7 +273,8 @@ fn meta_get_fn() -> Value {
     ergo_function!(independent std::value::meta::get,
     r"Get metadata of a value.
 
-Arguments: <value> <metadata key>",
+Arguments: <value> <metadata key>
+Returns the metadata value or `Unset` if no key is set.",
     |ctx, args| {
         let val = args.next().ok_or("no value argument")?.unwrap();
         let key = args.next().ok_or("no metadata key provided")?.unwrap();
@@ -282,7 +283,7 @@ Arguments: <value> <metadata key>",
 
         match val.get_metadata(&Runtime { key: key.id() }) {
             Some(v) => v.as_ref().clone(),
-            None => types::Unit.into_value()
+            None => types::Unset::new().into()
         }
     })
     .into()
@@ -292,7 +293,8 @@ fn meta_set_fn() -> Value {
     ergo_function!(independent std::value::meta::set,
     r"Set metadata of a value.
 
-Arguments: <value> <metadata key> <metadata value>",
+Arguments: <value> <metadata key> [metadata value]
+You may omit metadata value to unset a metadata key.",
     |ctx, args| {
         let mut val = args.next().ok_or("no value argument")?.unwrap();
         let key = args.next().ok_or("no metadata key provided")?.unwrap();
