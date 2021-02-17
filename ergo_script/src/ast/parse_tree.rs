@@ -1,6 +1,6 @@
 //! Parsing of tree tokens.
 //!
-//! Pipe operators and (infix) colons are desugared, and infix operators are disambiguated.
+//! Pipe operators are desugared and the syntax tree is formed.
 
 use super::tokenize_tree::{PairedToken, SymbolicToken, TreeToken};
 use ergo_runtime::{source::IntoSource, Source};
@@ -11,7 +11,7 @@ pub type TreeVec = Vec<Source<Tree>>;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Tree {
     String(String),
-    DocComment(String),
+    DocString(String),
     Bang(Box<Source<Tree>>),
     Caret(Box<Source<Tree>>),
     ColonPrefix(Box<Source<Tree>>),
@@ -22,6 +22,7 @@ pub enum Tree {
     Parens(TreeVec),
     Curly(TreeVec),
     Bracket(TreeVec),
+    DocCurly(TreeVec),
 }
 
 /// A tree parser.
@@ -182,7 +183,7 @@ where
                 Ok(Some(match t {
                     TreeToken::Symbol(s) => source.with(match s {
                         SymbolicToken::String(s) => Tree::String(s).into(),
-                        SymbolicToken::DocComment(s) => Tree::DocComment(s).into(),
+                        SymbolicToken::DocString(s) => Tree::DocString(s).into(),
                         o => o.into(),
                     }),
                     TreeToken::ColonPriorFree => source.with(TreeOrSymbol::ColonPriorFree),
@@ -224,6 +225,9 @@ where
                                 Tree::Curly(groups)
                             }
                             PairedToken::Bracket => Tree::Bracket(self.groups()?),
+                            // It's not really useful to elaborate strings in doc curlies, so we
+                            // won't treat them quite the same as curlies.
+                            PairedToken::DocCurly => Tree::DocCurly(self.groups()?),
                         };
                         // Next token must be valid and EndNested
                         let end = self.next_tok().unwrap().unwrap();
@@ -255,12 +259,18 @@ where
             self.tokens.next();
         }
 
+        // Read all tokens until end of current group, next child separator, or doc tokens
+        // (which should be considered separate groups).
         while self
             .tokens
             .peek()
             .map(|t| {
                 t.as_ref()
-                    .map(|t| *t != TreeToken::EndNested && *t != TreeToken::NextChild)
+                    .map(|t| {
+                        *t != TreeToken::EndNested
+                            && *t != TreeToken::NextChild
+                            && (parts.is_empty() || !t.is_doc_token())
+                    })
                     .unwrap_or(true)
             })
             .unwrap_or(false)
@@ -736,7 +746,7 @@ mod test {
     fn doc_comment() {
         assert_single(
             "# some comment\n##doc comment\n",
-            DocComment("doc comment".into()),
+            DocString("doc comment".into()),
         );
     }
 

@@ -6,7 +6,7 @@ if exists("b:current_syntax")
 endif
 
 set iskeyword=$,%,&,',*,+,45-57,63-90,95-122,126,~
-syn keyword ergoFunctions ergo pat fn index
+syn keyword ergoFunctions ergo pat fn index std workspace doc
 syn keyword ergoConditional if
 syn match ergoGetSet /:/
 syn match ergoMerge /\^/

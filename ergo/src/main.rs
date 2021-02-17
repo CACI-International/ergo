@@ -198,6 +198,8 @@ fn run(opts: Opts) -> Result<String, String> {
     // on values cleaning up after themselves.
     let weak_logger = std::sync::Arc::downgrade(&logger);
 
+    let doc_write = opts.doc_path.is_some();
+
     // Create runtime context
     let mut ctx = script::script_context(
         Context::builder()
@@ -206,6 +208,7 @@ fn run(opts: Opts) -> Result<String, String> {
             .threads(opts.jobs)
             .keep_going(!opts.stop),
         initial_load_path,
+        opts.doc_path,
     )
     .expect("failed to create script context");
 
@@ -234,7 +237,7 @@ fn run(opts: Opts) -> Result<String, String> {
     // Ensure load path is set for path resolution done below.
     ctx.reset_load_path();
 
-    let to_eval = if opts.expression {
+    let mut to_eval = if opts.expression {
         if no_args {
             "()".into()
         } else {
@@ -271,6 +274,12 @@ fn run(opts: Opts) -> Result<String, String> {
         }
     };
 
+    if opts.doc {
+        to_eval = format!("doc ({})", to_eval);
+    } else if doc_write {
+        to_eval = format!("doc:write . ({})", to_eval);
+    }
+
     let source = Source::new(StringSource::new("<command line>", to_eval));
     let loaded = Script::load(source).app_err_result("failed to parse script file")?;
 
@@ -292,19 +301,12 @@ fn run(opts: Opts) -> Result<String, String> {
     // We *must* keep the context around because it holds onto plugins, which may have functions referenced in values.
     // Likewise, our return from this function is "flattened" to strings to ensure any references to plugins are used when the plugins are still loaded.
 
-    // Get doc value, prior to forcing resulting functions.
-    // This way users can document the entire function and retrieve that documentation easily.
-    let doc = opts.doc;
     let value_to_execute = script_output.and_then(|script_output| {
-        if doc {
-            Ok(ergo_runtime::metadata::Doc::get(&ctx, &script_output).into())
-        } else {
-            task.block_on(grease::value::Errored::observe(
-                on_error.clone(),
-                script::final_value(&mut ctx, script_output),
-            ))
-            .map(Source::unwrap)
-        }
+        task.block_on(grease::value::Errored::observe(
+            on_error.clone(),
+            script::final_value(&mut ctx, script_output),
+        ))
+        .map(Source::unwrap)
     });
 
     // Clear context, which removes any unneeded values that may be held.

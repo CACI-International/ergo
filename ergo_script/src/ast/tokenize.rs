@@ -63,8 +63,11 @@ impl<I: Iterator> Iterator for LookaheadIterator<I> {
 pub enum SymbolicToken {
     /// A string, either from quoted or unquoted words.
     String(String),
-    /// A doc comment block.
-    DocComment(String),
+    /// A doc string.
+    ///
+    /// Doc strings will always be present immediately after `Token::DocComment`, and immediately
+    /// before `Token::Newline`, even if empty.
+    DocString(String),
     Equal,
     Caret,
     Colon,
@@ -76,11 +79,12 @@ pub enum SymbolicToken {
 }
 
 /// Tokens which are parsed in pairs.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PairedToken {
     Paren,
     Curly,
     Bracket,
+    DocCurly,
 }
 
 /// Script tokens.
@@ -91,6 +95,7 @@ pub enum Token {
         which: PairedToken,
         open: bool,
     },
+    DocComment,
     Comma,
     Semicolon,
     Newline,
@@ -103,8 +108,8 @@ impl Token {
         Token::Symbol(SymbolicToken::String(s.into()))
     }
 
-    pub fn doc_comment<S: Into<String>>(s: S) -> Self {
-        Token::Symbol(SymbolicToken::DocComment(s.into()))
+    pub fn doc_string<S: Into<String>>(s: S) -> Self {
+        Token::Symbol(SymbolicToken::DocString(s.into()))
     }
 
     pub fn equal() -> Self {
@@ -169,6 +174,20 @@ impl Token {
         }
     }
 
+    pub fn open_doc_curly() -> Self {
+        Token::Pair {
+            which: PairedToken::DocCurly,
+            open: true,
+        }
+    }
+
+    pub fn close_doc_curly() -> Self {
+        Token::Pair {
+            which: PairedToken::DocCurly,
+            open: false,
+        }
+    }
+
     pub fn pipe() -> Self {
         Token::Symbol(SymbolicToken::Pipe)
     }
@@ -207,12 +226,7 @@ impl fmt::Display for SymbolicToken {
         use SymbolicToken::*;
         match self {
             String(s) => write!(f, "{}", s),
-            DocComment(s) => {
-                for line in s.split("\n") {
-                    writeln!(f, "## {}", line)?;
-                }
-                Ok(())
-            }
+            DocString(s) => write!(f, "{}", s),
             Equal => write!(f, "="),
             Caret => write!(f, "^"),
             Colon => write!(f, ":"),
@@ -231,6 +245,7 @@ impl fmt::Display for PairedToken {
             PairedToken::Paren => write!(f, "parenthesis"),
             PairedToken::Bracket => write!(f, "square bracket"),
             PairedToken::Curly => write!(f, "curly bracket"),
+            PairedToken::DocCurly => write!(f, "doc curly bracket"),
         }
     }
 }
@@ -269,6 +284,17 @@ impl fmt::Display for Token {
                     write!(f, "}}")
                 }
             }
+            Token::Pair {
+                which: PairedToken::DocCurly,
+                open,
+            } => {
+                if *open {
+                    write!(f, "{{{{")
+                } else {
+                    write!(f, "}}}}")
+                }
+            }
+            Token::DocComment => write!(f, "##"),
             Token::Comma => write!(f, ","),
             Token::Semicolon => write!(f, ";"),
             Token::Newline => write!(f, "\n"),
@@ -309,10 +335,48 @@ impl fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+enum DocCommentMode {
+    String,
+    Expression,
+}
+
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+struct DocComment {
+    active: bool,
+    mode: DocCommentMode,
+}
+
+impl Default for DocComment {
+    fn default() -> Self {
+        DocComment {
+            active: false,
+            mode: DocCommentMode::String,
+        }
+    }
+}
+
+impl DocComment {
+    fn string() -> Self {
+        DocComment {
+            active: true,
+            mode: DocCommentMode::String,
+        }
+    }
+
+    fn expr() -> Self {
+        DocComment {
+            active: true,
+            mode: DocCommentMode::Expression,
+        }
+    }
+}
+
 /// Iterator producing tokens or errors.
 pub struct Tokens<I: Iterator> {
     iter: LookaheadIterator<I>,
     source: Source<()>,
+    doc_comment: DocComment,
 }
 
 impl<I: Iterator, T> From<Source<T>> for Tokens<I>
@@ -324,7 +388,23 @@ where
         Tokens {
             iter: LookaheadIterator::new(i.into_iter()),
             source,
+            doc_comment: DocComment::default(),
         }
+    }
+}
+
+impl<I: Iterator> Tokens<I> {
+    fn next_source(&mut self) -> Option<I::Item> {
+        let ret = self.iter.next();
+        if ret.is_some() {
+            self.source.location.length += 1;
+        }
+        ret
+    }
+
+    fn reset_source_start(&mut self) {
+        self.source.location.start += self.source.location.length;
+        self.source.location.length = 0;
     }
 }
 
@@ -332,32 +412,44 @@ impl<I: Iterator<Item = char>> Iterator for Tokens<I> {
     type Item = Result<Source<Token>, Source<Error>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.iter.next().and_then(|c| {
-            self.source.location.start += self.source.location.length;
-            self.source.location.length = 1;
-            // Comments
-            if c == '#' {
-                // Doc comment
-                if self.iter.peek_match(&['#']) {
-                    self.iter.next();
-                    self.source.location.length += 1;
+        self.reset_source_start();
 
-                    let mut s = String::new();
-                    while let Some(c) = self.iter.peek() {
-                        if *c != '\n' {
-                            s.push(*c);
-                            self.iter.next();
-                            self.source.location.length += 1;
-                        } else {
-                            break;
-                        }
-                    }
-                    Some(Ok(self.source.clone().with(Token::doc_comment(s))))
+        // If in doc comment string mode, _always_ consume everything until newline/doc curly (even
+        // if empty) and emit a doc string. In any case, the doc comment state must be transitioned
+        // to something other than `DocComment::string()`.
+        if self.doc_comment == DocComment::string() {
+            let mut s = String::new();
+            while let Some(c) = self.iter.peek() {
+                if *c == '\n' {
+                    break;
+                } else if *c == '{' && self.iter.peek_at(1) == Some(&'{') {
+                    self.doc_comment = DocComment::expr();
+                    break;
+                } else {
+                    s.push(self.next_source().unwrap());
+                }
+            }
+            // Newline sets this too, but we need to ensure the doc comment state changes even if
+            // self.iter.peek() returned None.
+            if self.doc_comment == DocComment::string() {
+                self.doc_comment.active = false;
+            }
+            debug_assert!(self.doc_comment != DocComment::string());
+            return Some(Ok(self.source.clone().with(Token::doc_string(s))));
+        }
+
+        self.next_source().and_then(|c| {
+            if c == '#' {
+                // Doc comment (only when we are not in a doc comment expression)
+                if self.iter.peek_match(&['#']) && !self.doc_comment.active {
+                    self.next_source();
+
+                    self.doc_comment.active = true;
+                    Some(Ok(self.source.clone().with(Token::DocComment)))
                 } else {
                     while let Some(c) = self.iter.peek() {
                         if *c != '\n' {
-                            self.iter.next();
-                            self.source.location.length += 1;
+                            self.next_source();
                         } else {
                             break;
                         }
@@ -372,8 +464,7 @@ impl<I: Iterator<Item = char>> Iterator for Tokens<I> {
                     if c == '"' {
                         let mut s = String::new();
                         let mut escape = false;
-                        while let Some(c) = self.iter.next() {
-                            self.source.location.length += 1;
+                        while let Some(c) = self.next_source() {
                             // Escape sequence
                             if escape {
                                 if "\"\\".contains(c) {
@@ -404,14 +495,14 @@ impl<I: Iterator<Item = char>> Iterator for Tokens<I> {
                     }
                     // Newlines
                     else if c == '\n' {
+                        self.doc_comment.active = false;
                         Ok(Token::Newline)
                     }
                     // General whitespace
                     else if c.is_whitespace() {
                         while let Some(c) = self.iter.peek() {
                             if c.is_whitespace() && *c != '\n' {
-                                self.iter.next();
-                                self.source.location.length += 1;
+                                self.next_source();
                             } else {
                                 break;
                             }
@@ -424,9 +515,22 @@ impl<I: Iterator<Item = char>> Iterator for Tokens<I> {
                     } else if c == ']' {
                         Ok(Token::close_bracket())
                     } else if c == '{' {
-                        Ok(Token::open_curly())
+                        // Check for doc open curly if applicable.
+                        Ok(if self.doc_comment == DocComment::expr() && self.iter.peek_match(&['{']) {
+                            self.next_source();
+                            Token::open_doc_curly()
+                        } else {
+                            Token::open_curly()
+                        })
                     } else if c == '}' {
-                        Ok(Token::close_curly())
+                        // Check for doc closing curly if applicable.
+                        Ok(if self.doc_comment == DocComment::expr() && self.iter.peek_match(&['}']) {
+                            self.next_source();
+                            self.doc_comment = DocComment::string();
+                            Token::close_doc_curly()
+                        } else {
+                            Token::close_curly()
+                        })
                     } else if c == '(' {
                         Ok(Token::open_paren())
                     } else if c == ')' {
@@ -444,18 +548,15 @@ impl<I: Iterator<Item = char>> Iterator for Tokens<I> {
                     } else if c == '!' {
                         Ok(Token::bang())
                     } else if c == '-' && self.iter.peek_match(&['>']) {
-                        self.iter.next();
-                        self.source.location.length += 1;
+                        self.next_source();
                         Ok(Token::arrow())
                     } else if c == '|' {
                         Ok(if self.iter.peek_match(&['>']) {
-                            self.iter.next();
-                            self.source.location.length += 1;
+                            self.next_source();
                             Token::pipe_right()
                         } else { Token::pipe() })
                     } else if c == '<' && self.iter.peek_match(&['|']) {
-                        self.iter.next();
-                        self.source.location.length += 1;
+                        self.next_source();
                         Ok(Token::pipe_left())
                     } else {
                         // Words
@@ -466,8 +567,7 @@ impl<I: Iterator<Item = char>> Iterator for Tokens<I> {
                                 || self.iter.peek_match(&['-','>']) {
                                 break;
                             } else {
-                                s.push(self.iter.next().unwrap());
-                                self.source.location.length += 1;
+                                s.push(self.next_source().unwrap());
                             }
                         }
                         Ok(Token::string(s))
@@ -614,7 +714,8 @@ mod test {
         assert_tokens(
             "##This is a doc comment\nhello world",
             &[
-                Token::doc_comment("This is a doc comment"),
+                Token::DocComment,
+                Token::doc_string("This is a doc comment"),
                 Token::Newline,
                 Token::string("hello"),
                 Token::Whitespace,
@@ -624,14 +725,50 @@ mod test {
         assert_tokens(
             "##This is a doc comment\n##more doc comment\n  ##  and more\nhello",
             &[
-                Token::doc_comment("This is a doc comment"),
+                Token::DocComment,
+                Token::doc_string("This is a doc comment"),
                 Token::Newline,
-                Token::doc_comment("more doc comment"),
+                Token::DocComment,
+                Token::doc_string("more doc comment"),
                 Token::Newline,
                 Token::Whitespace,
-                Token::doc_comment("  and more"),
+                Token::DocComment,
+                Token::doc_string("  and more"),
                 Token::Newline,
                 Token::string("hello"),
+            ],
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn doc_comment_expression() -> Result<(), Source<Error>> {
+        assert_tokens(
+            "##doc comment {{ hello }}",
+            &[
+                Token::DocComment,
+                Token::doc_string("doc comment "),
+                Token::open_doc_curly(),
+                Token::Whitespace,
+                Token::string("hello"),
+                Token::Whitespace,
+                Token::close_doc_curly(),
+                Token::doc_string(""),
+            ],
+        )?;
+        assert_tokens(
+            "##doc comment {{\n##hello\n##}}",
+            &[
+                Token::DocComment,
+                Token::doc_string("doc comment "),
+                Token::open_doc_curly(),
+                Token::Newline,
+                Token::DocComment,
+                Token::string("hello"),
+                Token::Newline,
+                Token::DocComment,
+                Token::close_doc_curly(),
+                Token::doc_string(""),
             ],
         )?;
         Ok(())

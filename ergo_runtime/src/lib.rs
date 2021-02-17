@@ -94,6 +94,7 @@ pub struct Runtime {
     pub mod_path: ROption<PathBuf>,
     pub current_load_path: RVec<PathBuf>,
     pub lint: bool,
+    pub doc_path: ROption<PathBuf>,
     keyed_lifetime: RArc<RMutex<RHashMap<grease::types::Type, RArc<Erased>>>>,
     // It is important that lifetime is the last member of the runtime, so that when dropped it is
     // the last thing dropped. Other members of this struct, like env, load_cache, and
@@ -127,6 +128,7 @@ impl Runtime {
         context: Context,
         global_env: ScriptEnv,
         initial_load_path: Vec<std::path::PathBuf>,
+        doc_path: Option<std::path::PathBuf>,
     ) -> Self {
         Runtime {
             context,
@@ -139,6 +141,7 @@ impl Runtime {
             initial_load_path: initial_load_path.into_iter().map(|p| p.into()).collect(),
             current_load_path: Default::default(),
             lint: false,
+            doc_path: doc_path.map(|v| v.into()).into(),
             keyed_lifetime: RArc::new(RMutex::new(Default::default())),
             lifetime: RArc::new(RMutex::new(Default::default())),
         }

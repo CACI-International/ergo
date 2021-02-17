@@ -39,6 +39,7 @@ pub struct Script {
 pub fn script_context(
     cb: grease::runtime::ContextBuilder,
     initial_load_path: Vec<std::path::PathBuf>,
+    doc_path: Option<std::path::PathBuf>,
 ) -> Result<Runtime, grease::runtime::BuilderError> {
     let mut global_env = ScriptEnv::default();
     {
@@ -56,13 +57,14 @@ pub fn script_context(
         insert("fn", base::pat_args_to_args());
         insert("pat", base::pat_args_to_pat_args());
         insert("index", base::pat_args_to_index());
+        insert("doc", base::doc());
     }
 
     cb.build().map(|mut ctx| {
         // Add initial traits
         ergo_runtime::traits::traits(&mut ctx.traits);
         runtime::traits(&mut ctx.traits);
-        Runtime::new(ctx, global_env, initial_load_path)
+        Runtime::new(ctx, global_env, initial_load_path, doc_path)
     })
 }
 
@@ -204,12 +206,49 @@ mod test {
         )
     }
 
-    #[test]
-    fn doc_comment() -> Result<(), String> {
-        script_eval_to(
-            "## doc comment comment comment\n:a = something\n:a",
-            SRString("something"),
-        )
+    mod doc_comment {
+        use super::*;
+
+        #[test]
+        fn basic() -> Result<(), String> {
+            script_eval_to(
+                "## doc comment comment comment\n:a = something\n:a",
+                SRString("something"),
+            )
+        }
+
+        #[test]
+        fn expression() -> Result<(), String> {
+            script_eval_to(
+                "doc {\n## doc {{ comment }}\n()\n}",
+                SRString("doc comment"),
+            )
+        }
+
+        #[test]
+        fn expression_scope() -> Result<(), String> {
+            script_eval_to(
+                "doc {\n## {{v = comment}}doc {{:v}}\n()\n}",
+                SRString("doc comment"),
+            )?;
+            script_eval_to(
+                "v = comment\ndoc {\n## doc {{:v}}\n()\n}",
+                SRString("doc comment"),
+            )?;
+            script_eval_to(
+                "v = hello\n## {{v = comment}}doc {{:v}}\n()\n:v",
+                SRString("hello"),
+            )?;
+            Ok(())
+        }
+
+        #[test]
+        fn expression_self() -> Result<(), String> {
+            script_eval_to(
+                "doc {\n## doc {{self:v}}\n{ v = comment }\n}",
+                SRString("doc comment"),
+            )
+        }
     }
 
     #[test]
@@ -635,7 +674,8 @@ mod test {
     }
 
     async fn script_eval(s: &str) -> Result<Value, String> {
-        let mut ctx = script_context(Default::default(), vec![]).map_err(|e| e.to_string())?;
+        let mut ctx =
+            script_context(Default::default(), vec![], None).map_err(|e| e.to_string())?;
         Script::load(Source::new(StringSource::new("<test>", s.to_owned())))
             .map_err(|e| e.to_string())?
             .evaluate(&mut ctx)

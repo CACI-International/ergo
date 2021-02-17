@@ -8,7 +8,7 @@
 //! * Curly brackets and square brackets may contain newline-, semicolon-, and/or comma-separated
 //! lines.
 //!
-//! Colons are disambiguated between syntax sugar and prefixes/suffixes.
+//! Colons are disambiguated between prefix/infix/suffix.
 
 use super::tokenize::Token;
 pub use super::tokenize::{PairedToken, SymbolicToken};
@@ -29,11 +29,30 @@ pub enum TreeToken {
     NextChild,
 }
 
+impl TreeToken {
+    pub fn is_doc_token(&self) -> bool {
+        match self {
+            TreeToken::Symbol(SymbolicToken::DocString(_)) => true,
+            TreeToken::StartNested(PairedToken::DocCurly) => true,
+            _ => false,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DocComment {
+    None,
+    Present,
+    Ended,
+}
+
 /// Iterator producing tree tokens or errors.
 pub struct TreeTokens<TokenIter: Iterator> {
     iter: std::iter::Peekable<TokenIter>,
     nested: Vec<Source<PairedToken>>,
     last_implies_value: bool,
+    doc_comment: DocComment,
+    doc_curly_open: bool,
 }
 
 /// Tree tokenization errors.
@@ -91,6 +110,8 @@ impl<T: IntoIterator> From<T> for TreeTokens<T::IntoIter> {
             iter: i.into_iter().peekable(),
             nested: Default::default(),
             last_implies_value: false,
+            doc_comment: DocComment::None,
+            doc_curly_open: false,
         }
     }
 }
@@ -115,6 +136,26 @@ where
                 let (source, t) = source_t.take();
                 let last_implies_value =
                     std::mem::replace(&mut self.last_implies_value, t.implies_value_when_before());
+
+                // If we previously saw a doc comment and the next token will not be included in
+                // the doc comment (anything except newline, whitespace, and another doc comment),
+                // check that any doc curlies are closed.
+                if self.doc_comment == DocComment::Ended {
+                    match &t {
+                        Token::Newline | Token::Whitespace | Token::DocComment => (),
+                        _ => {
+                            self.doc_comment = DocComment::None;
+                            if self.doc_curly_open {
+                                let p = self
+                                    .nested
+                                    .pop()
+                                    .expect("tree tokenization invariant failed");
+                                return Some(Err(p.map(Error::UnmatchedOpeningToken)));
+                            }
+                        }
+                    }
+                }
+
                 match t {
                     Token::Symbol(SymbolicToken::Colon) => Some({
                         let next_implies_value = self
@@ -138,10 +179,16 @@ where
                     }),
                     Token::Symbol(s) => Some(Ok(source.with(TreeToken::Symbol(s)))),
                     Token::Pair { which, open: true } => {
+                        if which == PairedToken::DocCurly {
+                            self.doc_curly_open = true;
+                        }
                         self.nested.push(source.clone().with(which.clone()));
                         Some(Ok(source.with(TreeToken::StartNested(which))))
                     }
                     Token::Pair { which, open: false } => Some({
+                        if which == PairedToken::DocCurly {
+                            self.doc_curly_open = false;
+                        }
                         let expected = self.nested.pop();
                         if Some(&which) == expected.as_ref().map(|t| &**t) {
                             Ok(source.with(TreeToken::EndNested))
@@ -149,6 +196,10 @@ where
                             Err(source.with(Error::UnmatchedClosingToken(which, expected)))
                         }
                     }),
+                    Token::DocComment => {
+                        self.doc_comment = DocComment::Present;
+                        self.next()
+                    }
                     Token::Comma | Token::Semicolon => Some({
                         if self.has_children() {
                             Ok(source.with(TreeToken::NextChild))
@@ -157,6 +208,9 @@ where
                         }
                     }),
                     Token::Newline => {
+                        if self.doc_comment == DocComment::Present {
+                            self.doc_comment = DocComment::Ended;
+                        }
                         if self.has_children() {
                             Some(Ok(source.with(TreeToken::NextChild)))
                         } else {
@@ -300,6 +354,27 @@ mod test {
     }
 
     #[test]
+    fn doc_comment_expression() {
+        assert_tokens(
+            "## {{ a }}\nhello",
+            &[
+                Symbol(DocString(" ".into())),
+                StartNested(DocCurly),
+                s("a"),
+                EndNested,
+                Symbol(DocString("".into())),
+                NextChild,
+                s("hello"),
+            ],
+        );
+    }
+
+    #[test]
+    fn doc_comment_expression_mismatch() {
+        assert_fail("## {{\nhello");
+    }
+
+    #[test]
     fn invalid_separator() {
         assert_fail("(a, b)");
         assert_fail("(a; b)");
@@ -311,6 +386,7 @@ mod test {
         assert_fail(")");
         assert_fail("(a {b c\n d [e,f})");
         assert_fail("a {b c\n d [e,f]})");
+        assert_fail("## {{");
     }
 
     fn assert_tokens(s: &str, expected: &[TreeToken]) {

@@ -5,14 +5,18 @@ use crate::constants::{DIR_NAME, EXTENSION, PLUGIN_ENTRY, WORKSPACE_NAME};
 use abi_stable::{
     external_types::RMutex,
     std_types::{ROption, RResult},
+    StableAbi,
 };
 use ergo_runtime::{
-    namespace_id, source::FileSource, traits, types, ContextExt, EvalResult, Runtime, Source,
+    metadata::Doc, namespace_id, source::FileSource, traits, types, ContextExt, EvalResult,
+    Runtime, Source,
 };
 use futures::FutureExt;
 use grease::{
-    depends, match_value,
+    depends, make_value, match_value,
     path::PathBuf,
+    runtime::TaskLocal,
+    task_local_key,
     types::GreaseType,
     value::{IntoValue, TypedValue, Value},
 };
@@ -31,7 +35,7 @@ When loading a script, the following resolution process occurs for the first arg
 1. Filesystem Name Resolution
    a. If the passed script is an existing path in one of the load path directories, it is used.
    b. If the passed script with the `.ergo` extension appended is an existing path in one of the
-      load path directories, it is used.
+     load path directories, it is used.
 
    The load path is checked from first to last, and is determined by the location of `ergo` and the currently-executing
    script. By default, the load path contains the directory containing the currently-executing script (or if there is no
@@ -190,7 +194,7 @@ pub fn load_std() -> Value {
             }
             .boxed()
         },
-        depends![namespace_id!(ergo::load)],
+        depends![namespace_id!(ergo::std)],
         Some(TypedValue::constant(
             "Get the value as if `ergo std` was run, and apply any bindings to it. Return the library if called with no arguments.".into(),
         )),
@@ -271,11 +275,148 @@ pub fn load_workspace() -> Value {
             }
             .boxed()
         },
-        depends![namespace_id!(ergo::load)],
+        depends![namespace_id!(ergo::workspace)],
         Some(TypedValue::constant(
             "Get the value as if `ergo path/to/ancestor/workspace.ergo` was run, and apply any bindings to it.
 Return the workspace value if called with no arguments.".into(),
         )),
+    )
+    .into()
+}
+
+#[derive(StableAbi)]
+#[repr(C)]
+struct DocPath {
+    doc_path: PathBuf,
+}
+
+impl TaskLocal for DocPath {
+    fn task_local_key() -> u128 {
+        task_local_key!(ergo::doc::path)
+    }
+}
+
+impl DocPath {
+    pub fn get(fallback: PathBuf) -> PathBuf {
+        Self::task_local()
+            .map(|v| v.doc_path.clone())
+            .unwrap_or(fallback)
+    }
+}
+
+/// The doc function, supporting a number of indexed functions as well.
+pub fn doc() -> Value {
+    let path: Value = ergo_runtime::ergo_function!(independent ergo::doc::path,
+           r"Get the current documentation path, if any.
+
+Arguments: none
+
+Returns the doc Path, or Unset if no Path is present (documentation is not being generated to the filesystem).",
+        |ctx, args| {
+            args.unused_arguments()?;
+
+            match ctx.doc_path.as_ref().into_option() {
+                None => types::Unset::new().into(),
+                Some(doc_path) => {
+                    let doc_path = doc_path.clone();
+                    make_value!([namespace_id!(ergo::doc::path)] Ok(DocPath::get(doc_path))).into()
+                }
+            }
+        }).into();
+
+    let write: Value = ergo_runtime::ergo_function!(independent ergo::doc::gen,
+             r"Write documentation relative to the current documentation path.
+
+Arguments: <Path> <doc value>
+
+Returns the Path to the given documentation. If no documentation path is set, returns a string with
+the relative path (without writing anything).",
+        |ctx, args| {
+            let path = args.next().ok_or("no path provided")?;
+            let value = args.next().ok_or("no value provided")?;
+
+            args.unused_arguments()?;
+
+            let (path_source, path) = ctx.source_value_as::<types::String>(path).await?.take();
+            let doc = Doc::get(ctx, &value);
+
+            match ctx.doc_path.as_ref().into_option() {
+                None => path.into(),
+                Some(root_doc_path) => {
+                    let root_doc_path = root_doc_path.clone();
+                    make_value!([path, doc] {
+                        let path = path.await?;
+                        let doc_path = DocPath::get(root_doc_path).into_pathbuf();
+                        let mut rel_path = std::path::PathBuf::new();
+                        for component in std::path::Path::new(path.0.as_str()).components() {
+                           use std::path::Component::*;
+                           match component {
+                               Prefix(_) | RootDir | ParentDir => return Err(path_source.with("invalid components specified (may only be relative descendant paths)").into_grease_error()),
+                               CurDir => (),
+                               Normal(c) => rel_path.push(c),
+                           }
+                        }
+                        let new_doc_path = doc_path.join(&rel_path);
+                        if let Some(parent) = new_doc_path.parent() {
+                           std::fs::create_dir_all(parent)?;
+                        }
+                        let doc_val = DocPath { doc_path: new_doc_path.clone().into() }.scoped(doc).await?;
+                        if new_doc_path.is_dir() {
+                            rel_path.push("index.md");
+                        } else {
+                            rel_path.set_extension("md");
+                        }
+                        let output_file = doc_path.join(&rel_path);
+                        std::fs::write(&output_file, doc_val.0.as_str().as_bytes())?;
+                        Ok(PathBuf::from(rel_path))
+                    }).into()
+                }
+            }
+        }).into();
+
+    types::Unbound::new(
+        move |ctx, v| {
+            let path = path.clone();
+            let write = write.clone();
+            async move {
+                let (source, v) = v.take();
+                match_value!(peek v => {
+                    types::Args => |args| {
+                        let mut args = args.await?.owned().args;
+                        let to_doc = args.next().ok_or("no argument to doc")?;
+                        args.unused_arguments()?;
+
+                        Doc::get(ctx, &to_doc).into()
+                    },
+                    types::Index => |index| {
+                        let ind = index.await?.owned().0;
+                        let (ind_source, ind) = ctx.source_value_as::<types::String>(ind).await?.take();
+                        let ind = ind.await?;
+                        if ind.0.as_str() == "path" {
+                            path
+                        } else if ind.0.as_str() == "write" {
+                            write
+                        } else {
+                            Err(ind_source.with("unrecognized index").into_grease_error())?
+                        }
+                    },
+                    => |v| traits::type_error(ctx, source.with(v), "function call or index").await?
+                })
+                .await
+            }
+            .boxed()
+        },
+        depends![namespace_id!(ergo::doc)],
+        Some(TypedValue::constant(
+            "Get the documentation for a value.
+
+Arguments: <value>
+
+Returns the documentation string.
+
+### Indices
+* `path` - Get the documentation output path, if set.
+* `write` - Write documentation to the given output path.".into())),
     )
     .into()
 }

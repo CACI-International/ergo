@@ -10,6 +10,13 @@ mod parse_tree;
 mod tokenize;
 mod tokenize_tree;
 
+/// Parts of a doc comment.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum DocCommentPart {
+    String(String),
+    Expression(Vec<Expr>),
+}
+
 /// A parsed expression.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Expression {
@@ -31,7 +38,7 @@ pub enum Expression {
     IfBind(Box<Expr>, Box<Expr>, Option<Box<Expr>>),
     Force(Box<Expr>),
     Merge(Box<Expr>),
-    DocComment(String, Box<Expr>),
+    DocComment(Vec<DocCommentPart>, Box<Expr>),
     Compiled(Value),
 }
 

@@ -34,6 +34,7 @@ macro_rules! grease_string_map {
             $( m.insert(crate::grease_string($s), $v); )*
             let mut v = ergo_runtime::types::Map(m).into_value_no_doc();
             let mut doc = String::from($map_doc);
+            doc.push('\n');
             $( doc.push_str(&format!("\n* {}: {}", $s, $doc)); )*
             v.set_metadata(
                 &ergo_runtime::metadata::Doc,

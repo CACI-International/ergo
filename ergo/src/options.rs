@@ -86,6 +86,14 @@ pub struct Opts {
     /// This option toggles the `--page` state.
     pub doc: bool,
 
+    #[structopt(long = "doc-write")]
+    /// Generate documentation for the final value rather than executing it, and write it to the
+    /// filesystem.
+    ///
+    /// This option behaves similarly to `--doc`, but rather than displaying the documentation, it
+    /// is written to the given path.
+    pub doc_path: Option<std::path::PathBuf>,
+
     #[structopt(short, long)]
     /// Page the evaluation output.
     pub page: bool,

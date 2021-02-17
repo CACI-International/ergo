@@ -26,6 +26,16 @@
 * Add `-E`/`--error-limit` flag and default to 3 frames of error context.
   Pretty-print error tracebacks rather than relying on the error display
   implementations.
+* Add `--doc-write` flag to output documentation to markdown files.
+* Add a built-in `doc` function to get documentation of a value, supporting the
+  following additional indexes:
+  * `doc:write` to write out documentation for a value (if `--doc-write` has
+    been specified)
+  * `doc:path` to get the current output location for documentation, if any.
+* Support expressions in doc comments.
+  * `{{ ... }}` in doc comments (possibly spanning multiple lines) will evaluate
+    the content as a block, with scope that is shared throughout the doc
+    comment. The result of the block is displayed inline in the final comment.
 
 ### Improvements
 * Improve doc comment parsing by not requiring a space after the initial `##`.

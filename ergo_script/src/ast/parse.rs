@@ -37,7 +37,8 @@ where
     type Item = Result<Source<Expression>, Source<Error<E>>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut doc_comment_lines = Vec::new();
+        let mut doc_comment_parts = Vec::new();
+
         loop {
             match self.trees.next() {
                 None => break None,
@@ -45,8 +46,20 @@ where
                 Some(Ok(t)) => {
                     let (source, t) = t.take();
                     match t {
-                        Tree::DocComment(s) => {
-                            doc_comment_lines.push(s);
+                        Tree::DocString(s) => {
+                            doc_comment_parts.push(DocCommentPart::String(s));
+                        }
+                        Tree::DocCurly(inner) => {
+                            let exprs = Parser::with_context(
+                                inner.into_iter().map(Ok),
+                                self.ctx.allow_merge(true).bind_equal(false),
+                            )
+                            .collect::<Result<Vec<_>, _>>();
+                            let exprs = match exprs {
+                                Err(e) => break Some(Err(e)),
+                                Ok(v) => v,
+                            };
+                            doc_comment_parts.push(DocCommentPart::Expression(exprs));
                         }
                         o => {
                             let e = match to_expression(self.ctx, source.with(o)) {
@@ -54,41 +67,69 @@ where
                                 Err(e) => break Some(Err(e)),
                             };
                             let doc_comment = {
-                                let mut doc_comment_lines = doc_comment_lines.into_iter();
-                                let mut doc_comment = String::new();
+                                // Reduce doc comment parts, trimming whitespace and inserting
+                                // newlines.
+                                let mut doc_comment_parts = doc_comment_parts.into_iter();
+                                let mut result = Vec::new();
 
-                                // Use whitespace of first line of doc comment to determine trimmable
-                                // whitespace from subsequent lines.
+                                // Use whitespace of first non-empty line of doc comment to
+                                // determine trimmable whitespace from subsequent lines.
                                 let mut leading_ws_offset = 0;
-                                while let Some(line) = doc_comment_lines.next() {
-                                    match line.find(|c: char| !c.is_whitespace()) {
-                                        None => continue,
-                                        Some(offset) => {
-                                            leading_ws_offset = offset;
-                                            doc_comment
-                                                .push_str(unsafe { line.get_unchecked(offset..) });
+                                while let Some(part) = doc_comment_parts.next() {
+                                    match part {
+                                        DocCommentPart::String(s) => {
+                                            match s.find(|c: char| !c.is_whitespace()) {
+                                                None => continue,
+                                                Some(offset) => {
+                                                    leading_ws_offset = offset;
+                                                    result.push(DocCommentPart::String(
+                                                        unsafe { s.get_unchecked(offset..) }.into(),
+                                                    ));
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        DocCommentPart::Expression(_) => {
+                                            result.push(part);
                                             break;
                                         }
                                     }
                                 }
 
                                 // Get remaining lines and trim leading whitespace if necessary.
-                                while let Some(line) = doc_comment_lines.next() {
-                                    doc_comment.push('\n');
-                                    let offset = std::cmp::min(
-                                        leading_ws_offset,
-                                        line.find(|c: char| !c.is_whitespace()).unwrap_or(0),
-                                    );
-                                    doc_comment.push_str(unsafe { line.get_unchecked(offset..) });
+                                while let Some(part) = doc_comment_parts.next() {
+                                    match part {
+                                        DocCommentPart::Expression(_) => {
+                                            result.push(part);
+                                        }
+                                        DocCommentPart::String(ref s) => {
+                                            if let Some(DocCommentPart::String(l)) =
+                                                result.last_mut()
+                                            {
+                                                let offset = std::cmp::min(
+                                                    leading_ws_offset,
+                                                    s.find(|c: char| !c.is_whitespace())
+                                                        .unwrap_or(s.len()),
+                                                );
+                                                l.push('\n');
+                                                l.push_str(unsafe { s.get_unchecked(offset..) });
+                                            } else {
+                                                result.push(part);
+                                            }
+                                        }
+                                    }
                                 }
 
                                 // We already have done the equivalent of trim_start, so just need
                                 // to trim_end.
-                                doc_comment.trim_end().to_owned()
+                                if let Some(DocCommentPart::String(l)) = result.last_mut() {
+                                    *l = l.trim_end().into();
+                                }
+                                result
                             };
                             break Some(Ok(if !doc_comment.is_empty() {
                                 // If a doc comment precedes a bind expression, apply it to the value.
-                                // Otherwise apply it to whatever value it precedes.
+                                // Otherwise apply it to whichever value it precedes.
                                 let (expr_source, expr) = e.take();
                                 match expr {
                                     Expression::Bind(a, b) => expr_source.with(Expression::Bind(
@@ -385,7 +426,7 @@ fn to_expression<E>(
                 .collect::<Result<Vec<_>, _>>()
                 .map(|v| source.with(Expression::Array(v)))
         }
-        Tree::DocComment(_) => Err(source.with(Error::BadDocComment)),
+        Tree::DocString(_) | Tree::DocCurly(_) => Err(source.with(Error::BadDocComment)),
     }
 }
 
@@ -699,7 +740,10 @@ mod test {
     fn doc_comment() {
         assert_single(
             "## my doc\n ##\n##   docs\n##more doc\n##\nval",
-            DocComment("my doc\n\n  docs\nmore doc".into(), s("val")),
+            DocComment(
+                vec![DocCommentPart::String("my doc\n\n  docs\nmore doc".into())],
+                s("val"),
+            ),
         );
     }
 
@@ -707,7 +751,33 @@ mod test {
     fn doc_comment_bind() {
         assert_single(
             "## my doc\n:a = b",
-            Bind(src(Set(s("a"))), src(DocComment("my doc".into(), s("b")))),
+            Bind(
+                src(Set(s("a"))),
+                src(DocComment(
+                    vec![DocCommentPart::String("my doc".into())],
+                    s("b"),
+                )),
+            ),
+        );
+    }
+
+    #[test]
+    fn doc_comment_expressions() {
+        assert_single(
+            "## my doc {{ comment }}\n## {{\n## more expr\n## abc def ghi }} stuff\n##   more docs\nval",
+            DocComment(
+                vec![
+                    DocCommentPart::String("my doc ".into()),
+                    DocCommentPart::Expression(vec![s("comment")]),
+                    DocCommentPart::String("\n".into()),
+                    DocCommentPart::Expression(vec![
+                        src(Command(src(Get(s("more"))), vec![s("expr")])),
+                        src(Command(src(Get(s("abc"))), vec![s("def"), s("ghi")])),
+                    ]),
+                    DocCommentPart::String(" stuff\n  more docs".into()),
+                ],
+                s("val"),
+            ),
         );
     }
 

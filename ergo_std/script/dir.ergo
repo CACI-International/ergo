@@ -94,42 +94,71 @@ extend-index = fn :a :b -> {
     ]) :doc
 }
 
-extend-index :plugin {
-    ## * default: Provide a default value for a binding.
-    ## * ergo-remote: Load an ergo library from a remote url of an archive.
-    ## * import: Access nested indices of a bound value.
-    ## * matches: Create a value which matches the given bindings.
-    ## * pass: Bind to any value, evaluating to the bound value.
-    ## * recursive: Create a recursive function.
-    {
-        type = extend-index plugin:type {
-            ## * enum: Create an enumerated type.
-            ## * struct: Create a structured type.
-            ## * MapValues: Match a map with specific value types.
-            ## * MapOf: Match a map with single key and value types.
-            ## * ArrayValues: Match an array with specific value types.
-            ## * ArrayOf: Match an array of a single type.
-            ## * Optional: Match an inner value or `Unset` types.
-            ## * Required: Match an inner value, disallowing `Unset` types.
-            :type
-        }
-        net = extend-index plugin:net {
-            ## * unarchive-remote: Open a remote archive.
-            :net
-        }
-        match = extend-index plugin:match {
-            ## ## Indices
-            ## * value: Create a value that matches against a binding.
-            { value = :matches }
-        }
-        path = extend-index plugin:path {
-            ## * with-output: Run a command which creates an output Path.
-            { with-output = :with-output-path }
-        }
-        ergo-remote
-        pass
-        default
-        recursive
-        import
+doc-summary = fn :val -> (plugin:string:split "\n\n" (doc :val)):0
+
+doc-module = fn :self :name -> {
+    first = !plugin:match doc:path: ^[
+        plugin:type:Unset -> :name
+        _ -> plugin:string:format "[{}]({})" :name (doc:write :name self::name)
+    ]
+    plugin:string:format "* {}: {}\n" :first (doc-summary self::name)
+}
+
+doc-modules = fn :self ^:names -> {
+    !plugin:collection:fold (fn :s :n -> plugin:string:format "{}{}" :s (doc-module :self :n)) "" :names
+}
+
+doc-function = fn :self :name -> {
+    !plugin:match doc:path: ^[
+        plugin:type:Unset -> plugin:string:format "* {}: {}\n" :name (doc-summary self::name)
+        _ -> plugin:string:format "## {}\n{}\n\n" :name (doc self::name)
+    ]
+}
+
+doc-functions = fn :self ^:names -> {
+    !plugin:collection:fold (fn :s :n -> plugin:string:format "{}{}" :s (doc-function :self :n)) "" :names
+}
+
+## The ergo standard library.
+##
+## This library provides a number of submodules that group related functions, as well as a few
+## top-level functions. It is often useful to merge the library into the top-level environment,
+## for instance with `^ergo std`.
+##
+## # Modules
+## {{doc-modules :self collection env error fs io net path script string type value}}
+##
+## # Functions
+## {{doc-functions :self default ergo-remote exec import log match pass recursive seq task}}
+{
+    ^:plugin
+    type = extend-index plugin:type {
+        ## * enum: Create an enumerated type.
+        ## * struct: Create a structured type.
+        ## * MapValues: Match a map with specific value types.
+        ## * MapOf: Match a map with single key and value types.
+        ## * ArrayValues: Match an array with specific value types.
+        ## * ArrayOf: Match an array of a single type.
+        ## * Optional: Match an inner value or `Unset` types.
+        ## * Required: Match an inner value, disallowing `Unset` types.
+        :type
     }
+    net = extend-index plugin:net {
+        ## * unarchive-remote: Open a remote archive.
+        :net
+    }
+    match = extend-index plugin:match {
+        ## ## Indices
+        ## * value: Create a value that matches against a binding.
+        { value = :matches }
+    }
+    path = extend-index plugin:path {
+        ## * with-output: Run a command which creates an output Path.
+        { with-output = :with-output-path }
+    }
+    ergo-remote
+    pass
+    default
+    recursive
+    import
 }

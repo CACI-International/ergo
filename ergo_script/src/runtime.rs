@@ -4,7 +4,7 @@
 //! Importantly, it tracks source locations for values and errors so that when an error occurs,
 //! useful error information can be provided.
 
-use super::ast::{Expr, Expression};
+use super::ast::{DocCommentPart, Expr, Expression};
 use ergo_runtime::error::PatternError;
 use ergo_runtime::source::Source;
 use ergo_runtime::Result as EResult;
@@ -461,14 +461,37 @@ impl Evaluator {
                     }
                     Force(v) => Force(self.compile_env_into(ctx, *v).await?.into()),
                     Merge(v) => Merge(self.compile_env_into(ctx, *v).await?.into()),
-                    DocComment(s, v) => {
+                    DocComment(parts, v) => {
                         let mut v = self.compile_env_into(ctx, *v).await?;
-                        if let Compiled(value) = &mut *v {
-                            value.set_metadata(&metadata::Doc, types::String::from(s).into());
-                            v.unwrap()
-                        } else {
-                            DocComment(s, v.into())
-                        }
+                        let new_parts = ctx
+                            .env_scoped(|ctx| {
+                                async move {
+                                    let mut r = Vec::new();
+                                    for p in parts {
+                                        match p {
+                                            DocCommentPart::String(_) => r.push(Ok(p)),
+                                            DocCommentPart::Expression(es) => {
+                                                let mut new_es = Vec::new();
+                                                for e in es {
+                                                    new_es
+                                                        .push(self.compile_env_into(ctx, e).await);
+                                                }
+                                                r.push(
+                                                    new_es
+                                                        .into_iter()
+                                                        .collect_result()
+                                                        .map(DocCommentPart::Expression),
+                                                );
+                                            }
+                                        }
+                                    }
+                                    r.into_iter().collect_result()
+                                }
+                                .boxed()
+                            })
+                            .await
+                            .0?;
+                        DocComment(new_parts, v.into())
                     }
                     Compiled(v) => Compiled(v),
                 })
@@ -882,10 +905,37 @@ impl Evaluator {
 
                         Ok(types::Merge(val).into_value())
                     }
-                    DocComment(s, val) => {
-                        let mut val = self.evaluate(ctx, *val).await?.unwrap();
-                        val.set_metadata(&metadata::Doc, types::String::from(s).into());
-                        Ok(val)
+                    DocComment(parts, val) => {
+                        let mut val = self.evaluate(ctx, *val).await?;
+                        let doc_val = val.clone();
+                        let doc = ctx.env_scoped(|ctx| async move {
+                            // Insert special `self` keyword representing the value being
+                            // documented.
+                            ctx.env_set_to_current(|ctx| async move {
+                                ctx.env_insert(types::String::from("self").into(), Ok(doc_val));
+                            }.boxed()).await;
+                            let mut doc = std::string::String::new();
+                            for p in parts {
+                                match p {
+                                    DocCommentPart::String(s) => doc.push_str(&s),
+                                    DocCommentPart::Expression(es) => {
+                                        // Evaluate as a block, displaying the final value and
+                                        // merging the scope into the doc comment scope.
+                                        let (val, scope) = self.evaluate_block(ctx, es).await?;
+                                        ctx.env_set_to_current(|ctx| async move { ctx.env_extend(scope); }.boxed()).await;
+                                        // Only add to string if the last value wasn't a bind
+                                        // expression (to support using a block to only add
+                                        // bindings).
+                                        if val.grease_type_immediate() != Some(&BindExpr::grease_type()) {
+                                            doc.push_str(&ctx.display(val.unwrap()).await?);
+                                        }
+                                    }
+                                }
+                            }
+                            Result::<_, grease::Error>::Ok(doc)
+                        }.boxed()).await.0?;
+                        val.set_metadata(&metadata::Doc, types::String::from(doc).into());
+                        Ok(val.unwrap())
                     }
                     Compiled(v) => Ok(v)
                 }
