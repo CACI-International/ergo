@@ -9,7 +9,7 @@ use crate::Source;
 use abi_stable::{
     sabi_trait,
     sabi_trait::prelude::*,
-    std_types::{RBox, RString, RVec},
+    std_types::{RBox, ROption, RString, RVec},
     StableAbi,
 };
 use grease::bst::BstMap;
@@ -20,6 +20,8 @@ use grease::types::GreaseType;
 use grease::value::{Dependencies, TypedValue, Value};
 
 pub(crate) mod byte_stream;
+pub(crate) mod shared_iter;
+pub(crate) mod shared_stream;
 
 pub use byte_stream::ByteStream;
 
@@ -300,6 +302,197 @@ impl Unset {
     /// Return whether the given value is unset.
     pub fn is_unset(v: &Value) -> bool {
         v.grease_type_immediate() == Some(&Self::grease_type())
+    }
+}
+
+/// A stream type.
+///
+/// This differs from `Iterator` in that you can partially consume streams and retain correct
+/// dependency tracking.
+#[derive(Clone, Debug, GreaseType, StableAbi)]
+#[repr(C)]
+pub struct Stream(StreamInner);
+
+pub trait StreamInterface: Clone + std::fmt::Debug + Send + Sync {
+    fn next(self) -> Option<(Value, TypedValue<Stream>)>;
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (0, None)
+    }
+}
+
+impl<I: StreamInterface> StreamAbi for I {
+    fn next(self) -> ROption<abi_stable::std_types::Tuple2<Value, TypedValue<Stream>>> {
+        StreamInterface::next(self).map(|v| v.into()).into()
+    }
+
+    fn size_hint(&self) -> abi_stable::std_types::Tuple2<usize, ROption<usize>> {
+        let (min, max) = StreamInterface::size_hint(self);
+        (min, max.into()).into()
+    }
+}
+
+impl Stream {
+    /// Create a new Stream.
+    pub fn new<I: StreamInterface + 'static>(interface: I) -> Self {
+        Stream(StreamInner::Inner(StreamAbi_TO::from_value(
+            interface, TU_Opaque,
+        )))
+    }
+}
+
+#[derive(Clone, Debug, StableAbi)]
+#[repr(C)]
+enum StreamInner {
+    Inner(StreamAbi_TO<'static, RBox<()>>),
+    Pending(Value, TypedValue<Stream>),
+    Empty,
+}
+
+#[sabi_trait]
+trait StreamAbi: Clone + Debug + Send + Sync {
+    fn next(self) -> ROption<abi_stable::std_types::Tuple2<Value, TypedValue<Stream>>>;
+
+    #[sabi(last_prefix_field)]
+    fn size_hint(&self) -> abi_stable::std_types::Tuple2<usize, ROption<usize>> {
+        (0, ROption::RNone).into()
+    }
+}
+
+impl StreamInner {
+    fn take(&mut self) -> Self {
+        std::mem::replace(self, StreamInner::Empty)
+    }
+}
+
+impl futures::stream::Stream for Stream {
+    type Item = crate::Result<Value>;
+
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        let me = &mut *self;
+        loop {
+            match me.0.take() {
+                StreamInner::Inner(s) => match s.next().into_option() {
+                    None => break std::task::Poll::Ready(None),
+                    Some(v) => {
+                        let (a, b) = v.into_tuple();
+                        me.0 = StreamInner::Pending(a, b);
+                    }
+                },
+                StreamInner::Pending(v, mut next) => {
+                    match futures::Future::poll(std::pin::Pin::new(&mut next), cx) {
+                        std::task::Poll::Pending => {
+                            me.0 = StreamInner::Pending(v, next);
+                            break std::task::Poll::Pending;
+                        }
+                        std::task::Poll::Ready(r) => match r {
+                            Err(e) => break std::task::Poll::Ready(Some(Err(e))),
+                            Ok(new_me) => {
+                                *me = new_me.owned();
+                                break std::task::Poll::Ready(Some(Ok(v)));
+                            }
+                        },
+                    }
+                }
+                StreamInner::Empty => break std::task::Poll::Ready(None),
+            }
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match &self.0 {
+            StreamInner::Inner(i) => {
+                let (min, max) = i.size_hint().into_tuple();
+                (min, max.into_option())
+            }
+            StreamInner::Empty => (0, Some(0)),
+            _ => (0, None),
+        }
+    }
+}
+
+/// An iterator type.
+///
+/// Note that iterator types are meant to be fully consumed wherever they are used. Changing one
+/// partially and creating a new Value may not correctly capture dependencies; for a partial
+/// consumption case, use `Stream`.
+#[derive(Clone, Debug, GreaseType, StableAbi)]
+#[repr(C)]
+pub struct Iter(shared_iter::SharedIterator<IterWrapper>);
+
+#[sabi_trait]
+trait IterAbi: Send + Sync {
+    fn next(&mut self) -> ROption<Value>;
+
+    #[sabi(last_prefix_field)]
+    fn size_hint(&self) -> abi_stable::std_types::Tuple2<usize, ROption<usize>> {
+        (0, ROption::RNone).into()
+    }
+}
+
+#[derive(StableAbi)]
+#[repr(C)]
+struct IterWrapper(IterAbi_TO<'static, RBox<()>>);
+
+impl Iterator for IterWrapper {
+    type Item = Value;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next().into_option()
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let (min, max) = self.0.size_hint().into_tuple();
+        (min, max.into_option())
+    }
+}
+
+impl Iterator for Iter {
+    type Item = Value;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        Iterator::next(&mut self.0)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        Iterator::size_hint(&self.0)
+    }
+}
+
+impl<I> IterAbi for I
+where
+    I: Iterator<Item = Value> + Send + Sync,
+{
+    fn next(&mut self) -> ROption<Value> {
+        Iterator::next(self).into()
+    }
+
+    fn size_hint(&self) -> abi_stable::std_types::Tuple2<usize, ROption<usize>> {
+        let (min, max) = Iterator::size_hint(self);
+        (min, max.into()).into()
+    }
+}
+
+impl Iter {
+    /// Create a new Iter value with the given dependencies.
+    pub fn new<I>(iter: I, deps: Dependencies) -> TypedValue<Self>
+    where
+        I: Iterator<Item = Value> + Send + Sync + 'static,
+    {
+        TypedValue::constant_deps(Self::from_iter(iter), deps)
+    }
+
+    /// Create an Iter from an iterator.
+    pub fn from_iter<I>(iter: I) -> Self
+    where
+        I: Iterator<Item = Value> + Send + Sync + 'static,
+    {
+        Iter(shared_iter::SharedIterator::new(IterWrapper(
+            IterAbi_TO::from_value(iter, TU_Opaque),
+        )))
     }
 }
 

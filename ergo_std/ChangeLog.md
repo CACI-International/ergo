@@ -14,6 +14,7 @@
 * Add `recursive` to create recursive functions.
 * Add `match:value` convenience function.
 * Add `path:with-output` to make output paths from commands more ergonomic.
+* Add `Iter` type for iterators.
 
 ### Improvements
 * Allow `env:path-search` to take Paths, and simply forward them as the returned

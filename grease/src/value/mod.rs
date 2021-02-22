@@ -872,10 +872,12 @@ macro_rules! match_value {
 /// A reference to a type-erased result.
 pub type Ref<T> = crate::type_erase::Ref<T, RArc<Erased>>;
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, StableAbi)]
+#[repr(C)]
+#[sabi(phantom_field="phantom: RArc<T>")]
 pub struct TypedValue<T> {
     inner: Value,
-    phantom: std::marker::PhantomData<Arc<T>>,
+    phantom: std::marker::PhantomData<RArc<T>>,
 }
 
 impl<T: GreaseType> TypedValue<T> {

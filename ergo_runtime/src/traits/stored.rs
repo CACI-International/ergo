@@ -110,6 +110,26 @@ grease_traits_fn! {
         }
     }
 
+    impl Stored for types::Iter {
+        async fn put(&self, stored_ctx: &StoredContext, item: ItemContent) {
+            let mut ids: Vec<u128> = Vec::new();
+            for v in self.clone() {
+                ids.push(v.id());
+                stored_ctx.write_to_store(CONTEXT, v).await?;
+            }
+            bincode::serialize_into(item, &ids)?
+        }
+
+        async fn get(stored_ctx: &StoredContext, item: ItemContent) -> Erased {
+            let ids: Vec<u128> = bincode::deserialize_from(item)?;
+            let mut vals = Vec::new();
+            for id in ids {
+                vals.push(stored_ctx.read_from_store(CONTEXT, id).await?);
+            }
+            Erased::new(types::Iter::from_iter(vals.into_iter()))
+        }
+    }
+
     impl Stored for types::Map {
         async fn put(&self, stored_ctx: &StoredContext, item: ItemContent) {
             let mut ids: BTreeMap<u128, u128> = BTreeMap::new();

@@ -36,6 +36,7 @@
   * `{{ ... }}` in doc comments (possibly spanning multiple lines) will evaluate
     the content as a block, with scope that is shared throughout the doc
     comment. The result of the block is displayed inline in the final comment.
+* Add `Iter` type for iterators.
 
 ### Improvements
 * Improve doc comment parsing by not requiring a space after the initial `##`.

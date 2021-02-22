@@ -21,6 +21,12 @@ grease_traits_fn! {
         }
     }
 
+    impl Nested for types::Iter {
+        async fn nested(&self) -> RVec<Value> {
+            self.clone().collect()
+        }
+    }
+
     impl Nested for types::Map {
         async fn nested(&self) -> RVec<Value> {
             self.0.iter().map(|t| t.1).cloned().collect()
