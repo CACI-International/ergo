@@ -9,6 +9,7 @@ pub fn module() -> Value {
         "A map of string manipulation functions:"
         "format": "Create a string from a formatting specification." = format_fn(),
         "from": "Convert a value into a string." = from_fn(),
+        "join": "Join a string." = join_fn(),
         "split": "Split a string on a substring." = split_fn(),
         "trim": "Trim whitespace from the ends of a string." = trim_fn()
     }
@@ -222,6 +223,39 @@ Returns an Array of Strings representing the segments of `str` separated by `pat
     .into()
 }
 
+fn join_fn() -> Value {
+    ergo_function!(std::string::split,
+    r"Join an array of strings.
+
+Arguments: <separator: String> <iter: Iter>
+
+Returns a String representing the strings in `iter` separated by `separator`.",
+    |ctx, args| {
+        let sep = args.next().ok_or("join separator not provided")?;
+        let iter = args.next().ok_or("iter not provided")?;
+
+        args.unused_arguments()?;
+
+        let sep = ctx.source_value_as::<types::String>(sep).await?.unwrap();
+        let (iter_source, iter) = ctx.into_sourced::<types::Iter>(iter).await?.take();
+
+        let ctx = ctx.empty();
+        make_value!([sep, iter] {
+            let (sep, iter) = ctx.task.join(sep,iter).await?;
+            let iter = iter.owned();
+            let strs: Vec<_> = iter.map(|v| ctx.source_value_as::<types::String>(iter_source.clone().with(v))).collect();
+            // Evaluate source_value_as
+            let strs = ctx.task.join_all(strs).await?.into_iter().map(|sv| sv.unwrap());
+            // Evaluate resulting TypedValue<types::String>
+            let strs = ctx.task.join_all(strs).await?;
+            let strs = strs.iter().map(|v| v.as_str()).collect::<Vec<_>>();
+            Ok(types::String::from(strs.join(sep.0.as_str())))
+        })
+        .into()
+    })
+    .into()
+}
+
 fn trim_fn() -> Value {
     ergo_function!(
         std::string::trim,
@@ -273,6 +307,14 @@ mod test {
             t.assert_content_eq(r#"self:string:split the "the fox jumps over the fence""#, r#"[""," fox jumps over "," fence"]"#);
             t.assert_content_eq(r#"self:string:split " " "the fox jumps over the fence""#, "[the,fox,jumps,over,the,fence]");
             t.assert_content_eq("self:string:split t tttt", r#"["","","","",""]"#);
+        }
+    }
+
+    ergo_script::test! {
+        fn join(t) {
+            t.assert_content_eq(r#"self:string:join l [he,"","o wor",d]"#, r#""hello world""#);
+            t.assert_content_eq(r#"self:string:join " " [the,fox,jumps,over,the,fence]"#, r#""the fox jumps over the fence""#);
+            t.assert_content_eq(r#"self:string:join v ["","","","",""]"#, "vvvv");
         }
     }
 

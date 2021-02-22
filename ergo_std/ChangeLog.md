@@ -15,6 +15,7 @@
 * Add `match:value` convenience function.
 * Add `path:with-output` to make output paths from commands more ergonomic.
 * Add `Iter` type for iterators.
+* Add `string:join` to join iterators of strings.
 
 ### Improvements
 * Allow `env:path-search` to take Paths, and simply forward them as the returned
