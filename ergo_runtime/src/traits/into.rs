@@ -99,16 +99,16 @@ pub async fn into<T: GreaseType + StableAbi + Send + Sync + 'static>(
 }
 
 grease_traits_fn! {
-    // Anything -> bool (true)
+    // Anything -> Bool (true)
     {
         extern "C" fn to_bool<'a>(_data: &'a grease::type_erase::Erased, _ctx: &'a grease::runtime::Context, v: Value) ->
             grease::future::BoxFuture<'a, grease::error::RResult<Value>> {
             grease::future::BoxFuture::new(async move {
-                grease::error::RResult::ROk(v.then(TypedValue::constant(true).into()))
+                grease::error::RResult::ROk(v.then(crate::types::Bool(true).into()))
             })
         }
-        traits.add_generator_by_trait_for_trait::<IntoTyped<bool>>(|_traits, _type| {
-            ROption::RSome(IntoTypedImpl::<bool> {
+        traits.add_generator_by_trait_for_trait::<IntoTyped<crate::types::Bool>>(|_traits, _type| {
+            ROption::RSome(IntoTypedImpl::<crate::types::Bool> {
                 into_typed: unsafe { FnPtr::new(to_bool) },
                 grease_trait_data: Default::default(),
                 _phantom0: Default::default(),
@@ -140,10 +140,10 @@ grease_traits_fn! {
         unsafe { traits.add_generator(id) };
     }
 
-    // Unset -> bool (false)
-    impl IntoTyped<bool> for crate::types::Unset {
+    // Unset -> Bool (false)
+    impl IntoTyped<crate::types::Bool> for crate::types::Unset {
         async fn into_typed(self) -> Value {
-            TypedValue::constant(false).into()
+            crate::types::Bool(false).into()
         }
     }
 

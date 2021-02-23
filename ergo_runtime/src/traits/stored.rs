@@ -46,17 +46,6 @@ impl StoredContext {
 }
 
 grease_traits_fn! {
-    impl Stored for () {
-        async fn put(&self, _stored_ctx: &StoredContext, item: ItemContent) {
-            bincode::serialize_into(item, self)?
-        }
-
-        async fn get(_stored_ctx: &StoredContext, item: ItemContent) -> Erased {
-            let t: () = bincode::deserialize_from(item)?;
-            Erased::new(t)
-        }
-    }
-
     impl Stored for types::Unit {
         async fn put(&self, _stored_ctx: &StoredContext, item: ItemContent) {
             bincode::serialize_into(item, &())?
@@ -65,6 +54,17 @@ grease_traits_fn! {
         async fn get(_stored_ctx: &StoredContext, item: ItemContent) -> Erased {
             let _t: () = bincode::deserialize_from(item)?;
             Erased::new(types::Unit)
+        }
+    }
+
+    impl Stored for types::Bool {
+        async fn put(&self, _stored_ctx: &StoredContext, item: ItemContent) {
+            bincode::serialize_into(item, &self.0)?
+        }
+
+        async fn get(_stored_ctx: &StoredContext, item: ItemContent) -> Erased {
+            let v: bool = bincode::deserialize_from(item)?;
+            Erased::new(types::Bool(v))
         }
     }
 

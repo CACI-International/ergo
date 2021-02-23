@@ -50,12 +50,6 @@ macro_rules! grease_display_basic {
 }
 
 grease_traits_fn! {
-    impl Display for () {
-        async fn fmt(&self) -> RString {
-            Default::default()
-        }
-    }
-
     impl Display for types::Unit {
         async fn fmt(&self) -> RString {
             Default::default()
@@ -106,17 +100,6 @@ grease_traits_fn! {
         }
     }
 
-    grease_display_basic!(traits, u8);
-    grease_display_basic!(traits, i8);
-    grease_display_basic!(traits, u16);
-    grease_display_basic!(traits, i16);
-    grease_display_basic!(traits, u32);
-    grease_display_basic!(traits, i32);
-    grease_display_basic!(traits, u64);
-    grease_display_basic!(traits, i64);
-    grease_display_basic!(traits, usize);
-    grease_display_basic!(traits, isize);
-    grease_display_basic!(traits, char);
-    grease_display_basic!(traits, bool);
+    grease_display_basic!(traits, types::Bool);
     grease_display_basic!(traits, types::String);
 }

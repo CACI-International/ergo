@@ -171,7 +171,7 @@ Returns a boolean indicating whether the path exists (as either a file or direct
             let path = path.await?.unwrap();
 
             make_value!((path) {
-                Ok(path.await?.as_ref().as_ref().exists())
+                Ok(types::Bool(path.await?.as_ref().as_ref().exists()))
             })
             .into()
         }
@@ -332,7 +332,7 @@ Returns a boolean indicating whether `sum` is the sha1 sum of the contents of `f
                 let mut digest = Sha1::default();
                 std::io::copy(&mut f, &mut digest)?;
                 use sha::utils::DigestExt;
-                Ok(digest.to_hex().eq_ignore_ascii_case(sum.as_ref().as_str()))
+                Ok(types::Bool(digest.to_hex().eq_ignore_ascii_case(sum.as_ref().as_str())))
             })
             .into()
         }

@@ -105,6 +105,13 @@ Syntax has changed in the following breaking ways:
   of the command-line invocation. If you were relying on such behavior in
   scripts, use `workspace:command <args>` explicitly in the script.
 
+Semantics have changed in the following breaking ways:
+* `()` (unit-typed values) now convert to true (rather than false) if converted
+  to a `Bool`. This means the logic of some things that relied on this behavior
+  needs to be updated. In particular, all values now convert to true if there is
+  no other override, and `Unset` values convert to false. You can (and should)
+  use the standard library to explicitly create `Bool` instances.
+
 ## 1.0.0-beta.8  -- 2021-01-15
 * Fix some bugs and improve output UI.
   * Don't count/display abort errors.

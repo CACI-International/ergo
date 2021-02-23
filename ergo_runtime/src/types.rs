@@ -38,6 +38,28 @@ impl From<Unit> for TypedValue<Unit> {
     }
 }
 
+/// Bool type.
+#[derive(Clone, Copy, Debug, GreaseType, PartialEq, Hash, Eq, StableAbi)]
+#[repr(C)]
+pub struct Bool(pub bool);
+
+impl From<Bool> for TypedValue<Bool> {
+    fn from(b: Bool) -> Self {
+        let mut v = Self::constant(b);
+        v.set_metadata(
+            &Doc,
+            make_value!(Ok(if b.0 { "<true>" } else { "<false>" }.into())),
+        );
+        v
+    }
+}
+
+impl std::fmt::Display for Bool {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 /// Script string type.
 #[derive(Clone, Debug, Default, GreaseType, PartialEq, Hash, Eq, StableAbi)]
 #[repr(C)]

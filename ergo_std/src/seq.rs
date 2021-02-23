@@ -20,7 +20,8 @@ maps will be evaluated concurrently).",
                 val.map(|v| {
                     let ctx = ctx.as_context().clone();
                     Value::from(make_value!([v] {
-                        ctx.force_value_nested(v).await
+                        ctx.force_value_nested(v).await?;
+                        Ok(ergo_runtime::types::Unit)
                     }))
                 })
                 .unwrap()

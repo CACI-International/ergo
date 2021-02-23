@@ -18,6 +18,7 @@ pub fn module() -> Value {
         "Any": "Match any type." = match_any(),
         "Unset": "Match the unset type (returned by unset values)." = match_unset(),
         "Unit": "Match the unit type." = match_unit(),
+        "Bool": "Match a Bool type." = match_bool(),
         "String": "Match the string type." = match_string(),
         "Path": "Match the path type." = match_path(),
         "Map": "Match the map type." = match_map(),
@@ -288,29 +289,9 @@ fn make_match_fn<S: Into<types::String>>(
 }
 
 fn match_unset() -> Value {
-    let construct: Value = types::Unbound::new(
-        |ctx, arg| {
-            async move {
-                let (arg_source, arg) = arg.take();
-                match_value!(arg => {
-                    types::Args => |args| {
-                        let mut args = args.await?.owned().args;
-                        args.unused_arguments()?;
-                        types::Unset::new().into()
-                    },
-                    => |v| traits::bind_error(ctx, arg_source.with(v)).await?
-                })
-                .await
-            }
-            .boxed()
-        },
-        depends![namespace_id!(std::type::Unset)],
-        None,
-    )
-    .into();
     make_match_fn(
         types::Unset::grease_type(),
-        Ok(construct),
+        Ok(types::Unset::new().into()),
         "Matches an Unset value.",
     )
 }
@@ -320,6 +301,14 @@ fn match_unit() -> Value {
         types::Unit::grease_type(),
         Err("cannot compose; use script syntax".into()),
         "Matches a Unit value.",
+    )
+}
+
+fn match_bool() -> Value {
+    make_match_fn(
+        types::Bool::grease_type(),
+        Err("cannot compose; use true and false indices".into()),
+        "Matches a Bool value.",
     )
 }
 
@@ -439,15 +428,7 @@ mod test {
             t.assert_script_fail("self:type:Unset str");
             t.assert_success("self:type:Unset :x = {}:key");
             t.assert_success("!self:type:Unset = {}:key");
-            t.assert_success("unset = self:type:Unset:");
-        }
-    }
-
-    ergo_script::test! {
-        fn map_entry(t) {
-            t.assert_script_success("self:type:MapEntry: k v");
-            t.assert_eq("(self:type:MapEntry: k v):key","k");
-            t.assert_eq("(self:type:MapEntry: k v):value","v");
+            t.assert_success("self:type:Unset :x = self:type:Unset:");
         }
     }
 
@@ -463,6 +444,12 @@ mod test {
     }
 
     ergo_script::test! {
+        fn bool(t) {
+            t.assert_success("self:type:Bool :b = self:bool:true");
+        }
+    }
+
+    ergo_script::test! {
         fn string(t) {
             t.assert_eq("self:type:String hi", "hi");
             t.assert_script_fail("self:type:String ()");
@@ -470,6 +457,14 @@ mod test {
             t.assert_script_fail("self:type:String :x = ()");
             t.assert_success("!self:type:String = hi");
             t.assert_script_fail("!self:type:String = ()");
+        }
+    }
+
+    ergo_script::test! {
+        fn map_entry(t) {
+            t.assert_script_success("self:type:MapEntry: k v");
+            t.assert_eq("(self:type:MapEntry: k v):key","k");
+            t.assert_eq("(self:type:MapEntry: k v):value","v");
         }
     }
 

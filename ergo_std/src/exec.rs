@@ -66,9 +66,9 @@ impl From<std::process::ExitStatus> for ExitStatus {
     }
 }
 
-impl From<ExitStatus> for bool {
+impl From<ExitStatus> for types::Bool {
     fn from(e: ExitStatus) -> Self {
-        e.success()
+        types::Bool(e.success())
     }
 }
 
@@ -352,7 +352,7 @@ script.
 
         let retain_terminal = match cargs.kw("retain-terminal") {
             Some(v) => {
-                let v = ctx.into_sourced::<bool>(v);
+                let v = ctx.into_sourced::<types::Bool>(v);
                 Some(v.await?.unwrap())
             }
             None => None
@@ -430,7 +430,7 @@ script.
             log.debug(format!("spawning child process: {:?}", command));
 
             let retain_terminal = match retain_terminal {
-                Some(v) => *v.forced_value().as_ref(),
+                Some(v) => v.forced_value().as_ref().0,
                 None => false,
             };
             if !retain_terminal {
@@ -565,7 +565,7 @@ grease::grease_traits_fn! {
     ergo_runtime::grease_type_name!(traits, CommandString);
 
     // ExitStatus traits
-    IntoTyped::<bool>::add_impl::<ExitStatus>(traits);
+    IntoTyped::<types::Bool>::add_impl::<ExitStatus>(traits);
     ergo_runtime::grease_display_basic!(traits, ExitStatus);
     ergo_runtime::grease_type_name!(traits, ExitStatus);
     traits::ValueByContent::add_impl::<ExitStatus>(traits);

@@ -1,6 +1,7 @@
 ///! Ergo standard module plugin.
 use ergo_runtime::{plugin_entry, source::Source, EvalResult, Runtime};
 
+mod bool;
 mod collection;
 mod env;
 mod error;
@@ -57,6 +58,7 @@ This library provides a number of submodules that group related functions, as we
 Generally, it is most useful to merge the library into the top-level environment, for instance with `^ergo std`.
 
 The library's map includes:"
+        "bool": "Boolean values" = bool::module(),
         "collection": "Utilities for manipulating arrays and maps." = collection::module(),
         "env": "Access to the program's environment." = env::module(),
         "error": "Error handling functions." = error::module(),

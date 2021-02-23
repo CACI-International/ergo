@@ -861,7 +861,7 @@ impl Evaluator {
                     If(cond, if_true, if_false) => {
                         // TODO should this be env_scoped?
                         let cond = self.evaluate(ctx, *cond).await?;
-                        let to_sourced = ctx.into_sourced::<bool>(cond);
+                        let to_sourced = ctx.into_sourced::<types::Bool>(cond);
                         let cond = to_sourced.await?.unwrap();
 
                         let if_true = self.compile_env_into(ctx, *if_true).await?;
@@ -879,7 +879,7 @@ impl Evaluator {
                         let mut ctx = ctx.empty();
                         Ok(Value::dyn_new(async move {
                             let c = cond.await?;
-                            Ok(if *c.as_ref() {
+                            Ok(if c.as_ref().0 {
                                 self.evaluate(&mut ctx, if_true).await?.unwrap().into_any_value()
                             } else {
                                 match if_false {

@@ -116,7 +116,7 @@ macro_rules! impl_grease_type {
     ( $name:ident , $t:ty ) => {
         impl GreaseType for $t {
             fn grease_type() -> Type {
-                Type::named(concat!["std::", stringify!($name)].as_bytes())
+                Type::named(concat!["type::", stringify!($name)].as_bytes())
             }
         }
     };

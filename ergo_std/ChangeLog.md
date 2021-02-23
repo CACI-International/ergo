@@ -20,6 +20,8 @@
 * `type:new` accepts a `bind` keyword argument to dictate how value instances
   can bind. If unspecified, uses the `bind` behavior of whatever inner type is
   returned by the compose function.
+* Add `type:Bool` as well as `bool:true`, `bool:false`, and `bool:from` to
+  create and convert values.
 
 ### Improvements
 * Allow `env:path-search` to take Paths, and simply forward them as the returned

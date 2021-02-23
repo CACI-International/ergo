@@ -155,10 +155,10 @@ Arguments: <map-or-array> <index>",
                         let index = index.await?.unwrap().await?;
                         use std::str::FromStr;
                         let i = usize::from_str(index.as_ref())?;
-                        i < val.await?.0.len()
+                        types::Bool(i < val.await?.0.len())
                     }
                     types::Map => |val| {
-                        val.await?.0.get(&index.unwrap()).is_some()
+                        types::Bool(val.await?.0.get(&index.unwrap()).is_some())
                     }
                     => |_| Err("non-indexable value")?
                 }).await
