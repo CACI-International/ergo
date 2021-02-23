@@ -3,10 +3,9 @@
 use super::shared_stream::*;
 use crate::traits as trts;
 use abi_stable::{
-    external_types::RRwLock,
     sabi_trait,
     sabi_trait::prelude::*,
-    std_types::{RArc, RBox, ROption, RResult, RString, RVec},
+    std_types::{RBox, RResult, RString, RVec},
     StableAbi,
 };
 use grease::{
@@ -17,8 +16,6 @@ use grease::{
     Erased, Error, Value,
 };
 use std::pin::Pin;
-use std::ptr::NonNull;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 const BYTE_STREAM_BLOCK_LIMIT: usize = 2048;

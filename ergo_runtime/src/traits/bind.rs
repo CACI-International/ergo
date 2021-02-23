@@ -406,4 +406,19 @@ grease_traits_fn! {
             self.bind(ctx, arg).await?
         }
     }
+
+    impl Bind for types::MapEntry {
+        async fn bind(&self, ctx: &mut Runtime, arg: Source<Value>) -> Value {
+            let ind = ctx.source_pattern_value_as::<types::Index>(arg).await?.await.transpose_ok()?.unwrap().owned().0;
+            let (src, ind) = ctx.source_pattern_value_as::<types::String>(ind).await?.take();
+            let s = ind.await?;
+            if s.as_str() == "key" {
+                self.key.clone()
+            } else if s.as_str() == "value" {
+                self.value.clone()
+            } else {
+                Err(PatternError::wrap(src.with("unknown index").into_grease_error()))?
+            }
+        }
+    }
 }

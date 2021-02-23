@@ -96,6 +96,16 @@ grease_traits_fn! {
         }
     }
 
+    impl Display for types::MapEntry {
+        async fn fmt(&self) -> RString {
+            format!(
+                "{} -> {}",
+                to_empty(display(CONTEXT, self.key.clone()).await?),
+                to_empty(display(CONTEXT,self.value.clone()).await?),
+            ).into()
+        }
+    }
+
     grease_display_basic!(traits, u8);
     grease_display_basic!(traits, i8);
     grease_display_basic!(traits, u16);

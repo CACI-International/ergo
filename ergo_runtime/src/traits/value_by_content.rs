@@ -123,4 +123,19 @@ grease_traits_fn! {
             types::Map(inner_vals.into_iter().collect()).into_value(CONTEXT)
         }
     }
+
+    impl ValueByContent for types::MapEntry {
+        async fn value_by_content(self, deep: bool) -> Value {
+            let data = self.await?.owned();
+            if deep {
+                let (key,value) = CONTEXT.task.join(
+                    super::value_by_content(CONTEXT, data.key, true),
+                    super::value_by_content(CONTEXT, data.value, true),
+                ).await?;
+                types::MapEntry { key, value }
+            } else {
+                data.into()
+            }.into()
+        }
+    }
 }

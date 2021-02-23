@@ -507,13 +507,14 @@ impl Value {
         }
     }
 
-    /// Try to convert this Value to a TypedValue.
+    /// Ensure this value has the given type.
     ///
-    /// If the conversion fails, the given function is used to get an Error from the type.
-    pub fn typed<T: GreaseType, F, Fut>(
+    /// If the value is not the given type, `on_error` is used to get an Error from the type.
+    pub fn as_type<F, Fut>(
         self,
+        target_tp: Type,
         on_error: F,
-    ) -> futures::future::BoxFuture<'static, crate::Result<TypedValue<T>>>
+    ) -> futures::future::BoxFuture<'static, crate::Result<Value>>
     where
         F: FnOnce(&Type) -> Fut + Send + 'static,
         Fut: std::future::Future<Output = Error> + Send,
@@ -522,20 +523,20 @@ impl Value {
             Errored::report(
                 match_value_data!(self.data => {
                     ValueData::Typed { ref tp, .. } => {
-                        if &**tp == &T::grease_type() {
-                            Ok(unsafe { TypedValue::from_value(self) })
+                        if &**tp == &target_tp {
+                            Ok(self)
                         } else {
                             Err(on_error(&*tp).await)
                         }
                     }
-                    ValueData::Dynamic { fut } => Ok(unsafe {
-                        TypedValue::from_value(Value {
+                    ValueData::Dynamic { fut } => Ok({
+                        Value {
                             data: ValueData::Typed {
-                                tp: RArc::new(T::grease_type()),
+                                tp: RArc::new(target_tp.clone()),
                                 fut: BoxSharedFuture::from_eager(fut.into_eager().then(move |r| async move {
                                     match r {
                                         RResult::ROk(AnyValue {inner}) => {
-                                            let v = match inner.typed::<T, F, Fut>(on_error).await {
+                                            let v = match inner.as_type::<F, Fut>(target_tp, on_error).await {
                                                 Ok(v) => v,
                                                 Err(e) => return RResult::RErr(e)
                                             };
@@ -547,11 +548,30 @@ impl Value {
                                 }).await),
                             },
                             ..self
-                        })
+                        }
                     })
                 })
             )
         }.boxed()
+    }
+
+    /// Produce a TypedValue from this value, checking the type.
+    ///
+    /// If the check fails, `on_error` is used to get an Error from the type.
+    pub fn typed<T: GreaseType, F, Fut>(
+        self,
+        on_error: F,
+    ) -> futures::future::BoxFuture<'static, crate::Result<TypedValue<T>>>
+    where
+        F: FnOnce(&Type) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = Error> + Send,
+    {
+        async move {
+            self.as_type(T::grease_type(), on_error)
+                .await
+                .map(|v| unsafe { TypedValue::from_value(v) })
+        }
+        .boxed()
     }
 
     /// Try to convert this Value to a TypedValue immediately.
@@ -874,7 +894,7 @@ pub type Ref<T> = crate::type_erase::Ref<T, RArc<Erased>>;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, StableAbi)]
 #[repr(C)]
-#[sabi(phantom_field="phantom: RArc<T>")]
+#[sabi(phantom_field = "phantom: RArc<T>")]
 pub struct TypedValue<T> {
     inner: Value,
     phantom: std::marker::PhantomData<RArc<T>>,

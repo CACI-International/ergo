@@ -32,6 +32,12 @@ grease_traits_fn! {
             self.0.iter().map(|t| t.1).cloned().collect()
         }
     }
+
+    impl Nested for types::MapEntry {
+        async fn nested(&self) -> RVec<Value> {
+            abi_stable::rvec![self.key.clone(), self.value.clone()]
+        }
+    }
 }
 
 fn add_value<'a>(

@@ -155,6 +155,21 @@ impl Map {
     }
 }
 
+/// Type for an individual Map entry.
+#[derive(Clone, Debug, GreaseType, PartialEq, StableAbi)]
+#[repr(C)]
+pub struct MapEntry {
+    pub key: Value,
+    pub value: Value,
+}
+
+impl From<MapEntry> for TypedValue<MapEntry> {
+    fn from(v: MapEntry) -> Self {
+        let deps = depends![v.key, v.value];
+        Self::constant_deps(v, deps)
+    }
+}
+
 /// Script type for values that require a single value to produce a new value.
 ///
 /// This is most importantly used to functions, where the input value is an `Args` or `PatternArgs`

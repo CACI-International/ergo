@@ -152,6 +152,22 @@ grease_traits_fn! {
             Erased::new(types::Map(vals))
         }
     }
+
+    impl Stored for types::MapEntry {
+        async fn put(&self, stored_ctx: &StoredContext, item: ItemContent) {
+            let ids = (self.key.id(), self.value.id());
+            stored_ctx.write_to_store(CONTEXT, self.key.clone()).await?;
+            stored_ctx.write_to_store(CONTEXT, self.value.clone()).await?;
+            bincode::serialize_into(item, &ids)?
+        }
+
+        async fn get(stored_ctx: &StoredContext, item: ItemContent) -> Erased {
+            let ids: (u128, u128) = bincode::deserialize_from(item)?;
+            let key = stored_ctx.read_from_store(CONTEXT, ids.0).await?;
+            let value = stored_ctx.read_from_store(CONTEXT, ids.1).await?;
+            Erased::new(types::MapEntry { key, value })
+        }
+    }
 }
 
 /// Read a Value from the store by id.

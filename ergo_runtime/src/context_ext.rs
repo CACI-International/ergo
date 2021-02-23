@@ -79,11 +79,65 @@ pub trait ContextExt: AsContext {
         .boxed()
     }
 
+    fn source_value_as_type_map_error<E>(
+        &self,
+        v: Source<Value>,
+        target_tp: Type,
+        map_error: E,
+    ) -> BoxFuture<'static, Result<Source<Value>>>
+    where
+        E: FnOnce(grease::Error) -> grease::Error + Send + 'static,
+    {
+        let (source, v) = v.take();
+        let s = source.clone();
+        let ctx = self.as_context().clone();
+        v.as_type(target_tp.clone(), move |t| {
+            let ctx = ctx.clone();
+            let t = t.clone();
+            async move {
+                let expected = match ctx.type_name(&target_tp).await {
+                    Err(e) => return e,
+                    Ok(v) => v,
+                };
+                let found = match ctx.type_name(&t).await {
+                    Err(e) => return e,
+                    Ok(v) => v,
+                };
+                map_error(
+                    s.with(format!("expected {}, found {}", expected, found))
+                        .into_grease_error(),
+                )
+            }
+        })
+        .map(move |r| r.map(move |v| source.with(v)))
+        .boxed()
+    }
+
     fn source_pattern_value_as<T: GreaseType + 'static>(
         &self,
         v: Source<Value>,
     ) -> BoxFuture<'static, Result<Source<TypedValue<T>>>> {
-        self.source_value_as_map_error(v, crate::error::PatternError::wrap)
+        // Any error that immediately occurs should be considered a
+        // pattern error. The error that may occur later (in the
+        // case of a dynamic type) should not be considered a
+        // pattern error.
+        self.source_value_as::<T>(v)
+            .map(|res| res.map_err(crate::error::PatternError::wrap))
+            .boxed()
+    }
+
+    fn source_pattern_value_as_type(
+        &self,
+        v: Source<Value>,
+        target_tp: Type,
+    ) -> BoxFuture<'static, Result<Source<Value>>> {
+        // Any error that immediately occurs should be considered a
+        // pattern error. The error that may occur later (in the
+        // case of a dynamic type) should not be considered a
+        // pattern error.
+        self.source_value_as_type(v, target_tp)
+            .map(|res| res.map_err(crate::error::PatternError::wrap))
+            .boxed()
     }
 
     fn source_value_as<T: GreaseType + 'static>(
@@ -91,6 +145,14 @@ pub trait ContextExt: AsContext {
         v: Source<Value>,
     ) -> BoxFuture<'static, Result<Source<TypedValue<T>>>> {
         self.source_value_as_map_error(v, std::convert::identity)
+    }
+
+    fn source_value_as_type(
+        &self,
+        v: Source<Value>,
+        target_tp: Type,
+    ) -> BoxFuture<'static, Result<Source<Value>>> {
+        self.source_value_as_type_map_error(v, target_tp, std::convert::identity)
     }
 
     fn source_value_as_immediate<T: GreaseType + 'static>(

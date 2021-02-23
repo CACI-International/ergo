@@ -172,13 +172,8 @@ grease_traits_fn! {
     impl IntoTyped<crate::types::Iter> for crate::types::Map {
         async fn into_typed(self) -> Value {
             self.map(|v| {
-                let key_k: Value = crate::types::String::from("key").into();
-                let value_k: Value = crate::types::String::from("value").into();
-                crate::types::Iter::from_iter(v.owned().0.into_iter().map(move |(k,v)| {
-                    let mut map = bst::BstMap::new();
-                    map.insert(key_k.clone(), k);
-                    map.insert(value_k.clone(), v);
-                    crate::types::Map(map).into_value_no_doc()
+                crate::types::Iter::from_iter(v.owned().0.into_iter().map(move |(key,value)| {
+                    crate::types::MapEntry { key, value }.into()
                 }))
             }).into()
         }
@@ -192,26 +187,11 @@ grease_traits_fn! {
             make_value!([v] {
                 let iter = v.await?.owned();
                 let mut ret = bst::BstMap::default();
-                let key_k: Value = crate::types::String::from("key").into();
-                let value_k: Value = crate::types::String::from("value").into();
                 for i in iter {
                     /// XXX do this in a better way (with an actual source)
-                    let crate::types::Map(mut m) = ctx.source_value_as::<crate::types::Map>(Source::builtin(i))
+                    let entry = ctx.source_value_as::<crate::types::MapEntry>(Source::builtin(i))
                         .await?.unwrap().await?.owned();
-                    let key = m.remove(&key_k);
-                    let value = m.remove(&value_k);
-                    if !m.is_empty() {
-                        return Err("invalid map iterator, extra keys in items".into());
-                    } else {
-                        match (key,value) {
-                            (None, None) => return Err("missing key and value in iterator".into()),
-                            (None, _) => return Err("missing key in iterator".into()),
-                            (_, None) => return Err("missing value in iterator".into()),
-                            (Some(key), Some(value)) => {
-                                ret.insert(key, value);
-                            }
-                        }
-                    }
+                    ret.insert(entry.key, entry.value);
                 }
                 Ok(crate::types::Map(ret))
             }).into()

@@ -16,6 +16,10 @@
 * Add `path:with-output` to make output paths from commands more ergonomic.
 * Add `Iter` type for iterators.
 * Add `string:join` to join iterators of strings.
+* Add `MapEntry` type for iterators of `Map`.
+* `type:new` accepts a `bind` keyword argument to dictate how value instances
+  can bind. If unspecified, uses the `bind` behavior of whatever inner type is
+  returned by the compose function.
 
 ### Improvements
 * Allow `env:path-search` to take Paths, and simply forward them as the returned
@@ -26,12 +30,32 @@
   error (which may be ignored by something like `match`).
 * `value:meta:get` and `env:get` return `Unset` rather than `()` if a return is
   not available.
+* Make `type:new` produce a value that behaves exactly like all other type
+  functions for consistency (calls check types, call with no args returns a
+  function to compose types).
 
 ### Bugfixes
 * Fix an issue where `match` incorrectly detected bind errors when a binding in
   the body of a case failed.
-* Fix a panic when `scrip:path` is called when no path is available (now it will
+* Fix a panic when `script:path` is called when no path is available (now it will
   be a runtime error).
+
+### Migration Guide
+* Values produced by `type:new` (custom script types) will now behave like other
+  types in the standard library, meaning that calling the produced types merely
+  checks the type (without (de)composing it as the previous behavior was). This
+  means that anywhere where these types are used must be changed from
+  ```
+  MyType :x :y :z
+  ```
+  to
+  ```
+  MyType: :x :y :z
+  ```
+  where calling the type with no arguments returns the compose/decompose
+  function. Since previously this was always the behavior, it will be sufficient
+  (though not using the new features here) to change all calls of the custom
+  types by adding a trailing colon as above.
 
 ## 1.0.0-beta.8  -- 2020-01-15
 * Fix deadlock occurring from task execution.
