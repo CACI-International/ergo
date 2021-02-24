@@ -5,12 +5,11 @@ use grease::{path::PathBuf, value::Value};
 
 pub fn module() -> Value {
     crate::grease_string_map! {
-        "A map of script-related functions:"
-        "bindings": "Get all of the current bindings in the script at the call site." = bindings_fn(),
-        "dir": "Get the parent directory of the currently-executing script." = dir_fn(),
-        "load-path": "Get the load path for any `ergo` calls." = load_path_fn(),
-        "path": "Get the path of the currently-executing script." = path_fn(),
-        "set-load-path": "Set the load path for any `ergo` calls." = set_load_path_fn()
+        "bindings" = bindings_fn(),
+        "dir" = dir_fn(),
+        "load-path" = load_path_fn(),
+        "path" = path_fn(),
+        "set-load-path" = set_load_path_fn()
     }
 }
 

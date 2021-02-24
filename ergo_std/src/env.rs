@@ -9,11 +9,10 @@ use grease::{
 
 pub fn module() -> Value {
     crate::grease_string_map! {
-        "A map of program environment functions:"
-        "get": "Get an environment variable." = get_fn(),
-        "home": "Get the user's home directory." = home_path(),
-        "path-search": "Find a binary in the system path." = path_search_fn(),
-        "current-dir": "Get the program's present working directory." = current_dir_path()
+        "get" = get_fn(),
+        "home" = home_path(),
+        "path-search" = path_search_fn(),
+        "current-dir" = current_dir_path()
     }
 }
 

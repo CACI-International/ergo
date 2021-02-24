@@ -9,9 +9,8 @@ use grease::{
 
 pub fn module() -> Value {
     crate::grease_string_map! {
-        "A map of error manipulation functions:"
-        "catch": "Catch any error as a result of executing a value." = catch_fn(),
-        "throw": "Create a value which will error." = throw_fn()
+        "catch" = catch_fn(),
+        "throw" = throw_fn()
     }
 }
 

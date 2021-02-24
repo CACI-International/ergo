@@ -13,19 +13,18 @@ use grease::{
 
 pub fn module() -> Value {
     crate::grease_string_map! {
-        "A map of type-related functions:"
-        "new": "Create a new type." = new_fn(),
-        "Any": "Match any type." = match_any(),
-        "Unset": "Match the unset type (returned by unset values)." = match_unset(),
-        "Unit": "Match the unit type." = match_unit(),
-        "Bool": "Match a Bool type." = match_bool(),
-        "String": "Match the string type." = match_string(),
-        "Path": "Match the path type." = match_path(),
-        "Map": "Match the map type." = match_map(),
-        "MapEntry": "Match a map entry." = match_map_entry(),
-        "Array": "Match the array type." = match_array(),
-        "Function": "Match the function type." = match_function(),
-        "Iter": "Match an Iter type." = match_iter()
+        "new" = new_fn(),
+        "Any" = match_any(),
+        "Unset" = match_unset(),
+        "Unit" = match_unit(),
+        "Bool" = match_bool(),
+        "String" = match_string(),
+        "Path" = match_path(),
+        "Map" = match_map(),
+        "MapEntry" = match_map_entry(),
+        "Array" = match_array(),
+        "Function" = match_function(),
+        "Iter" = match_iter()
     }
 }
 

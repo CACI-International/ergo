@@ -7,12 +7,11 @@ use grease::{depends, make_value, match_value, value::Value};
 
 pub fn module() -> Value {
     crate::grease_string_map! {
-        "A map of map and array manipulation functions:"
-        "entries": "Get the entries in a map as an array of {key,value}." = entries_fn(),
-        "fold": "Fold over the values in an array from first to last." = fold_fn(),
-        "get": "Get a key's value from a map, returning unit if it does not exist." = get_fn(),
-        "has": "Check whether a map contains a key." = has_fn(),
-        "map": "Map a function over the values in an array." = map_fn()
+        "entries" = entries_fn(),
+        "fold" = fold_fn(),
+        "get" = get_fn(),
+        "has" = has_fn(),
+        "map" = map_fn()
     }
 }
 
@@ -120,9 +119,8 @@ For example, `entries {a=1,b=2}` evalutes to `[{key=a,value=1},{key=b,value=2}]`
             let mut vals = RVec::new();
             for (k,v) in map.await?.owned().0 {
                 vals.push(crate::grease_string_map! {
-                    "Key-value pair from an entry in a map."
-                    "key": "The key in the map." = k,
-                    "value": "The value in the map." = v
+                    "key" = k,
+                    "value" = v
                 });
             }
 

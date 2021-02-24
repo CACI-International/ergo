@@ -13,25 +13,19 @@ use std::sync::Arc;
 
 pub fn module() -> Value {
     crate::grease_string_map! {
-        "A map of value-manipulation functions:"
-        "by-content": "Identify a value by its content (forcing evaluation)." = by_content_fn(),
-        "cache": "Persist a value across program runs." = cache_fn(),
-        "debug": "Display debug info of a value in the debug log."  = debug_fn(),
-        "doc": "Value documentation." = crate::grease_string_map! {
-            "A map of documentation functions:"
-            "get": "Get the documentation of a value." = doc_get_fn(),
-            "set": "Set the documentation of a value." = doc_set_fn()
+        "by-content" = by_content_fn(),
+        "cache" = cache_fn(),
+        "debug" = debug_fn(),
+        "doc" = crate::grease_string_map! {
+            "get" = doc_get_fn(),
+            "set" = doc_set_fn()
         },
-        "dynamic": "Force a value to be dynamically-typed." = dyn_fn(),
-        "meta": "Value metadata manipulation." = crate::grease_string_map! {
-            r"A map of metadata functions.
-Arbitrary values can be attached as metadata to other values, keyed by the identity of a third key value.
-Metadata allows one to retrieve associated values without evaluating a value. While this could be achieved by wrapping
-values with a map, metadata does not alter how other code treats the value."
-            "get": "Get the metadata of a value for a specific key." = meta_get_fn(),
-            "set": "Set the metadata of a value for a specific key." = meta_set_fn()
+        "dynamic" = dyn_fn(),
+        "meta" = crate::grease_string_map! {
+            "get" = meta_get_fn(),
+            "set" = meta_set_fn()
         },
-        "variable": "Mark a value as being variable, i.e., with an identity not wholly derived from its dependencies." = variable_fn()
+        "variable" = variable_fn()
     }
 }
 

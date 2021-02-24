@@ -6,12 +6,11 @@ use std::fmt::Write;
 
 pub fn module() -> Value {
     crate::grease_string_map! {
-        "A map of string manipulation functions:"
-        "format": "Create a string from a formatting specification." = format_fn(),
-        "from": "Convert a value into a string." = from_fn(),
-        "join": "Join a string." = join_fn(),
-        "split": "Split a string on a substring." = split_fn(),
-        "trim": "Trim whitespace from the ends of a string." = trim_fn()
+        "format" = format_fn(),
+        "from" = from_fn(),
+        "join" = join_fn(),
+        "split" = split_fn(),
+        "trim" = trim_fn()
     }
 }
 

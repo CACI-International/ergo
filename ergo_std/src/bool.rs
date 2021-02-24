@@ -5,10 +5,9 @@ use grease::Value;
 
 pub fn module() -> Value {
     crate::grease_string_map! {
-        "Bool values."
-        "true": "true value" = true_val(),
-        "false": "false value" = false_val(),
-        "from": "Convert from a value to Bool." = from_fn()
+        "true" = true_val(),
+        "false" = false_val(),
+        "from" = from_fn()
     }
 }
 

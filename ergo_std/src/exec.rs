@@ -531,11 +531,10 @@ script.
         let exit_status = make_value!((run_command) [namespace_id!(std::exec::exit_status)] { run_command.await?; Ok(ExitStatus::from(rcv_status.await?)) });
 
         crate::grease_string_map! {
-            "Outputs from an `exec` call."
-            "stdout": "The standard output byte stream." = stdout.into(),
-            "stderr": "The standard error byte stream." = stderr.into(),
-            "exit-status": "The exit status, which may be used in boolean contexts to check for successful exit." = exit_status.into(),
-            "complete": "A unit value for the successful completion of the launched program." = run_command.into()
+            "stdout" = stdout.into(),
+            "stderr" = stderr.into(),
+            "exit-status" = exit_status.into(),
+            "complete" = run_command.into()
         }
     })
     .into()
