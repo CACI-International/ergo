@@ -39,6 +39,9 @@
 * Make `type:new` produce a value that behaves exactly like all other type
   functions for consistency (calls check types, call with no args returns a
   function to compose types).
+* Allow `value:cache` to drop values early when they are present in the cache.
+  This mainly makes things like a `task` value not count toward the pending
+  work.
 
 ### Bugfixes
 * Fix an issue where `match` incorrectly detected bind errors when a binding in

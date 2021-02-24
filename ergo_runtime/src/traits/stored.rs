@@ -185,6 +185,11 @@ pub async fn read_from_store(ctx: &Context, store_item: &Item, id: u128) -> Resu
     }
 }
 
+/// Check whether a Value is in the store by id.
+pub fn present_in_store(_ctx: &Context, store_item: &Item, id: u128) -> bool {
+    store_item.value_id(id).exists()
+}
+
 /// Write a value to the store.
 ///
 /// The value must already be forced (using `force_value_nested`).

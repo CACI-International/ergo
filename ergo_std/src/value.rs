@@ -67,9 +67,10 @@ fn cache_fn() -> Value {
     r"Cache a value by identity.
 
 Arguments: <value>
+Keyword Arguments: no-persist
 
 By default, caches both at runtime and to persistent storage, to be cached across runs. If the
-`no-persist` keyword-arg is present, it will only cache at runtime.
+`no-persist` argument is present, it will only cache at runtime.
 
 Returns a value identical to the argument, however possibly loads the value from a persisted store rather than
 evaluating it. If not yet persisted, when the returned value is evaluated it will evaluate the inner value and persist
@@ -92,8 +93,43 @@ it. Multiple values with the same id will be normalized to the same single runti
                 let store = ctx.store.item(item_name!("cache"));
                 let log = ctx.log.sublog("cache");
                 let ctx = ctx.as_context().clone();
-                match to_cache.grease_type_immediate() {
-                    Some(tp) => unsafe {
+                match (ctx.present_in_store(&store, id), to_cache.grease_type_immediate()) {
+                    // If the value is present in the store, return a value which simply reads it
+                    // (so the original value can be dropped).
+                    (true, Some(tp)) => unsafe {
+                        let tp = tp.clone();
+                        Value::with_id(RArc::new(tp.clone()), async move {
+                            match ctx.read_from_store(&store, id).await {
+                                Ok(val) => {
+                                    log.debug(format!(
+                                        "successfully read cached value for {}",
+                                        id
+                                    ));
+                                    if val.grease_type_immediate() != Some(&tp) {
+                                        Err("cached value had different value type".into())
+                                    } else {
+                                        Ok(val
+                                            .await
+                                            .expect("value should have success value from cache"))
+                                    }
+                                }
+                                Err(e) => Err(format!("cache value disappeared: {}", e).into()),
+                            }
+                        }, id)
+                    },
+                    (true, None) => Value::dyn_with_id(async move {
+                        match ctx.read_from_store(&store, id).await {
+                            Ok(val) => {
+                                log.debug(format!(
+                                    "successfully read cached value for {}",
+                                    id
+                                ));
+                                Ok(val.into_any_value())
+                            }
+                            Err(e) => Err(format!("cache value disappeared: {}", e).into()),
+                        }
+                    }, id),
+                    (false, Some(tp)) => unsafe {
                         Value::with_id(RArc::new(tp.clone()), async move {
                             let err = match ctx.read_from_store(&store, id).await {
                                 Ok(val) => {
@@ -123,7 +159,7 @@ it. Multiple values with the same id will be normalized to the same single runti
                                 .expect("error should have been caught previously"))
                         }, id)
                     },
-                    None => Value::dyn_with_id(async move {
+                    (false, None) => Value::dyn_with_id(async move {
                         let err = match ctx.read_from_store(&store, id).await {
                             Ok(val) => {
                                 log.debug(format!(

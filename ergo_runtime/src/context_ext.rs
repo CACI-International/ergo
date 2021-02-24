@@ -194,6 +194,10 @@ pub trait ContextExt: AsContext {
         crate::traits::read_from_store(self.as_context(), store_item, id).boxed()
     }
 
+    fn present_in_store(&self, store_item: &grease::runtime::Item, id: u128) -> bool {
+        crate::traits::present_in_store(self.as_context(), store_item, id)
+    }
+
     fn write_to_store<'a>(
         &'a self,
         store_item: &'a grease::runtime::Item,

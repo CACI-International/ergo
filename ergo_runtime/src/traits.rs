@@ -12,7 +12,9 @@ pub use bind::{bind, bind_error, delay_bind, Bind, BindImpl};
 pub use display::{display, Display, DisplayImpl};
 pub use into::{into, into_sourced, IntoTyped, IntoTypedImpl};
 pub use nested::{force_value_nested, Nested, NestedImpl};
-pub use stored::{read_from_store, write_to_store, Stored, StoredContext, StoredImpl};
+pub use stored::{
+    present_in_store, read_from_store, write_to_store, Stored, StoredContext, StoredImpl,
+};
 pub use type_name::{type_error, type_name, TypeName, TypeNameImpl};
 pub use value_by_content::{value_by_content, ValueByContent, ValueByContentImpl};
 
