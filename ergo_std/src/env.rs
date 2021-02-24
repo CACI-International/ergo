@@ -14,11 +14,12 @@ pub fn module() -> Value {
         "path-search" = path_search_fn(),
         "current-dir" = current_dir_path(),
         "user-cache" = user_cache_path(),
-        "system-cache" = system_cache_path()
+        "system-cache" = system_cache_path(),
+        "os" = os_string()
     }
 }
 
-pub fn get_fn() -> Value {
+fn get_fn() -> Value {
     ergo_function!(independent std::env::get,
     r"Get an environment variable.
 
@@ -46,7 +47,7 @@ string, where the string is identified by the environment variable's content.",
     .into()
 }
 
-pub fn current_dir_path() -> Value {
+fn current_dir_path() -> Value {
     let path = std::env::current_dir().ok();
     let mut v = make_value!([ergo_runtime::namespace_id!(std::env::current_dir), path] {
         path.map(|d| PathBuf::from(d)).ok_or("current directory path could not be retrieved".into())
@@ -58,7 +59,7 @@ pub fn current_dir_path() -> Value {
     v.into()
 }
 
-pub fn user_cache_path() -> Value {
+fn user_cache_path() -> Value {
     let path = directories::ProjectDirs::from("", "", "ergo").map(|d| d.cache_dir().to_owned());
     let mut v = make_value!([ergo_runtime::namespace_id!(std::env::user_cache), path] {
         path.map(|d| PathBuf::from(d)).ok_or("user cache path could not be retrieved".into())
@@ -70,7 +71,7 @@ pub fn user_cache_path() -> Value {
     v.into()
 }
 
-pub fn system_cache_path() -> Value {
+fn system_cache_path() -> Value {
     let mut path = if cfg!(unix) {
         Some(std::path::Path::new("/var/cache/ergo"))
     } else if cfg!(windows) {
@@ -103,7 +104,7 @@ pub fn system_cache_path() -> Value {
     v.into()
 }
 
-pub fn home_path() -> Value {
+fn home_path() -> Value {
     let path = directories::BaseDirs::new().map(|d| d.home_dir().to_owned());
     let mut v = make_value!([ergo_runtime::namespace_id!(std::env::home), path] {
         path.map(|d| PathBuf::from(d)).ok_or("home path could not be retrieved".into())
@@ -115,7 +116,7 @@ pub fn home_path() -> Value {
     v.into()
 }
 
-pub fn path_search_fn() -> Value {
+fn path_search_fn() -> Value {
     ergo_function!(
         std::env::path_search,
         r"Find a file in the binary lookup path.
@@ -157,4 +158,18 @@ in PATH. If not found, an error occurs. Otherwise the path of the resolved file 
         }
     )
     .into()
+}
+
+fn os_string() -> Value {
+    let mut v: Value = types::String::from(std::env::consts::OS).into();
+    v.set_metadata(
+        &ergo_runtime::metadata::Doc,
+        TypedValue::constant(
+            "The OS running ergo.
+
+Possible values include `linux`, `macos`, and `windows`."
+                .into(),
+        ),
+    );
+    v
 }

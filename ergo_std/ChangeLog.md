@@ -25,6 +25,7 @@
 * Add `fs:append` for appending to a file.
 * Add `env:user-cache` and `env:system-cache` to get the user and system cache
   paths.
+* Add `env:os` to get the OS running ergo.
 
 ### Improvements
 * Allow `env:path-search` to take Paths, and simply forward them as the returned
