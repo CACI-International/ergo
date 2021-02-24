@@ -12,6 +12,7 @@ use std::path::Path;
 
 pub fn module() -> Value {
     crate::grease_string_map! {
+        "append" = append_fn(),
         "copy" = copy_fn(),
         "create-dir" = create_dir_fn(),
         "exists" = exists_fn(),
@@ -534,6 +535,39 @@ Creates or overwrites the file with the bytes from the ByteStream.",
             make_value!([path,data] {
                 let (path, data) = task.join(path,data).await?;
                 let mut f = Blocking::new(std::fs::File::create(path.as_ref().as_ref())?);
+                grease::runtime::io::copy(&task, &mut data.read(), &mut f).await?;
+                Ok(types::Unit)
+            })
+            .into()
+        }
+    )
+    .into()
+}
+
+fn append_fn() -> Value {
+    ergo_function!(
+        std::fs::append,
+        r"Append a ByteStream to a file.
+
+Arguments: <Path> <ByteStream>
+Creates or appends the file with the bytes from the ByteStream.",
+        |ctx, args| {
+            let path = args.next().ok_or("'path' missing")?;
+            let data = args.next().ok_or("'data' missing")?;
+
+            args.unused_arguments()?;
+
+            let path = ctx.source_value_as::<PathBuf>(path);
+            let path = path.await?.unwrap();
+
+            let data = ctx.into_sourced::<types::ByteStream>(data);
+            let data = data.await?.unwrap();
+
+            let task = ctx.task.clone();
+
+            make_value!([path,data] {
+                let (path, data) = task.join(path,data).await?;
+                let mut f = Blocking::new(std::fs::OpenOptions::new().create(true).append(true).open(path.as_ref().as_ref())?);
                 grease::runtime::io::copy(&task, &mut data.read(), &mut f).await?;
                 Ok(types::Unit)
             })

@@ -22,6 +22,9 @@
   returned by the compose function.
 * Add `type:Bool` as well as `bool:true`, `bool:false`, and `bool:from` to
   create and convert values.
+* Add `fs:append` for appending to a file.
+* Add `env:user-cache` and `env:system-cache` to get the user and system cache
+  paths.
 
 ### Improvements
 * Allow `env:path-search` to take Paths, and simply forward them as the returned

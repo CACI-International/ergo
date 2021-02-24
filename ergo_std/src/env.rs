@@ -12,7 +12,9 @@ pub fn module() -> Value {
         "get" = get_fn(),
         "home" = home_path(),
         "path-search" = path_search_fn(),
-        "current-dir" = current_dir_path()
+        "current-dir" = current_dir_path(),
+        "user-cache" = user_cache_path(),
+        "system-cache" = system_cache_path()
     }
 }
 
@@ -52,6 +54,51 @@ pub fn current_dir_path() -> Value {
     v.set_metadata(
         &ergo_runtime::metadata::Doc,
         TypedValue::constant("The current working directory of the process, as a path.".into()),
+    );
+    v.into()
+}
+
+pub fn user_cache_path() -> Value {
+    let path = directories::ProjectDirs::from("", "", "ergo").map(|d| d.cache_dir().to_owned());
+    let mut v = make_value!([ergo_runtime::namespace_id!(std::env::user_cache), path] {
+        path.map(|d| PathBuf::from(d)).ok_or("user cache path could not be retrieved".into())
+    });
+    v.set_metadata(
+        &ergo_runtime::metadata::Doc,
+        TypedValue::constant("A user-level cache directory path.".into()),
+    );
+    v.into()
+}
+
+pub fn system_cache_path() -> Value {
+    let mut path = if cfg!(unix) {
+        Some(std::path::Path::new("/var/cache/ergo"))
+    } else if cfg!(windows) {
+        Some(std::path::Path::new("C:\\Program Files\\ergo"))
+    } else {
+        None
+    };
+    if let Some(p) = &path {
+        match p.metadata() {
+            Err(_) => path = None,
+            Ok(m) => {
+                if !m.is_dir() || m.permissions().readonly() {
+                    path = None;
+                }
+            }
+        }
+    }
+
+    let path = path.map(|d| d.to_owned()).or_else(|| {
+        directories::ProjectDirs::from("", "", "ergo").map(|d| d.cache_dir().to_owned())
+    });
+
+    let mut v = make_value!([ergo_runtime::namespace_id!(std::env::system_cache), path] {
+        path.map(|d| PathBuf::from(d)).ok_or("system cache path could not be retrieved".into())
+    });
+    v.set_metadata(
+        &ergo_runtime::metadata::Doc,
+        TypedValue::constant("A system-level cache directory path.".into()),
     );
     v.into()
 }
