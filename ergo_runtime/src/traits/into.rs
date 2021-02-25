@@ -194,7 +194,12 @@ grease_traits_fn! {
                     /// XXX do this in a better way (with an actual source)
                     let entry = ctx.source_value_as::<crate::types::MapEntry>(Source::builtin(v))
                         .await?.unwrap().await?.owned();
-                    ret.insert(entry.key, entry.value);
+                    // Remove Unset values.
+                    if crate::types::Unset::is_unset(&entry.value) {
+                        ret.remove(&entry.key);
+                    } else {
+                        ret.insert(entry.key, entry.value);
+                    }
                 }
                 Ok(crate::types::Map(ret))
             }).into()

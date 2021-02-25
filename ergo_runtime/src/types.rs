@@ -130,6 +130,8 @@ impl From<Array> for TypedValue<Array> {
 }
 
 /// Script map type.
+///
+/// TODO: should the semantics be changed so that Map will always have Unset values removed?
 #[derive(Clone, Debug, GreaseType, PartialEq, StableAbi)]
 #[repr(C)]
 pub struct Map(pub BstMap<Value, Value>);
