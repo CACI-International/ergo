@@ -164,7 +164,10 @@ grease_traits_fn! {
     // Iter -> Array
     impl IntoTyped<crate::types::Array> for crate::types::Iter {
         async fn into_typed(self) -> Value {
-            self.map(|v| crate::types::Array(v.owned().collect())).into()
+            let v = self;
+            make_value!([v] {
+                Ok(crate::types::Array(v.await?.owned().try_collect().await?))
+            }).into()
         }
     }
 
@@ -185,11 +188,11 @@ grease_traits_fn! {
             let v = self;
             let ctx = CONTEXT.clone();
             make_value!([v] {
-                let iter = v.await?.owned();
+                let vals: Vec<_> = v.await?.owned().try_collect().await?;
                 let mut ret = bst::BstMap::default();
-                for i in iter {
+                for v in vals {
                     /// XXX do this in a better way (with an actual source)
-                    let entry = ctx.source_value_as::<crate::types::MapEntry>(Source::builtin(i))
+                    let entry = ctx.source_value_as::<crate::types::MapEntry>(Source::builtin(v))
                         .await?.unwrap().await?.owned();
                     ret.insert(entry.key, entry.value);
                 }

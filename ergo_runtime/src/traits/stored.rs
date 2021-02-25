@@ -113,7 +113,8 @@ grease_traits_fn! {
     impl Stored for types::Iter {
         async fn put(&self, stored_ctx: &StoredContext, item: ItemContent) {
             let mut ids: Vec<u128> = Vec::new();
-            for v in self.clone() {
+            let vals: Vec<_> = self.clone().try_collect().await?;
+            for v in vals {
                 ids.push(v.id());
                 stored_ctx.write_to_store(CONTEXT, v).await?;
             }

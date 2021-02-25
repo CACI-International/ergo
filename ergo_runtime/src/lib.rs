@@ -32,6 +32,9 @@ pub use source::Source;
 
 pub use ergo_runtime_macro::plugin_entry;
 
+// TODO move to grease
+pub use types::shared_async_stream::SharedAsyncStream;
+
 /// The Result type.
 pub type Result<T> = grease::Result<T>;
 

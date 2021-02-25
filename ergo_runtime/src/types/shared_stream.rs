@@ -55,6 +55,11 @@ impl<T> SharedStreamIter<T> {
         }
     }
 
+    /// Return whether `current` will return a value.
+    pub fn has_current(&self) -> bool {
+        unsafe { self.current.as_ref() }.item.is_some()
+    }
+
     /// Get a count of the immediately available items.
     ///
     /// This runs in O(n) time.

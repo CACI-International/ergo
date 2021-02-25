@@ -1,14 +1,16 @@
 ///! Ergo standard module plugin.
 use ergo_runtime::{plugin_entry, source::Source, EvalResult, Runtime};
 
+mod array;
 mod bool;
-mod collection;
 mod env;
 mod error;
 mod exec;
 mod fs;
 mod io;
+mod iter;
 mod log;
+mod map;
 #[path = "match.rs"]
 mod match_;
 mod net;
@@ -44,14 +46,16 @@ fn entry(ctx: &mut Runtime) -> EvalResult {
     exec::traits(&mut ctx.traits);
 
     Ok(Source::builtin(grease_string_map! {
+        "array" = array::module(),
         "bool" = bool::module(),
-        "collection" = collection::module(),
         "env" = env::module(),
         "error" = error::module(),
         "exec" = exec::function(),
         "fs" = fs::module(),
         "io" = io::module(),
+        "iter" = iter::module(),
         "log" = log::function(ctx),
+        "map" = map::module(),
         "match" = match_::function(),
         "net" = net::module(),
         "path" = path::module(),

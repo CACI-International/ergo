@@ -31,6 +31,7 @@ impl<I: Iterator> std::fmt::Debug for SharedIterator<I> {
 }
 
 impl<I: Iterator> SharedIterator<I> {
+    #[allow(dead_code)]
     /// Make a new SharedIterator from the given iterator.
     pub fn new(iter: I) -> Self {
         let (_, stream_iter) = SharedStream::new();

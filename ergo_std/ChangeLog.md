@@ -26,6 +26,20 @@
 * Add `env:user-cache` and `env:system-cache` to get the user and system cache
   paths.
 * Add `env:os` to get the OS running ergo.
+* Add `iter` module with the following functions:
+  * `from` to convert values to iterators,
+  * `fold` to fold an iterator into a value,
+  * `filter` to filter values in an iterator,
+  * `flatten` to flatten an iterator of iterators,
+  * `map` to map values in an iterator,
+  * `map-all` to concurrently map values in an iterator,
+  * `skip` to skip a number of values in an iterator,
+  * `skip-while` to skip values based on a predicate in an iterator,
+  * `take` to take a number of  values in an iterator,
+  * `take-while` to take values based on a predicate in an iterator,
+  * `unique` to deduplicate values in an iterator,
+  * `zip` to zip/unzip iterators into array iterators.
+* Add `array:from` and `map:from` (mainly for conversion from iterators).
 
 ### Improvements
 * Allow `env:path-search` to take Paths, and simply forward them as the returned
@@ -42,6 +56,7 @@
 * Allow `value:cache` to drop values early when they are present in the cache.
   This mainly makes things like a `task` value not count toward the pending
   work.
+* Remove `collection` in favor of iterators and array-/map-specific functions.
 
 ### Bugfixes
 * Fix an issue where `match` incorrectly detected bind errors when a binding in
@@ -65,6 +80,15 @@
   function. Since previously this was always the behavior, it will be sufficient
   (though not using the new features here) to change all calls of the custom
   types by adding a trailing colon as above.
+* Anything previously using functions in `collection` will have to be convert to
+  iterator functions:
+  * `collection:map :f :v` -> `array:from <| iter:map :f :v`
+  * `collection:fold :f :orig :v` -> `iter:fold :f :orig :v`
+  * `collection:entries :v` -> `iter:from :v | iter:map (fn :entry -> {key = entry:key, value = entry:value}) | array:from`
+  * `collection:get` and `collection:has` are no longer necessary (use `Unset` return type checking).
+  Note that the above are directly equivalent conversions, but with the new
+  iterator functions you can probably have better functionality not constrained
+  as before.
 
 ## 1.0.0-beta.8  -- 2020-01-15
 * Fix deadlock occurring from task execution.

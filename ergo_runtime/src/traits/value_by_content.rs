@@ -80,17 +80,18 @@ grease_traits_fn! {
     impl ValueByContent for types::Iter {
         async fn value_by_content(self, deep: bool) -> Value {
             let iter = self.await?.owned();
+            let vals: Vec<_> = iter.try_collect().await?;
             let mut inner_vals = Vec::new();
             let mut errs: Vec<Error> = Vec::new();
             if deep {
-                for v in iter {
+                for v in vals {
                     match super::value_by_content(CONTEXT, v.clone(), true).await {
                         Ok(v) => inner_vals.push(v),
                         Err(e) => errs.push(e)
                     }
                 }
             } else {
-                inner_vals = iter.collect();
+                inner_vals = vals;
             }
             if !errs.is_empty() {
                 Err(errs.into_iter().collect::<Error>())?

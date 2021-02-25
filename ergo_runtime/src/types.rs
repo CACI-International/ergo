@@ -12,14 +12,16 @@ use abi_stable::{
     std_types::{RBox, ROption, RString, RVec},
     StableAbi,
 };
+use futures::stream::StreamExt;
 use grease::bst::BstMap;
 use grease::depends;
-use grease::future::BoxFuture;
+use grease::future::{stream::BoxStream, BoxFuture};
 use grease::make_value;
 use grease::types::GreaseType;
 use grease::value::{Dependencies, TypedValue, Value};
 
 pub(crate) mod byte_stream;
+pub(crate) mod shared_async_stream;
 pub(crate) mod shared_iter;
 pub(crate) mod shared_stream;
 
@@ -456,60 +458,30 @@ impl futures::stream::Stream for Stream {
 /// Note that iterator types are meant to be fully consumed wherever they are used. Changing one
 /// partially and creating a new Value may not correctly capture dependencies; for a partial
 /// consumption case, use `Stream`.
+///
+/// You may notice that Iter itself implements Stream rather than Iterator, this is to make Iter
+/// useful (otherwise you can't really do meaningful manipulations of the contents), while from a
+/// script perspective it still seems like an iterator (since in scripts everything is async).
 #[derive(Clone, Debug, GreaseType, StableAbi)]
 #[repr(C)]
-pub struct Iter(shared_iter::SharedIterator<IterWrapper>);
+pub struct Iter(
+    shared_async_stream::SharedAsyncStream<BoxStream<'static, crate::ResultAbi<Value>>>,
+);
 
-#[sabi_trait]
-trait IterAbi: Send + Sync {
-    fn next(&mut self) -> ROption<Value>;
+impl futures::stream::Stream for Iter {
+    type Item = crate::Result<Value>;
 
-    #[sabi(last_prefix_field)]
-    fn size_hint(&self) -> abi_stable::std_types::Tuple2<usize, ROption<usize>> {
-        (0, ROption::RNone).into()
-    }
-}
-
-#[derive(StableAbi)]
-#[repr(C)]
-struct IterWrapper(IterAbi_TO<'static, RBox<()>>);
-
-impl Iterator for IterWrapper {
-    type Item = Value;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.0.next().into_option()
+    fn poll_next(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        unsafe { self.map_unchecked_mut(|v| &mut v.0) }
+            .poll_next(cx)
+            .map(|opt| opt.map(|res| res.into()))
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let (min, max) = self.0.size_hint().into_tuple();
-        (min, max.into_option())
-    }
-}
-
-impl Iterator for Iter {
-    type Item = Value;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        Iterator::next(&mut self.0)
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        Iterator::size_hint(&self.0)
-    }
-}
-
-impl<I> IterAbi for I
-where
-    I: Iterator<Item = Value> + Send + Sync,
-{
-    fn next(&mut self) -> ROption<Value> {
-        Iterator::next(self).into()
-    }
-
-    fn size_hint(&self) -> abi_stable::std_types::Tuple2<usize, ROption<usize>> {
-        let (min, max) = Iterator::size_hint(self);
-        (min, max.into()).into()
+        self.0.size_hint()
     }
 }
 
@@ -522,14 +494,37 @@ impl Iter {
         TypedValue::constant_deps(Self::from_iter(iter), deps)
     }
 
+    /// Create a new Iter value from a Stream with the given dependencies.
+    pub fn new_stream<S>(stream: S, deps: Dependencies) -> TypedValue<Self>
+    where
+        S: futures::stream::Stream<Item = crate::Result<Value>> + Send + 'static,
+    {
+        TypedValue::constant_deps(Self::from_stream(stream), deps)
+    }
+
     /// Create an Iter from an iterator.
     pub fn from_iter<I>(iter: I) -> Self
     where
         I: Iterator<Item = Value> + Send + Sync + 'static,
     {
-        Iter(shared_iter::SharedIterator::new(IterWrapper(
-            IterAbi_TO::from_value(iter, TU_Opaque),
+        Self::from_stream(futures::stream::iter(iter.map(Ok)))
+    }
+
+    /// Create an Iter from a stream.
+    pub fn from_stream<S>(stream: S) -> Self
+    where
+        S: futures::stream::Stream<Item = crate::Result<Value>> + Send + 'static,
+    {
+        Iter(shared_async_stream::SharedAsyncStream::new(BoxStream::new(
+            stream.map(|res| res.into()),
         )))
+    }
+
+    pub async fn try_collect<C>(self) -> crate::Result<C>
+    where
+        C: Default + Extend<Value>,
+    {
+        futures::stream::TryStreamExt::try_collect(self).await
     }
 }
 

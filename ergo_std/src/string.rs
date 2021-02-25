@@ -242,7 +242,8 @@ Returns a String representing the strings in `iter` separated by `separator`.",
         make_value!([sep, iter] {
             let (sep, iter) = ctx.task.join(sep,iter).await?;
             let iter = iter.owned();
-            let strs: Vec<_> = iter.map(|v| ctx.source_value_as::<types::String>(iter_source.clone().with(v))).collect();
+            let vals: Vec<_> = iter.try_collect().await?;
+            let strs: Vec<_> = vals.into_iter().map(|v| ctx.source_value_as::<types::String>(iter_source.clone().with(v))).collect();
             // Evaluate source_value_as
             let strs = ctx.task.join_all(strs).await?.into_iter().map(|sv| sv.unwrap());
             // Evaluate resulting TypedValue<types::String>

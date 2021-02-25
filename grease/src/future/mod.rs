@@ -16,6 +16,7 @@ use std::task;
 use std::collections::BTreeMap;
 
 pub mod eager;
+pub mod stream;
 
 #[derive(Debug, StableAbi)]
 #[repr(C)]
