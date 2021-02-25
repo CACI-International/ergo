@@ -72,6 +72,11 @@
   actually is less), but using `less` as the default is still probably more
   useful.
 * Improve error messages a little to decrease ambiguity/repetitiveness.
+* Allow `ByteStream` types to be displayed. This was a nuisance; initially the
+  idea was that there would be a `Utf8Stream` type to specifically capture such
+  a stream that's appropriate for display, but we sanitize the bytes in
+  `ByteStream` when converting to a `String`, so there's no reason to not do the
+  same to implement `Display`.
 
 ### Bugfixes
 * Fix incorrect parsing of indexing in e.g. `a |>:b:c`.

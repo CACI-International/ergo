@@ -1,4 +1,7 @@
 //! The Display grease trait and helper utilities.
+//!
+//! TODO: Change this trait to use something that supports Write rather than putting everything
+//! into a String.
 
 use super::type_name;
 use crate::types;

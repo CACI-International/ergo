@@ -206,7 +206,7 @@ impl ByteStreamSource for ByteStreamSourceImpl {
 
 /// A stream of bytes.
 ///
-/// Call `read()` to get a value supporting `std::io::Read`.
+/// Call `read()` to get a value supporting `AsyncRead`.
 #[derive(Clone, GreaseType, StableAbi)]
 #[repr(C)]
 pub struct ByteStream {
@@ -244,7 +244,7 @@ impl ByteStream {
         }
     }
 
-    /// Get a value supporting `std::io::Read`.
+    /// Get a value supporting `AsyncRead`.
     pub fn read(&self) -> ByteStreamReader {
         ByteStreamReader {
             oblock: None,
@@ -398,6 +398,18 @@ grease_traits_fn! {
 
         async fn get(_stored_ctx: &trts::StoredContext, item: ItemContent) -> Erased {
             Erased::new(ByteStream::new(grease::runtime::io::Blocking::new(item)))
+        }
+    }
+
+    impl trts::Display for ByteStream {
+        async fn fmt(&self) -> RString {
+            let mut bytes = Vec::new();
+            self.read().read_to_end(&CONTEXT.task, &mut bytes).await?;
+
+            match String::from_utf8(bytes) {
+                Ok(s) => s.into(),
+                Err(v) => String::from_utf8_lossy(v.as_bytes()).into()
+            }
         }
     }
 }
