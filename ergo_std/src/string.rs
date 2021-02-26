@@ -1,8 +1,7 @@
 //! String manipulation functions.
 
-use ergo_runtime::{context_ext::AsContext, ergo_function, types, ContextExt};
+use ergo_runtime::{context_ext::AsContext, ergo_function, traits, types, ContextExt};
 use grease::{make_value, value::Value};
-use std::fmt::Write;
 
 pub fn module() -> Value {
     crate::grease_string_map! {
@@ -160,16 +159,16 @@ Examples:
                     .collect();
                 ctx.task.join_all(values).await?;
 
-                let mut result = types::String::new();
+                let mut result = String::new();
+                let mut formatter = traits::Formatter::new(&mut result);
                 for f in fragments.into_iter() {
                     match f {
-                        StringFragment::Literal(s) => result.push_str(&s),
-                        StringFragment::Value(v) => {
-                            write!(result, "{}", ctx.display(v.clone()).await?)?;
-                        }
+                        StringFragment::Literal(s) => formatter.write_str(&s)?,
+                        StringFragment::Value(v) => ctx.display(v.clone(), &mut formatter).await?
                     }
                 }
-                Ok(result)
+                drop(formatter);
+                Ok(types::String::from(result))
             }).into()
         }
     }).into()

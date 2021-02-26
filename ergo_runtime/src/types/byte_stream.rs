@@ -402,13 +402,53 @@ grease_traits_fn! {
     }
 
     impl trts::Display for ByteStream {
-        async fn fmt(&self) -> RString {
-            let mut bytes = Vec::new();
-            self.read().read_to_end(&CONTEXT.task, &mut bytes).await?;
+        async fn fmt(&self, f: &mut trts::Formatter) {
+            let mut reader = self.read();
+            let mut buf: [u8; BYTE_STREAM_BLOCK_LIMIT] =
+                unsafe { std::mem::MaybeUninit::uninit().assume_init() };
+            let mut overflow: [u8; 4] =
+                unsafe { std::mem::MaybeUninit::uninit().assume_init() };
+            let mut overflow_size = 0;
+            loop {
+                let end = reader.read(&CONTEXT.task, &mut buf).await?;
+                if end == 0 {
+                    break
+                } else {
+                    let mut start = 0;
+                    while start < end {
+                        if overflow_size > 0 {
+                            overflow[overflow_size] = buf[start];
+                            start += 1;
+                            overflow_size += 1;
+                            if let Ok(s) = std::str::from_utf8(&overflow[..overflow_size]) {
+                                f.write_str(s)?;
+                                overflow_size = 0;
+                            }
+                            continue;
+                        }
 
-            match String::from_utf8(bytes) {
-                Ok(s) => s.into(),
-                Err(v) => String::from_utf8_lossy(v.as_bytes()).into()
+                        match std::str::from_utf8(&buf[start..end]) {
+                            Ok(s) => f.write_str(s)?,
+                            Err(e) => {
+                                let ind = e.valid_up_to();
+                                f.write_str(std::str::from_utf8(&buf[start..ind]).unwrap())?;
+                                start = ind;
+                                match e.error_len() {
+                                    None => {
+                                        assert!(end - ind < 4);
+                                        overflow_size = end - ind;
+                                        overflow[..overflow_size].copy_from_slice(&buf[ind..end]);
+                                        start = end;
+                                    }
+                                    Some(n) => {
+                                        start += n;
+                                        f.write_str(std::char::REPLACEMENT_CHARACTER.encode_utf8(&mut overflow))?;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }

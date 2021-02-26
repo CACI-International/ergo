@@ -915,9 +915,10 @@ impl Evaluator {
                                 ctx.env_insert(types::String::from("self").into(), Ok(doc_val));
                             }.boxed()).await;
                             let mut doc = std::string::String::new();
+                            let mut formatter = traits::Formatter::new(&mut doc);
                             for p in parts {
                                 match p {
-                                    DocCommentPart::String(s) => doc.push_str(&s),
+                                    DocCommentPart::String(s) => formatter.write_str(&s)?,
                                     DocCommentPart::Expression(es) => {
                                         // Evaluate as a block, displaying the final value and
                                         // merging the scope into the doc comment scope.
@@ -927,11 +928,12 @@ impl Evaluator {
                                         // expression (to support using a block to only add
                                         // bindings).
                                         if val.grease_type_immediate() != Some(&BindExpr::grease_type()) {
-                                            doc.push_str(&ctx.display(val.unwrap()).await?);
+                                            ctx.display(val.unwrap(), &mut formatter).await?;
                                         }
                                     }
                                 }
                             }
+                            drop(formatter);
                             Result::<_, grease::Error>::Ok(doc)
                         }.boxed()).await.0?;
                         val.set_metadata(&metadata::Doc, types::String::from(doc).into());

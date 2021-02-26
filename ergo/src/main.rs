@@ -318,7 +318,12 @@ fn run(opts: Opts) -> Result<String, String> {
     let ret = value_to_execute.and_then(|value| {
         task.block_on(grease::value::Errored::observe(on_error, async {
             ctx.force_value_nested(value.clone()).await?;
-            ctx.display(value).await
+            let mut s = String::new();
+            {
+                let mut formatter = ergo_runtime::traits::Formatter::new(&mut s);
+                ctx.display(value, &mut formatter).await?;
+            }
+            Ok(s)
         }))
     });
 

@@ -9,7 +9,7 @@ mod type_name;
 mod value_by_content;
 
 pub use bind::{bind, bind_error, delay_bind, Bind, BindImpl};
-pub use display::{display, Display, DisplayImpl};
+pub use display::{display, Display, DisplayImpl, Formatter};
 pub use into::{into, into_sourced, IntoTyped, IntoTypedImpl};
 pub use nested::{force_value_nested, Nested, NestedImpl};
 pub use stored::{
