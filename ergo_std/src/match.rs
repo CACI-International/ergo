@@ -7,7 +7,7 @@ pub fn function() -> Value {
     ergo_function!(std::match,
         r"Attempt to match a value over multiple bindings.
 
-Arguments: <value> <bindings>...
+Arguments: `:value ^:bindings`
 
 Returns a dynamic value which will evaluate to the result of binding `value` to the first binding
 which does not result in a binding error.",

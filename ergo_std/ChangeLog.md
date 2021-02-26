@@ -2,31 +2,36 @@
 
 ## Unreleased
 ### New Features
-* Add `enum`, `struct`, `MapValues`, `MapOf`, `ArrayValues`, and `ArrayOf` to
-  `type` module.
+* The standard library has been restructured into a more consistent hierarchy
+  (see the documentation or the migration guide for details).
+* Add `type:enum` and `type:struct` for common cases.
+* Add `Map:Values`, `Map:Of`, `Array:Values`, and `Array:Of` to check the
+  contents of arrays and maps.
 * Add `net:unarchive-remote` function for fetching and caching a remote archive,
   and `ergo-remote` convenience function for loading a remote archive.
-* Add `type:Unset` function to match `Unset` types.
-* Add `type:Optional` and `type:Required` predicates, checking for `Unset`.
-* Add `default` to specify default values for `Unset` values.
+* Add a number of support features for interacting with `Unset` types:
+  * The `Unset` function to match the type.
+  * `optional` and `required` predicates, allowing/disallowing `Unset` in
+    patterns.
+  * `default` to specify default values for `Unset` values.
 * Add `import` to easily use a map of keys to bind to indexed values.
-* Add `pass` convenience function, namely for use in `match` cases.
-* Add `recursive` to create recursive functions.
+* Add `Function:pass` convenience function, namely for use in `match` cases.
+* Add `Function:recursive` to create recursive functions.
+* Add `Function:partial` to partially apply functions.
 * Add `match:value` convenience function.
-* Add `path:with-output` to make output paths from commands more ergonomic.
-* Add `Iter` type for iterators.
-* Add `string:join` to join iterators of strings.
+* Add `Path:with-output` to make output paths from commands more ergonomic.
+* Add `String:join` to join iterators of strings.
 * Add `MapEntry` type for iterators of `Map`.
 * `type:new` accepts a `bind` keyword argument to dictate how value instances
   can bind. If unspecified, uses the `bind` behavior of whatever inner type is
   returned by the compose function.
-* Add `type:Bool` as well as `bool:true`, `bool:false`, and `bool:from` to
-  create and convert values.
+* Add `Bool` type as well as `Bool:true`, `Bool:false`, and `Bool:from` to
+  create and convert bool values.
 * Add `fs:append` for appending to a file.
 * Add `env:user-cache` and `env:system-cache` to get the user and system cache
   paths.
 * Add `env:os` to get the OS running ergo.
-* Add `iter` module with the following functions:
+* Add `Iter` type for iterators, with the following support functions:
   * `from` to convert values to iterators,
   * `fold` to fold an iterator into a value,
   * `filter` to filter values in an iterator,
@@ -39,7 +44,7 @@
   * `take-while` to take values based on a predicate in an iterator,
   * `unique` to deduplicate values in an iterator,
   * `zip` to zip/unzip iterators into array iterators.
-* Add `array:from` and `map:from` (mainly for conversion from iterators).
+* Add `Array:from` and `Map:from` (mainly for conversion from iterators).
 
 ### Improvements
 * Allow `env:path-search` to take Paths, and simply forward them as the returned
@@ -82,13 +87,18 @@
   types by adding a trailing colon as above.
 * Anything previously using functions in `collection` will have to be convert to
   iterator functions:
-  * `collection:map :f :v` -> `array:from <| iter:map :f :v`
-  * `collection:fold :f :orig :v` -> `iter:fold :f :orig :v`
-  * `collection:entries :v` -> `iter:from :v | iter:map (fn :entry -> {key = entry:key, value = entry:value}) | array:from`
+  * `collection:map :f :v` -> `Array:from <| Iter:map :f :v`
+  * `collection:fold :f :orig :v` -> `Iter:fold :f :orig :v`
+  * `collection:entries :v` -> `Iter:from :v | Iter:map (fn :entry -> {key = entry:key, value = entry:value}) | Array:from`
   * `collection:get` and `collection:has` are no longer necessary (use `Unset` return type checking).
   Note that the above are directly equivalent conversions, but with the new
   iterator functions you can probably have better functionality not constrained
   as before.
+* Functions/modules in the `value` module have been moved to the top level.
+* `value:doc` has been removed as the builtin `doc` is sufficient.
+* Type-related functions are now indexed off the type checking function:
+  * Values in the `string` module are now accessed with `String`.
+  * Values in the `path` module are now accessed with `Path`.
 
 ## 1.0.0-beta.8  -- 2020-01-15
 * Fix deadlock occurring from task execution.

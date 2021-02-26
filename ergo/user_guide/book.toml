@@ -7,3 +7,6 @@ title = "Ergo"
 
 [output.html]
 additional-js = ["ergo.js"]
+
+[output.html.fold]
+enable = true

@@ -33,7 +33,7 @@ fn by_content_fn() -> Value {
     ergo_function!(independent std::value::force,
     r"Identify a value by its content.
 
-Arguments: <value>
+Arguments: `:value`
 
 Returns a new value which has the same type and result as the given value, but has an identity derived from the result
 (typically by forcing the value and any inner values).",
@@ -66,15 +66,17 @@ fn cache_fn() -> Value {
     ergo_function!(independent std::value::cache,
     r"Cache a value by identity.
 
-Arguments: <value>
-Keyword Arguments: no-persist
+Arguments: `:value`
 
-By default, caches both at runtime and to persistent storage, to be cached across runs. If the
-`no-persist` argument is present, it will only cache at runtime.
+Keyword Arguments:
+* `:no-persist`: If present, the caching will not be persisted (only runtime caching will be done).
 
-Returns a value identical to the argument, however possibly loads the value from a persisted store rather than
-evaluating it. If not yet persisted, when the returned value is evaluated it will evaluate the inner value and persist
-it. Multiple values with the same id will be normalized to the same single runtime value.",
+Caches the given value both at runtime and to persistent storage (to be cached across invocations).
+
+Returns a value identical to the argument, however possibly loads the value from a persisted store
+rather than evaluating it. If not yet persisted, when the returned value is evaluated it will
+evaluate the inner value and persist it. Multiple values with the same id will be normalized to the
+same single runtime value.",
     |ctx, args| {
         let to_cache = args.next().ok_or("no argument to cache")?.unwrap();
         let no_persist = args.kw("no-persist").is_some();
@@ -191,10 +193,10 @@ fn variable_fn() -> Value {
     ergo_function!(independent std::value::variable,
     r"Change the identity of a value.
 
-Arguments: <value>
+Arguments: `:value`
 
 Keyword Arguments:
-* <depends>: The value for which the identity should be used to set the identity of the argument.
+* `:depends`: A value whose identity will be used to set the identity of the returne value.
 
 Returns a value identical to the argument, but with a different identity. If `depends` is not set, the value will have
 a fixed identity derived from nothing else.",
@@ -218,7 +220,7 @@ fn debug_fn() -> Value {
     ergo_function!(independent std::value::debug,
             r"Print a value's type (if immediately available) and identity to the debug log.
 
-Arguments: <value>
+Arguments: `:value`
 
 Returns the argument exactly as-is. The logging occurs immediately.",
     |ctx, args| {
@@ -249,7 +251,7 @@ fn doc_get_fn() -> Value {
     ergo_function!(independent std::value::doc::get,
     r"Get the documentation for a value.
 
-Arguments: <value>",
+Arguments: `:value`",
     |ctx, args| {
         let val = args.next().ok_or("no argument to doc")?;
 
@@ -264,7 +266,7 @@ fn doc_set_fn() -> Value {
     ergo_function!(independent std::value::doc::set,
     r"Set the documentation for a value.
 
-Arguments: <value> <doc: String>",
+Arguments: `:value (String :doc)`",
     |ctx, args| {
         let mut val = args.next().ok_or("no value argument")?.unwrap();
         let doc = args.next().ok_or("no documentation argument")?;
@@ -283,7 +285,7 @@ fn dyn_fn() -> Value {
     ergo_function!(independent std::value::dynamic,
     r"Return a dynamically-typed value which evaluates to the given value.
 
-Arguments: <value>",
+Arguments: `:value`",
     |ctx, args| {
         let val = args.next().ok_or("no value argument")?.unwrap();
 
@@ -299,7 +301,8 @@ fn meta_get_fn() -> Value {
     ergo_function!(independent std::value::meta::get,
     r"Get metadata of a value.
 
-Arguments: <value> <metadata key>
+Arguments: `:value :metadata-key`
+
 Returns the metadata value or `Unset` if no key is set.",
     |ctx, args| {
         let val = args.next().ok_or("no value argument")?.unwrap();
@@ -319,8 +322,8 @@ fn meta_set_fn() -> Value {
     ergo_function!(independent std::value::meta::set,
     r"Set metadata of a value.
 
-Arguments: <value> <metadata key> [metadata value]
-You may omit metadata value to unset a metadata key.",
+Arguments: `:value :metadata-key (Optional :metadata-value)`
+You may omit the metadata value to unset a metadata key.",
     |ctx, args| {
         let mut val = args.next().ok_or("no value argument")?.unwrap();
         let key = args.next().ok_or("no metadata key provided")?.unwrap();

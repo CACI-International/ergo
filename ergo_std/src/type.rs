@@ -39,16 +39,16 @@ fn new_fn() -> Value {
     ergo_function!(independent std::type::new,
         "Create a new type.
 
-Arguments: (String id) (Function compose)
-Keyword Arguments: (Optional (Function bind))
-
+Arguments: `(String :id) (Function :compose)`
 * `id` is used to derive the type identity, and should be unique to this type.
 * `compose` should be a value which can be called in expressions and patterns; its call
 implementations will be used by the returned value to compose and decompose values.
-* `bind`, if provided, should be a value which will be bound to the inner value (as returned by a
-call to `compose`) and will then be bound whenever instances of the new type are bound. If `bind`
-is not provided, binding to instances of the new type will behave as if the value returned by
-`compose` were bound (i.e. as if `bind` were specified as `:a -> :a`).
+
+Keyword Arguments:
+* `Function :bind`: a value which will be bound to the inner value (as returned by a
+  call to `compose`) and will then be bound whenever instances of the new type are bound. If `bind`
+  is not provided, binding to instances of the new type will behave as if the value returned by
+  `compose` were bound (i.e. as if `bind` were specified as `:a -> :a`).
 
 Returns a value which matches values of the new type (by application). If applied to no arguments,
 returns a function which will compose or decompose values of the type (using `compose`
@@ -56,7 +56,7 @@ internally).
 
 ### Example Usage
 Create type:
-```
+```ergo
 MyType = type:new \"library:MyType\" <| match:value ^[
     fn :a :b :c -> {a,b,c} # store internally as a map
     pat :out-a :out-b :out-c -> {a,b,c} -> {

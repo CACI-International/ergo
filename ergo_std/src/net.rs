@@ -18,10 +18,10 @@ fn download_fn() -> Value {
     ergo_function!(std::net::download,
     r"Download a file over HTTP or HTTPS.
 
-Arguments: <url: String> <target: Path>
+Arguments: `(String :url) (Path :target)`
 
 Keyword Arguments:
-* <headers: Map>: A map of Strings to Strings where key-value pairs are header names and values to set for the request.
+* `(Map:Of :String :String) :headers`: Key-value pairs are header names and values to set for the request.
 
 Returns a unit-typed value which downloads the file referenced by `url` to the given `target`.",
     |ctx,args| {

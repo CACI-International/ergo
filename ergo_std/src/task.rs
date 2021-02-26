@@ -20,12 +20,12 @@ pub fn function() -> Value {
     ergo_function!(independent std::task,
     r"Run the given value as a concurrent task.
 
-Arguments: <description: String> <value>
+Arguments: `(String :description) :value`
 
 Keyword Arguments:
-* <task-count: String>: A numeric string indicating the number of task slots the task should use.
+* `String :task-count`: A numeric string indicating the number of task slots the task should use.
   Defaults to 0.
-* <track-work-by>: A value the identity of which is used as the identifier for work tracking. If unset, the task value
+* `:track-work-by`: A value the identity of which is used as the identifier for work tracking. If unset, the task value
   identity is used. For instance, you might use this to indicate the values which affect a task's runtime, so that
   progress estimation may be able to predict how long the task will take based on prior runs.
 

@@ -1,50 +1,83 @@
 plugin = ergo plugin
 
+native-doc = :doc
+
 ## Create a value that will evaluate to the first argument which successfully binds.
 ## 
-## Arguments: <binding cases>...
-## This is a shortcut for `:a -> match :a <cases>`.
+## Arguments: `^:cases`
+## This is a shortcut for `:a -> match :a ^:cases`.
 matches = fn ^:cases -> :a -> !plugin:match :a ^:cases
 
-net = ergo net
-type = ergo type
+mdoc = ergo doc
+mnet = ergo net
+mtype = ergo type
 
 ## Load a remote archive.
 ##
 ## Fetches the archive with `net:unarchive-remote`, and loads the archive from the root directory.
 ##
-## Arguments: (String url)
-ergo-remote = fn :url -> ergo <| net:unarchive-remote :url
+## Arguments: `(String :url)`
+ergo-remote = fn :url -> ergo <| mnet:unarchive-remote :url
 
 ## Return any bound value as-is.
 ##
 ## Particularly useful as a case in `match` calls.
 pass = :v -> :v
 
-## Default a value in a binding expression.
+## Use a default value if Unset.
 ##
-## Arguments: <target> as <value>
+## Arguments: `:target as :value`
 ##
-## Ensure that `<value>` is evaluated as a normal expression (typically preceded by `!`, though not
-## always necessary if the value doesn't use get/set syntax).
+## Ensure that `value` is evaluated as a normal expression in pattern expressions (typically
+## preceded by `!`, though not always necessary if the value doesn't use get/set syntax).
 ##
 ## If the value bound to the result is `Unset`, the default is used.
 ##
-## ## Example
-## ```
+## ### Example Usage
+## ```ergo
+## :v = default :my-value as []
 ## default :my-value as [] = :maybe-an-array
+## func = fn (opt-arg = default :arg as []) -> {...}
 ## ```
-default = pat :out as :default-value -> :v -> {
-    !:out = !plugin:match :v (plugin:type:Unset -> :default-value) (:other -> :other)
-}
+default = matches ^[
+    fn :v as :default-value -> {
+        !plugin:match :v (plugin:type:Unset -> :default-value) :pass
+    }
+    pat :out as :default-value -> :v -> {
+        !:out = !plugin:match :v (plugin:type:Unset -> :default-value) :pass
+    }
+]
+
+## Partially apply a function.
+##
+## Arguments: `(Function :func) ^:args`
+##
+## Keyword Arguments: `^:kwargs`
+##
+## Returns a `Function` that, when called, will call the original function with the original arguments
+## and any extra arguments of the call.
+##
+## ### Example Usage
+## ```ergo
+## f = fn :a :b :c -> [:a,:b,:c]
+## part = Function:partial :f 1 2
+## [1,2,3] = part 3
+## [1,2,a] = part a
+## ```
+partial = fn :f ^:args ^{^:kwargs}-> fn ^:args2 ^{^:kwargs2} -> f ^:args ^:args2 ^:kwargs ^:kwargs2
 
 ## Run a command that produces an output path, where the path to create is passed as an argument to
 ## the given function.
 ##
-## Arguments: <function>
+## Arguments: `(Function :function)`
 ##
 ## Returns the output path, relying on the value returned by the function. Execution of that value
 ## _must_ make the path valid for future use.
+##
+## ### Example Usage
+## ```ergo
+## out = Path:with-output <| fn :p -> exec touch :p
+## ```
 with-output-path = fn :f -> {
     file = plugin:path:new:
     seq (f :file) :file
@@ -53,112 +86,278 @@ with-output-path = fn :f -> {
 ## Create a recursive function. The passed function will be passed itself as the first argument, and
 ## all other arguments will be forwarded.
 ##
-## Arguments: <function>
+## Arguments: `(Function :function)`
 ##
 ## Returns a function that calls the passed function, forwarding arguments.
 ##
 ## When recursively calling the function, you must also pass the function as the first argument.
 ## *Avoid recursion when possible*, as it is often difficult to reason about value identities and
 ## behavior in the lazily-evaluated runtime.
+##
+## ### Example Usage
+## ```ergo
+## func = Function:recursive <| fn :self :a :b -> {
+##    # Recursive call
+##    self :self 1 2
+## }
+##
+## # External call
+## func 1 2
+## ```
 recursive = fn :f -> fn ^:args ^{^:kwargs} -> f :f ^:args ^:kwargs
 
 ## Import values by index in a binding expression.
 ##
-## Arguments: <Map or binding>
+## Arguments: `(MapOrValue :descriptor)`
 ##
 ## If passed a map, each key in the map will be used as an index to the bound value, and each value
 ## will be bound as if `import` were used.
 ## Otherwise, bind the result to the binding expression.
+##
+## ### Example Usage
+## ```ergo
+## # Basic import (no different than normal binding)
+## import :s = std:
+##
+## # Name import
+## import {fs = {write},io} = std:
+## write file.txt io:stdin
+##
+## # Renaming import
+## import {path = :stdpath} = std:
+## stdpath:new:
+## ```
 import = {
     inner = recursive <| fn :self :descr -> :v -> {
-        !match :descr {
-            plugin:type:Map :m -> plugin:collection:entries :m | plugin:collection:map (fn {key,value} -> { type:Required !(self :self :value) = v::key; () })
+        !plugin:match :descr ^[
+            plugin:type:Map :m -> !plugin:iter:map (fn (plugin:type:MapEntry: :key :value) -> { mtype:required !(self :self :value) = v::key; () }) :m
             :other -> { !:other = :v; () }
-        }
+        ]
     }
 
     pat :descr -> inner :descr
 }
 
-copydoc = matches ^[
-    fn :a :b -> plugin:value:doc:set :b (plugin:value:doc:get :a)
-    fn :a merge :b -> plugin:value:doc:set :b (plugin:string:format "{}\n{}" (plugin:value:doc:get :a) (plugin:value:doc:get :b))
-]
-
-extend-index = fn :a :b -> {
-    doc = plugin:string:format "{}\n{}" (plugin:value:doc:get :a) (plugin:value:doc:get :b)
-    require-b = pat :out -> index :i -> { type:Required !:out = b::i }
-    plugin:value:doc:set (!plugin:match :a ^[
-        plugin:type:Map :m -> {^:m,^:b}
-        :other -> matches (require-b :v -> :v) :other
-    ]) :doc
-}
-
-doc-summary = fn :val -> (plugin:string:split "\n\n" (doc :val)):0
-
-doc-module = fn :self :name -> {
-    first = !plugin:match doc:path: ^[
-        plugin:type:Unset -> :name
-        _ -> plugin:string:format "[{}]({})" :name (doc:write :name self::name)
-    ]
-    plugin:string:format "* {}: {}\n" :first (doc-summary self::name)
-}
-
-doc-modules = fn :self ^:names -> {
-    !plugin:collection:fold (fn :s :n -> plugin:string:format "{}{}" :s (doc-module :self :n)) "" :names
-}
-
-doc-function = fn :self :name -> {
-    !plugin:match doc:path: ^[
-        plugin:type:Unset -> plugin:string:format "* {}: {}\n" :name (doc-summary self::name)
-        _ -> plugin:string:format "## {}\n{}\n\n" :name (doc self::name)
+match-indices = fn :fallback :from -> {
+    matches ^[
+        index :i -> !plugin:match from::i ^[
+            plugin:type:Unset -> !plugin:error:throw <| plugin:string:format "missing index: {}" :i
+            :pass
+        ]
+        :fallback
     ]
 }
 
-doc-functions = fn :self ^:names -> {
-    !plugin:collection:fold (fn :s :n -> plugin:string:format "{}{}" :s (doc-function :self :n)) "" :names
+type-function = {
+    binding = (
+"When called on a single value, checks whether the value is the type (if statically typed) or
+creates a typed value from a dynamically typed value (checking the type when evaluated).
+
+When called in a pattern on a single argument, checks that the bound value is the type, and then
+binds that value to the argument (behaving the same way for static/dynamic typed values).
+
+If bound directly to a value (versus calling with an argument), checks that the bound value is the
+type."
+    )
+    compose = (
+"If called without arguments, returns a composition function which can be used to compose or
+decompose instances of the type."
+    )
+    matches ^[
+        fn: -> :binding
+        fn :args -> plugin:string:format "{}\n\n{}\nArguments: {}" :binding :compose :args
+    ]
 }
 
 ## The ergo standard library.
 ##
-## This library provides a number of submodules that group related functions, as well as a few
-## top-level functions. It is often useful to merge the library into the top-level environment,
-## for instance with `^ergo std`.
+## This library provides a number of submodules that group related functions, as well as some
+## top-level functions. It is often useful to merge the library into the top-level environment, for
+## instance with `^ergo std`.
+##
+## # Types
+## {{mdoc:modules :self Any Array Bool Function Iter Map MapEntry Path String Unit Unset}}
 ##
 ## # Modules
-## {{doc-modules :self collection env error fs io net path script string type value}}
+## {{mdoc:modules :self doc env error fs io meta net script type}}
 ##
 ## # Functions
-## {{doc-functions :self default ergo-remote exec import log match pass recursive seq task}}
+## {{(mdoc:functions :self by-content cache debug default dynamic ergo-remote
+##    exec import log match optional required seq task variable)}}
 {
-    ^:plugin
-    type = extend-index plugin:type {
-        ## * enum: Create an enumerated type.
-        ## * struct: Create a structured type.
-        ## * MapValues: Match a map with specific value types.
-        ## * MapOf: Match a map with single key and value types.
-        ## * ArrayValues: Match an array with specific value types.
-        ## * ArrayOf: Match an array of a single type.
-        ## * Optional: Match an inner value or `Unset` types.
-        ## * Required: Match an inner value, disallowing `Unset` types.
-        :type
+    ## The Any type.
+    ##
+    ## This type will always match the given value.
+    ##
+    ## {{type-function:}}
+    Any = plugin:type:Any
+
+    ## The Array type and related functions.
+    ##
+    ## {{type-function:}}
+    ##
+    ## # Functions
+    ## {{mdoc:functions :self from Values Of}}
+    Array = match-indices plugin:type:Array {
+        import {from} = plugin:array
+        Values = mtype:ArrayValues
+        Of = mtype:ArrayOf
     }
-    net = extend-index plugin:net {
-        ## * unarchive-remote: Open a remote archive.
-        :net
+
+    ## The Bool type and related functions.
+    ##
+    ## {{type-function:}}
+    ##
+    ## # Functions
+    ## {{mdoc:functions :self from true false}}
+    Bool = match-indices plugin:type:Bool plugin:bool
+
+    ## The Function tpye and related functions.
+    ##
+    ## {{type-function:}}
+    ##
+    ## # Functions
+    ## {{mdoc:functions :self partial pass recursive}}
+    Function = match-indices plugin:type:Function {partial,pass,recursive}
+
+    ## The Iter type and related functions.
+    ##
+    ## Iter types can be used to manipulate collections of values All functions here (when taking an
+    ## some iterator argument) convert the argument to an Iter if possible. So, for example, one can
+    ## you these functions directly on arrays and maps (but you should take care to convert the
+    ## resulting Iters back to arrays and maps when necessary).
+    ##
+    ## {{type-function:}}
+    ##
+    ## # Functions
+    ## {{
+    ##   (mdoc:functions :self from fold filter flatten map map-all skip skip-while
+    ##    take take-while unique zip)
+    ## }}
+    Iter = (match-indices plugin:type:Iter plugin:iter)
+
+    ## The Map type and related functions.
+    ##
+    ## When converting a map to/from an iterator, the iterator elements will/must be `MapEntry` types.
+    ##
+    ## {{type-function:}}
+    ##
+    ## # Functions
+    ## {{mdoc:functions :self from Values Of}}
+    Map = match-indices plugin:type:Map {
+        import {from} = plugin:map
+        Values = mtype:MapValues
+        Of = mtype:MapOf
     }
-    match = extend-index plugin:match {
-        ## ## Indices
-        ## * value: Create a value that matches against a binding.
-        { value = :matches }
+
+    ## The MapEntry type.
+    ##
+    ## This type supports indexing with `key` and `value`.
+    ##
+    ## {{type-function "key value"}}
+    MapEntry = plugin:type:MapEntry
+
+    ## The Path type and related functions.
+    ##
+    ## {{type-function:}}
+    ##
+    ## # Functions
+    ## {{mdoc:functions :self new join split name parent relative with-output}}
+    Path = match-indices plugin:type:Path {^plugin:path, with-output = :with-output-path}
+
+    ## The String type and related functions.
+    ##
+    ## {{type-function:}}
+    ##
+    ## # Functions
+    ## {{mdoc:functions :self format from join split trim}}
+    String = match-indices plugin:type:String plugin:string
+
+    ## The Unit type.
+    ##
+    ## {{type-function:}}
+    Unit = plugin:type:Unit
+
+    ## The Unset type.
+    ##
+    ## {{type-function:}}
+    ##
+    ## If called with no arguments, returns an Unset instance.
+    ##
+    ## When indexing maps, `Unset` is returned if a key does not exist.
+    ## To remove values from a map, you may bind them to `Unset` instances. 
+    Unset = plugin:type:Unset
+
+    ## Documentation helpers.
+    ##
+    ## {{mdoc:functions :self summary modules functions}}
+    doc = :mdoc
+
+    ## Get values related to the program's runtime environment.
+    ##
+    ## {{mdoc:functions :self get path-search home current-dir user-cache system-cache os}}
+    env = plugin:env
+
+    ## Interface with errors.
+    ##
+    ## {{mdoc:functions :self catch throw}}
+    error = plugin:error
+
+    ## Interact with the local filesystem.
+    ##
+    ## {{
+    ## (mdoc:functions :self append copy create-dir exists glob read remove sha1 track unarchive
+    ##  write)
+    ## }}
+    fs = plugin:fs
+
+    ## Interact with the program's io channels.
+    ##
+    ## {{mdoc:functions :self stdin stdout stderr}}
+    io = plugin:io
+
+    ## Manipulate value metadata.
+    ##
+    ## Values can have arbitrary metadata attached to them at runtime. This metadata can be
+    ## retrieved without evaluating the value.
+    ##
+    ## {{mdoc:functions :self get set}}
+    meta = plugin:value:meta
+
+    ## Networking functions.
+    ##
+    ## {{mdoc:functions :self download unarchive-remote}}
+    net = {
+        import {download} = plugin:net
+        import {unarchive-remote} = :mnet
     }
-    path = extend-index plugin:path {
-        ## * with-output: Run a command which creates an output Path.
-        { with-output = :with-output-path }
+
+    ## Script runtime functions.
+    ##
+    ## {{mdoc:functions :self bindings dir path load-path set-load-path}}
+    script = plugin:script
+
+    ## Type creation.
+    ##
+    ## {{mdoc:functions :self new enum struct}}
+    type = {
+        import {new} = plugin:type
+        import {enum,struct} = :mtype
     }
-    ergo-remote
-    pass
+
+    # Functions
+    import {by-content,cache,debug,dynamic,variable} = plugin:value
+    import {optional,required} = :mtype
     default
-    recursive
+    ergo-remote
+    exec = plugin:exec
     import
+    log = plugin:log
+    ## {{native-doc plugin:match}}
+    ##
+    ## # Functions
+    ## {{mdoc:functions :self value}}
+    match = match-indices plugin:match {value = :matches}
+    seq = plugin:seq
+    task = plugin:task
 }

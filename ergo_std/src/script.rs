@@ -37,7 +37,7 @@ fn load_path_fn() -> Value {
     ergo_function!(independent std::script::load_path,
             r"Get the load path of the currently-executing script.
 
-Arguments: (None)
+Arguments: (none)
 
 Returns an Array of Path.",
         |ctx, args| {
@@ -51,7 +51,7 @@ fn set_load_path_fn() -> Value {
     ergo_function!(independent std::script::set_load_path,
     r"Set the load path of the currently-executing script.
 
-Arguments: <Array of Path>
+Arguments: `((Array:Of :Path) :paths)`
 
 This function immediately executes.
 Any load calls (`ergo ...`) following this call will use the given array of paths, where paths are checked in-order.",

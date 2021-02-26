@@ -30,7 +30,7 @@ fn glob_fn() -> Value {
     ergo_function!(std::fs::glob,
     r"Get an array of files using a glob.
 
-Arguments: <glob-pattern: Into<String>>
+Arguments: `(Into<String> :glob-pattern)`
 The glob pattern is similar to unix-style globs, where:
 * `?` matches any single character.
 * `*` matches any (possibly empty) sequence of characters.
@@ -125,7 +125,7 @@ fn copy_fn() -> Value {
     ergo_function!(std::fs::copy,
     r"Copy files or directories.
 
-Arguments: <from: Path> <to: Path>
+Arguments: `(Path :from) (Path :to)`
 If the destination is an existing directory, `from` is copied with the same basename into that directory.
 All destination directories are automatically created.
 If `from` is a directory, it is recursively copied.",
@@ -160,8 +160,8 @@ fn exists_fn() -> Value {
         std::fs::exists,
         r"Check whether a path exists.
 
-Arguments: <Path>
-Returns a boolean indicating whether the path exists (as either a file or directory).",
+Arguments: `(Path :path)`
+Returns a `Bool` indicating whether the path exists (as either a file or directory).",
         |ctx, args| {
             let path = args.next().ok_or("'path' missing")?;
 
@@ -184,8 +184,8 @@ fn create_dir_fn() -> Value {
         std::fs::create_dir,
         r"Create a directory (and all ancestor directories).
 
-Arguments: <Path>
-Returns a unit-typed value that creates the directory and ancestors if they do not exist.",
+Arguments: `(Path :path)`
+Returns a `Unit` value that creates the directory and ancestors if they do not exist.",
         |ctx, args| {
             let path = args.next().ok_or("'path' missing")?;
 
@@ -217,7 +217,7 @@ fn unarchive_fn() -> Value {
     ergo_function!(std::fs::unarchive,
     r"Extract an archive to a path.
 
-Arguments: <archive: Path> <destination: Path>
+Arguments: `(Path :archive) (Path :destination)`
 `archive` may be a path to a directory, zip file or tar archive, where the tar archive can optionally be compressed with
 gzip, bzip2, or lzma (xz). The archive contents are extracted into `destination` as a directory.",
     |ctx,args| {
@@ -311,7 +311,7 @@ fn sha1_fn() -> Value {
         std::fs::sha1,
         r"Check the sha1sum of a file.
 
-Arguments: <file: Path> <sum: String>
+Arguments: `(Path :file) (String :sum)`
 Returns a boolean indicating whether `sum` is the sha1 sum of the contents of `file`.",
         |ctx, args| {
             let path = args.next().ok_or("no file provided to sha1")?;
@@ -344,9 +344,9 @@ fn track_fn() -> Value {
     ergo_function!(independent std::fs::track,
     r"Make a Path depend on the contents of the file to which it refers.
 
-Arguments: <Path-or-String>
-Returns a Path that is identified by the contents of the file to which the argument refers. The path must exist and
-refer to a file.",
+Arguments: `(PathOrString :file)`
+Returns a `Path` that is identified by the contents of the file to which the argument refers.
+`file` must exist and refer to a file.",
     |ctx,args| {
         let path = args.next().ok_or("no file provided to track")?;
 
@@ -458,7 +458,7 @@ fn remove_fn() -> Value {
         std::fs::remove,
         r"Remove a file or directory (recursively).
 
-Arguments: <Path>
+Arguments: `(Path :path)`
 If the path does not exist, nothing happens.",
         |ctx, args| {
             let path = args.next().ok_or("'path' missing")?;
@@ -490,8 +490,8 @@ fn read_fn() -> Value {
         std::fs::read,
         r"Read a file as a ByteStream.
 
-Arguments: <Path>
-Returns a ByteStream of the file's contents.",
+Arguments: `(Path :file)`
+Returns a `ByteStream` of the file's contents.",
         |ctx, args| {
             let path = args.next().ok_or("'path' missing")?;
 
@@ -516,7 +516,7 @@ fn write_fn() -> Value {
         std::fs::write,
         r"Write a ByteStream to a file.
 
-Arguments: <Path> <ByteStream>
+Arguments: `(Path :file) (ByteStream :bytes)`
 Creates or overwrites the file with the bytes from the ByteStream.",
         |ctx, args| {
             let path = args.next().ok_or("'path' missing")?;
@@ -549,7 +549,7 @@ fn append_fn() -> Value {
         std::fs::append,
         r"Append a ByteStream to a file.
 
-Arguments: <Path> <ByteStream>
+Arguments: `(Path :file) (ByteStream :bytes)`
 Creates or appends the file with the bytes from the ByteStream.",
         |ctx, args| {
             let path = args.next().ok_or("'path' missing")?;

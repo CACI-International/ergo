@@ -7,11 +7,11 @@ pub fn function() -> Value {
     ergo_function!(independent std::seq,
     r"Execute the arguments sequentially.
 
-Arguments: value [value...]
+Arguments: `^:values :final`
 
-Returns a value that is identical to the final value, but identified as if it depends on the previous values. When
-executed, the returned value will execute each of the prior values in order and deeply (i.e., the indices of arrays and
-maps will be evaluated concurrently).",
+Returns a value that is identical to the `final` value, but identified as if it depends on the
+previous `values`. When executed, the returned value will execute each of the prior values in order
+and deeply (i.e., the values within of arrays and maps will be evaluated concurrently).",
     |ctx, args| {
         let mut val = args.next().ok_or("no values provided")?;
         while let Some(next) = args.next() {

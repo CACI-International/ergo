@@ -4,12 +4,12 @@ Language: Ergo
 function ergo_lang(hljs) {
     return {
         name: "Ergo",
-        keywords: "fn pat if",
+        keywords: "ergo pat fn index std workspace doc if",
         contains: [
             hljs.COMMENT(/#/, /$/, {
                 contains: [
                     {
-                        className: 'doc', begin: /## /, end: /$/
+                        className: 'doc', begin: /##/, end: /$/
                     }
                 ]
             }),

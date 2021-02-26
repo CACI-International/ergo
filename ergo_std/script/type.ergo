@@ -9,30 +9,36 @@
     
     ## Match maps with specific keys and value types.
     ## 
-    ## Arguments: (Map map)
-    ## 
+    ## Arguments: `(Map :map)`
     ## `map` should contain the expected keys and their corresponding value types.
+    ##
+    ## Returns a type that will check arguments like typical type functions.
     MapValues = fn (type:Map :fields) -> basic-type (pat :out -> (!:fields = :x) -> { !:out = :x })
 
     ## Match maps where all keys match a specific type and all values match a specific type.
     ## 
-    ## Arguments: (Function key-type) (Function value-type)
+    ## Arguments: `(Function :key-type) (Function :value-type)`
+    ##
+    ## Returns a type that will check arguments like typical type functions.
     MapOf = fn (type:Function :keys) (type:Function :values) -> {
-        basic-type (pat :out -> type:Map :m -> { !collection:map (fn {key = !:keys, value = !:values} -> ()) <| collection:entries :m; !:out = :m })
+        basic-type (pat :out -> type:Map :m -> { !iter:map (fn (type:MapEntry: !:keys !:values) -> ()) :m; !:out = :m })
     }
 
     ## Match arrays with specific value types (and length).
     ## 
-    ## Arguments: (Array array)
-    ## 
+    ## Arguments: `(Array :array)`
     ## `array` should contain the expected value types for each entry in the array.
+    ##
+    ## Returns a type that will check arguments like typical type functions.
     ArrayValues = fn (type:Array :tps) -> basic-type (pat :out -> (!:tps = :x) -> { !:out = :x })
 
     ## Match arrays where all values match a specific type.
     ## 
-    ## Arguments: (Function type)
+    ## Arguments: `(Function :type)`
+    ##
+    ## Returns a type that will check arguments like typical type functions.
     ArrayOf = fn (type:Function :tp) -> {
-        basic-type (pat :out -> type:Array :a -> { !collection:map (fn !:tp -> ()) :a; !:out = :a })
+        basic-type (pat :out -> type:Array :a -> { !iter:map (fn !:tp -> ()) :a; !:out = :a })
     }
 
     {MapValues, MapOf, ArrayValues, ArrayOf}
@@ -40,8 +46,8 @@
 
 ## Match a value allowing `Unset` values.
 ##
-## Binding Arguments: <target>
-Optional = pat :out -> :v -> !match :v ^[
+## Pattern Arguments: `:target`
+optional = pat :out -> :v -> !match :v ^[
     type:Unset -> ()
     :other -> {!:out = :other}
 ]
@@ -50,15 +56,15 @@ Optional = pat :out -> :v -> !match :v ^[
 ##
 ## This is only useful if the binding argument would normally accept an `Unset` value.
 ##
-## Binding Arguments: <target>
-Required = pat :out -> :v -> !match :v ^[
-    type:Unset :x -> !:x # Forcing an unset value will always error.
+## Pattern Arguments: `:target`
+required = pat :out -> :v -> !match :v ^[
+    type:Unset :x -> !error:throw (pattern=true) "required value missing"
     :other -> {!:out = :other}
 ]
 
 ## Create an enumeration type.
 ## 
-## Arguments: (String name) (Map variants)
+## Arguments: `(String :name) (Map :variants)`
 ## 
 ## Enumeration (sum) types have one of a closed set of inner types.
 ## The first argument should be the unique name of the type (as would be passed to [new](self:new)).
@@ -86,7 +92,7 @@ enum = fn (type:String :name) (type:Map :variants) -> {
         fn ^:args ^{^:kwargs} -> tp :key ^:args ^:kwargs
         pat ^:args ^{^:kwargs} -> tp !:key ^!:args ^!:kwargs -> ()
     ]
-    accessor = !collection:fold (fn :m :e -> {^:m, :(e key) = key-to-accessor e:key}) {} <| collection:entries :variants
+    accessor = ! :variants | iter:map (fn (type:MapEntry: :key _) -> type:MapEntry: :key (key-to-accessor :key)) | map:from
     # Wrap the accessor to add a way to check for `tp` using it.
     :a -> !match :a ^[
         fn :arg -> accessor :arg
@@ -97,7 +103,7 @@ enum = fn (type:String :name) (type:Map :variants) -> {
 
 ## Create a structured type.
 ## 
-## Arguments: (String name) (Map fields)
+## Arguments: `(String :name) (Map :fields)`
 ## 
 ## Structured (product) types are a set of keyed values.
 ## Note this merely makes a new type with a `MapValues` type checker.
@@ -109,7 +115,7 @@ enum = fn (type:String :name) (type:Map :variants) -> {
 ##     first = type:String
 ##     second = type:String
 ## }
-## pair = StringPair { first = hello, second = world }
-## StringPair {first,second} = :pair
+## pair = StringPair: { first = hello, second = world }
+## StringPair: {first,second} = :pair
 ## ```
 struct = fn (type:String :name) (type:Map :fields) -> type:new :name <| MapValues :fields

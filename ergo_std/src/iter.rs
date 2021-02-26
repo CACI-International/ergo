@@ -29,7 +29,7 @@ fn from_fn() -> Value {
     ergo_function!(independent std::iter::from,
     r"Convert a value into an Iter.
 
-Arguments: value",
+Arguments: `:value`",
     |ctx, args| {
         let value = args.next().ok_or("value not provided")?;
 
@@ -45,11 +45,11 @@ fn fold_fn() -> Value {
         std::iter::fold,
         r"Accumulate a value with each value in an iterator.
 
-Arguments: (Function func) accumulator (Into<Iter> iter)
-The function will be applied on each subsequent value in the iterator, specifically as `f
-accumulator iter-value`. The value the function produces will be the `accumulator` used in the next
-call. Returns a dynamically-typed value that will evaluate to the last `accumulator`, which may be
-the original if there are no values in the iterator.",
+Arguments: `(Function :func) :accumulator (Into<Iter> :iter)`
+The function will be applied on each subsequent value in the iterator, specifically as `func
+:accumulator :iter-value`. The value the function produces will be the `accumulator` used in the
+next call. Returns a dynamically-typed value that will evaluate to the last `accumulator`, which
+may be the original if there are no values in the iterator.",
         |ctx, args| {
             let func = args.next().ok_or("fold function not provided")?;
             let acc = args.next().ok_or("fold accumulator value not provided")?;
@@ -103,7 +103,7 @@ fn unique_fn() -> Value {
         std::iter::unique,
         r"Filter an iterator to unique values (by identity).
 
-Arguments: (Into<Iter> iter)
+Arguments: `(Into<Iter> :iter)`
 Returns a new iterator containing only the unique values of `iter` (where the first unique value is
 retained).",
         |ctx, args| {
@@ -130,7 +130,7 @@ fn filter_fn() -> Value {
     ergo_function!(std::iter::filter,
     r"Filter the values of an iterator according to a function.
 
-Arguments: (Function func) (Into<Iter> iter)
+Arguments: `(Function :func) (Into<Iter> :iter)`
 Returns a new iterator containing only the values from `iter` for which `func` returned a value
 which was `true` when converted to Bool.",
     |ctx,args| {
@@ -259,7 +259,7 @@ fn zip_fn() -> Value {
     }, depends![namespace_id!(std::iter::zip)], Some(TypedValue::constant(
         r"Zip the values of iterators together.
 
-Arguments: (Into<Iter> iter)...
+Arguments: `^((Array:Of Into<Iter>) :iters)`
 Returns a new iterator containing arrays where the each value index corresponds to the iterator
 argument to the function. The returned iterator will have only as many values as the minimum of the
 passed iterators.
@@ -273,7 +273,7 @@ fn skip_while_fn() -> Value {
     ergo_function!(std::iter::skip_while,
     r"Skip the consecutive values for which a function returns true.
 
-Arguments: (Function func) (Into<Iter> iter)
+Arguments: `(Function :func) (Into<Iter> :iter)`
 Returns a new iterator containing only the values from `iter` following (and including) the first
 value for which `func` returned a value which was `false` when converted to Bool.",
     |ctx,args| {
@@ -317,7 +317,7 @@ fn skip_fn() -> Value {
         std::iter::skip,
         r"Skip the first `n` consecutive values.
 
-Arguments: (String n) (Into<Iter> iter)
+Arguments: `(String :n) (Into<Iter> :iter)`
 Returns a new iterator containing only the values from `iter` after the first `n`.",
         |ctx, args| {
             let amount = args.next().ok_or("skip amount not provided")?;
@@ -346,7 +346,7 @@ fn take_while_fn() -> Value {
     ergo_function!(std::iter::take_while,
     r"Take the consecutive values for which a function returns true.
 
-Arguments: (Function func) (Into<Iter> iter)
+Arguments: `(Function :func) (Into<Iter> :iter)`
 Returns a new iterator containing only the values from `iter` preceding the first
 value for which `func` returned a value which was `false` when converted to Bool.",
     |ctx,args| {
@@ -390,7 +390,7 @@ fn take_fn() -> Value {
         std::iter::take,
         r"Take the first `n` consecutive values.
 
-Arguments: (String n) (Into<Iter> iter)
+Arguments: `(String :n) (Into<Iter> :iter)`
 Returns a new iterator containing only the first `n` values from `iter`.",
         |ctx, args| {
             let amount = args.next().ok_or("take amount not provided")?;
@@ -420,7 +420,7 @@ fn flatten_fn() -> Value {
         std::iter::flatten,
         r"Flatten the values of an iterator.
 
-Arguments: (Into<Iter> iter)
+Arguments: `(Into<Iter> :iter)`
 Returns a new iterator with each subsequent nested value in the values of `iter`. The values of
 `iter` must be `Into<Iter>` themselves.",
         |ctx, args| {
@@ -457,7 +457,7 @@ fn map_fn() -> Value {
     ergo_function!(std::iter::map,
     r"Apply a function to each value in an iterator.
 
-Arguments: (Function func) (Into<Iter> iter)
+Arguments: `(Function :func) (Into<Iter> :iter)`
 Returns a new iterator where each element is the result of applying `func` on each value in `iter`.",
     |ctx,args| {
         let func = args.next().ok_or("map function not provided")?;
@@ -495,7 +495,7 @@ fn map_all_fn() -> Value {
     ergo_function!(std::iter::map_all,
     r"Apply a function to each value in an iterator concurrently.
 
-Arguments: (Function func) (Into<Iter> iter)
+Arguments: `(Function :func) (Into<Iter> :iter)`
 Returns a new iterator where each element is the result of applying `func` on each value in `iter`.
 
 This differs from Iter:map in that it applies the function to all values in the iterator concurrently.",

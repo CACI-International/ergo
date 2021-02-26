@@ -13,13 +13,13 @@ fn logger(log: Log) -> Value {
 
 The first argument is a command, one of: `sublog`, `debug`, `info`, `warn`, or `error`.
 
-## `sublog`
-The next argument gives the name of the sublogger to create, and the function returns a new log function.
+### `sublog`
+The next argument gives the name of the sublogger to create, and the function returns a new logging function.
 
-## `debug`, `info`, `warn`, `error`
+### `debug`, `info`, `warn`, `error`
 The next argument gives the string to log to the appropriate output verbosity level.
 
-Note that like other functions, these logging functions don't occur immediately, but rather return a
+Note that like other functions, these logging functions don't occur immediately. They return a
 unit-typed value that, when evaluated, will log to the output.",
     log |ctx, args| {
         let op = args.next().ok_or("no command given")?;

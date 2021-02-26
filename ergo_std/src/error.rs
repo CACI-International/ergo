@@ -19,7 +19,7 @@ fn throw_fn() -> Value {
         std::error::throw,
         r"Create a value which, when evaluated, will error.
 
-Arguments: <error: String>
+Arguments: `(String :error)`
 If the keyword argument `pattern` is present, the error will be marked as a pattern error.
 The returned value will be unit-typed and will immediately error with the given error message.",
         |ctx, args| {
@@ -49,8 +49,8 @@ fn catch_fn() -> Value {
     ergo_function!(std::error::catch,
         r"Catch an error result in the given value.
 
-Arguments: <handler: Function> <value>
-The returned value is dynamically-typed, and will return the result of `<value>` if it does not error.
+Arguments: `(Function :handler) :value`
+The returned value is dynamically-typed, and will return the result of `value` if it does not error.
 If it _does_ error, `handler` is applied to the error string and whatever it returns will be the result.",
         |ctx,args| {
         let handler = args.next().ok_or("no handler provided")?;

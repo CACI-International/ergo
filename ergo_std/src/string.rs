@@ -63,20 +63,20 @@ fn format_fn() -> Value {
     ergo_function!(std::string::format,
     r#"Create a string based on a format specification.
 
-Arguments: <format string: String> [arguments...]
+Arguments: `(String :format-string) ^:arguments`
 
-Keyword Arguments: any
+Keyword Arguments: `^:kwargs`
 
 The format string may contain curly brackets to indicate arguments to insert in the string. The curly brackets may be
 empty (`{}`) or may contain a numeric index to indicate which positional argument to use, or a string index to indicate
-which non-positional argument to use. Empty brackets will use the next positional argument unused by other empty
+which non-positional (keyword) argument to use. Empty brackets will use the next positional argument unused by other empty
 brackets. Note that since the curly brackets are syntactically-significant, a format string containing them will need
 to be quoted. To insert a literal open curly bracket, use `{{`, and likewise `}}` for a literal close curly bracket.
 
-Examples:
-`format "hello {}" world` => `"hello world"`
-`format "hello {name}" ^{name = billy}` => `"hello billy"`
-`format "{}, {a}, {}, {0}, and {{{}}}" ^{a = alice} bob cal daisy` => `"bob, alice, cal, bob, and {daisy}"`"#,
+### Examples
+* `format "hello {}" world` => `"hello world"`
+* `format "hello {name}" ^{name = billy}` => `"hello billy"`
+* `format "{}, {a}, {}, {0}, and {{{}}}" ^{a = alice} bob cal daisy` => `"bob, alice, cal, bob, and {daisy}"`"#,
     |ctx, args| {
         let format_str = args.next().ok_or("no format string provided")?;
         let source = format_str.source();
@@ -178,7 +178,7 @@ fn from_fn() -> Value {
     ergo_function!(independent std::string::from,
     r"Convert a value into a string.
 
-Arguments: <value: Into<String>>
+Arguments: `(Into<String> :value)`
 
 Returns the result of converting the value into a string.",
     |ctx, args| {
@@ -196,9 +196,9 @@ fn split_fn() -> Value {
     ergo_function!(std::string::split,
     r"Split a string on a substring.
 
-Arguments: <pattern: String> <str: String>
+Arguments: `(String :pattern) (String :str)`
 
-Returns an Array of Strings representing the segments of `str` separated by `pattern`.",
+Returns an `Array` of `String` representing the segments of `str` separated by `pattern`.",
     |ctx, args| {
         let pat = args.next().ok_or("split pattern not provided")?;
         let s = args.next().ok_or("string not provided")?;
@@ -225,9 +225,9 @@ fn join_fn() -> Value {
     ergo_function!(std::string::split,
     r"Join an array of strings.
 
-Arguments: <separator: String> <iter: Iter>
+Arguments: `(String :separator) (Iter :iter)`
 
-Returns a String representing the strings in `iter` separated by `separator`.",
+Returns a `String` representing the strings in `iter` separated by `separator`.",
     |ctx, args| {
         let sep = args.next().ok_or("join separator not provided")?;
         let iter = args.next().ok_or("iter not provided")?;
@@ -260,7 +260,9 @@ fn trim_fn() -> Value {
         std::string::trim,
         r"Trim whitespace from the beginning and end of a string.
 
-Arguments: <String>",
+Arguments: `(String :str)`
+
+Returns the trimmed string.",
         |ctx, args| {
             let s = args.next().ok_or("string not provided")?;
 

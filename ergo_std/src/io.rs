@@ -72,7 +72,7 @@ fn stdout_fn() -> Value {
     ergo_function!(std::io::stdout,
     r"Write a ByteStream to the process standard output.
 
-Arguments: <ByteStream>
+Arguments: `(ByteStream :bytes)`
 When the returned unit value is evaluated, takes exclusive access of the process standard output (pausing logging) and writes
 the ByteStream to it.",
     |ctx,args| {
@@ -103,7 +103,7 @@ fn stderr_fn() -> Value {
     ergo_function!(std::io::stderr,
     r"Write a ByteStream to the process standard error.
 
-Arguments: <ByteStream>
+Arguments: `(ByteStream :bytes)`
 When the returned unit value is evaluated, writes the ByteStream to the process standard error. This does not have any
 exlusive access guarantees like `stdin` and `stdout`.",
     |ctx,args| {

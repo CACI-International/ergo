@@ -65,7 +65,7 @@ fn join_fn() -> Value {
         std::path::join,
         r"Join components into a Path.
 
-Arguments: [component: Path-or-String...]
+Arguments: `^(PathOrString :components)`
 
 Return a Path that is the result of joining the individual path components together.",
         |ctx, cargs| {
@@ -127,10 +127,10 @@ fn split_fn() -> Value {
     ergo_function!(std::path::split,
     r"Split a path into its components.
 
-Arguments: <Path>
+Arguments: `(Path :path)`
 
-Returns an Array of Strings, where each element in the array is a (in-order, from least to most specific) component of
-the argument.",
+Returns an `Array` of `String`, where each element in the array is a (in-order, from least to most
+specific) component of the argument.",
     |ctx, args| {
         let to_split = args.next().ok_or("no path to split")?;
 
@@ -159,7 +159,7 @@ fn parent_fn() -> Value {
     ergo_function!(std::path::parent,
     r"Return the parent path of the given path.
 
-Arguments: <Path>
+Arguments: `(Path :path)`
 Fails if the given path does not have a parent (is a root).",
     |ctx, args| {
         let path = args.next().ok_or("no path provided")?;
@@ -181,7 +181,7 @@ fn name_fn() -> Value {
         std::path::name,
         r"Returns the name (final component) of the given path.
 
-Arguments: <Path>
+Arguments: `(Path :path)`
 
 Returns the component as a String.
 Fails if the given path ends in `..`.",
@@ -209,9 +209,9 @@ fn relative_fn() -> Value {
     ergo_function!(std::path::relative,
     r"Get a relative path.
 
-Arguments: <base: Path> <child: Path>
+Arguments: `(Path :base) (Path :child)`
 
-Returns a path that is composed of the components of `child` that are children of `base`.",
+Returns a path that is composed of the components of `child` that are not components of `base`.",
     |ctx, args| {
         let base = args.next().ok_or("no base path")?;
         let path = args.next().ok_or("no path")?;

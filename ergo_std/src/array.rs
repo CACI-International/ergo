@@ -13,7 +13,7 @@ fn from_fn() -> Value {
     ergo_function!(independent std::array::from,
     r"Convert a value into an Array.
 
-Arguments: value",
+Arguments: `:value`",
     |ctx, args| {
         let value = args.next().ok_or("value not provided")?;
 

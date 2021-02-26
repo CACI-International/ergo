@@ -13,7 +13,7 @@ fn from_fn() -> Value {
     ergo_function!(independent std::map::from,
     r"Convert a value into an Map.
 
-Arguments: value",
+Arguments: `:value`",
     |ctx, args| {
         let value = args.next().ok_or("value not provided")?;
 
@@ -29,6 +29,12 @@ mod test {
     ergo_script::test! {
         fn from(t) {
             t.assert_content_eq("self:map:from <| self:iter:from {a=1,b=2}", "{a=1,b=2}");
+        }
+    }
+
+    ergo_script::test! {
+        fn iter(t) {
+            t.assert_content_eq("self:map:from <| self:iter:map (fn (self:type:MapEntry: :key :value) -> self:type:MapEntry: :key ()) {a=1,b=2}", "{a=(),b=()}");
         }
     }
 }

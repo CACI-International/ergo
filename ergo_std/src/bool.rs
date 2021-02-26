@@ -23,7 +23,7 @@ fn from_fn() -> Value {
     ergo_function!(independent std::bool::from,
         "Convert from another value to Bool.
 
-Arguments: value",
+Arguments: `:value`",
     |ctx, args| {
         let val = args.next().ok_or("missing value")?;
         args.unused_arguments()?;

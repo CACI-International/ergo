@@ -118,7 +118,7 @@ grease_traits_fn! {
                 display(CONTEXT, v.clone(), f).await?;
             }
 
-            for (k,v) in self.0.iter() {
+            for (k,v) in iter {
                 write!(f, "\n")?;
                 display(CONTEXT, k.clone(), f).await?;
                 write!(f, " -> ")?;

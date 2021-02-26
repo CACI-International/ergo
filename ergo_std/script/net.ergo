@@ -2,7 +2,7 @@
 
 ## Open a remote archive file.
 ##
-## Arguments: (String url)
+## Arguments: `(String :url)`
 ##
 ## The url can resolve to anything that `fs:unarchive` accepts.
 ## Caches the result, only downloading a particular url once.

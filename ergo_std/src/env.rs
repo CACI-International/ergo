@@ -23,7 +23,7 @@ fn get_fn() -> Value {
     ergo_function!(independent std::env::get,
     r"Get an environment variable.
 
-Arguments: <environment variable name: String>
+Arguments: `(String :environment-variable-name)`
 If the environment variable is not set, returns `Unset`. Otherwise returns the value of the environment variable as a
 string, where the string is identified by the environment variable's content.",
     |ctx,args| {
@@ -121,7 +121,7 @@ fn path_search_fn() -> Value {
         std::env::path_search,
         r"Find a file in the binary lookup path.
 
-Arguments: <name: String or Path>
+Arguments: `(StringOrPath :name)`
 If a Path is passed, it will simply be returned as-is.
 If a String is passed, a Path value is returned that, when evaluated, will searched for the string
 in PATH. If not found, an error occurs. Otherwise the path of the resolved file is returned.",

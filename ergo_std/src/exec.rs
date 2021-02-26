@@ -286,29 +286,30 @@ pub fn function() -> Value {
     ergo_function!(independent std::exec,
         "Execute an external program.
 
-Arguments: <program> [arguments...]
-Both `program` and `arguments` must be convertible to CommandString. By default String, Path, and ByteStream satisfy
+Arguments: `:program ^:arguments`
+Both `program` and `arguments` must be convertible to `CommandString`. By default `String`, `Path`, and `ByteStream` satisfy
 this. 
 
 Keyword Arguments:
-* <env: Map>: A map of Strings to Strings where key-value pairs define the environment variables to
+* `Map :env`: A map of Strings to Strings where key-value pairs define the environment variables to
   set while executing the program.
-* <pwd: Into<Path>>: The working directory to set while executing the program.
-* <stdin: Into<ByteStream>>: The stdin to pipe into the program.
-* <retain-terminal: bool>: If true, the spawned child is kept in the same terminal session.
+* `Into<Path> :pwd`: The working directory to set while executing the program.
+* `Into<ByteStream> :stdin`: The stdin to pipe into the program.
+* `Bool :retain-terminal`: If true, the spawned child is kept in the same terminal session.
 
 Programs are by default run without any working directory or environment variables.
 
 This returns a map with the following keys:
-* <stdout: ByteStream>: The standard output stream from the program.
-* <stderr: ByteStream>: The standard output stream from the program.
-* <exit-status: ExitStatus>: The exit status of the program.
-* <complete: ()>: A value which returns successfully when the program does.
+* `ByteStream :stdout`: The standard output stream from the program.
+* `ByteStream :stderr`: The standard output stream from the program.
+* `ExitStatus :exit-status`: The exit status of the program.
+* `Unit :complete`: A value which returns successfully when the program does.
 
 Note that `complete` _won't_ cause an error to occur if `exit-status` is used in the script.
 Also note that if `complete` throws an error, it will include the stdout or stderr values if they are unused in the
 script.
-",
+
+The `ExitStatus` type can be converted to `Bool` to check whether the program returned a successful status.",
     |ctx,cargs| {
         let cmd = cargs.next().ok_or("no command provided")?;
 
