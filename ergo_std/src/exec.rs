@@ -287,6 +287,7 @@ pub fn function() -> Value {
         "Execute an external program.
 
 Arguments: `:program ^:arguments`
+
 Both `program` and `arguments` must be convertible to `CommandString`. By default `String`, `Path`, and `ByteStream` satisfy
 this. 
 

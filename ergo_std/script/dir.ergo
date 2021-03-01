@@ -5,6 +5,7 @@ native-doc = :doc
 ## Create a value that will evaluate to the first argument which successfully binds.
 ## 
 ## Arguments: `^:cases`
+##
 ## This is a shortcut for `:a -> match :a ^:cases`.
 matches = fn ^:cases -> :a -> !plugin:match :a ^:cases
 

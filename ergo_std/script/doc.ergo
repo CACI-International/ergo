@@ -31,20 +31,6 @@ modules = fn :self ^:names -> {
     workspace:iter:map (fn :n -> workspace:string:format "* {}" <| module :self :n) :names | workspace:string:join "\n"
 }
 
-## Document a function.
-##
-## Arguments: `:value :function-index`
-##
-## The function must be accessible as an index `function-index` of `value`.
-## If generating documentation, this will generate the function documentation inline as a section,
-## otherwise it will display summary documentation for the function.
-function = fn :self :name -> {
-    !workspace:match doc:path: ^[
-        workspace:type:Unset -> workspace:string:format "* {}: {}\n" :name (summary self::name)
-        _ -> workspace:string:format "## {}\n{}\n\n" :name (doc self::name)
-    ]
-}
-
 ## Document function indices of a value.
 ##
 ## Arguments: `:value ^:functions`
@@ -52,5 +38,15 @@ function = fn :self :name -> {
 ## Document multiple functions as an unordered list with summaries, or as inline sections if
 ## generating documentation. `functions` must be indices of `value`.
 functions = fn :self ^:names -> {
-    workspace:iter:map (fn :n -> function :self :n) :names | workspace:string:join ""
+    !workspace:match doc:path: ^[
+        workspace:type:Unset -> {
+            workspace:iter:map (fn :n -> workspace:string:format "* {}: {}" :n (summary self::n)) :names | workspace:string:join "\n"
+        }
+        _ -> {
+            # Build an unordered list of links to the functions
+            list = workspace:iter:map (fn :n -> workspace:string:format "* [{0}](#{0}): {1}" :n (summary self::n)) :names | workspace:string:join "\n"
+            content = workspace:iter:map (fn :n -> workspace:string:format "<div class='function'>\n\n## {}\n{}\n\n</div>" :n (doc self::n)) :names | workspace:string:join "\n\n"
+            workspace:string:format "{}\n\n{}" :list :content
+        }
+    ]
 }

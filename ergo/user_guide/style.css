@@ -1,0 +1,10 @@
+.function {
+	border-left: 1px solid black;
+	margin: 20px 10px;
+	padding: 10px;
+	border-radius: 10px;
+}
+
+.function > *:first-child {
+	margin-top: 0px;
+}
