@@ -91,16 +91,14 @@ pub struct Runtime {
     global_env: ScriptEnv,
     env: RVec<RArc<RMutex<ScriptEnv>>>,
     env_set: ROption<RArc<RMutex<ScriptEnv>>>,
-    pub loading: RArc<RMutex<RVec<PathBuf>>>,
-    pub load_cache: RArc<RMutex<BstMap<PathBuf, EvalResultAbi>>>,
     initial_load_path: RVec<PathBuf>,
     pub mod_path: ROption<PathBuf>,
     pub current_load_path: RVec<PathBuf>,
     pub lint: bool,
     keyed_lifetime: RArc<RMutex<RHashMap<grease::types::Type, RArc<Erased>>>>,
     // It is important that lifetime is the last member of the runtime, so that when dropped it is
-    // the last thing dropped. Other members of this struct, like env, load_cache, and
-    // keyed_lifetime, may depend on something in this vec (like a loaded plugin).
+    // the last thing dropped. Other members of this struct, like env and keyed_lifetime, may
+    // depend on something in this vec (like a loaded plugin).
     lifetime: RArc<RMutex<RVec<Erased>>>,
 }
 
@@ -136,8 +134,6 @@ impl Runtime {
             global_env,
             env: Default::default(),
             env_set: ROption::RNone,
-            loading: RArc::new(RMutex::new(Default::default())),
-            load_cache: RArc::new(RMutex::new(Default::default())),
             mod_path: ROption::RNone,
             initial_load_path: initial_load_path.into_iter().map(|p| p.into()).collect(),
             current_load_path: Default::default(),
@@ -289,7 +285,7 @@ impl Runtime {
         })
     }
 
-    /// Clear the environment of all values.
+    /// Clear environment values.
     pub fn clear_env(&mut self) {
         self.global_env.clear();
         self.env.clear();

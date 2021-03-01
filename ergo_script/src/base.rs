@@ -50,10 +50,108 @@ When loading a script, the following resolution process occurs for the first arg
 If the directory-resolved script exists as a file, it is loaded. If additional arguments were
 provided, the resulting value is called with them.";
 
-/// Return the load function.
-pub fn load() -> Value {
-    types::Unbound::new(
-        |ctx, v| {
+#[derive(Clone)]
+struct LoadData {
+    pub loading: Arc<RMutex<Vec<path::PathBuf>>>,
+    pub load_cache: Arc<RMutex<BTreeMap<path::PathBuf, EvalResult>>>,
+}
+
+impl Default for LoadData {
+    fn default() -> Self {
+        LoadData {
+            loading: Arc::new(RMutex::new(Default::default())),
+            load_cache: Arc::new(RMutex::new(Default::default())),
+        }
+    }
+}
+
+impl LoadData {
+    /// Load a script at the given path.
+    ///
+    /// The path should already be verified as an existing file.
+    pub async fn load_script(&self, ctx: &mut Runtime, path: &path::Path) -> EvalResult {
+        // Check whether path is already being loaded.
+        for l_path in self.loading.lock().iter() {
+            if l_path == path {
+                return Err(Error::LoadFailed {
+                    was_loading: true,
+                    load_path: path.to_owned(),
+                }
+                .into());
+            }
+        }
+
+        debug_assert!(path.is_file());
+        let path = path.canonicalize().unwrap(); // unwrap because is_file() should guarantee that canonicalize will succeed.
+
+        // FIXME if multiple threads are calling load, they may load the same script more than
+        // once. This could be changed into a cache of futures that yield the resulting value,
+        // though we need to clone contexts and the like. This was already attempted once but some
+        // recursive type errors also came up with async blocks.
+        let cache = self.load_cache.clone();
+
+        // Since we are in an async function, we need to access the cache in a somewhat odd
+        // pattern.
+        let cached = {
+            let cache = cache.lock();
+            let p = path.to_owned();
+            let ret = cache.get(&p).cloned();
+            if ret.is_none() {
+                // Exclude path from loading in nested calls.
+                self.loading.lock().push(p);
+            }
+            ret
+        };
+
+        match cached {
+            None => {
+                let result = if !is_plugin(&path) {
+                    let mut script = super::Script::load(Source::new(FileSource(path.clone())))?;
+                    script.file_path(path.clone());
+                    script.evaluate(ctx).await
+                } else {
+                    let lib = dl::Library::new(&path)?;
+                    let f: dl::Symbol<
+                        extern "C" fn(
+                            ergo_runtime::plugin::Context,
+                            &mut Runtime,
+                        )
+                            -> RResult<Source<Value>, grease::Error>,
+                    > = unsafe { lib.get(PLUGIN_ENTRY.as_bytes()) }?;
+                    let result = f(ergo_runtime::plugin::Context::get(), ctx);
+                    // Leak loaded libraries rather than storing them and dropping them in
+                    // the context, as this can cause issues if the thread pool hasn't shut
+                    // down.
+                    // ctx.lifetime(lib);
+                    std::mem::forget(lib);
+                    result.into()
+                };
+
+                let cache = self.load_cache.clone();
+                let mut cache = cache.lock();
+                cache.insert(path.into(), result.clone());
+                self.loading.lock().pop();
+                result
+            }
+            Some(v) => v,
+        }
+    }
+}
+
+pub struct LoadFunctions {
+    pub load: Value,
+    pub std: Value,
+    pub workspace: Value,
+}
+
+/// Return the load functions (which are all created with a shared cache).
+pub fn load_functions() -> LoadFunctions {
+    let load_data = LoadData::default();
+
+    let ld = load_data.clone();
+    let load = types::Unbound::new(
+        move |ctx, v| {
+            let ld = ld.clone();
             async move {
                 let (source, args_val) = ctx.source_value_as::<types::Args>(v).await?.take();
                 let mut args = args_val.await?.owned().args;
@@ -81,7 +179,7 @@ pub fn load() -> Value {
                 };
 
                 // Load if some module was found.
-                let loaded = load_script(ctx, &target).await?;
+                let loaded = ld.load_script(ctx, &target).await?;
 
                 let loaded_context = source
                     .clone()
@@ -101,7 +199,122 @@ pub fn load() -> Value {
         depends![namespace_id!(ergo::load)],
         Some(TypedValue::constant(LOAD_DOCUMENTATION.into())),
     )
-    .into()
+    .into();
+
+    let ld = load_data.clone();
+    let std = types::Unbound::new(
+        move |ctx, v| {
+            let ld = ld.clone();
+            async move {
+                let path = match resolve_script_path(ctx, "std".as_ref()) {
+                    Some(path) => path,
+                    None => {
+                        return Err(Error::LoadFailed {
+                            was_loading: false,
+                            load_path: "std".into(),
+                        }
+                        .into());
+                    }
+                };
+
+                let lib = ld.load_script(ctx, &path).await?;
+
+                let (src, v) = v.take();
+                match_value!(v => {
+                    types::Args => |args| {
+                        let args = args.await?.owned().args;
+                        if args.is_empty() {
+                            // If called with no args, return the loaded library.
+                            lib.unwrap()
+                        } else {
+                            traits::bind(ctx, lib, src.with(types::Args { args }.into())).await.map(Source::unwrap)?
+                        }
+                    }
+                    => |v| traits::bind(ctx, lib, src.with(v)).await.map(Source::unwrap)?
+                }).await
+            }
+            .boxed()
+        },
+        depends![namespace_id!(ergo::std)],
+        Some(TypedValue::constant(
+            "Get the value as if `ergo std` was run, and apply any bindings to it. Return the library if called with no arguments.".into(),
+        )),
+    )
+    .into();
+
+    let ld = load_data.clone();
+    let workspace = types::Unbound::new(
+        move |ctx, v| {
+            let ld = ld.clone();
+            async move {
+                // If the current file is a workspace, allow it to load from parent workspaces.
+                let (path_basis, check_for_workspace) = if let ROption::RSome(v) = &ctx.mod_path {
+                    (v.clone().into(), true)
+                } else {
+                    (ctx.mod_dir(), false)
+                };
+
+                let resolved = ctx.shared_state(|| Ok(ResolvedWorkspaces::default()))?;
+
+                let path = {
+                    let mut guard = resolved.map.lock();
+                    match guard.get(&path_basis) {
+                        Some(v) => v.clone(),
+                        None => {
+                            let within_workspace = check_for_workspace && path_basis.file_name().map(|v| v == WORKSPACE_NAME).unwrap_or(false);
+
+                            let mut ancestors = path_basis.ancestors().peekable();
+                            if within_workspace {
+                                while let Some(v) = ancestors.peek().and_then(|a| a.file_name()) {
+                                    if v == WORKSPACE_NAME {
+                                        ancestors.next();
+                                    } else {
+                                        break;
+                                    }
+                                }
+                                // Skip one more to drop parent directory of top-most workspace, which would find
+                                // the same workspace as the original.
+                                ancestors.next();
+                            }
+
+                            let result = ancestors.find_map(script_path_exists(WORKSPACE_NAME, false));
+                            guard.insert(path_basis, result.clone());
+                            result
+                        }
+                    }
+                }.ok_or("no ancestor workspace found")?;
+
+                let lib = ld.load_script(ctx, &path).await?;
+
+                let (src, v) = v.take();
+                match_value!(v => {
+                    types::Args => |args| {
+                        let args = args.await?.owned().args;
+                        if args.is_empty() {
+                            // If called with no args, return the loaded library.
+                            lib.unwrap()
+                        } else {
+                            traits::bind(ctx, lib, src.with(types::Args { args }.into())).await.map(Source::unwrap)?
+                        }
+                    }
+                    => |v| traits::bind(ctx, lib, src.with(v)).await.map(Source::unwrap)?
+                }).await
+            }
+            .boxed()
+        },
+        depends![namespace_id!(ergo::workspace)],
+        Some(TypedValue::constant(
+            "Get the value as if `ergo path/to/ancestor/workspace.ergo` was run, and apply any bindings to it.
+Return the workspace value if called with no arguments.".into(),
+        )),
+    )
+    .into();
+
+    LoadFunctions {
+        load,
+        std,
+        workspace,
+    }
 }
 
 /// A binding function returning an Args.
@@ -160,48 +373,6 @@ pub fn pat_args_to_index() -> Value {
     .into()
 }
 
-/// A value that behaves as if `ergo std` was run just prior to binding.
-pub fn load_std() -> Value {
-    types::Unbound::new(
-        |ctx, v| {
-            async move {
-                let path = match resolve_script_path(ctx, "std".as_ref()) {
-                    Some(path) => path,
-                    None => {
-                        return Err(Error::LoadFailed {
-                            was_loading: false,
-                            load_path: "std".into(),
-                        }
-                        .into());
-                    }
-                };
-
-                let lib = load_script(ctx, &path).await?;
-
-                let (src, v) = v.take();
-                match_value!(v => {
-                    types::Args => |args| {
-                        let args = args.await?.owned().args;
-                        if args.is_empty() {
-                            // If called with no args, return the loaded library.
-                            lib.unwrap()
-                        } else {
-                            traits::bind(ctx, lib, src.with(types::Args { args }.into())).await.map(Source::unwrap)?
-                        }
-                    }
-                    => |v| traits::bind(ctx, lib, src.with(v)).await.map(Source::unwrap)?
-                }).await
-            }
-            .boxed()
-        },
-        depends![namespace_id!(ergo::std)],
-        Some(TypedValue::constant(
-            "Get the value as if `ergo std` was run, and apply any bindings to it. Return the library if called with no arguments.".into(),
-        )),
-    )
-    .into()
-}
-
 #[derive(GreaseType)]
 struct ResolvedWorkspaces {
     map: Arc<RMutex<BTreeMap<path::PathBuf, Option<path::PathBuf>>>>,
@@ -213,75 +384,6 @@ impl Default for ResolvedWorkspaces {
             map: Arc::new(RMutex::new(Default::default())),
         }
     }
-}
-
-/// A value that behaves as if `ergo path/to/ancestor/workspace` was run just prior to binding.
-pub fn load_workspace() -> Value {
-    types::Unbound::new(
-        |ctx, v| {
-            async move {
-                // If the current file is a workspace, allow it to load from parent workspaces.
-                let (path_basis, check_for_workspace) = if let ROption::RSome(v) = &ctx.mod_path {
-                    (v.clone().into(), true)
-                } else {
-                    (ctx.mod_dir(), false)
-                };
-
-                let resolved = ctx.shared_state(|| Ok(ResolvedWorkspaces::default()))?;
-
-                let path = {
-                    let mut guard = resolved.map.lock();
-                    match guard.get(&path_basis) {
-                        Some(v) => v.clone(),
-                        None => {
-                            let within_workspace = check_for_workspace && path_basis.file_name().map(|v| v == WORKSPACE_NAME).unwrap_or(false);
-
-                            let mut ancestors = path_basis.ancestors().peekable();
-                            if within_workspace {
-                                while let Some(v) = ancestors.peek().and_then(|a| a.file_name()) {
-                                    if v == WORKSPACE_NAME {
-                                        ancestors.next();
-                                    } else {
-                                        break;
-                                    }
-                                }
-                                // Skip one more to drop parent directory of top-most workspace, which would find
-                                // the same workspace as the original.
-                                ancestors.next();
-                            }
-
-                            let result = ancestors.find_map(script_path_exists(WORKSPACE_NAME, false));
-                            guard.insert(path_basis, result.clone());
-                            result
-                        }
-                    }
-                }.ok_or("no ancestor workspace found")?;
-
-                let lib = load_script(ctx, &path).await?;
-
-                let (src, v) = v.take();
-                match_value!(v => {
-                    types::Args => |args| {
-                        let args = args.await?.owned().args;
-                        if args.is_empty() {
-                            // If called with no args, return the loaded library.
-                            lib.unwrap()
-                        } else {
-                            traits::bind(ctx, lib, src.with(types::Args { args }.into())).await.map(Source::unwrap)?
-                        }
-                    }
-                    => |v| traits::bind(ctx, lib, src.with(v)).await.map(Source::unwrap)?
-                }).await
-            }
-            .boxed()
-        },
-        depends![namespace_id!(ergo::workspace)],
-        Some(TypedValue::constant(
-            "Get the value as if `ergo path/to/ancestor/workspace.ergo` was run, and apply any bindings to it.
-Return the workspace value if called with no arguments.".into(),
-        )),
-    )
-    .into()
 }
 
 // TODO This should probably be scoped in the context itself, not as a task local value.
@@ -606,75 +708,4 @@ pub fn resolve_script_path(ctx: &Runtime, path: &path::Path) -> Option<path::Pat
         .iter()
         .map(|p| p.as_ref())
         .find_map(|p| script_path_exists(path, true)(p.as_ref()))
-}
-
-/// Load a script at the given path.
-///
-/// The path should already be verified as an existing file.
-async fn load_script(ctx: &mut Runtime, path: &path::Path) -> EvalResult {
-    // Check whether path is already being loaded.
-    for l_path in ctx.loading.lock().iter() {
-        if l_path.as_ref() == path {
-            return Err(Error::LoadFailed {
-                was_loading: true,
-                load_path: path.to_owned(),
-            }
-            .into());
-        }
-    }
-
-    debug_assert!(path.is_file());
-    let path = path.canonicalize().unwrap(); // unwrap because is_file() should guarantee that canonicalize will succeed.
-
-    // FIXME if multiple threads are calling load, they may load the same script more than
-    // once. This could be changed into a cache of futures that yield the resulting value,
-    // though we need to clone contexts and the like. This was already attempted once but some
-    // recursive type errors also came up with async blocks.
-    let cache = ctx.load_cache.clone();
-
-    // Since we are in an async function, we need to access the cache in a somewhat odd
-    // pattern.
-    let cached = {
-        let cache = cache.lock();
-        let p = PathBuf::from(path.to_owned());
-        let ret = cache.get(&p).cloned();
-        if ret.is_none() {
-            // Exclude path from loading in nested calls.
-            ctx.loading.lock().push(p);
-        }
-        ret
-    };
-
-    match cached {
-        None => {
-            let result = if !is_plugin(&path) {
-                let mut script = super::Script::load(Source::new(FileSource(path.clone())))?;
-                script.file_path(path.clone());
-                script.evaluate(ctx).await.into()
-            } else {
-                let lib = dl::Library::new(&path)?;
-                let f: dl::Symbol<
-                    extern "C" fn(
-                        ergo_runtime::plugin::Context,
-                        &mut Runtime,
-                    ) -> RResult<Source<Value>, grease::Error>,
-                > = unsafe { lib.get(PLUGIN_ENTRY.as_bytes()) }?;
-                let result = f(ergo_runtime::plugin::Context::get(), ctx);
-                // Leak loaded libraries rather than storing them and dropping them in
-                // the context, as this can cause issues if the thread pool hasn't shut
-                // down.
-                // ctx.lifetime(lib);
-                std::mem::forget(lib);
-                result
-            };
-
-            let cache = ctx.load_cache.clone();
-            let mut cache = cache.lock();
-            cache.insert(PathBuf::from(path), result.clone());
-            ctx.loading.lock().pop();
-            result
-        }
-        Some(v) => v,
-    }
-    .into_result()
 }

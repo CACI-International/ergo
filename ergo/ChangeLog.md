@@ -77,6 +77,8 @@
   a stream that's appropriate for display, but we sanitize the bytes in
   `ByteStream` when converting to a `String`, so there's no reason to not do the
   same to implement `Display`.
+* Release the load cache when no other load calls are present, to correctly drop
+  lifetimes of values.
 
 ### Bugfixes
 * Fix incorrect parsing of indexing in e.g. `a |>:b:c`.

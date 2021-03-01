@@ -49,10 +49,12 @@ pub fn script_context(
             )
         };
 
+        let load_functions = base::load_functions();
+
         // Add initial environment functions
-        insert(constants::PROGRAM_NAME, base::load());
-        insert("std", base::load_std());
-        insert("workspace", base::load_workspace());
+        insert(constants::PROGRAM_NAME, load_functions.load);
+        insert("std", load_functions.std);
+        insert("workspace", load_functions.workspace);
         insert("fn", base::pat_args_to_args());
         insert("pat", base::pat_args_to_pat_args());
         insert("index", base::pat_args_to_index());
