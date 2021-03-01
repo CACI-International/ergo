@@ -183,7 +183,7 @@ decompose instances of the type."
 ##
 ## # Functions
 ## {{(mdoc:functions :self by-content cache debug default dynamic ergo-remote
-##    exec import log match optional required seq task variable)}}
+##    exec import log match optional required seq task typed variable)}}
 {
     ## The Any type.
     ##
@@ -346,7 +346,7 @@ decompose instances of the type."
     }
 
     # Functions
-    import {by-content,cache,debug,dynamic,variable} = plugin:value
+    import {by-content,cache,debug,dynamic,typed,variable} = plugin:value
     import {optional,required} = :mtype
     default
     ergo-remote

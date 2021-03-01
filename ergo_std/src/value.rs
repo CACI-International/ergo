@@ -25,6 +25,7 @@ pub fn module() -> Value {
             "get" = meta_get_fn(),
             "set" = meta_set_fn()
         },
+        "typed" = typed_fn(),
         "variable" = variable_fn()
     }
 }
@@ -297,6 +298,28 @@ Arguments: `:value`",
     .into()
 }
 
+fn typed_fn() -> Value {
+    ergo_function!(independent std::value::typed,
+    r"Evaluate a value until it has a static type (thus is not dynamically typed).
+
+Arguments: `:value`
+
+Evaluation occurs immediately, and the typed value is returned.",
+    |ctx, args| {
+        let mut val = args.next().ok_or("no value argument")?.unwrap();
+
+        args.unused_arguments()?;
+
+        loop {
+            match val.dyn_value().await? {
+                Ok(inner) => val = inner,
+                Err(val) => break val,
+            }
+        }
+    })
+    .into()
+}
+
 fn meta_get_fn() -> Value {
     ergo_function!(independent std::value::meta::get,
     r"Get metadata of a value.
@@ -347,6 +370,14 @@ mod test {
     ergo_script::test! {
         fn by_content(t) {
             t.assert_eq("self:value:by-content [a,b,c]:2", "c");
+        }
+    }
+
+    ergo_script::test! {
+        fn typed(t) {
+            t.assert_ne("self:value:dynamic str", "str");
+            t.assert_eq("self:value:typed <| self:value:dynamic str", "str");
+            t.assert_eq("self:value:typed str", "str");
         }
     }
 }

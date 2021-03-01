@@ -45,6 +45,7 @@
   * `unique` to deduplicate values in an iterator,
   * `zip` to zip/unzip iterators into array iterators.
 * Add `Array:from` and `Map:from` (mainly for conversion from iterators).
+* Add `typed` function to evaluate a value to a typed value.
 
 ### Improvements
 * Allow `env:path-search` to take Paths, and simply forward them as the returned
