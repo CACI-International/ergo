@@ -198,8 +198,6 @@ fn run(opts: Opts) -> Result<String, String> {
     // on values cleaning up after themselves.
     let weak_logger = std::sync::Arc::downgrade(&logger);
 
-    let doc_write = opts.doc_path.is_some();
-
     // Create runtime context
     let mut ctx = script::script_context(
         Context::builder()
@@ -208,7 +206,6 @@ fn run(opts: Opts) -> Result<String, String> {
             .threads(opts.jobs)
             .keep_going(!opts.stop),
         initial_load_path,
-        opts.doc_path,
     )
     .expect("failed to create script context");
 
@@ -276,8 +273,8 @@ fn run(opts: Opts) -> Result<String, String> {
 
     if opts.doc {
         to_eval = format!("doc ({})", to_eval);
-    } else if doc_write {
-        to_eval = format!("doc:write . ({})", to_eval);
+    } else if let Some(path) = opts.doc_path {
+        to_eval = format!("doc:write {} (fn: -> {})", path.display(), to_eval);
     }
 
     let source = Source::new(StringSource::new("<command line>", to_eval));
@@ -311,8 +308,8 @@ fn run(opts: Opts) -> Result<String, String> {
 
     // Clear context, which removes any unneeded values that may be held.
     //
-    // This is *important* as some values (like those returned by exec) behave differently if their
-    // peers still exist or not.
+    // This is *important* as some values (like those returned by exec or task) behave differently
+    // based on their lifetime.
     ctx.clear_env();
 
     let ret = value_to_execute.and_then(|value| {

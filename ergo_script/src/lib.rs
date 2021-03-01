@@ -39,7 +39,6 @@ pub struct Script {
 pub fn script_context(
     cb: grease::runtime::ContextBuilder,
     initial_load_path: Vec<std::path::PathBuf>,
-    doc_path: Option<std::path::PathBuf>,
 ) -> Result<Runtime, grease::runtime::BuilderError> {
     let mut global_env = ScriptEnv::default();
     {
@@ -64,7 +63,7 @@ pub fn script_context(
         // Add initial traits
         ergo_runtime::traits::traits(&mut ctx.traits);
         runtime::traits(&mut ctx.traits);
-        Runtime::new(ctx, global_env, initial_load_path, doc_path)
+        Runtime::new(ctx, global_env, initial_load_path)
     })
 }
 
@@ -674,8 +673,7 @@ mod test {
     }
 
     async fn script_eval(s: &str) -> Result<Value, String> {
-        let mut ctx =
-            script_context(Default::default(), vec![], None).map_err(|e| e.to_string())?;
+        let mut ctx = script_context(Default::default(), vec![]).map_err(|e| e.to_string())?;
         Script::load(Source::new(StringSource::new("<test>", s.to_owned())))
             .map_err(|e| e.to_string())?
             .evaluate(&mut ctx)

@@ -9,7 +9,7 @@ mod unix {
     use std::os::unix::ffi::OsStrExt;
     use std::os::unix::ffi::OsStringExt;
 
-    #[derive(Clone, Debug, PartialOrd, Ord, PartialEq, Eq, Hash, StableAbi)]
+    #[derive(Clone, Debug, Default, PartialOrd, Ord, PartialEq, Eq, Hash, StableAbi)]
     #[repr(C)]
     pub struct OsString {
         bytes: RVec<u8>,

@@ -24,7 +24,6 @@ impl Test {
                 .threads(Some(1))
                 .keep_going(false),
             vec![],
-            None,
         )
         .expect("failed to create runtime");
 

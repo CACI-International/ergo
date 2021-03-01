@@ -29,8 +29,8 @@
 * Add `--doc-write` flag to output documentation to markdown files.
 * Add a built-in `doc` function to get documentation of a value, supporting the
   following additional indexes:
-  * `doc:write` to write out documentation for a value (if `--doc-write` has
-    been specified)
+  * `doc:write` to write out documentation for a value,
+  * `doc:child` to write child documentation (if `doc:write` is being used), and
   * `doc:path` to get the current output location for documentation, if any.
 * Support expressions in doc comments.
   * `{{ ... }}` in doc comments (possibly spanning multiple lines) will evaluate

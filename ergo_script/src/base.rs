@@ -28,7 +28,7 @@ use std::sync::Arc;
 /// Documentation for the load function.
 pub const LOAD_DOCUMENTATION: &'static str = r"Load a script, with optional additional arguments with which to call the result.
 
-The first argument, if present, must be a string or path.
+Arguments: `(StringOrPath :to-load) ^:call-args`
 
 ## Script resolution
 When loading a script, the following resolution process occurs for the first argument (if present):
@@ -47,8 +47,8 @@ When loading a script, the following resolution process occurs for the first arg
    c. If the name-resolved script exists as a directory, and the directory contains `workspace.ergo`,
       that path is used and step (2) is repeated.
 
-If the directory-resolved script exists as a file, it is loaded. If additional arguments were provided, they are applied
-to the resulting value.";
+If the directory-resolved script exists as a file, it is loaded. If additional arguments were
+provided, the resulting value is called with them.";
 
 /// Return the load function.
 pub fn load() -> Value {
@@ -284,10 +284,12 @@ Return the workspace value if called with no arguments.".into(),
     .into()
 }
 
-#[derive(StableAbi)]
+// TODO This should probably be scoped in the context itself, not as a task local value.
+#[derive(Clone, StableAbi)]
 #[repr(C)]
 struct DocPath {
-    doc_path: PathBuf,
+    root: PathBuf,
+    relative: PathBuf,
 }
 
 impl TaskLocal for DocPath {
@@ -297,80 +299,139 @@ impl TaskLocal for DocPath {
 }
 
 impl DocPath {
-    pub fn get(fallback: PathBuf) -> PathBuf {
-        Self::task_local()
-            .map(|v| v.doc_path.clone())
-            .unwrap_or(fallback)
+    pub fn new(root: PathBuf) -> Self {
+        DocPath {
+            root,
+            relative: Default::default(),
+        }
+    }
+
+    pub fn join(&mut self, p: &std::path::Path) {
+        self.relative = self.relative.as_ref().join(p).into();
+    }
+
+    pub fn current(&self) -> PathBuf {
+        self.root.as_ref().join(self.relative.as_ref()).into()
     }
 }
 
 /// The doc function, supporting a number of indexed functions as well.
 pub fn doc() -> Value {
     let path: Value = ergo_runtime::ergo_function!(independent ergo::doc::path,
-           r"Get the current documentation path, if any.
+       r"Get the current documentation path, if any.
 
-Arguments: none
+Arguments: (none)
 
-Returns the doc Path, or Unset if no Path is present (documentation is not being generated to the filesystem).",
+Returns the doc Path, or Unset if no Path is present (documentation is not being written to the
+filesystem).",
+    |ctx, args| {
+        args.unused_arguments()?;
+
+        match DocPath::task_local().map(|v| v.current()) {
+            None => types::Unset::new().into(),
+            Some(doc_path) => make_value!([namespace_id!(ergo::doc::path)] Ok(doc_path)).into(),
+        }
+    })
+    .into();
+
+    let write: Value = ergo_runtime::ergo_function!(independent ergo::doc::write,
+             r"Write documentation to the given path.
+
+Arguments: `(StringOrPath :path) (Function :doc-value)`
+
+`doc-value` must be a function taking no arguments that returns the value to be documented.
+Returns the `Path` to the written documentation.",
         |ctx, args| {
+            let path = args.next().ok_or("no path provided")?;
+            let func = args.next().ok_or("no value function provided")?;
+
             args.unused_arguments()?;
 
-            match ctx.doc_path.as_ref().into_option() {
-                None => types::Unset::new().into(),
-                Some(doc_path) => {
-                    let doc_path = doc_path.clone();
-                    make_value!([namespace_id!(ergo::doc::path)] Ok(DocPath::get(doc_path))).into()
+            let func = traits::delay_bind(ctx, func).await?;
+
+            let path = path.map_async(|v|
+                match_value!(v => {
+                    types::String => |s| s.map(|v| PathBuf::from(std::path::PathBuf::from(v.owned().to_string()))),
+                    PathBuf => |p| p,
+                    => |_| Err("argument must be a string or path")?
+                })
+            ).await.transpose_err().map_err(|e| e.into_grease_error())?;
+
+            let ctx = ctx.empty();
+            make_value!([path, *func.value] {
+                let path = path.await?.owned();
+                let mut doc_path = path.clone().into_pathbuf();
+                if let Some(parent) = doc_path.parent() {
+                    std::fs::create_dir_all(parent)?;
                 }
-            }
+                let doc = DocPath::new(path).scoped(async {
+                   let val = func.bind(Source::builtin(types::Args { args: Default::default() }.into())).await?;
+                   Doc::get(&ctx, &val).await
+                }).await?;
+                if doc_path.is_dir() {
+                    doc_path.push("index.md");
+                } else {
+                    doc_path.set_extension("md");
+                }
+                std::fs::write(&doc_path, doc.0.as_str().as_bytes())?;
+                Ok(PathBuf::from(doc_path))
+            }).into()
         }).into();
 
-    let write: Value = ergo_runtime::ergo_function!(independent ergo::doc::gen,
-             r"Write documentation relative to the current documentation path.
+    let child: Value = ergo_runtime::ergo_function!(independent ergo::doc::child,
+             r"Write child documentation relative to the current documentation path.
 
-Arguments: <Path> <doc value>
+Arguments: `(StringOrPath :path) :doc-value`
 
-Returns the Path to the given documentation. If no documentation path is set, returns a string with
-the relative path (without writing anything).",
+Returns the `Path` to the written documentation. If no documentation path is set, returns `path`
+(without writing anything).",
         |ctx, args| {
             let path = args.next().ok_or("no path provided")?;
             let value = args.next().ok_or("no value provided")?;
 
             args.unused_arguments()?;
 
-            let (path_source, path) = ctx.source_value_as::<types::String>(path).await?.take();
+            let (path_source, path) = path.map_async(|v|
+                match_value!(v => {
+                    types::String => |s| s.map(|v| PathBuf::from(std::path::PathBuf::from(v.owned().to_string()))),
+                    PathBuf => |p| p,
+                    => |_| Err("argument must be a string or path")?
+                })
+            ).await.transpose().map_err(|e| e.into_grease_error())?.take();
             let doc = Doc::get(ctx, &value);
 
-            match ctx.doc_path.as_ref().into_option() {
-                None => path.into(),
-                Some(root_doc_path) => {
-                    let root_doc_path = root_doc_path.clone();
-                    make_value!([path, doc] {
-                        let path = path.await?;
-                        let doc_path = DocPath::get(root_doc_path).into_pathbuf();
-                        let mut rel_path = std::path::PathBuf::new();
-                        for component in std::path::Path::new(path.0.as_str()).components() {
-                           use std::path::Component::*;
-                           match component {
-                               Prefix(_) | RootDir | ParentDir => return Err(path_source.with("invalid components specified (may only be relative descendant paths)").into_grease_error()),
-                               CurDir => (),
-                               Normal(c) => rel_path.push(c),
-                           }
+            match DocPath::task_local() {
+               None => path.into(),
+               Some(local_doc_path) => {
+                  make_value!([path, doc] {
+                     let path = path.await?;
+                     let doc_path = local_doc_path.current().into_pathbuf();
+                     let mut rel_path = std::path::PathBuf::new();
+                     for component in path.as_ref().as_ref().components() {
+                        use std::path::Component::*;
+                        match component {
+                           Prefix(_) | RootDir | ParentDir => return Err(path_source.with("invalid components specified (may only be relative descendant paths)").into_grease_error()),
+                           CurDir => (),
+                           Normal(c) => rel_path.push(c),
                         }
-                        let new_doc_path = doc_path.join(&rel_path);
-                        if let Some(parent) = new_doc_path.parent() {
-                           std::fs::create_dir_all(parent)?;
-                        }
-                        let doc_val = DocPath { doc_path: new_doc_path.clone().into() }.scoped(doc).await?;
-                        if new_doc_path.is_dir() {
-                            rel_path.push("index.md");
-                        } else {
-                            rel_path.set_extension("md");
-                        }
-                        let output_file = doc_path.join(&rel_path);
-                        std::fs::write(&output_file, doc_val.0.as_str().as_bytes())?;
-                        Ok(PathBuf::from(rel_path))
-                    }).into()
-                }
+                     }
+                     let new_doc_path = doc_path.join(&rel_path);
+                     if let Some(parent) = new_doc_path.parent() {
+                        std::fs::create_dir_all(parent)?;
+                     }
+                     let mut local_doc_path = local_doc_path.as_ref().clone();
+                     local_doc_path.join(&rel_path);
+                     let doc_val = local_doc_path.scoped(doc).await?;
+                     if new_doc_path.is_dir() {
+                        rel_path.push("index.md");
+                     } else {
+                        rel_path.set_extension("md");
+                     }
+                     let output_file = doc_path.join(&rel_path);
+                     std::fs::write(&output_file, doc_val.0.as_str().as_bytes())?;
+                     Ok(PathBuf::from(rel_path))
+                  }).into()
+               }
             }
         }).into();
 
@@ -378,6 +439,7 @@ the relative path (without writing anything).",
         move |ctx, v| {
             let path = path.clone();
             let write = write.clone();
+            let child = child.clone();
             async move {
                 let (source, v) = v.take();
                 match_value!(peek v => {
@@ -394,6 +456,8 @@ the relative path (without writing anything).",
                         let ind = ind.await?;
                         if ind.0.as_str() == "path" {
                             path
+                        } else if ind.0.as_str() == "child" {
+                            child
                         } else if ind.0.as_str() == "write" {
                             write
                         } else {
@@ -410,11 +474,12 @@ the relative path (without writing anything).",
         Some(TypedValue::constant(
             "Get the documentation for a value.
 
-Arguments: <value>
+Arguments: `:value`
 
 Returns the documentation string.
 
-### Indices
+## Functions
+* `child` - Write documentation to a relative path.
 * `path` - Get the documentation output path, if set.
 * `write` - Write documentation to the given output path.".into())),
     )

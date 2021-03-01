@@ -65,9 +65,9 @@ fn join_fn() -> Value {
         std::path::join,
         r"Join components into a Path.
 
-Arguments: `^(PathOrString :components)`
+Arguments: `^((Array:Of :StringOrPath) :components)`
 
-Return a Path that is the result of joining the individual path components together.",
+Return a `Path` that is the result of joining the individual path components together.",
         |ctx, cargs| {
             let mut args = Vec::new();
 

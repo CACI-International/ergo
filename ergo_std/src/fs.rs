@@ -344,7 +344,7 @@ fn track_fn() -> Value {
     ergo_function!(independent std::fs::track,
     r"Make a Path depend on the contents of the file to which it refers.
 
-Arguments: `(PathOrString :file)`
+Arguments: `(StringOrPath :file)`
 Returns a `Path` that is identified by the contents of the file to which the argument refers.
 `file` must exist and refer to a file.",
     |ctx,args| {

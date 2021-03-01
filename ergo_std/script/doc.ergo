@@ -16,7 +16,7 @@ summary = fn :val -> (workspace:string:split "\n\n" (doc :val)):0
 module = fn :self :name -> {
     first = !workspace:match doc:path: ^[
         workspace:type:Unset -> :name
-        _ -> workspace:string:format "[{}]({})" :name (doc:write :name self::name)
+        _ -> workspace:string:format "[{}]({})" :name (doc:child :name self::name)
     ]
     workspace:string:format "{}: {}" :first (summary self::name)
 }

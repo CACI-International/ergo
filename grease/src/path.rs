@@ -6,7 +6,7 @@ use crate::ffi::OsString;
 use abi_stable::StableAbi;
 use std::borrow::Cow;
 
-#[derive(Clone, Debug, PartialOrd, Ord, PartialEq, Eq, Hash, StableAbi)]
+#[derive(Clone, Debug, Default, PartialOrd, Ord, PartialEq, Eq, Hash, StableAbi)]
 #[repr(C)]
 pub struct PathBuf {
     path: OsString,
