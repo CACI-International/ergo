@@ -853,7 +853,7 @@ impl Evaluator {
                             } else {
                                 match if_false {
                                     Some(e) => self.evaluate(ctx, *e).await.map(Source::unwrap),
-                                    None => Ok(types::Unit.into_value())
+                                    None => Ok(types::Unset::new().into())
                                 }
                             }
                         }.boxed()).await.0
@@ -884,7 +884,7 @@ impl Evaluator {
                             } else {
                                 match if_false {
                                     Some(e) => self.evaluate(&mut ctx, e).await?.unwrap().into_any_value(),
-                                    None => types::Unit.into_value().into_any_value()
+                                    None => Value::from(types::Unset::new()).into_any_value()
                                 }
                             })
                         }, deps))

@@ -79,6 +79,8 @@
   same to implement `Display`.
 * Release the load cache when no other load calls are present, to correctly drop
   lifetimes of values.
+* Make `if` return `Unset` if the false case is not provided and the condition
+  evaluates to that case.
 
 ### Bugfixes
 * Fix incorrect parsing of indexing in e.g. `a |>:b:c`.
@@ -118,6 +120,8 @@ Semantics have changed in the following breaking ways:
   needs to be updated. In particular, all values now convert to true if there is
   no other override, and `Unset` values convert to false. You can (and should)
   use the standard library to explicitly create `Bool` instances.
+* `if` returns `Unset` for the false case if it is not provided. Previously, it
+  returned `()`.
 
 ## 1.0.0-beta.8  -- 2021-01-15
 * Fix some bugs and improve output UI.
