@@ -274,7 +274,7 @@ fn run(opts: Opts) -> Result<String, String> {
     if opts.doc {
         to_eval = format!("doc ({})", to_eval);
     } else if let Some(path) = opts.doc_path {
-        to_eval = format!("doc:write {} (fn: -> {})", path.display(), to_eval);
+        to_eval = format!("doc:write {} ({})", path.display(), to_eval);
     }
 
     let source = Source::new(StringSource::new("<command line>", to_eval));

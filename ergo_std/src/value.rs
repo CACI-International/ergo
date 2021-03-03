@@ -1,12 +1,7 @@
 //! Value-related intrinsics.
 
 use abi_stable::{external_types::RMutex, std_types::RArc};
-use ergo_runtime::{
-    context_ext::AsContext,
-    ergo_function,
-    metadata::{Doc, Runtime},
-    types, ContextExt,
-};
+use ergo_runtime::{context_ext::AsContext, ergo_function, metadata::Runtime, types, ContextExt};
 use grease::{depends, item_name, types::GreaseType, value::Value};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -16,10 +11,6 @@ pub fn module() -> Value {
         "by-content" = by_content_fn(),
         "cache" = cache_fn(),
         "debug" = debug_fn(),
-        "doc" = crate::grease_string_map! {
-            "get" = doc_get_fn(),
-            "set" = doc_set_fn()
-        },
         "dynamic" = dyn_fn(),
         "meta" = crate::grease_string_map! {
             "get" = meta_get_fn(),
@@ -244,40 +235,6 @@ Returns the argument exactly as-is. The logging occurs immediately.",
         );
 
         val.unwrap()
-    })
-    .into()
-}
-
-fn doc_get_fn() -> Value {
-    ergo_function!(independent std::value::doc::get,
-    r"Get the documentation for a value.
-
-Arguments: `:value`",
-    |ctx, args| {
-        let val = args.next().ok_or("no argument to doc")?;
-
-        args.unused_arguments()?;
-
-        Doc::get(ctx, &val).into()
-    })
-    .into()
-}
-
-fn doc_set_fn() -> Value {
-    ergo_function!(independent std::value::doc::set,
-    r"Set the documentation for a value.
-
-Arguments: `:value (String :doc)`",
-    |ctx, args| {
-        let mut val = args.next().ok_or("no value argument")?.unwrap();
-        let doc = args.next().ok_or("no documentation argument")?;
-
-        args.unused_arguments()?;
-
-        let doc = ctx.source_value_as::<types::String>(doc).await?.unwrap();
-
-        val.set_metadata(&Doc, doc);
-        val
     })
     .into()
 }

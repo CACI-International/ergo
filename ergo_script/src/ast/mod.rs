@@ -45,6 +45,34 @@ pub enum Expression {
 /// Expressions with source information.
 pub type Expr = Source<Expression>;
 
+impl From<&DocCommentPart> for grease::value::Dependencies {
+    fn from(part: &DocCommentPart) -> Self {
+        match part {
+            DocCommentPart::String(s) => depends![s],
+            DocCommentPart::Expression(es) => {
+                let mut deps = depends![];
+                for e in es {
+                    deps += (&**e).into();
+                }
+                deps
+            }
+        }
+    }
+}
+
+impl DocCommentPart {
+    /// Get the dependencies of multiple doc comment parts.
+    pub fn dependencies<'a, I: IntoIterator<Item = &'a DocCommentPart>>(
+        parts: I,
+    ) -> grease::value::Dependencies {
+        let mut deps = depends![];
+        for p in parts {
+            deps += p.into();
+        }
+        deps
+    }
+}
+
 impl From<&Expression> for grease::value::Dependencies {
     fn from(e: &Expression) -> Self {
         use Expression::*;

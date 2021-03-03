@@ -35,7 +35,7 @@ pub struct Unit;
 impl From<Unit> for TypedValue<Unit> {
     fn from(v: Unit) -> Self {
         let mut v = Self::constant(v);
-        v.set_metadata(&Doc, make_value!(Ok("()".into())));
+        Doc::set_string(&mut v, "()");
         v
     }
 }
@@ -48,10 +48,7 @@ pub struct Bool(pub bool);
 impl From<Bool> for TypedValue<Bool> {
     fn from(b: Bool) -> Self {
         let mut v = Self::constant(b);
-        v.set_metadata(
-            &Doc,
-            make_value!(Ok(if b.0 { "<true>" } else { "<false>" }.into())),
-        );
+        Doc::set_string(&mut v, if b.0 { "<true>" } else { "<false>" });
         v
     }
 }
@@ -73,9 +70,21 @@ impl std::fmt::Display for String {
     }
 }
 
-impl<T: Into<RString>> From<T> for String {
-    fn from(t: T) -> Self {
-        String(t.into())
+impl<'a> From<&'a str> for String {
+    fn from(s: &'a str) -> Self {
+        String(s.into())
+    }
+}
+
+impl<'a> From<std::borrow::Cow<'a, str>> for String {
+    fn from(s: std::borrow::Cow<'a, str>) -> Self {
+        String(s.into())
+    }
+}
+
+impl From<std::string::String> for String {
+    fn from(s: std::string::String) -> Self {
+        String(s.into())
     }
 }
 
@@ -95,9 +104,9 @@ impl std::ops::DerefMut for String {
 
 impl From<String> for TypedValue<String> {
     fn from(v: String) -> Self {
+        let doc = v.clone();
         let mut v = Self::constant(v.clone());
-        let v_meta = v.clone();
-        v.set_metadata(&Doc, v_meta);
+        Doc::set_string(&mut v, doc);
         v
     }
 }
@@ -124,7 +133,7 @@ impl From<Array> for TypedValue<Array> {
         let deps = depends![^@v.0];
         let doc = format!("array with {} elements", v.0.len());
         let mut v = Self::constant_deps(v, deps);
-        v.set_metadata(&Doc, TypedValue::constant(String::from(doc)));
+        Doc::set_string(&mut v, doc);
         v
     }
 }
@@ -136,48 +145,13 @@ impl From<Array> for TypedValue<Array> {
 #[repr(C)]
 pub struct Map(pub BstMap<Value, Value>);
 
-impl Map {
-    /// Create a new TypedValue<Map> from this Map.
-    ///
-    /// The context is used to generate default documentation for the value.
-    pub fn into_typed_value(self, ctx: &grease::runtime::Context) -> TypedValue<Self> {
-        let key_docs: Vec<_> = self.0.iter().map(|(k, _)| Doc::get(ctx, &k)).collect();
-        let deps: grease::value::Dependencies = self.0.iter().map(|(k, v)| depends![*k, *v]).sum();
-        let mut v = TypedValue::constant_deps(self, deps);
-        v.set_metadata(
-            &Doc,
-            make_value!({
-                let key_docs = futures::future::try_join_all(key_docs).await?;
-                Ok(if key_docs.len() == 0 {
-                    "map with no keys".into()
-                } else {
-                    let mut s = "map with keys:".to_owned();
-                    for k in key_docs {
-                        s.push_str(&format!("\n * {}", k.as_ref()));
-                    }
-                    s.into()
-                })
-            }),
-        );
+impl From<Map> for TypedValue<Map> {
+    fn from(m: Map) -> Self {
+        let deps: grease::value::Dependencies = m.0.iter().map(|(k, v)| depends![*k, *v]).sum();
+        let doc = format!("map with {} entries", m.0.len());
+        let mut v = TypedValue::constant_deps(m, deps);
+        Doc::set_string(&mut v, doc);
         v
-    }
-
-    /// Create a new TypedValue<Map> from this Map without documentation metadata.
-    pub fn into_typed_value_no_doc(self) -> TypedValue<Self> {
-        let deps: grease::value::Dependencies = self.0.iter().map(|(k, v)| depends![*k, *v]).sum();
-        TypedValue::constant_deps(self, deps)
-    }
-
-    /// Create a new Value from this Map.
-    ///
-    /// The context is used to generate default documentation for the value.
-    pub fn into_value(self, ctx: &grease::runtime::Context) -> Value {
-        self.into_typed_value(ctx).into()
-    }
-
-    /// Create a new Value from this Map without documentation metadata.
-    pub fn into_value_no_doc(self) -> Value {
-        self.into_typed_value_no_doc().into()
     }
 }
 
@@ -233,9 +207,26 @@ where
     }
 }
 
+pub struct UnboundDoc(Option<String>);
+
+impl From<()> for UnboundDoc {
+    fn from(_: ()) -> Self {
+        UnboundDoc(None)
+    }
+}
+
+impl<T> From<T> for UnboundDoc
+where
+    T: Into<String>,
+{
+    fn from(t: T) -> Self {
+        UnboundDoc(Some(t.into()))
+    }
+}
+
 impl Unbound {
     /// Create a new unbound value with the given implementation.
-    pub fn new<F>(bind: F, deps: Dependencies, doc: Option<TypedValue<String>>) -> TypedValue<Self>
+    pub fn new<F, S: Into<UnboundDoc>>(bind: F, deps: Dependencies, doc: S) -> TypedValue<Self>
     where
         F: for<'a> Fn(
                 &'a mut crate::Runtime,
@@ -247,8 +238,8 @@ impl Unbound {
     {
         let mut v =
             TypedValue::constant_deps(Unbound(UnboundAbi_TO::from_value(bind, TU_Opaque)), deps);
-        if let Some(doc) = doc {
-            v.set_metadata(&Doc, doc);
+        if let Some(doc) = doc.into().0 {
+            Doc::set_string(&mut v, doc);
         }
         v
     }
@@ -336,7 +327,7 @@ impl Unset {
     /// Create a new Unset value (which, when evaluated, will error).
     pub fn new() -> TypedValue<Self> {
         let mut v: TypedValue<Self> = make_value!(Err("unset value".into()));
-        v.set_metadata(&Doc, make_value!(Ok("<unset>".into())));
+        Doc::set_string(&mut v, "<unset>");
         v
     }
 
@@ -583,7 +574,7 @@ macro_rules! ergo_function {
                 )
             },
             ::grease::depends![$crate::namespace_id!($( $l )::+)],
-            Some(::grease::value::TypedValue::constant($doc.into()))
+            $doc,
         )
     };
 

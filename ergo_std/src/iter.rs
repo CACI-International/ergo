@@ -5,7 +5,7 @@ use futures::{
     future::{ok, ready, FutureExt, TryFutureExt},
     stream::{StreamExt, TryStreamExt},
 };
-use grease::{depends, make_value, match_value, TypedValue, Value};
+use grease::{depends, make_value, match_value, Value};
 use std::collections::BTreeSet;
 
 pub fn module() -> Value {
@@ -251,12 +251,12 @@ fn zip_fn() -> Value {
                             }
                             Ok(types::Unit.into())
                         }.boxed()
-                    }, deps, None).into()
+                    }, deps, ()).into()
                 },
                 => |v| traits::bind_error(ctx, arg_source.with(v)).await?
             }).await
         }.boxed()
-    }, depends![namespace_id!(std::iter::zip)], Some(TypedValue::constant(
+    }, depends![namespace_id!(std::iter::zip)],
         r"Zip the values of iterators together.
 
 Arguments: `^((Array:Of Into<Iter>) :iters)`
@@ -266,7 +266,7 @@ passed iterators.
 
 When used in a pattern call, unzips an iterator of arrays into the provided iterators, ignoring
 missing and extra values in each array. If arrays have `Unset` values, they are skipped in the respective
-iterator.".into()))).into()
+iterator.").into()
 }
 
 fn skip_while_fn() -> Value {

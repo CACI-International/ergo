@@ -28,7 +28,7 @@ All bindings at the call site are returned as a Map.",
         types::Map(env.into_iter()
             .map(|(k,v)| Ok((k,v.into_result()?.unwrap())))
             .collect_result()?
-        ).into_value(ctx)
+        ).into()
     })
     .into()
 }

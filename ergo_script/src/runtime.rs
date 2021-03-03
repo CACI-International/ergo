@@ -268,7 +268,7 @@ impl Evaluator {
                         types::Unbound::new(
                             |_, _| async { Ok(types::Unit.into_value()) }.boxed(),
                             depends![ergo_runtime::namespace_id!(ergo::any)],
-                            None,
+                            (),
                         )
                         .into(),
                     ),
@@ -466,6 +466,17 @@ impl Evaluator {
                         let new_parts = ctx
                             .env_scoped(|ctx| {
                                 async move {
+                                    ctx.env_set_to_current(|ctx| {
+                                        async move {
+                                            ctx.env_insert(
+                                                types::String::from("self").into(),
+                                                Ok(Source::builtin(types::Unset::new().into())),
+                                            );
+                                        }
+                                        .boxed()
+                                    })
+                                    .await;
+
                                     let mut r = Vec::new();
                                     for p in parts {
                                         match p {
@@ -645,7 +656,7 @@ impl Evaluator {
                     Empty => Ok(types::Unit.into_value()),
                     BindAny => {
                         Ok(types::Unbound::new(|_, _| async { Ok(BindExpr.into_value()) }.boxed(),
-                            depends![ergo_runtime::namespace_id!(ergo::any)], None).into())
+                            depends![ergo_runtime::namespace_id!(ergo::any)], ()).into())
                     },
                     String(s) => {
                         let s: Value = types::String::from(s).into();
@@ -717,7 +728,7 @@ impl Evaluator {
                                 }
                             })
                             .collect_result::<BstMap<_, _>>()
-                            .map(|ret| types::Map(ret).into_value(ctx))
+                            .map(|ret| types::Map(ret).into())
                     }
                     Block(es) => {
                         expr_type = Some("block");
@@ -752,7 +763,7 @@ impl Evaluator {
                                 }).await.0.map(Source::unwrap)
                             }
                             .boxed()
-                        }, deps, None).into())
+                        }, deps, ()).into())
                     }
                     Bind(bind, e) => {
                         // evaluate `e` first, so that any bindings in `bind` aren't in the
@@ -797,7 +808,7 @@ impl Evaluator {
                                 env.lock().insert(k, Ok(v).into());
                                 Ok(types::Unit.into_value())
                             }.boxed()
-                        }, depends![ergo_runtime::namespace_id!(ergo::set)], None).into())
+                        }, depends![ergo_runtime::namespace_id!(ergo::set)], ()).into())
                     }
                     BindEqual(a, b) => {
                         let a = self.evaluate(ctx, *a).await?;
@@ -814,7 +825,7 @@ impl Evaluator {
                                 b.bind(v).await?;
                                 Ok(types::Unit.into_value())
                             }.boxed()
-                        }, deps, None).into())
+                        }, deps, ()).into())
                     }
                     Index(a, b) => {
                         let a = self.evaluate(ctx, *a).await?;
@@ -906,38 +917,49 @@ impl Evaluator {
                         Ok(types::Merge(val).into_value())
                     }
                     DocComment(parts, val) => {
-                        let mut val = self.evaluate(ctx, *val).await?;
-                        let doc_val = val.clone();
-                        let doc = ctx.env_scoped(|ctx| async move {
-                            // Insert special `self` keyword representing the value being
-                            // documented.
-                            ctx.env_set_to_current(|ctx| async move {
-                                ctx.env_insert(types::String::from("self").into(), Ok(doc_val));
-                            }.boxed()).await;
-                            let mut doc = std::string::String::new();
-                            let mut formatter = traits::Formatter::new(&mut doc);
-                            for p in parts {
-                                match p {
-                                    DocCommentPart::String(s) => formatter.write_str(&s)?,
-                                    DocCommentPart::Expression(es) => {
-                                        // Evaluate as a block, displaying the final value and
-                                        // merging the scope into the doc comment scope.
-                                        let (val, scope) = self.evaluate_block(ctx, es).await?;
-                                        ctx.env_set_to_current(|ctx| async move { ctx.env_extend(scope); }.boxed()).await;
-                                        // Only add to string if the last value wasn't a bind
-                                        // expression (to support using a block to only add
-                                        // bindings).
-                                        if val.grease_type_immediate() != Some(&BindExpr::grease_type()) {
-                                            ctx.display(val.unwrap(), &mut formatter).await?;
+                        let (parts, val) = if let DocComment(parts, val) = self.compile_env_into(ctx, src.with(DocComment(parts, val))).await?.unwrap() {
+                            (parts, val)
+                        } else {
+                            panic!("compile_env_into returned a different expression from a doc comment");
+                        };
+                        let deps = DocCommentPart::dependencies(&parts);
+                        let doc = types::Unbound::new(move |ctx, v| {
+                            let parts = parts.clone();
+                            let mut ctx = ctx.empty();
+                            async move {
+                                ctx.env_scoped(|ctx| async move {
+                                    // Insert special `self` keyword representing the value being
+                                    // documented.
+                                    ctx.env_set_to_current(|ctx| async move {
+                                        ctx.env_insert(types::String::from("self").into(), Ok(v));
+                                    }.boxed()).await;
+                                    let mut doc = std::string::String::new();
+                                    let mut formatter = traits::Formatter::new(&mut doc);
+                                    for p in parts {
+                                        match p {
+                                            DocCommentPart::String(s) => formatter.write_str(&s)?,
+                                            DocCommentPart::Expression(es) => {
+                                                // Evaluate as a block, displaying the final value and
+                                                // merging the scope into the doc comment scope.
+                                                let (val, scope) = self.evaluate_block(ctx, es).await?;
+                                                ctx.env_set_to_current(|ctx| async move { ctx.env_extend(scope); }.boxed()).await;
+                                                // Only add to string if the last value wasn't a bind
+                                                // expression (to support using a block to only add
+                                                // bindings).
+                                                if val.grease_type_immediate() != Some(&BindExpr::grease_type()) {
+                                                    ctx.display(val.unwrap(), &mut formatter).await?;
+                                                }
+                                            }
                                         }
                                     }
-                                }
-                            }
-                            drop(formatter);
-                            Result::<_, grease::Error>::Ok(doc)
-                        }.boxed()).await.0?;
-                        val.set_metadata(&metadata::Doc, types::String::from(doc).into());
-                        Ok(val.unwrap())
+                                    drop(formatter);
+                                    Ok(types::String::from(doc).into())
+                                }.boxed()).await.0
+                            }.boxed()
+                        }, deps, ());
+                        let mut val = self.evaluate(ctx, *val).await?.unwrap();
+                        val.set_metadata(&metadata::Doc, doc);
+                        Ok(val)
                     }
                     Compiled(v) => Ok(v)
                 }

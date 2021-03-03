@@ -1,10 +1,12 @@
+^workspace:
+
 ## Get the summary documentation of a value.
 ##
 ## Arguments: `:value`
 ##
 ## The summary documentation is the first paragraph of documentation (where paragraphs are separated
 ## by two newlines).
-summary = fn :val -> (workspace:string:split "\n\n" (doc :val)):0
+summary = fn :val -> (string:split "\n\n" (doc :val)):0
 
 ## Document a module.
 ##
@@ -14,11 +16,11 @@ summary = fn :val -> (workspace:string:split "\n\n" (doc :val)):0
 ## If generating documentation, this will generate the module documentation separately and provide a
 ## link. It will display a summary of the module documentation.
 module = fn :self :name -> {
-    first = !workspace:match doc:path: ^[
-        workspace:type:Unset -> :name
-        _ -> workspace:string:format "[{}]({})" :name (doc:child :name self::name)
+    first = !match doc:path: ^[
+        type:Unset -> :name
+        _ -> string:format "[{}]({})" :name (doc:child :name self::name)
     ]
-    workspace:string:format "{}: {}" :first (summary self::name)
+    string:format "{}: {}" :first (summary self::name)
 }
 
 ## Document module indices of a value.
@@ -28,7 +30,7 @@ module = fn :self :name -> {
 ## Document multiple modules as an unordered list, with links to separate pages for each module if
 ## generating documentation. `modules` must be indices of `value`.
 modules = fn :self ^:names -> {
-    workspace:iter:map (fn :n -> workspace:string:format "* {}" <| module :self :n) :names | workspace:string:join "\n"
+    iter:map (fn :n -> string:format "* {}" <| module :self :n) :names | string:join "\n"
 }
 
 ## Document function indices of a value.
@@ -38,15 +40,15 @@ modules = fn :self ^:names -> {
 ## Document multiple functions as an unordered list with summaries, or as inline sections if
 ## generating documentation. `functions` must be indices of `value`.
 functions = fn :self ^:names -> {
-    !workspace:match doc:path: ^[
-        workspace:type:Unset -> {
-            workspace:iter:map (fn :n -> workspace:string:format "* {}: {}" :n (summary self::n)) :names | workspace:string:join "\n"
+    !match doc:path: ^[
+        type:Unset -> {
+            iter:map (fn :n -> string:format "* {}: {}" :n (summary self::n)) :names | string:join "\n"
         }
         _ -> {
             # Build an unordered list of links to the functions
-            list = workspace:iter:map (fn :n -> workspace:string:format "* [{0}](#{0}): {1}" :n (summary self::n)) :names | workspace:string:join "\n"
-            content = workspace:iter:map (fn :n -> workspace:string:format "<div class='function'>\n\n## {}\n{}\n\n</div>" :n (doc self::n)) :names | workspace:string:join "\n\n"
-            workspace:string:format "{}\n\n{}" :list :content
+            list = iter:map (fn :n -> string:format "* [{0}](#{0}): {1}" :n (summary self::n)) :names | string:join "\n"
+            content = iter:map (fn :n -> string:format "<div class='function'>\n\n## {}\n{}\n\n</div>" :n (doc self::n)) :names | string:join "\n\n"
+            string:format "{}\n\n{}" :list :content
         }
     ]
 }

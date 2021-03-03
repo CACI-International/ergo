@@ -18,7 +18,7 @@ use grease::{
     runtime::TaskLocal,
     task_local_key,
     types::GreaseType,
-    value::{IntoValue, TypedValue, Value},
+    value::{IntoValue, Value},
 };
 use libloading as dl;
 use std::collections::BTreeMap;
@@ -197,7 +197,7 @@ pub fn load_functions() -> LoadFunctions {
             .boxed()
         },
         depends![namespace_id!(ergo::load)],
-        Some(TypedValue::constant(LOAD_DOCUMENTATION.into())),
+        LOAD_DOCUMENTATION,
     )
     .into();
 
@@ -236,9 +236,7 @@ pub fn load_functions() -> LoadFunctions {
             .boxed()
         },
         depends![namespace_id!(ergo::std)],
-        Some(TypedValue::constant(
-            "Get the value as if `ergo std` was run, and apply any bindings to it. Return the library if called with no arguments.".into(),
-        )),
+        "Get the value as if `ergo std` was run, and apply any bindings to it. Return the library if called with no arguments."
     )
     .into();
 
@@ -303,10 +301,12 @@ pub fn load_functions() -> LoadFunctions {
             .boxed()
         },
         depends![namespace_id!(ergo::workspace)],
-        Some(TypedValue::constant(
-            "Get the value as if `ergo path/to/ancestor/workspace.ergo` was run, and apply any bindings to it.
-Return the workspace value if called with no arguments.".into(),
-        )),
+        "Get the value as if `ergo path/to/ancestor/workspace.ergo` was run, and apply any bindings to it.
+Return the workspace value if called with no arguments.
+
+Note that this only retrieves the active workspace _when bound_, so if you want to use `workspace`
+within a function that is to be used outside of the workspace, you should retrieve the workspace
+outside of the function and reference that."
     )
     .into();
 
@@ -329,10 +329,7 @@ pub fn pat_args_to_args() -> Value {
             .boxed()
         },
         depends![namespace_id!(ergo::fn)],
-        Some(TypedValue::constant(
-            "The 'fn' binding function, which takes all PatternArgs and returns an Args to be bound."
-                .into(),
-        )),
+        "The 'fn' binding function, which takes all PatternArgs and returns an Args to be bound.",
     )
     .into()
 }
@@ -344,10 +341,7 @@ pub fn pat_args_to_pat_args() -> Value {
             async move { Ok(ctx.source_value_as::<types::PatternArgs>(v).await?.unwrap().into()) }.boxed()
         },
         depends![namespace_id!(ergo::pat)],
-        Some(TypedValue::constant(
-            "The 'pat' binding function, which takes all PatternArgs and returns a PatternArgs to be bound."
-                .into(),
-        )),
+        "The 'pat' binding function, which takes all PatternArgs and returns a PatternArgs to be bound."
     )
     .into()
 }
@@ -365,10 +359,7 @@ pub fn pat_args_to_index() -> Value {
             }.boxed()
         },
         depends![namespace_id!(ergo::index)],
-        Some(TypedValue::constant(
-            "The 'index' binding function, which takes a single argument and returns an Index to be bound."
-                .into(),
-        )),
+        "The 'index' binding function, which takes a single argument and returns an Index to be bound."
     )
     .into()
 }
@@ -439,17 +430,14 @@ filesystem).",
     let write: Value = ergo_runtime::ergo_function!(independent ergo::doc::write,
              r"Write documentation to the given path.
 
-Arguments: `(StringOrPath :path) (Function :doc-value)`
+Arguments: `(StringOrPath :path) :doc-value`
 
-`doc-value` must be a function taking no arguments that returns the value to be documented.
 Returns the `Path` to the written documentation.",
         |ctx, args| {
             let path = args.next().ok_or("no path provided")?;
-            let func = args.next().ok_or("no value function provided")?;
+            let value = args.next().ok_or("no value provided")?.unwrap();
 
             args.unused_arguments()?;
-
-            let func = traits::delay_bind(ctx, func).await?;
 
             let path = path.map_async(|v|
                 match_value!(v => {
@@ -459,16 +447,15 @@ Returns the `Path` to the written documentation.",
                 })
             ).await.transpose_err().map_err(|e| e.into_grease_error())?;
 
-            let ctx = ctx.empty();
-            make_value!([path, *func.value] {
+            let mut ctx = ctx.empty();
+            make_value!([path, value] {
                 let path = path.await?.owned();
                 let mut doc_path = path.clone().into_pathbuf();
                 if let Some(parent) = doc_path.parent() {
                     std::fs::create_dir_all(parent)?;
                 }
                 let doc = DocPath::new(path).scoped(async {
-                   let val = func.bind(Source::builtin(types::Args { args: Default::default() }.into())).await?;
-                   Doc::get(&ctx, &val).await
+                   Doc::get(&mut ctx, &value).await?.await
                 }).await?;
                 if doc_path.is_dir() {
                     doc_path.push("index.md");
@@ -500,7 +487,7 @@ Returns the `Path` to the written documentation. If no documentation path is set
                     => |_| Err("argument must be a string or path")?
                 })
             ).await.transpose().map_err(|e| e.into_grease_error())?.take();
-            let doc = Doc::get(ctx, &value);
+            let doc = Doc::get(ctx, &value).await?;
 
             match DocPath::task_local() {
                None => path.into(),
@@ -550,7 +537,7 @@ Returns the `Path` to the written documentation. If no documentation path is set
                         let to_doc = args.next().ok_or("no argument to doc")?;
                         args.unused_arguments()?;
 
-                        Doc::get(ctx, &to_doc).into()
+                        Doc::get(ctx, &to_doc).await?.into()
                     },
                     types::Index => |index| {
                         let ind = index.await?.owned().0;
@@ -573,7 +560,6 @@ Returns the `Path` to the written documentation. If no documentation path is set
             .boxed()
         },
         depends![namespace_id!(ergo::doc)],
-        Some(TypedValue::constant(
             "Get the documentation for a value.
 
 Arguments: `:value`
@@ -583,7 +569,7 @@ Returns the documentation string.
 ## Functions
 * `child` - Write documentation to a relative path.
 * `path` - Get the documentation output path, if set.
-* `write` - Write documentation to the given output path.".into())),
+* `write` - Write documentation to the given output path."
     )
     .into()
 }

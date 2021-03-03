@@ -35,7 +35,7 @@ macro_rules! grease_string_map {
         {
             let mut m: grease::bst::BstMap<grease::value::Value,grease::value::Value> = Default::default();
             $( m.insert(crate::grease_string($s), $v); )*
-            ergo_runtime::types::Map(m).into_value_no_doc()
+            ergo_runtime::types::Map(m).into()
         }
     };
 }

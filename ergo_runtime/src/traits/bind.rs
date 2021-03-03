@@ -328,7 +328,7 @@ grease_traits_fn! {
             }
             Some(v) => {
                 let remaining = from.into_iter().map(|(k,v)| (k.unwrap(), v.unwrap())).collect::<BstMap<_,_>>();
-                bind(ctx, v, from_source.with(types::Map(remaining).into_value(ctx))).await?;
+                bind(ctx, v, from_source.with(types::Map(remaining).into())).await?;
                 Ok(())
             }
         }

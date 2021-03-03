@@ -7,7 +7,6 @@ use grease::{
     depends, grease_trait_impl, match_value,
     type_erase::Erased,
     types::{GreaseType, Type},
-    value::TypedValue,
     Value,
 };
 
@@ -112,7 +111,7 @@ my-type:a
         let id = ctx.source_value_as::<types::String>(id).await?.unwrap();
         let id = id.await?.owned().0;
 
-        let interface_doc = Doc::get(ctx, &*interface);
+        let interface_doc = Doc::get(ctx, &*interface).await?;
         let interface_doc = interface_doc.await?;
 
         let mut tp = grease::types::Type::named(id.as_str().as_bytes());
@@ -177,12 +176,12 @@ my-type:a
                                 let data = unsafe { (*data).as_ref::<ScriptTypeData>() };
                                 traits::bind(ctx, to_bind, arg_source.with(data.inner_value.clone())).await.map(|v| v.unwrap())
                             }.boxed()
-                        }, deps, None).into()
+                        }, deps, ()).into()
                     },
                     => |v| traits::bind_error(ctx, arg_source.with(v)).await?
                 }).await
             }.boxed()
-        }, deps, None).into();
+        }, deps, ()).into();
         make_match_fn(ret_tp, Ok(construct), format!("Match a {} value.
 
 If called with no arguments, returns a composition function:
@@ -213,7 +212,7 @@ fn match_any() -> Value {
                             async move {
                                 traits::bind(ctx, v, arg).await.map(|v| v.unwrap())
                             }.boxed()
-                        }, deps, None).into()
+                        }, deps, ()).into()
                     },
                     => |v| v
                 })
@@ -222,7 +221,7 @@ fn match_any() -> Value {
             .boxed()
         },
         depends![namespace_id!(std::type::Unit)],
-        Some(TypedValue::constant("Matches any value.".into())),
+        "Matches any value.",
     )
     .into()
 }
@@ -264,7 +263,7 @@ fn make_match_fn<S: Into<types::String>>(
                                         let arg = ctx.source_pattern_value_as_type(arg, tp).await?;
                                         traits::bind(ctx, v, arg).await.map(|v| v.unwrap())
                                     }.boxed()
-                                }, deps, None).into()
+                                }, deps, ()).into()
                             }
                         }
                     },
@@ -282,7 +281,7 @@ fn make_match_fn<S: Into<types::String>>(
             .boxed()
         },
         deps,
-        Some(TypedValue::constant(doc.into())),
+        doc,
     )
     .into()
 }
@@ -357,7 +356,7 @@ fn match_map_entry() -> Value {
                                     traits::bind(ctx, value, entry_source.with(entry.value)).await?;
                                     Ok(types::Unit.into())
                                 }.boxed()
-                            }, deps, None).into()
+                            }, deps, ()).into()
                         },
                         => |v| traits::bind_error(ctx, arg_source.with(v)).await?
                     })
@@ -366,7 +365,7 @@ fn match_map_entry() -> Value {
                 .boxed()
             },
             depends![namespace_id!(std::type::MapEntry::construct)],
-            None
+            ()
         )
         .into();
     make_match_fn(

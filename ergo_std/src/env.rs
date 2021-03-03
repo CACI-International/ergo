@@ -1,11 +1,7 @@
 //! Environment variable functions.
 
-use ergo_runtime::{ergo_function, traits, types, ContextExt};
-use grease::{
-    make_value, match_value,
-    path::PathBuf,
-    value::{TypedValue, Value},
-};
+use ergo_runtime::{ergo_function, metadata::Doc, traits, types, ContextExt};
+use grease::{make_value, match_value, path::PathBuf, value::Value};
 
 pub fn module() -> Value {
     crate::grease_string_map! {
@@ -52,9 +48,9 @@ fn current_dir_path() -> Value {
     let mut v = make_value!([ergo_runtime::namespace_id!(std::env::current_dir), path] {
         path.map(|d| PathBuf::from(d)).ok_or("current directory path could not be retrieved".into())
     });
-    v.set_metadata(
-        &ergo_runtime::metadata::Doc,
-        TypedValue::constant("The current working directory of the process, as a path.".into()),
+    Doc::set_string(
+        &mut v,
+        "The current working directory of the process, as a path.",
     );
     v.into()
 }
@@ -64,10 +60,7 @@ fn user_cache_path() -> Value {
     let mut v = make_value!([ergo_runtime::namespace_id!(std::env::user_cache), path] {
         path.map(|d| PathBuf::from(d)).ok_or("user cache path could not be retrieved".into())
     });
-    v.set_metadata(
-        &ergo_runtime::metadata::Doc,
-        TypedValue::constant("A user-level cache directory path.".into()),
-    );
+    Doc::set_string(&mut v, "A user-level cache directory path.");
     v.into()
 }
 
@@ -97,10 +90,7 @@ fn system_cache_path() -> Value {
     let mut v = make_value!([ergo_runtime::namespace_id!(std::env::system_cache), path] {
         path.map(|d| PathBuf::from(d)).ok_or("system cache path could not be retrieved".into())
     });
-    v.set_metadata(
-        &ergo_runtime::metadata::Doc,
-        TypedValue::constant("A system-level cache directory path.".into()),
-    );
+    Doc::set_string(&mut v, "A system-level cache directory path.");
     v.into()
 }
 
@@ -109,10 +99,7 @@ fn home_path() -> Value {
     let mut v = make_value!([ergo_runtime::namespace_id!(std::env::home), path] {
         path.map(|d| PathBuf::from(d)).ok_or("home path could not be retrieved".into())
     });
-    v.set_metadata(
-        &ergo_runtime::metadata::Doc,
-        TypedValue::constant("The current user's home directory path.".into()),
-    );
+    Doc::set_string(&mut v, "The current user's home directory path.");
     v.into()
 }
 
@@ -162,14 +149,11 @@ in PATH. If not found, an error occurs. Otherwise the path of the resolved file 
 
 fn os_string() -> Value {
     let mut v: Value = types::String::from(std::env::consts::OS).into();
-    v.set_metadata(
-        &ergo_runtime::metadata::Doc,
-        TypedValue::constant(
-            "The OS running ergo.
+    Doc::set_string(
+        &mut v,
+        "The OS running ergo.
 
-Possible values include `linux`, `macos`, and `windows`."
-                .into(),
-        ),
+Possible values include `linux`, `macos`, and `windows`.",
     );
     v
 }

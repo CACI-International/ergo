@@ -324,7 +324,7 @@ mod test {
     fn if_expr() -> Result<(), String> {
         script_eval_to(":t = 1; :f = 2; if {}:k :t :f", SRString("2"))?;
         script_eval_to(":t = 1; :f = 2; if something :t :f", SRString("1"))?;
-        script_eval_to(":t = 1; :f = 2; if {}:k :t", SRUnit)?;
+        script_eval_to(":t = 1; :f = 2; if {}:k :t", SRUnset)?;
         Ok(())
     }
 
@@ -333,7 +333,7 @@ mod test {
         script_eval_to("if (!string = string) 1 2", SRString("1"))?;
         script_eval_to("if (a = 1) :a 2", SRString("1"))?;
         script_eval_to("if (!string = other) 1 2", SRString("2"))?;
-        script_eval_to("if (!string = other) 1", SRUnit)?;
+        script_eval_to("if (!string = other) 1", SRUnset)?;
         Ok(())
     }
 
