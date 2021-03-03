@@ -12,13 +12,6 @@ Before we begin, let's cover some nomenclature.
 A __script__ is a file conforming to the expected `ergo` syntax, which describes a
 dependency tree of commands.
 
-A __command__ is a single logical operation in a script. It may involve running
-an external binary, running a built-in function, scheduling tasks on remote
-resources, etc.
-
-__Data__ is the term used for script runtime information; it can take a number
-of common forms, which will be described later.
-
-A __future__ is a _lazily-evaluated_ piece of data in the script runtime. While
-the future itself is lazily-evaluted, it has attached metadata such as type
-information.
+A __value__ is a _lazily-evaluated_ result in the script runtime. While the
+value itself is lazily-evaluted, it has attached metadata such as type
+information which is immediately available.

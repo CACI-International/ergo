@@ -81,7 +81,7 @@ partial = fn :f ^:args ^{^:kwargs}-> fn ^:args2 ^{^:kwargs2} -> f ^:args ^:args2
 ## ```
 with-output-path = fn :f -> {
     file = plugin:path:new:
-    seq (f :file) :file
+    plugin:seq (f :file) :file
 }
 
 ## Create a recursive function. The passed function will be passed itself as the first argument, and

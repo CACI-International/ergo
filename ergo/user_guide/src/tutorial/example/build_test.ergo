@@ -1,72 +1,67 @@
 #!/usr/bin/env ergo
 
-# Convenience bindings for following functions
-run = fn ^{^kwargs} ^args -> exec ^:kwargs ^:args |>:complete
-run-with-path = fn ^{^kwargs} ^args -> run ^{ ^:kwargs, env = { PATH = env:get PATH }} ^:args
-copy-out = fn file name -> fs:copy :file (path:join :script-dir :name)
+std:import {
+    cache, default, env, exec, fs, net, script, seq, task,
+    Array, Iter, Path, String
+} = std:
+
+# Convenience bindings for the following functions
+run = fn ^{^:kwargs} ^:args -> (exec ^:kwargs ^:args):complete
+run-with-path = fn ^{^:kwargs} ^:args -> run ^{^:kwargs, env = {PATH = env:get PATH} } ^:args
+copy-out = fn :file :name -> fs:copy :file (Path:join script:dir: :name)
 
 # Compile function, taking one argument indicating the file to compile,
 # and a non-positional `includes` argument.
-compile = fn ^{^kwargs} source-file -> {
-    incs = match :kwargs {
-        {includes,^_} = collection:fold (fn incs p -> [^:incs,-I,:p]) [] :includes
-        _ = []
+compile = fn ^{includes = default :includes as []} :source-file -> {
+    includes = :includes | Iter:map (fn :i -> [-I,:i]) | Iter:flatten | Array:from
+    cache <| Path:with-output <| fn :out -> {
+        task (String:format "compiling {}" :source-file) (
+            run-with-path c++ -o :out ^:includes -c (fs:track :source-file)
+        )
     }
-    object-file = (path:new)
-    value:cache <| seq ^[
-        task (string:format "compiling {}" :source-file) <| run-with-path c++ -o :object-file ^:incs -c (fs:track :source-file)
-        :object-file
-    ]
 }
 
-# Linking function, which passes all arguments to the link command.
-link = fn name ^args -> value:cache <| seq ^[
-    exe = (path:new)
-    task (string:format "linking {}" :name) <| run-with-path c++ -o :exe ^:args
-    :exe
-]
+# Linking function, which passes all arguments to the linker.
+link = fn :name ^:args -> cache <| Path:with-output <| fn :out -> {
+    task (String:format "linking {}" :name) <| run-with-path c++ -o :out ^:args
+}
 
 # Executable-linking function, which links all arguments.
-link_exe = :link
+link-exe = :link
 
-# Library-linking function, which links all arguments.
-link_so = fn name ^args -> link :name -shared ^:args
-
+# Library-linking function, which links all arguments as a shared library.
+link-so = fn :name ^:args -> link :name -shared ^:args
 
 # Create a library from lib.cpp.
-lib = link_so "add2 library" "-Wl,-hlibadd2.so" (compile lib.cpp) 
+lib = link-so "add2 library" "-Wl,-hlibadd2.so" (compile lib.cpp) 
 
 # Create an executable using the library.
-exe = link_exe forty_two (compile main.cpp) :lib
+exe = link-exe forty_two (compile main.cpp) :lib
 
 # Download Catch2, build it and get the output include directory.
 Catch2 = {
-    tarball = seq (p = (path:new)) (run wget "https://github.com/catchorg/Catch2/archive/v2.11.1.tar.gz" -O :p) :p
-    source = seq (p = (path:new)) (run mkdir -p :p) :p
-    catch_dir = seq (run ^{pwd = :source} tar -xzf :tarball) (path:join :source Catch2-2.11.1)
-    run_tests = seq ^[
-        build_dir = (path:new)
-        run-with-path cmake -DCMAKE_BUILD_TYPE=Release -S :catch_dir -B :build_dir
-        run-with-path ^{pwd=:build_dir} make -j8
-        run-with-path ^{pwd=:build_dir} make test
+    catch-source = task "fetching Catch2" <| net:unarchive-remote "https://github.com/catchorg/Catch2/archive/v2.11.1.tar.gz" 
+    catch-source = Path:join :catch-source Catch2-2.11.1
+    build_dir = Path:new:
+    run_tests = task "building/running Catch2 tests" <| seq ^[
+        run-with-path cmake "-DCMAKE_BUILD_TYPE=Release" -S :catch-source -B :build_dir
+        run-with-path (pwd=:build_dir) make -j8
+        run-with-path (pwd=:build_dir) make test
     ]
     # Run the test suite before returning the library path
-    value:cache <| seq :run_tests (path:join :catch_dir single_include)
+    cache <| seq :run_tests (Path:join :catch-source single_include)
 }
 
 # Create lib directory to link named library for testing
 libpath = {
-    dir = (path:new)
-    value:cache <| seq ^[
-        fs:create-dir :dir
-        fs:copy :lib (path:join :dir libadd2.so)
-        :dir
-    ]
+    cache <| Path:with-output <| fn :dir -> {
+        fs:copy :lib (Path:join :dir libadd2.so)
+    }
 }
 
 # Create and run a test executable using the library.
-test_prog = link_exe "test program" (compile test.cpp ^{ includes = [:Catch2] }) :lib
-test = run ^{ env = { LD_LIBRARY_PATH = :libpath } } :test_prog
+test_prog = link-exe "test program" (compile (includes = [:Catch2]) test.cpp) :lib
+test = run (env = { LD_LIBRARY_PATH = :libpath }) :test_prog
 
 # Copy results into the current directory.
 copy_result = [
@@ -75,4 +70,4 @@ copy_result = [
 ]
 
 # Only copy outputs if the tests pass.
-seq (value:cache :test) :copy_result
+seq (cache :test) :copy_result

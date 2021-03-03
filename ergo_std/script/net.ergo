@@ -9,7 +9,7 @@
 ## Returns the unpacked remote archive directory.
 unarchive-remote = fn :url -> value:cache {
     out = path:new:
-    archive = seq (net:download :bb-url :out) :out
+    archive = seq (net:download :url :out) :out
     unpacked-dir = path:new:
     remove-out = fs:remove :out
     seq (fs:unarchive :archive :unpacked-dir) :remove-out :unpacked-dir

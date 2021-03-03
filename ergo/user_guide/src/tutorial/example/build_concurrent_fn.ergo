@@ -1,18 +1,18 @@
 #!/usr/bin/env ergo
 
+std:import {cache, env, exec, fs, script, seq, task, Path, String} = std:
+
 # Compile function, taking one argument indicating the file to compile.
-compile = fn source-file -> value:cache <| seq ^[
-    object-file = (path:new)
-    task (string:format "compiling {}" :source-file) <| exec ^{env = {PATH = env:get PATH}} c++ -o :object-file -c (fs:track :source-file)
-    :object-file
-]
+compile = fn :source-file -> cache <| Path:with-output <| fn :out -> {
+    task (String:format "compiling {}" :source-file) (
+        exec (env = {PATH = env:get PATH}) c++ -o :out -c (fs:track :source-file)
+    ):complete
+}
 
 # Executable-linking function, which links all arguments.
-link_exe = fn name ^objs -> value:cache <| seq ^[
-    exe = (path:new)
-    task (string:format "linking executable {}" :name) <| exec ^{env = {PATH = env:get PATH}} c++ -o :exe ^:objs
-    :exe
-]
+link-exe = fn :name ^:objs -> cache <| Path:with-output <| fn :exe -> {
+    task (String:format "linking executable {}" :name) (exec (env = {PATH = env:get PATH}) c++ -o :exe ^:objs):complete
+}
 
 # Compile main.cpp
 main = compile main.cpp
@@ -20,7 +20,7 @@ main = compile main.cpp
 lib = compile lib.cpp
 
 # Link the object files together
-exe = link_exe forty_two :main :lib
+exe = link-exe forty_two :main :lib
 
-# Copy to a file in the current directory.
-fs:copy :exe (path:join :script-dir forty_two)
+# Copy to a file in the working directory.
+fs:copy :exe (Path:join script:dir: forty_two)

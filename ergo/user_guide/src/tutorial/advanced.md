@@ -17,13 +17,13 @@ As usual, there are a few things to note here:
 * For convenience, we've created a `run-with-path` function which is a wrapper
   around `exec` that sets the `PATH` environment variable to be inherited and
   also only depends on command completion (which affects error messages).
-* Since we are just forwarding all arguments from `link_so` to `c++`, we can
-  specify the SONAME for the library (`-Wl,-h`) directly to the function.
-  Likewise, we can just pass `$lib` to `link_exe`.
-* We've made a separate `link` command, and use it for both `link_exe` and
-  `link_so`.
-* The final value is an array. Because of this, each of the values (both futures
-  in this case) in the array are evaluated concurrently.
+* We've made a separate `link` command, and use it for both `link-exe` and
+  `link-so`.
+* Since we are just forwarding all arguments from `link-so` to `c++`, we can
+  specify the SONAME for the library (`-Wl,-h`) directly.  Likewise, we can just
+  pass `:lib` to `link-exe`.
+* The final value is an array. Because of this, each of the values in the array
+  are evaluated concurrently.
 
 ## Testing our library
 In the C/C++ space, there's no canonical testing library. We'll use [Catch2][]
@@ -40,24 +40,19 @@ Woah, that was a lot of new stuff we just added. Let's pick these changes apart.
 
 ### Improved `compile` function
 `compile` has been extended to take optional include directories. We need this
-to use the `Catch2` library. The first line of our new function checks for an
-`includes` key in the non-positional arguments, using the builtin `match`
-pattern matching expression. For calls that do have the key, it creates an array
-of arguments to pass `-I [path]` for each path specified.
+to use the `Catch2` library. The `default` function from the standard library is
+used to get the `includes` key from the non-positional arguments, defaulting to
+none (an empty array). It then adds a `-I` argument prior to them using `Iter`
+functions.
 
 ### Getting Catch2
 We've added a whole block to retrieve Catch2 and run its unit tests. The block
-is used to scope the inner variables and keep our environment cleaner. Here, the
-first three commands fetch the release tarball with `wget`, make a directory in
-which to unpack it, and unpack it.
+is used to scope the inner variables and keep our environment cleaner. Here, we
+use the standard library `net` module to fetch and unarchive the catch2 source.
 
-The `tar` command is using a new `exec` non-positional argument, `pwd`. It's
-simple enough: it sets the working directory of the process.
-
-We also are using the `path:join` function, which joins path components into a
-single path.
-
-After unpacking, we build the tests with `cmake` and `make`.
+After unpacking, we build the tests with `cmake` and `make`, using the `pwd`
+non-positional `exec` argument (as `run-with-path` forwards all arguments to
+`exec`) to set the working directory when running the programs.
 
 The final line of the block ensures that the tests have been run before
 returning the Catch2 include path, and caches this completion so that we don't
@@ -67,13 +62,13 @@ run tests every time we retrieve the value.
 The final change we made is that we compile a test program using the new
 `compile` function feature and the Catch2 library, and run it before copying our
 outputs in the last line. This is fairly straightforward and follows from what
-has been previously discussed (like passing `{ includes = [:Catch2] }` to the
-`compile` function). We do however need to make a temporary library directory so
-that our test executable can find the libraries it needs. The `libpath` block
-handles this: it creates a directory, copies the library into it with the
-expected name based on our SONAME setting, and returns this library path. Then
-we set the `LD_LIBRARY_PATH` environment variable appropriately when running the
-test program.
+has been previously discussed (like passing `(includes = [:Catch2])` to the
+`compile` function). We do, however, need to make a temporary library directory
+so that our test executable can find the libraries it needs. The `libpath` block
+handles this: it copies the library into a new directory with the expected name
+based on our SONAME setting, and returns this library path. Then we set the
+`LD_LIBRARY_PATH` environment variable appropriately when running the test
+program.
 
 For reference, the `test.cpp` file contains:
 

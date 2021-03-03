@@ -10,10 +10,25 @@ compilation and linking separately:
 {{#include example/build_concurrent.ergo}}
 ```
 
-From what we've covered so far, it should be clear how these changes work to
-achieve concurrent compilation. Remember, the `exec` commands (and other
-commands) aren't doing their actions immediately, but rather returning future
-values which are only forced as a chain of dependencies by the final value of
+Here we've changed a few things to take advantage of a few standard library
+functions:
+* `std:import` is used to specifically import particular indices of a value into
+  the current scope, so for instance here we are taking `cache`, `env`, etc.
+  from the standard library (rather than dumping the entire standard library
+  into the top-level scope).
+* `Path:with-output` is a convenience function that captures the typical use
+  case of creating an output path and having it depend on the command which
+  creates it. So we pass a _function_ (described in more detail in the next
+  section) which takes a single argument and returns the value which writes that
+  argument (which will be a new path). This replaces the `seq ^[out = Path:new:,
+  ..., :out]` pattern in the previous version of our script.
+* `task` is our concurrency primitive; it will return a value which, when
+  evaluated, will evaluate its value argument concurrently.
+
+From what we've covered so far, it should be clear how the rest of the changes
+to our script achieve concurrent compilation. Remember, the `exec` commands (and
+other commands) aren't doing their actions immediately, but rather returning
+values which are only evaluated as a chain of dependencies by the final value of
 the script.
 
 However, now we've got a lot of duplication. It'd be nice if we could make the
@@ -25,13 +40,14 @@ input data.
 are evaluated immediately at the call site, but only have access to the
 environment scope that was present at their definition.
 
-Functions are introduced with the `fn` keyword. Following the keyword should be
-a **pattern**, indicating the expected positional and non-positional arguments.
-Then, an arrow `->` followed by the body of the function is expected. Often this
-body will be a map/block (`{...}`), but it can be any expression. When called,
-the function argument pattern will be checked against the arguments and, if it
-matches, any bindings in the pattern will be present in the execution of the
-body.
+Functions are introduced with `fn`. Following the keyword should be a
+**pattern** expression, indicating the expected positional and non-positional
+arguments. Such expressions are similar to normal expressions, but for instance
+`:value` indicates the binding to _set_ in the environment rather _get_. Then,
+an arrow `->` followed by the body of the function is expected. Often this body
+will be a map/block (`{...}`), but it can be any expression. When called, the
+function argument pattern will be checked against the arguments and, if it
+matches, the body will be executed with the bindings from the pattern set.
 
 Let's make compiling and linking into functions:
 
@@ -39,15 +55,15 @@ Let's make compiling and linking into functions:
 {{#include example/build_concurrent_fn.ergo}}
 ```
 
-This is looking much more manageable. Note that both functions have a
-`value:cache <| seq` expression, and the final expression of the block is what
-is returned when the function is invoked.
+This is looking much more manageable. Note that both functions have a `cache`
+call, and the final value of the block (just that returned by `task`) is what is
+returned when the function is invoked.
 
 ## Mapping over arrays
 Ideally we'd like to map the `compile` function over an array of the files;
-luckily there's a built-in command for that, `collection:map`. It takes a function and an
-array and maps the function on each value in the array, returning an array with
-the result.
+luckily there's a standard library function for that, `Iter:map`. It takes a
+function and a value that can be converted to an iterator (like an array) and
+maps the function on each value, returning an iterator of the results.
 
 Let's take advantage of this:
 ```ergo
@@ -55,8 +71,8 @@ Let's take advantage of this:
 ```
 
 We've also condensed our final command by nesting commands in it. Note the `^`
-array merge to pass the resulting array values of the `collection:map` function
-each as arguments to `link_exe`.
+array merge to pass the resulting values in `objects` as individual arguments to
+`link_exe`.
 
 ## Command consistency and reproducibility
 

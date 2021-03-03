@@ -1,10 +1,12 @@
 #!/usr/bin/env ergo
 
+^std:
+
 # Compile our code, specifying an output file binding, and caching the result.
-exe = value:cache <| seq ^[
-    file = (path:new)
-    exec ^{env={PATH = env:get PATH}} c++ -o :file (fs:track main.cpp) (fs:track lib.cpp)
+exe = cache <| seq ^[
+    file = Path:new:
+    exec (env = {PATH = env:get PATH}) c++ -o :file (fs:track main.cpp) (fs:track lib.cpp) |>:complete
     :file
 ]
-# Refer to the output file binding and link to a file in the current directory.
-fs:copy :exe (path:join :script-dir forty_two)
+# Copy the output to a file in the current directory.
+fs:copy :exe (Path:join script:dir: forty_two)

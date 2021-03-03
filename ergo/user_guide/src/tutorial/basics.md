@@ -53,10 +53,9 @@ commented portion will continue until the end of the line.
 __Line 4__: A command to compile `main.cpp` and `lib.cpp` into an executable
 named `forty_two`.
 
-If you run this script, you will see output indicating that `c++` is invoked.
-And sure enough, `forty_two` is now in the current directory. Right now, this
-script is barely different than a shell script (both in function and most of the
-syntax).
+If you run this script, you will see `forty_two` is now in the current
+directory. Right now, this script is barely different than a shell script (both
+in function and in half of the syntax).
 
 ### Closer examination
 While our script is currently functionally identical to a shell script, under
@@ -65,30 +64,31 @@ executed in the ergo runtime, it *is not* immediately executing `c++`.
 
 Instead,
 
-1. The runtime loads the built-in `exec` command from the environment bindings
-   as the command to run.
-2. The `exec` command looks up `c++` using the `PATH` environment variable, just
-   like a shell would do. It then creates a future representing the execution of
-   the `c++` program. This is omitting some detail: the returned data actually
-   contains multiple futures representing things like stdout, exit code, etc.
+1. The runtime loads `exec` from the standard library (where `std` itself is a
+   built-in function to get the standard library).
+2. The `exec` function is applied to the arguments (where `(env = ...)` is
+   setting a non-positional argument that `exec` uses for environment
+   variables). `exec` passes `c++` to the system's `exec` system call, which
+   will look it up in a few fixed places. It then returns a _value_ representing
+   the execution of the `c++` program without actually executing it yet. This
+   omits some detail; the returned value actually contains multiple values
+   representing things like stdout, exit code, etc.
+3. The value returned by the last line of our script is then _evaluated_, which
+   is what invokes the `c++` program with the given arguments.
 
-Since the last line of our script evaluates to a future, that future is then run
-to completion, which is what invokes the `c++` program with the given arguments.
+Thus, `c++` is run only because the value of the last line of the script will
+run it.
 
-Thus, `c++` is run only because the future in the last line of the script
-will run it.
-
-The `{ env = ... }` is indicating to the `exec` command that the environment
-should contain the same `PATH` variable as the parent script. By default, _all_
-commands have an empty environment to make environment usage explicit. Most
-`c++` binaries (`gcc`- or `clang`-based, for example) use the `PATH` to find the
+The `(env = ...)` is indicating to the `exec` command that the environment
+should contain the same `PATH` variable as the `ergo` process. By default,
+`exec` has an empty environment to make environment usage explicit. Most `c++`
+binaries (`gcc`- or `clang`-based, for example) use the `PATH` to find the
 system linker (`ld`), so the easiest way to make this work is to forward the
 script `PATH` (though you could also manually specify `PATH=/usr/bin`).
 
 ## Syntax and execution
 We'll see more syntax examples in the coming chapters, but as a quick primer to
-get a grasp of what data is supported, we'll shortly discuss syntax and data
-here.
+get a grasp of what data is supported, we'll shortly discuss syntax here.
 
 ### Strings have priority
 Like shell languages, bare text is interpreted as a string. Strings can contain
@@ -97,7 +97,7 @@ whitespace. However, you can create strings containing arbitrary characters by
 surrounding them with quotes.
 
 ```ergo
-this_is_a_string!
+this_is_a_string
 "this is a quoted {} []: \"string\"\n"
 these are each individual strings
 ```
@@ -115,15 +115,15 @@ separated by commas, newlines, or semicolons indescriminately.
 { key = value, otherkey = othervalue }
 ```
 
-Maps are actually the **same** as nested code blocks; they open a new
-environment scope (which can have bindings that shadow outer environments), and
-the block itself evaluates to the map of environment bindings if the final
+The syntax for maps is actually the **same** as nested code blocks; they open a
+new environment scope (which can have bindings that shadow outer environments),
+and the block itself evaluates to the map of environment bindings if the final
 expression in the map is a binding:
 
 ```ergo
 {
   file = main.cpp
-  output = exec c++ $file
+  output = std:exec c++ $file
 }
 ```
 
@@ -132,7 +132,7 @@ Evaluates to a map with `file` and `output` as keys, whereas
 ```ergo
 {
   file = main.cpp
-  exec c++ :file
+  std:exec c++ :file
 }
 ```
 
@@ -144,18 +144,22 @@ bindings are disparate).
 
 ### Commands
 Commands process positional arguments and non-positional arguments (as seen in
-`^{env=...}`) and can interpret them in arbitrary ways. For instance, the `exec`
+`(env=...)`) and can interpret them in arbitrary ways. For instance, `exec`
 accepts a number of special non-positional arguments (as we saw with `env`) and
-tries to convert positional arguments into strings suitable for commands.
+tries to convert positional arguments into strings suitable for passing to an
+external program.
 
 You may nest commands with parentheses:
 ```ergo
 command1 arg1 (command2-giving-arg2 a b c) arg3
 ```
 
-The first value of a command, if it is a string (for instance, `exec`), is
-queried in the current environment to resolve to a bound value. Otherwise (if
-not a string), the value is used as-is.
+The first value of a command, if it is a string literal, is queried in the
+current environment to resolve to a bound value. Otherwise (if not a string),
+the value is used as-is.
+
+Commands are identified by the presence of arguments. To call a command without
+arguments, add a `:` after the value to call (e.g. `command:`).
 
 ### Binding Retrieval
 Querying any value from the environment is done by using a colon. For instance,
