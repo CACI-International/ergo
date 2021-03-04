@@ -131,6 +131,11 @@ impl LoadData {
                 let mut cache = cache.lock();
                 cache.insert(path.into(), result.clone());
                 self.loading.lock().pop();
+                if self.loading.lock().is_empty() {
+                   // Only maintain a cache while loading _something_, otherwise we clear it to
+                   // reduce value lifetimes.
+                   cache.clear();
+                }
                 result
             }
             Some(v) => v,
