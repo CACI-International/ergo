@@ -69,12 +69,12 @@ required = pat :out -> :v -> !match :v ^[
 ## Enumeration (sum) types have one of a closed set of inner types.
 ## The first argument should be the unique name of the type (as would be passed to [new](self:new)).
 ## The second argument should be a map of the variant keys and expectected types. For example:
-## ```
+## ```ergo
 ## MapResult = enum MapResult {
-##   Ok = type:Map
-##   Error = type:String
+##   Ok = :Map
+##   Error = :String
 ## }
-## ok = MapResult:Ok {...}
+## ok = MapResult:Ok {}
 ## err = MapResult:Error "oh no"
 ## !:MapResult = :ok
 ## !:MapResult = :err
@@ -83,22 +83,18 @@ required = pat :out -> :v -> !match :v ^[
 ## The variant values should be values supporting function calls and binding/pattern calls.
 enum = fn (type:String :name) (type:Map :variants) -> {
     # Create new type for enum
-    tp = type:new :name (:a -> !match :a ^[
+    tp = type:new :name <| :a -> !match :a ^[
         fn :which ^:args ^{^:kwargs} -> { ::which = variants::which ^:args ^:kwargs }
         pat :which ^:args ^{^:kwargs} -> { ::which = variants::which ^!:args ^!:kwargs } -> ()
-    ])
+    ]
     # Create map interface for enum variants
     key-to-accessor = fn :key -> :a -> !match :a ^[
-        fn ^:args ^{^:kwargs} -> tp :key ^:args ^:kwargs
-        pat ^:args ^{^:kwargs} -> tp !:key ^!:args ^!:kwargs -> ()
+        fn ^:args ^{^:kwargs} -> tp: :key ^:args ^:kwargs
+        pat ^:args ^{^:kwargs} -> tp: !:key ^!:args ^!:kwargs -> ()
     ]
-    accessor = ! :variants | iter:map (fn (type:MapEntry: :key _) -> type:MapEntry: :key (key-to-accessor :key)) | map:from
+    accessor = !(:variants | iter:map (fn (type:MapEntry: :key _) -> type:MapEntry: :key (key-to-accessor :key)) | map:from)
     # Wrap the accessor to add a way to check for `tp` using it.
-    :a -> !match :a ^[
-        fn :arg -> accessor :arg
-        pat :tgt -> :v -> { !:tp = :v; !:tgt = :v }
-        :v -> { !:tp = :v }
-    ]
+    :a -> !match :a (index :arg -> accessor::arg) :tp
 }
 
 ## Create a structured type.
@@ -110,12 +106,15 @@ enum = fn (type:String :name) (type:Map :variants) -> {
 ## 
 ## The first argument should be the unique name of the type (as would be passed to [new](self:new)).
 ## The second argument should be a map of the field keys and expectected types. For example:
-## ```
+## ```ergo
 ## StringPair = struct StringPair {
-##     first = type:String
-##     second = type:String
+##     first = :String
+##     second = :String
 ## }
 ## pair = StringPair: { first = hello, second = world }
+## StringPair _ = :pair
 ## StringPair: {first,second} = :pair
 ## ```
 struct = fn (type:String :name) (type:Map :fields) -> type:new :name <| MapValues :fields
+
+{optional,required,MapValues,MapOf,ArrayValues,ArrayOf,enum,struct}

@@ -1,0 +1,35 @@
+lib = std:
+
+success = success
+
+type-tests = {
+    enum = {
+        MapResult = lib:type:enum MapResult {
+            Ok = lib:Map
+            Error = lib:String
+        }
+
+        ok = MapResult:Ok {}
+        err = MapResult:Error "oh no"
+        lib:debug :MapResult:Ok
+        lib:debug :ok
+        !:MapResult = :ok
+        !:MapResult = :err
+        MapResult:Ok {} = :ok
+        MapResult:Error "oh no" = :err
+        :success
+    }
+
+    struct = {
+        StringPair = lib:type:struct StringPair {
+            first = lib:String
+            second = lib:String
+        }
+        pair = StringPair: { first = hello, second = world }
+        StringPair _ = :pair
+        StringPair: {first = hello, second = world} = :pair
+        :success
+    }
+}
+
+[:type-tests]

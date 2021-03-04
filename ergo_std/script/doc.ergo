@@ -52,3 +52,5 @@ functions = fn :self ^:names -> {
         }
     ]
 }
+
+{summary, modules, functions}

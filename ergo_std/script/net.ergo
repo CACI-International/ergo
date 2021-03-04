@@ -14,3 +14,5 @@ unarchive-remote = fn :url -> value:cache {
     remove-out = fs:remove :out
     seq (fs:unarchive :archive :unpacked-dir) :remove-out :unpacked-dir
 }
+
+{unarchive-remote}
