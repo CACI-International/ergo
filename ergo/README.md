@@ -89,20 +89,16 @@ scripts reside.
   * Right now it only cancels tasks.
 * Persist command timing information for better estimates.
 * Add value dependency tree print to help debug consistency issues.
-* Support `collection:map` over map values.
 * Change `path:new` to have identity based on source file and occurrence/seed
   value.
 * Deduplicate values based on identity.
-* Improve concurrent calls to `value:cache` which are on the same value.
 * Add `fs:expose` or something named similarly to expose read-only files.
   * Change `fs:copy` behavior to actually make copies (i.e., write-able files).
 * Strongly control the lifetime of the thread pool using weak references in the
   grease runtime.
   * This will allow loaded plugins to be properly dropped rather than leaked.
 * Improve std::fs file not found errors (print the file!).
-* Support unicode output in `exec` streams (for convenient printing).
-* Support generating documentation recursively (inspecting markdown links).
-* Investigate returning errors as a unique type (must like `Unset`). This would
+* Investigate returning errors as a unique type (much like `Unset`). This would
   make catching and throwing errors more natural, and would make _caching_
   errors easy/automatic (more correctly persisting the state), though some
   design would have to go into handling persistent source information.
@@ -110,6 +106,9 @@ scripts reside.
   specification of which flags have required args). This is convenient for
   things that want to pass flags to a program but also might need to easily
   inspect/manipulate the flags.
+* Revisit load caching to prevent loading the standard library and workspace
+  twice (which will often happen depending on scripting due to the cache being
+  cleared upon recursive load completion).
 
 ### Optimizations
 There are a few ways to _really_ speed up scripts that should be experimented
