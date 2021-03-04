@@ -104,8 +104,8 @@ enum = fn (type:String :name) (type:Map :variants) -> {
 ## Structured (product) types are a set of keyed values.
 ## Note this merely makes a new type with a `MapValues` type checker.
 ## 
-## The first argument should be the unique name of the type (as would be passed to [new](self:new)).
-## The second argument should be a map of the field keys and expectected types. For example:
+## The first argument should be the unique name of the type (as would be passed to `type:new`).
+## The second argument should be a map of the field keys and expected types. For example:
 ## ```ergo
 ## StringPair = struct StringPair {
 ##     first = :String
