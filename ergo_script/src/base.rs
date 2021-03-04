@@ -51,21 +51,19 @@ If the directory-resolved script exists as a file, it is loaded. If additional a
 provided, the resulting value is called with them.";
 
 #[derive(Clone)]
-struct LoadData {
+pub struct LoadData {
     pub loading: Arc<RMutex<Vec<path::PathBuf>>>,
     pub load_cache: Arc<RMutex<BTreeMap<path::PathBuf, EvalResult>>>,
 }
 
-impl Default for LoadData {
-    fn default() -> Self {
+impl LoadData {
+    fn new() -> Self {
         LoadData {
             loading: Arc::new(RMutex::new(Default::default())),
             load_cache: Arc::new(RMutex::new(Default::default())),
         }
     }
-}
 
-impl LoadData {
     /// Load a script at the given path.
     ///
     /// The path should already be verified as an existing file.
@@ -131,11 +129,6 @@ impl LoadData {
                 let mut cache = cache.lock();
                 cache.insert(path.into(), result.clone());
                 self.loading.lock().pop();
-                if self.loading.lock().is_empty() {
-                   // Only maintain a cache while loading _something_, otherwise we clear it to
-                   // reduce value lifetimes.
-                   cache.clear();
-                }
                 result
             }
             Some(v) => v,
@@ -147,11 +140,12 @@ pub struct LoadFunctions {
     pub load: Value,
     pub std: Value,
     pub workspace: Value,
+    pub load_data: LoadData,
 }
 
 /// Return the load functions (which are all created with a shared cache).
 pub fn load_functions() -> LoadFunctions {
-    let load_data = LoadData::default();
+    let load_data = LoadData::new();
 
     let ld = load_data.clone();
     let load = types::Unbound::new(
@@ -319,6 +313,7 @@ outside of the function and reference that."
         load,
         std,
         workspace,
+        load_data,
     }
 }
 

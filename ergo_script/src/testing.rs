@@ -19,7 +19,7 @@ impl Test {
             grease::Error,
         >,
     ) -> Self {
-        let mut rt = crate::script_context(
+        let (mut rt,_) = crate::script_context(
             grease::runtime::Context::builder()
                 .threads(Some(1))
                 .keep_going(false),

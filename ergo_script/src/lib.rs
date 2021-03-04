@@ -28,6 +28,18 @@ use runtime::*;
 
 pub use base::{resolve_script_path, LOAD_DOCUMENTATION};
 
+/// Script runtime functions.
+pub struct RuntimeControl {
+    load_data: base::LoadData,
+}
+
+impl RuntimeControl {
+    /// Clear the load cache of any loaded scripts.
+    pub fn clear_load_cache(&self) {
+        self.load_data.load_cache.lock().clear();
+    }
+}
+
 /// A loaded script.
 pub struct Script {
     ast: ast::Expr,
@@ -39,9 +51,9 @@ pub struct Script {
 pub fn script_context(
     cb: grease::runtime::ContextBuilder,
     initial_load_path: Vec<std::path::PathBuf>,
-) -> Result<Runtime, grease::runtime::BuilderError> {
+) -> Result<(Runtime, RuntimeControl), grease::runtime::BuilderError> {
     let mut global_env = ScriptEnv::default();
-    {
+    let load_data = {
         let mut insert = |k: &str, v| {
             global_env.insert(
                 ergo_runtime::types::String::from(k).into(),
@@ -59,13 +71,16 @@ pub fn script_context(
         insert("pat", base::pat_args_to_pat_args());
         insert("index", base::pat_args_to_index());
         insert("doc", base::doc());
-    }
+        load_functions.load_data
+    };
 
-    cb.build().map(|mut ctx| {
+    let ctrl = RuntimeControl { load_data };
+
+    cb.build().map(move |mut ctx| {
         // Add initial traits
         ergo_runtime::traits::traits(&mut ctx.traits);
         runtime::traits(&mut ctx.traits);
-        Runtime::new(ctx, global_env, initial_load_path)
+        (Runtime::new(ctx, global_env, initial_load_path), ctrl)
     })
 }
 
@@ -675,7 +690,7 @@ mod test {
     }
 
     async fn script_eval(s: &str) -> Result<Value, String> {
-        let mut ctx = script_context(Default::default(), vec![]).map_err(|e| e.to_string())?;
+        let (mut ctx, _) = script_context(Default::default(), vec![]).map_err(|e| e.to_string())?;
         Script::load(Source::new(StringSource::new("<test>", s.to_owned())))
             .map_err(|e| e.to_string())?
             .evaluate(&mut ctx)

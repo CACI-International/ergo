@@ -199,7 +199,7 @@ fn run(opts: Opts) -> Result<String, String> {
     let weak_logger = std::sync::Arc::downgrade(&logger);
 
     // Create runtime context
-    let mut ctx = script::script_context(
+    let (mut ctx, control) = script::script_context(
         Context::builder()
             .logger(WeakLogTarget(weak_logger.clone()))
             .storage_directory(storage_directory)
@@ -311,6 +311,11 @@ fn run(opts: Opts) -> Result<String, String> {
     // This is *important* as some values (like those returned by exec or task) behave differently
     // based on their lifetime.
     ctx.clear_env();
+
+    // Clear load cache, again so that lifetimes optimistically dropped. It's not very likely that
+    // stuff will be loaded while executing the final value, but if so it'll just take the hit of
+    // reloading the scripts.
+    control.clear_load_cache();
 
     let ret = value_to_execute.and_then(|value| {
         task.block_on(grease::value::Errored::observe(on_error, async {
