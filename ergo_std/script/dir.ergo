@@ -170,6 +170,14 @@ decompose instances of the type."
     ]
 }
 
+## Split an iterator after the first `n` elements.
+##
+## Arguments: `(String :n) (Into<Iter> :iter)`
+##
+## Returns a 2-value array where the first value is an Iter with the first `n` values, and the
+## second is an Iter with all remaining values.
+iter-split = fn :n :iter -> [plugin:iter:take :n :iter, plugin:iter:skip :n :iter]
+
 ## The ergo standard library.
 ##
 ## This library provides a number of submodules that group related functions, as well as some
@@ -233,9 +241,9 @@ decompose instances of the type."
     ## # Functions
     ## {{
     ##   (mdoc:functions :self from fold filter flatten map map-all skip skip-while
-    ##    take take-while unique zip)
+    ##    split take take-while unique zip)
     ## }}
-    Iter = (match-indices plugin:type:Iter plugin:iter)
+    Iter = (match-indices plugin:type:Iter {^plugin:iter, split = :iter-split})
 
     ## The Map type and related functions.
     ##

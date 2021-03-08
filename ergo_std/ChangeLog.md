@@ -40,6 +40,7 @@
   * `map-all` to concurrently map values in an iterator,
   * `skip` to skip a number of values in an iterator,
   * `skip-while` to skip values based on a predicate in an iterator,
+  * `split` to split an iterator into two after a number of values,
   * `take` to take a number of  values in an iterator,
   * `take-while` to take values based on a predicate in an iterator,
   * `unique` to deduplicate values in an iterator,
