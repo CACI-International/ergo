@@ -424,8 +424,12 @@ mod test {
                 SRArray(&[SRString("a"), SRString("b")]),
             )?;
             script_eval_to(
-                ":kw = fn ^_ ^{^:args} -> :args\nkw a ^{:k=3} (:d=4) b",
+                ":kw = fn ^_ ^{^:args} -> :args\nkw a ^{k=3} (d=4) b",
                 SRMap(&[("k", SRString("3")), ("d", SRString("4"))]),
+            )?;
+            script_eval_to(
+                ":kw = fn ^{ something } -> :something\nkw (something = hi)",
+                SRString("hi"),
             )?;
             Ok(())
         }
