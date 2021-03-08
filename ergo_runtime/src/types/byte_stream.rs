@@ -428,7 +428,10 @@ grease_traits_fn! {
                         }
 
                         match std::str::from_utf8(&buf[start..end]) {
-                            Ok(s) => f.write_str(s)?,
+                            Ok(s) => {
+                                f.write_str(s)?;
+                                break;
+                            }
                             Err(e) => {
                                 let ind = e.valid_up_to();
                                 f.write_str(std::str::from_utf8(&buf[start..ind]).unwrap())?;
@@ -438,7 +441,7 @@ grease_traits_fn! {
                                         assert!(end - ind < 4);
                                         overflow_size = end - ind;
                                         overflow[..overflow_size].copy_from_slice(&buf[ind..end]);
-                                        start = end;
+                                        break;
                                     }
                                     Some(n) => {
                                         start += n;
