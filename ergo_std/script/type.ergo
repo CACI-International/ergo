@@ -13,7 +13,9 @@
     ## `map` should contain the expected keys and their corresponding value types.
     ##
     ## Returns a type that will check arguments like typical type functions.
-    MapValues = fn (type:Map :fields) -> basic-type (pat :out -> (!:fields = :x) -> { !:out = :x })
+    MapValues = fn (type:Map :fields) -> basic-type <| pat :out -> type:Map :m -> {
+        !:out = !map:from <| iter:map (fn (type:MapEntry: :k :v) -> type:MapEntry: :k (fields::k :v)) :m
+    }
 
     ## Match maps where all keys match a specific type and all values match a specific type.
     ## 
@@ -21,16 +23,20 @@
     ##
     ## Returns a type that will check arguments like typical type functions.
     MapOf = fn (type:Function :keys) (type:Function :values) -> {
-        basic-type (pat :out -> type:Map :m -> { !iter:map (fn (type:MapEntry: !:keys !:values) -> ()) :m; !:out = :m })
+        basic-type <| pat :out -> type:Map :m -> {
+            !:out = !map:from <| iter:map (fn (type:MapEntry: (keys :k) (values :v)) -> type:MapEntry: :k :v) :m
+        }
     }
 
-    ## Match arrays with specific value types (and length).
+    ## Match arrays with specific value types.
     ## 
     ## Arguments: `(Array :array)`
     ## `array` should contain the expected value types for each entry in the array.
     ##
     ## Returns a type that will check arguments like typical type functions.
-    ArrayValues = fn (type:Array :tps) -> basic-type (pat :out -> (!:tps = :x) -> { !:out = :x })
+    ArrayValues = fn (type:Array :tps) -> basic-type <| pat :out -> type:Array :a -> {
+        !:out = !array:from <| iter:map (fn [:f,:v] -> f :v ) <| iter:zip :tps :a
+    }
 
     ## Match arrays where all values match a specific type.
     ## 
@@ -38,7 +44,7 @@
     ##
     ## Returns a type that will check arguments like typical type functions.
     ArrayOf = fn (type:Function :tp) -> {
-        basic-type (pat :out -> type:Array :a -> { !iter:map (fn !:tp -> ()) :a; !:out = :a })
+        basic-type (pat :out -> type:Array :a -> { !:out = !array:from <| iter:map :tp :a })
     }
 
     {MapValues, MapOf, ArrayValues, ArrayOf}
