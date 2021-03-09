@@ -1,6 +1,6 @@
 # ergo changelog
 
-## Unreleased
+## 1.0.0-beta.9  -- 2021-03-09
 ### New Features
 * Make indexing a distinct operation (as opposed to being syntax sugar).
   * Indexing (infix `:`) is now a distinct operation, binding an `Index`
