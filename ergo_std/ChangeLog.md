@@ -18,6 +18,7 @@
 * Add `Function:pass` convenience function, namely for use in `match` cases.
 * Add `Function:recursive` to create recursive functions.
 * Add `Function:partial` to partially apply functions.
+* Add `Function:memoize` to cache function results based on arguments.
 * Add `match:value` convenience function.
 * Add `Path:with-output` to make output paths from commands more ergonomic.
 * Add `String:join` to join iterators of strings.

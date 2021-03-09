@@ -107,6 +107,18 @@ with-output-path = fn :f -> {
 ## ```
 recursive = fn :f -> fn ^:args ^{^:kwargs} -> f :f ^:args ^:kwargs
 
+## Memoize a function (cache the function results based purely on arguments).
+##
+## Arguments: `(Function :f)`
+##
+## Returns a function which will share results based on the arguments. Thus, if you call the
+## function more than once on the same arguments, it will only be evaluated once with those
+## arguments.
+memoize = fn (plugin:type:Function :f) -> fn ^:args ^{^:kwargs} -> {
+    delayed = plugin:value:dynamic <| fn: -> f ^:args ^:kwargs
+    !(plugin:value:cache (no-persist=true) delayed:)
+}
+
 ## Import values by index in a binding expression.
 ##
 ## Arguments: `(MapOrValue :descriptor)`
@@ -226,8 +238,8 @@ iter-split = fn :n :iter -> [plugin:iter:take :n :iter, plugin:iter:skip :n :ite
     ## {{type-function:}}
     ##
     ## # Functions
-    ## {{mdoc:functions :self partial pass recursive}}
-    Function = match-indices plugin:type:Function {partial,pass,recursive}
+    ## {{mdoc:functions :self memoize partial pass recursive}}
+    Function = match-indices plugin:type:Function {memoize,partial,pass,recursive}
 
     ## The Iter type and related functions.
     ##

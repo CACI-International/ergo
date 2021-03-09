@@ -1,9 +1,9 @@
 //! Value-related intrinsics.
 
-use abi_stable::{external_types::RMutex, std_types::RArc};
+use abi_stable::{external_types::RRwLock, std_types::RArc};
 use ergo_runtime::{context_ext::AsContext, ergo_function, metadata::Runtime, types, ContextExt};
 use grease::{depends, item_name, types::GreaseType, value::Value};
-use std::collections::BTreeMap;
+use std::collections::HashMap as CacheMap;
 use std::sync::Arc;
 
 pub fn module() -> Value {
@@ -43,13 +43,13 @@ Returns a new value which has the same type and result as the given value, but h
 
 #[derive(GreaseType)]
 struct Cached {
-    map: Arc<RMutex<BTreeMap<u128, Value>>>,
+    map: Arc<RRwLock<CacheMap<u128, Value>>>,
 }
 
 impl Default for Cached {
     fn default() -> Self {
         Cached {
-            map: Arc::new(RMutex::new(Default::default())),
+            map: Arc::new(RRwLock::new(Default::default())),
         }
     }
 }
@@ -79,7 +79,7 @@ same single runtime value.",
 
         let cached = ctx.shared_state(|| Ok(Cached::default()))?;
 
-        let mut guard = cached.map.lock();
+        let mut guard = cached.map.read();
         if !guard.contains_key(&id) {
             let val = if no_persist {
                 to_cache
@@ -174,7 +174,9 @@ same single runtime value.",
                     }, id)
                 }
             };
-            guard.insert(id, val);
+            drop(guard);
+            cached.map.write().insert(id, val);
+            guard = cached.map.read();
         }
         guard.get(&id).unwrap().clone()
     })
