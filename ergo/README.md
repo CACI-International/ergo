@@ -106,9 +106,8 @@ scripts reside.
   specification of which flags have required args). This is convenient for
   things that want to pass flags to a program but also might need to easily
   inspect/manipulate the flags.
-* Revisit load caching to prevent loading the standard library and workspace
-  twice (which will often happen depending on scripting due to the cache being
-  cleared upon recursive load completion).
+* Change `<|` to have lower precedence than `|`/`|>`, that seems the more useful
+  choice.
 
 ### Optimizations
 There are a few ways to _really_ speed up scripts that should be experimented
@@ -125,7 +124,7 @@ left unevaluated on a cache hit).
 Such a change could be done in a number of ways, including:
 * Adding a way for script writers to declare a function output relies only on
   inputs (this already exists if you make a function dynamically-typed, but
-  could be more ergonomical).
+  could be more ergonomic).
 * Partially evaluating functions to determine return type. If we didn't care
   about return type, it wouldn't matter as much (and maybe it would turn out to
   be okay to simply return dynamic values everywhere).
@@ -171,7 +170,7 @@ Such a change could be done in a number of ways, including:
   without reducing circular reference detection to the granularity of files.
   Though the evaluation could be changed in this way to allow circular file
   references _without_ changing how the script runtime works, too (i.e. doing
-  the above but making sure all script code ends up evaulated prior to forcing
+  the above but making sure all script code ends up evaluated prior to forcing
   the final `Value`).
 
   Also, if everything were delayed in this matter, writing `if` and similar

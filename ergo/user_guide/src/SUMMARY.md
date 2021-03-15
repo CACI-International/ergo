@@ -39,3 +39,4 @@
 - [RFC](rfc/intro.md)
   - [Macros](rfc/macros.md)
   - [Script Design](rfc/script-design.md)
+  - [Script Execution Semantics](rfc/script-eval.md)
