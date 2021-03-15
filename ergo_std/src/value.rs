@@ -170,6 +170,7 @@ same single runtime value.",
                         {
                             log.warn(format!("failed to cache value for {}: {}", id, e));
                         }
+                        log.debug(format!("wrote cache value for {}", id));
                         Ok(to_cache.into_any_value())
                     }, id)
                 }
