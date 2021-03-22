@@ -85,15 +85,16 @@ expressions), it will necessarily be dynamic.
 
 ### Advantages
 * This will likely result in some serious speed-up of script execution overall.
-  For instance, since the standard library was made to have script components,
-  it takes about 0.2s to load (it used to be on the order of nanoseconds, just
-  loading a DSO). As the standard library script portions grow, this will become
-  more of a problem. One part of this is that the expressions still need to be
-  recursively traversed to capture bindings correctly; this process will likely
-  be a good place to focus some optimizations of the runtime. However, if we
-  aren't evaluating things that aren't needed for the most part only the bits
-  and pieces of the standard library that are actually _used_ will be evaluated
-  (which generally may be a somewhat sparse selection).
+  For example, since the standard library changed to have portions implemented
+  as scripts recently, it takes about 0.2s to load (it used to be on the order
+  of milliseconds, just loading a DSO). As the standard library script portions
+  grow, this will become more of a problem. One part of this is that the
+  expressions still need to be recursively traversed to capture bindings
+  correctly; this process will likely be a good place to focus some
+  optimizations of the runtime. However, if we aren't evaluating things that
+  aren't needed for the most part only the bits and pieces of the standard
+  library that are actually _used_ will be evaluated (which generally may be a
+  somewhat sparse selection).
 * This change would make it almost trivial to evaluate scripts concurrently, as
   we just need to spawn the evaluation onto the async runtime.
 * Related to the last point, it should become fairly easy to load scripts that
@@ -116,6 +117,13 @@ expressions), it will necessarily be dynamic.
   be correct. But for cases like `std:task`, if it is not forced with a `!` (to
   make it occur immediately), the resulting value will depend on the task
   description (which is probably never desirable?).
+* Functions relying on call-site context (`std:script:path`, `std:script:dir`,
+  and `workspace`) will have to operate in a different way. Either the call-site
+  context will have to be stored for each function call, the function signature
+  would have to be evaluated at the call site to get the context (which is just
+  as well because that kind of makes these "invisible" arguments more
+  visible/overridable in the function signature), or some other approach to
+  context will need to be taken.
 
 ### Compromises
 * The disadvantages above could be avoided if we still always evaluate commands
@@ -126,7 +134,7 @@ expressions), it will necessarily be dynamic.
   ```
   would actually evaluate the function, but the _block_ expression inside the
   function would not evaluate immediately. Basically the larger slowdown of
-  always evaluating functions right now is that if the inner expression has
+  always evaluating functions right now is that when the inner expression has
   multiple expressions (like a block), those all evaluate immediately too. It
   would be faster to only apply commands, and then things like type casting
   could occur immediately (so we would get some immediate type checking back).
