@@ -64,9 +64,13 @@ impl AnyValue {
     }
 }
 
+lazy_static::lazy_static! {
+    static ref ANYVALUE_TYPE: crate::uuid::Uuid = grease_type_uuid(b"grease::value::AnyValue");
+}
+
 impl GreaseType for AnyValue {
     fn grease_type() -> Type {
-        Type::named(b"grease::value::AnyValue")
+        Type::new(*ANYVALUE_TYPE)
     }
 }
 

@@ -4,7 +4,7 @@ use crate::path::PathBuf;
 use crate::type_erase::ErasedTrivial;
 use crate::uuid::*;
 use abi_stable::{std_types::RVec, StableAbi};
-use lazy_static::lazy_static;
+pub use lazy_static::lazy_static;
 use std::convert::TryInto;
 
 pub use grease_macro::GreaseType;
@@ -149,9 +149,13 @@ impl<T: GreaseType> GreaseType for RVec<T> {
     }
 }
 
+lazy_static::lazy_static! {
+    static ref PATHBUF_TYPE: Uuid = grease_type_uuid(b"grease::path::PathBuf");
+}
+
 impl GreaseType for PathBuf {
     fn grease_type() -> Type {
-        Type::named(b"grease::path::PathBuf")
+        Type::new(*PATHBUF_TYPE)
     }
 }
 

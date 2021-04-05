@@ -179,13 +179,18 @@ pub fn derive_grease_type(input: TokenStream) -> TokenStream {
         _ => None,
     });
     let namestr = syn::LitStr::new(&format!("{}", name), name.span());
+    let tpstatic = syn::Ident::new(&format!("{}_TYPE", name).to_uppercase(), name.span());
 
     let expanded = quote! {
+        ::grease::types::lazy_static! {
+            static ref #tpstatic: ::grease::uuid::Uuid = ::grease::types::grease_type_uuid(concat![module_path!(), "::", #namestr].as_bytes());
+        }
+
         impl<#(#param_reqs),*> ::grease::types::GreaseType for #name<#(#param_args),*> {
             fn grease_type() -> ::grease::types::Type {
                 let mut type_params = ::grease::types::TypeParameters::default();
                 #(#set_data)*
-                ::grease::types::Type::with_data(::grease::types::grease_type_uuid(concat![module_path!(), "::", #namestr].as_bytes()), type_params.into())
+                ::grease::types::Type::with_data(*#tpstatic, type_params.into())
             }
         }
     };
@@ -476,11 +481,16 @@ fn impl_grease_trait(name: syn::Ident, mut generics: syn::Generics) -> proc_macr
         _ => None,
     });
     let namestr = syn::LitStr::new(&format!("{}", name), name.span());
+    let tpstatic = syn::Ident::new(&format!("{}_TYPE", name).to_uppercase(), name.span());
 
     let (impl_generics, type_generics, where_clause) = generics.split_for_impl();
     let imp_name = impl_name(&name);
 
     let expanded = quote! {
+        ::grease::types::lazy_static! {
+            static ref #tpstatic: ::grease::uuid::Uuid = ::grease::traits::grease_trait_uuid(concat![module_path!(), "::", #namestr].as_bytes());
+        }
+
         impl #impl_generics ::grease::traits::GreaseTrait for #name #type_generics
         #where_clause
         {
@@ -489,7 +499,7 @@ fn impl_grease_trait(name: syn::Ident, mut generics: syn::Generics) -> proc_macr
             fn grease_trait() -> ::grease::traits::Trait {
                 let mut type_params = ::grease::types::TypeParameters::default();
                 #(#set_data)*
-                ::grease::traits::Trait::with_data(::grease::traits::grease_trait_uuid(concat![module_path!(), "::", #namestr].as_bytes()), type_params.into())
+                ::grease::traits::Trait::with_data(*#tpstatic, type_params.into())
             }
 
             fn create(inner: ::grease::runtime::Trait<Self::Impl>, ctx: &::grease::runtime::Context) -> Self {
