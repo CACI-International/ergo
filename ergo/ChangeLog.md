@@ -1,5 +1,10 @@
 # ergo changelog
 
+## 1.0.0-beta.9.1  -- 2021-04-05
+### Improvements
+* Evaluate scripts concurrently to avoid stack overflows.
+* More efficiently calculate type/trait uuids at runtime.
+
 ## 1.0.0-beta.9  -- 2021-03-09
 ### New Features
 * Make indexing a distinct operation (as opposed to being syntax sugar).
