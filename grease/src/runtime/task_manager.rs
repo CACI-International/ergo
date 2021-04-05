@@ -50,6 +50,58 @@ pub fn thread_id() -> Option<u64> {
     THREAD_ID.with(|m| m.read().as_ref().copied().into_option())
 }
 
+/*
+struct TaskPriorityControl {
+    pending: std::collections::BTreeMap<u32, VecDeque<std::task::Waker>>,
+}
+
+struct TaskPriority {
+    control: RArc<RMutex<TaskPriorityControl>>,
+}
+
+struct Registration {
+    parent: RArc<RMutex<TaskPriorityControl>>,
+    priority: u32,
+    queued: bool,
+}
+
+impl Future for Registration {
+    type Output = ();
+
+    fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context) -> std::task::Poll<()> {
+        let me = &mut *self;
+        let mut guard = me.parent.lock();
+        let run_immediately = if let Some((k, v)) = guard.pending.iter().next() {
+            if k == self.priority {
+                me.queued || v.is_empty()
+            } else {
+                k > self.priority
+            }
+        } else {
+            true
+        };
+        me.queued = true;
+        if run_immediately {
+            std::task::Poll::Ready(())
+        } else {
+            {
+                let queue = guard.pending.entry(me.priority).or_default();
+                queue.push_back(cx.waker().clone());
+            }
+            {
+                if let Some((k,v)) = guard.pending.iter().next()
+            }
+
+            std::task::Poll::Pending
+        }
+    }
+}
+
+impl TaskPriority {
+    pub fn register(priority: u32) -> Registration {}
+}
+*/
+
 /// A reference to a task local value.
 pub type TaskLocalRef<T> = Ref<T, RArc<Erased>>;
 
@@ -219,8 +271,10 @@ trait ThreadPoolInterface: Clone + Debug + Send + Sync {
         f: ClosureOnce<(), Erased>,
     ) -> BoxFuture<'static, RResult<Erased, Error>>;
 
-    #[sabi(last_prefix_field)]
     fn block_on<'a>(&self, future: LocalBoxFuture<'a, ()>);
+
+    #[sabi(last_prefix_field)]
+    fn wait_single(&self);
 }
 
 impl ThreadPoolInterface for std::sync::Arc<tokio_runtime::Runtime> {
@@ -241,6 +295,12 @@ impl ThreadPoolInterface for std::sync::Arc<tokio_runtime::Runtime> {
 
     fn block_on<'a>(&self, future: LocalBoxFuture<'a, ()>) {
         self.as_ref().block_on(future)
+    }
+
+    fn wait_single(&self) {
+        while std::sync::Arc::strong_count(self) > 1 {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
     }
 }
 
@@ -431,6 +491,11 @@ impl TaskManager {
     /// Return whether the runtime is configured for error aggregation.
     pub fn aggregate_errors(&self) -> bool {
         self.aggregate_errors
+    }
+
+    pub fn shutdown(&self) {
+        self.abort();
+        self.pool.wait_single();
     }
 }
 

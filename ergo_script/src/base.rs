@@ -364,6 +364,26 @@ pub fn pat_args_to_index() -> Value {
     .into()
 }
 
+/// A function to manually bind values.
+pub fn bind() -> Value {
+    types::Unbound::new(
+        |ctx, v| {
+            async move {
+                let args_val = ctx.source_value_as::<types::Args>(v).await?.unwrap();
+                let mut args = args_val.await?.owned().args.checked();
+                let to = args.next().ok_or("missing bind argument")?;
+                let from = args.next().ok_or("missing bind source argument")?;
+                args.unused_arguments()?;
+                Ok(traits::bind(ctx, to, from).await?.unwrap())
+            }
+            .boxed()
+        },
+        depends![namespace_id!(ergo::bind)],
+        "Bind the first argument using the value of the second argument.",
+    )
+    .into()
+}
+
 #[derive(GreaseType)]
 struct ResolvedWorkspaces {
     map: Arc<RMutex<BTreeMap<path::PathBuf, Option<path::PathBuf>>>>,

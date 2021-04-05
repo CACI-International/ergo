@@ -43,6 +43,7 @@ impl RuntimeControl {
 /// A loaded script.
 pub struct Script {
     ast: ast::Expr,
+    captures: runtime::Captures,
     top_level_env: ScriptEnv,
     file_path: Option<std::path::PathBuf>,
 }
@@ -57,7 +58,7 @@ pub fn script_context(
         let mut insert = |k: &str, v| {
             global_env.insert(
                 ergo_runtime::types::String::from(k).into(),
-                Ok(Source::builtin(v)).into(),
+                (Ok(Source::builtin(v)).into(), None.into()).into(),
             )
         };
 
@@ -71,6 +72,7 @@ pub fn script_context(
         insert("pat", base::pat_args_to_pat_args());
         insert("index", base::pat_args_to_index());
         insert("doc", base::doc());
+        insert("bind", base::bind());
         load_functions.load_data
     };
 
@@ -105,8 +107,9 @@ pub async fn final_value(ctx: &mut Runtime, mut val: Source<grease::Value>) -> E
 impl Script {
     /// Load a script from a character stream.
     pub fn load(src: Source<()>) -> Result<Self, grease::Error> {
-        ast::load(src).map(|ast| Script {
+        ast::load(src).map(|(ast, captures)| Script {
             ast,
+            captures: captures.into_iter().map(|(k, v)| (k, v.into())).collect(),
             top_level_env: Default::default(),
             file_path: None,
         })
@@ -131,10 +134,16 @@ impl Script {
         ctx.reset_load_path();
 
         let top_level_env = self.top_level_env;
-        ctx.env_set_to_current(move |ctx| async move { ctx.env_extend(top_level_env) }.boxed())
-            .await;
+        ctx.env_set_to_current(move |ctx| {
+            async move { ctx.env_extend(top_level_env.into_iter().map(|(k, v)| (k, v.0))) }.boxed()
+        })
+        .await;
 
-        Evaluator::default().evaluate(&mut ctx, self.ast).await
+        let evaluator = Evaluator::default();
+        let mut captures = self.captures;
+        evaluator.fill_unbound(&mut ctx, &mut captures)?;
+        evaluator.eval_captures(&mut ctx, &mut captures).await?;
+        Ok(evaluator.evaluate(&mut ctx, self.ast, &captures))
     }
 }
 
@@ -209,16 +218,8 @@ mod test {
     #[test]
     fn block_set_arbitrary() -> Result<(), String> {
         script_eval_to(
-            ":a = b; ::a = c; :arr = [:b,1]; ::arr = d; :::arr = e; :map = {:k=v}; ::map = f",
+            ":a = b; ::a = c; :arr = [::a,1]; ::arr = d; :::arr = e; :map = {:k=v}; ::map = f",
             SRAny,
-        )
-    }
-
-    #[test]
-    fn comment() -> Result<(), String> {
-        script_eval_to(
-            "# comment comment comment\n:a = something\n:a",
-            SRString("something"),
         )
     }
 
@@ -228,7 +229,9 @@ mod test {
         #[test]
         fn basic() -> Result<(), String> {
             script_eval_to(
-                "## doc comment comment comment\n:a = something\n:a",
+                "## doc comment comment comment
+                :a = something
+                :a",
                 SRString("something"),
             )
         }
@@ -236,7 +239,9 @@ mod test {
         #[test]
         fn expression() -> Result<(), String> {
             script_eval_to(
-                "doc {\n## doc {{ comment }}\n()\n}",
+                "## doc {{ comment }}
+                a = ()
+                doc :a",
                 SRString("doc comment"),
             )
         }
@@ -244,15 +249,23 @@ mod test {
         #[test]
         fn expression_scope() -> Result<(), String> {
             script_eval_to(
-                "doc {\n## {{v = comment}}doc {{:v}}\n()\n}",
+                "## {{v = comment}}doc {{:v}}
+                a = ()
+                doc :a",
                 SRString("doc comment"),
             )?;
             script_eval_to(
-                "v = comment\ndoc {\n## doc {{:v}}\n()\n}",
+                "v = comment
+                ## doc {{:v}}
+                a = ()
+                doc :a",
                 SRString("doc comment"),
             )?;
             script_eval_to(
-                "v = hello\n## {{v = comment}}doc {{:v}}\n()\n:v",
+                "v = hello
+                ## {{v = comment}}doc {{:v}}
+                ()
+                :v",
                 SRString("hello"),
             )?;
             Ok(())
@@ -261,7 +274,9 @@ mod test {
         #[test]
         fn expression_self() -> Result<(), String> {
             script_eval_to(
-                "doc {\n## doc {{self:v}}\n{ v = comment }\n}",
+                "## doc {{self:v}}
+                a = { v = comment }
+                doc :a",
                 SRString("doc comment"),
             )
         }
@@ -270,7 +285,7 @@ mod test {
     #[test]
     fn index() -> Result<(), String> {
         script_eval_to("[a,b]:0", SRString("a"))?;
-        script_fail("[a,b]:2")?;
+        script_parse_fail("[a,b]:2")?;
         script_eval_to("{:alpha=one,:beta=two}:beta", SRString("two"))?;
         script_eval_to("{:alpha=one,:beta=two}:omega", SRUnset)?;
         script_eval_to("{:alpha=[a,{:key=b}]}:alpha:1:key", SRString("b"))?;
@@ -280,7 +295,7 @@ mod test {
     #[test]
     fn array_negative_index() -> Result<(), String> {
         script_eval_to("[a,b]:-1", SRString("b"))?;
-        script_fail("[a,b]:-3")?;
+        script_parse_fail("[a,b]:-3")?;
         Ok(())
     }
 
@@ -295,17 +310,9 @@ mod test {
     }
 
     #[test]
-    #[ignore]
-    fn forced_bindings() -> Result<(), String> {
-        script_eval_to("[:a,:b] = [a]", SRAny)?;
-        script_fail("!([:a,:b] = [a])")?;
-        Ok(())
-    }
-
-    #[test]
     fn function() -> Result<(), String> {
         script_eval_to(":f = fn ^_ -> a\nf something", SRString("a"))?;
-        script_eval_to(":second = fn :b -> :b\nsecond b", SRString("b"))?;
+        script_eval_to(":f = fn :b -> :b\nf b", SRString("b"))?;
         script_eval_to(":second = fn _ :b ^_ -> :b\nsecond a b", SRString("b"))?;
         script_eval_to(
             ":f = fn :a _ :b ^_ -> {\n  :a = :a\n  :b = :b\n}\nf 1 2 3",
@@ -322,7 +329,7 @@ mod test {
     #[test]
     fn function_capture() -> Result<(), String> {
         script_eval_to(":f = { :a = 100; _ -> :a }; :a = 5; f:", SRString("100"))?;
-        script_fail(":f = _ -> :b; f:")?;
+        script_parse_fail(":f = _ -> :b; f:")?;
         script_eval_to(
             ":f = fn :a -> { :b = [:a,something]; fn: -> {b,a} }; (f hi):",
             SRMap(&[
@@ -330,25 +337,8 @@ mod test {
                 ("a", SRString("hi")),
             ]),
         )?;
-        script_eval_to(":a = 5; ::a = 10; :f = _ -> ::a; f:", SRString("10"))?;
-        script_fail(":a = 5; ::a = 10; :f = _ -> :b = 4; f:; :b")?;
-        Ok(())
-    }
-
-    #[test]
-    fn if_expr() -> Result<(), String> {
-        script_eval_to(":t = 1; :f = 2; if {}:k :t :f", SRString("2"))?;
-        script_eval_to(":t = 1; :f = 2; if something :t :f", SRString("1"))?;
-        script_eval_to(":t = 1; :f = 2; if {}:k :t", SRUnset)?;
-        Ok(())
-    }
-
-    #[test]
-    fn if_bind_expr() -> Result<(), String> {
-        script_eval_to("if (!string = string) 1 2", SRString("1"))?;
-        script_eval_to("if (a = 1) :a 2", SRString("1"))?;
-        script_eval_to("if (!string = other) 1 2", SRString("2"))?;
-        script_eval_to("if (!string = other) 1", SRUnset)?;
+        script_fail(":a = 5; ::a = 10; :f = _ -> ::a; f:")?;
+        script_parse_fail(":a = 5; ::a = 10; :f = _ -> :b = 4; f:; :b")?;
         Ok(())
     }
 
@@ -372,34 +362,25 @@ mod test {
         #[test]
         fn block() -> Result<(), String> {
             script_eval_to(
-                "{ :a = 1, :b = 2, ^{ :c = 3, :d = 4 }, :e = :c }",
+                "{ :a = 1, :b = 2, ^{ :c = 3, :d = 4 }, :e = 5 }",
                 SRMap(&[
                     ("a", SRString("1")),
                     ("b", SRString("2")),
                     ("c", SRString("3")),
                     ("d", SRString("4")),
-                    ("e", SRString("3")),
+                    ("e", SRString("5")),
                 ]),
             )
         }
 
         #[test]
         fn block_script_scope() -> Result<(), String> {
-            script_eval_to(
-                ":a = 1\n^{:b = 2}\n:c = :b",
-                SRMap(&[
-                    ("a", SRString("1")),
-                    ("b", SRString("2")),
-                    ("c", SRString("2")),
-                ]),
-            )
+            script_parse_fail(":a = 1\n^{:b = 2}\n:c = :b")
         }
 
         #[test]
-        fn block_invalid() -> Result<(), String> {
-            script_fail("{^:a}")?;
-            script_fail("{^[1,2]}")?;
-            Ok(())
+        fn block_with_array() -> Result<(), String> {
+            script_eval_to("{^[1,2]}", SRString("2"))
         }
 
         #[test]
@@ -473,9 +454,9 @@ mod test {
 
         #[test]
         fn literal_mismatch() -> Result<(), String> {
-            script_fail("!hello = goodbye")?;
-            script_fail("[1,2,3] = [1,2,3,4]")?;
-            script_fail("{:a=1} = {:a=b}")?;
+            script_fail("fn hello -> () |> goodbye")?;
+            script_fail("fn [1,2,3] -> () |> [1,2,3,4]")?;
+            script_fail("fn {:a=1} -> () |> {:a=b}")?;
             Ok(())
         }
 
@@ -516,7 +497,7 @@ mod test {
 
         #[test]
         fn array_undecidable() -> Result<(), String> {
-            script_fail("[^_,^_] = [1,2,3]")?;
+            script_fail("[:x,^_,^_] = [1,2,3], :x")?;
             Ok(())
         }
 
@@ -563,46 +544,54 @@ mod test {
 
         #[test]
         fn map_mismatch() -> Result<(), String> {
-            script_fail("{a,b} = {a=1,b=2,c=3}")?;
-            script_fail("{:a,^:keys,^:keys2} = {:a=1}")?;
+            script_fail("fn {a,b} -> () |> {a=1,b=2,c=3}")?;
+            script_fail("fn {:a,^:keys,^:keys2} -> () |> {:a=1}")?;
             Ok(())
         }
 
         #[test]
         fn bind_command() -> Result<(), String> {
             script_eval_to(
-                ":keyto = pat :key -> :v -> (!:key = v:key); :m = {:key = hi}; keyto hi = :m; ()",
+                ":keyto = pat :key -> :v -> { !bind :key v:key }; :m = {:key = hi}; fn (keyto hi) -> () |> :m",
                 SRUnit,
             )?;
             script_eval_to(
-                ":keyto = pat :key -> :v -> (!:key = v:key); :m = {:key = hi}; keyto :b = :m; :b",
+                ":keyto = pat :key -> :v -> { !bind :key v:key }; :m = {:key = hi}; keyto :b = :m; :b",
                 SRString("hi"),
             )?;
             script_fail(
-                ":keyto = pat :key -> :v -> (!:key = v:key); :m = {:key = hi}; keyto bye = :m; ()",
+                ":keyto = pat :key -> :v -> { !bind :key v:key }; :m = {:key = hi}; fn (keyto bye) -> () |> :m",
             )?;
             script_fail(
-                ":keyto = pat :key -> :v -> (!:key = v:key); :m = {:notkey = hi}; keyto hi = :m; ()",
+                ":keyto = pat :key -> :v -> { !bind :key v:key }; :m = {:notkey = hi}; fn (keyto hi) -> () |> :m",
             )?;
             Ok(())
         }
     }
 
     fn script_eval_to(s: &str, expected: ScriptResult) -> Result<(), String> {
-        block_on(async move { val_match(script_eval(s).await?, expected).await })
+        let mut ctx = make_context()?;
+        let task = ctx.task.clone();
+        let res =
+            block_on(async move { val_match(script_eval(&mut ctx, s).await?, expected).await });
+        task.shutdown();
+        res
     }
 
-    fn script_result_fail(s: &str) -> Result<(), String> {
-        let mut fail = block_on(script_eval(s))?;
-        assert!(block_on(&mut fail).is_err());
+    fn script_parse_fail(s: &str) -> Result<(), String> {
+        let mut ctx = make_context()?;
+        let failed = block_on(script_eval(&mut ctx, s));
+        assert!(failed.is_err());
+        ctx.task.shutdown();
         Ok(())
     }
 
     fn script_fail(s: &str) -> Result<(), String> {
-        match block_on(script_eval(s)) {
-            Ok(v) => Err(format!("expected failure, got {:?}", v)),
-            Err(_) => Ok(()),
-        }
+        let mut ctx = make_context()?;
+        let should_fail = block_on(script_eval(&mut ctx, s))?;
+        assert!(block_on(should_fail.into_non_dyn()).is_err());
+        ctx.task.shutdown();
+        Ok(())
     }
 
     trait ExpectOk {
@@ -693,11 +682,15 @@ mod test {
         .boxed()
     }
 
-    async fn script_eval(s: &str) -> Result<Value, String> {
-        let (mut ctx, _) = script_context(Default::default(), vec![]).map_err(|e| e.to_string())?;
+    fn make_context() -> Result<Runtime, String> {
+        let (ctx, _) = script_context(Default::default(), vec![]).map_err(|e| e.to_string())?;
+        Ok(ctx)
+    }
+
+    async fn script_eval(ctx: &mut Runtime, s: &str) -> Result<Value, String> {
         Script::load(Source::new(StringSource::new("<test>", s.to_owned())))
             .map_err(|e| e.to_string())?
-            .evaluate(&mut ctx)
+            .evaluate(ctx)
             .await
             .map(|sv| sv.unwrap())
             .map_err(|e| format!("{:?}", e))

@@ -19,7 +19,7 @@ impl Test {
             grease::Error,
         >,
     ) -> Self {
-        let (mut rt,_) = crate::script_context(
+        let (mut rt, _) = crate::script_context(
             grease::runtime::Context::builder()
                 .threads(Some(1))
                 .keep_going(false),
@@ -30,7 +30,10 @@ impl Test {
         let plugin = plugin_entry(ergo_runtime::plugin::Context::get(), &mut rt);
 
         let mut env = ScriptEnv::default();
-        env.insert(ergo_runtime::types::String::from("self").into(), plugin);
+        env.insert(
+            ergo_runtime::types::String::from("self").into(),
+            (plugin, None.into()).into(),
+        );
 
         Test { rt, env }
     }

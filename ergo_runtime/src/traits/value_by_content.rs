@@ -138,4 +138,22 @@ grease_traits_fn! {
             }.into()
         }
     }
+
+    impl ValueByContent for types::Unbound {
+        async fn value_by_content(self, _deep: bool) -> Value {
+            self.into()
+        }
+    }
+
+    impl ValueByContent for types::Merge {
+        async fn value_by_content(self, deep: bool) -> Value {
+            let data = self.await?.owned();
+            if deep {
+                let v = data.0.map_async(|v| super::value_by_content(CONTEXT, v, true)).await.transpose_ok()?;
+                types::Merge(v)
+            } else {
+                data.into()
+            }.into()
+        }
+    }
 }

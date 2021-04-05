@@ -51,6 +51,15 @@ impl Buffer {
         ptr.as_ref().unwrap()
     }
 
+    /// Get a mutable reference of type T.
+    ///
+    /// Unsafe because callers must ensure the Buffer holds the type T.
+    pub unsafe fn as_mut<T>(&mut self) -> &mut T {
+        Self::check_type::<T>();
+        let ptr = &mut self.0 as *mut [u8; 24] as *mut T;
+        ptr.as_mut().unwrap()
+    }
+
     fn check_type<T>() {
         debug_assert!(std::mem::size_of::<T>() <= std::mem::size_of::<Self>());
         debug_assert!(std::mem::align_of::<T>() <= std::mem::align_of::<Self>());
@@ -114,6 +123,13 @@ impl Erased {
     /// Unsafe because callers must ensure the data is a T.
     pub unsafe fn as_ref<T>(&self) -> &T {
         self.data.as_ref()
+    }
+
+    /// Get a &mut T reference.
+    ///
+    /// Unsafe because callers must ensure the data is a T.
+    pub unsafe fn as_mut<T>(&mut self) -> &mut T {
+        self.data.as_mut()
     }
 
     /// Get a T.
@@ -251,6 +267,10 @@ impl Boxed {
         (self.ptr as *const T).as_ref().unwrap()
     }
 
+    pub unsafe fn as_mut<T>(&mut self) -> &mut T {
+        (self.ptr as *mut T).as_mut().unwrap()
+    }
+
     pub unsafe fn to_owned<T>(self) -> T {
         let ret = (self.ptr as *mut T).read();
         self.drop(std::mem::size_of::<T>(), std::mem::align_of::<T>());
@@ -355,6 +375,20 @@ impl ErasedTrivial {
             self.data.as_ref::<Boxed>().as_ref()
         } else {
             self.data.as_ref()
+        }
+    }
+
+    /// Get a T mutable reference.
+    ///
+    /// Unsafe because callers must ensure the data is a T.
+    pub unsafe fn as_mut<T>(&mut self) -> &mut T {
+        debug_assert!(self.size() == std::mem::size_of::<T>());
+        debug_assert!(self.align() == std::mem::align_of::<T>());
+
+        if self.is_box() {
+            self.data.as_mut::<Boxed>().as_mut()
+        } else {
+            self.data.as_mut()
         }
     }
 

@@ -377,6 +377,15 @@ mod map {
         }
     }
 
+    impl<'a, K, V> IntoIterator for &'a BstMap<K, V> {
+        type IntoIter = Iter<'a, K, V>;
+        type Item = (&'a K, &'a V);
+
+        fn into_iter(self) -> Self::IntoIter {
+            self.iter()
+        }
+    }
+
     impl<K, V> std::iter::FromIterator<(K, V)> for BstMap<K, V>
     where
         K: Ord,
@@ -791,6 +800,15 @@ mod set {
             IntoIter {
                 inner: self.inner.into_iter(),
             }
+        }
+    }
+
+    impl<'a, T> IntoIterator for &'a BstSet<T> {
+        type IntoIter = Iter<'a, T>;
+        type Item = &'a T;
+
+        fn into_iter(self) -> Self::IntoIter {
+            self.iter()
         }
     }
 

@@ -108,6 +108,8 @@ scripts reside.
   inspect/manipulate the flags.
 * Change `<|` to have lower precedence than `|`/`|>`, that seems the more useful
   choice.
+* Only resolve directories to `dir.ergo` (not `workspace.ergo`).
+* Fix interaction of persistent caching and metadata (metadata not persisted).
 
 ### Optimizations
 There are a few ways to _really_ speed up scripts that should be experimented

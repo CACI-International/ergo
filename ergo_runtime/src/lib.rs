@@ -5,7 +5,7 @@
 use abi_stable::{
     external_types::RMutex,
     rvec,
-    std_types::{RArc, RHashMap, ROption, RVec},
+    std_types::{RArc, RHashMap, ROption, RVec, Tuple2},
     StableAbi,
 };
 use futures::future::{BoxFuture, FutureExt};
@@ -78,7 +78,7 @@ pub type EvalResult = Result<Source<Value>>;
 pub type EvalResultAbi = ResultAbi<Source<Value>>;
 
 /// Script environment bindings.
-pub type ScriptEnv = BstMap<Value, EvalResultAbi>;
+pub type ScriptEnv = BstMap<Value, Tuple2<EvalResultAbi, ROption<usize>>>;
 
 #[derive(Clone, StableAbi)]
 #[repr(C)]
@@ -169,13 +169,28 @@ impl Runtime {
     }
 
     /// Insert a binding into the current scoped environment.
-    pub fn env_insert<T: Into<EvalResult>>(&self, k: Value, v: T) {
-        self.env_current_set(|c| c.insert(k, v.into().into()));
+    pub fn env_insert<T: Into<EvalResult>>(&self, k: Value, v: T, cap: Option<usize>) {
+        self.env_current_set(|c| c.insert(k, (v.into().into(), cap.into()).into()));
     }
 
     /// Extend the current scoped environment.
     pub fn env_extend<T: IntoIterator<Item = (Value, EvalResultAbi)>>(&mut self, v: T) {
-        self.env_current_set(|c| c.extend(v.into_iter().map(|(k, v)| (k, v.into()))));
+        self.env_current_set(|c| {
+            c.extend(
+                v.into_iter()
+                    .map(|(k, v)| (k, (v.into(), ROption::RNone).into())),
+            )
+        });
+    }
+
+    /// Extend the current scoped environment.
+    pub fn env_extend_captures<
+        T: IntoIterator<Item = (Value, Tuple2<EvalResultAbi, ROption<usize>>)>,
+    >(
+        &mut self,
+        v: T,
+    ) {
+        self.env_current_set(|c| c.extend(v));
     }
 
     /// Get the current set environment.
@@ -199,7 +214,7 @@ impl Runtime {
             .rev()
             .find_map(|m| m.lock().get(k).map(|v| v.clone()))
             .or_else(|| self.global_env.get(k).map(|v| v.clone()))
-            .map(|v| v.into_result())
+            .map(|v| v.0.into_result())
     }
 
     /// Flatten the current environment.

@@ -24,133 +24,14 @@ where
     }
 }
 
-impl<I> Parser<I> {
-    fn with_context(trees: I, ctx: ParseContext) -> Self {
-        Parser { trees, ctx }
-    }
-}
-
 impl<I, E> Iterator for Parser<I>
 where
     I: Iterator<Item = Result<Source<Tree>, Source<E>>>,
 {
-    type Item = Result<Source<Expression>, Source<Error<E>>>;
+    type Item = Result<BlockItem, Source<Error<E>>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut doc_comment_parts = Vec::new();
-
-        loop {
-            match self.trees.next() {
-                None => break None,
-                Some(Err(e)) => break Some(Err(e.map(Error::TreeParse))),
-                Some(Ok(t)) => {
-                    let (source, t) = t.take();
-                    match t {
-                        Tree::DocString(s) => {
-                            doc_comment_parts.push(DocCommentPart::String(s));
-                        }
-                        Tree::DocCurly(inner) => {
-                            let exprs = Parser::with_context(
-                                inner.into_iter().map(Ok),
-                                self.ctx.allow_merge(true).bind_equal(false),
-                            )
-                            .collect::<Result<Vec<_>, _>>();
-                            let exprs = match exprs {
-                                Err(e) => break Some(Err(e)),
-                                Ok(v) => v,
-                            };
-                            doc_comment_parts.push(DocCommentPart::Expression(exprs));
-                        }
-                        o => {
-                            let e = match to_expression(self.ctx, source.with(o)) {
-                                Ok(v) => v,
-                                Err(e) => break Some(Err(e)),
-                            };
-                            let doc_comment = {
-                                // Reduce doc comment parts, trimming whitespace and inserting
-                                // newlines.
-                                let mut doc_comment_parts = doc_comment_parts.into_iter();
-                                let mut result = Vec::new();
-
-                                // Use whitespace of first non-empty line of doc comment to
-                                // determine trimmable whitespace from subsequent lines.
-                                let mut leading_ws_offset = 0;
-                                while let Some(part) = doc_comment_parts.next() {
-                                    match part {
-                                        DocCommentPart::String(s) => {
-                                            match s.find(|c: char| !c.is_whitespace()) {
-                                                None => continue,
-                                                Some(offset) => {
-                                                    leading_ws_offset = offset;
-                                                    result.push(DocCommentPart::String(
-                                                        unsafe { s.get_unchecked(offset..) }.into(),
-                                                    ));
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                        DocCommentPart::Expression(_) => {
-                                            result.push(part);
-                                            break;
-                                        }
-                                    }
-                                }
-
-                                // Get remaining lines and trim leading whitespace if necessary.
-                                while let Some(part) = doc_comment_parts.next() {
-                                    match part {
-                                        DocCommentPart::Expression(_) => {
-                                            result.push(part);
-                                        }
-                                        DocCommentPart::String(ref s) => {
-                                            if let Some(DocCommentPart::String(l)) =
-                                                result.last_mut()
-                                            {
-                                                let offset = std::cmp::min(
-                                                    leading_ws_offset,
-                                                    s.find(|c: char| !c.is_whitespace())
-                                                        .unwrap_or(s.len()),
-                                                );
-                                                l.push('\n');
-                                                l.push_str(unsafe { s.get_unchecked(offset..) });
-                                            } else {
-                                                result.push(part);
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // We already have done the equivalent of trim_start, so just need
-                                // to trim_end.
-                                if let Some(DocCommentPart::String(l)) = result.last_mut() {
-                                    *l = l.trim_end().into();
-                                }
-                                result
-                            };
-                            break Some(Ok(if !doc_comment.is_empty() {
-                                // If a doc comment precedes a bind expression, apply it to the value.
-                                // Otherwise apply it to whichever value it precedes.
-                                let (expr_source, expr) = e.take();
-                                match expr {
-                                    Expression::Bind(a, b) => expr_source.with(Expression::Bind(
-                                        a,
-                                        b.source()
-                                            .with(Expression::DocComment(doc_comment, b))
-                                            .into(),
-                                    )),
-                                    o => expr_source.clone().with(Expression::DocComment(
-                                        doc_comment,
-                                        expr_source.with(o).into(),
-                                    )),
-                                }
-                            } else {
-                                e
-                            }));
-                        }
-                    }
-                }
-            }
-        }
+        to_doc_block_item(self.ctx, &mut self.trees)
     }
 }
 
@@ -161,8 +42,8 @@ pub enum Error<TreeError> {
     TreeParse(TreeError),
     /// A caret operator was in an invalid position.
     BadCaret,
-    /// An if expression has an invalid number of arguments.
-    MalformedIf,
+    /// An equal operator was in an invalid position.
+    BadEqual,
     /// A doc comment was in an invalid position.
     BadDocComment,
 }
@@ -172,10 +53,10 @@ impl<E: fmt::Display> fmt::Display for Error<E> {
         match self {
             Error::TreeParse(t) => write!(f, "{}", t),
             Error::BadCaret => write!(f, "cannot merge values here"),
-            Error::MalformedIf => write!(f, "if expression must have 2 or 3 arguments"),
+            Error::BadEqual => write!(f, "cannot bind values here"),
             Error::BadDocComment => write!(
                 f,
-                "doc comments can only be at the top-level or within blocks or brackets"
+                "doc comments can only be within blocks or brackets, preceding an expression or binding"
             ),
         }
     }
@@ -199,45 +80,22 @@ enum StringImplies {
 
 #[derive(Clone, Copy, Debug)]
 struct ParseContext {
-    pub allow_merge: bool,
-    pub binding: bool,
-    pub bind_equal: bool,
+    pub pattern: bool,
     pub string_implies: StringImplies,
 }
 
 impl Default for ParseContext {
     fn default() -> Self {
         ParseContext {
-            allow_merge: true,
-            binding: false,
-            bind_equal: false,
+            pattern: false,
             string_implies: StringImplies::None,
         }
     }
 }
 
 impl ParseContext {
-    pub fn allow_merge(&self, allow_merge: bool) -> Self {
-        ParseContext {
-            allow_merge,
-            ..*self
-        }
-    }
-
-    // Implies bind_equal
-    pub fn binding(&self, binding: bool) -> Self {
-        ParseContext {
-            binding,
-            bind_equal: binding,
-            ..*self
-        }
-    }
-
-    pub fn bind_equal(&self, bind_equal: bool) -> Self {
-        ParseContext {
-            bind_equal,
-            ..*self
-        }
+    pub fn pattern(&self, pattern: bool) -> Self {
+        ParseContext { pattern, ..*self }
     }
 
     pub fn string_implies(&self, string_implies: StringImplies) -> Self {
@@ -246,6 +104,203 @@ impl ParseContext {
             ..*self
         }
     }
+}
+
+fn documented<I: Iterator<Item = Result<Source<Tree>, Source<E>>>, E, Item, R>(
+    ctx: ParseContext,
+    iter: &mut I,
+    item: Item,
+) -> Option<Result<R, Source<Error<E>>>>
+where
+    Item: FnOnce(
+        ParseContext,
+        Option<Source<Vec<DocCommentPart>>>,
+        Source<Tree>,
+    ) -> Result<R, Source<Error<E>>>,
+{
+    struct Comment {
+        pub parts: Vec<DocCommentPart>,
+        pub source: Source<()>,
+    }
+
+    let mut doc_comment: Option<Comment> = None;
+
+    let merge_part = |doc_comment: &mut Option<Comment>, part, src| match doc_comment {
+        None => {
+            *doc_comment = Some(Comment {
+                parts: vec![part],
+                source: src,
+            });
+        }
+        Some(Comment { parts, source }) => {
+            parts.push(part);
+            *source = (source.clone(), src).into_source().with(());
+        }
+    };
+
+    loop {
+        match iter.next() {
+            None => match doc_comment {
+                None => break None,
+                Some(Comment { source, .. }) => break Some(Err(source.with(Error::BadDocComment))),
+            },
+            Some(Err(e)) => break Some(Err(e.map(Error::TreeParse))),
+            Some(Ok(t)) => {
+                let (source, t) = t.take();
+                match t {
+                    Tree::DocString(s) => {
+                        merge_part(&mut doc_comment, DocCommentPart::String(s), source);
+                    }
+                    Tree::DocCurly(inner) => {
+                        let mut inner = inner.into_iter().map(Ok);
+                        let exprs = std::iter::from_fn(move || to_doc_block_item(ctx, &mut inner))
+                            .collect::<Result<Vec<_>, _>>();
+                        let exprs = match exprs {
+                            Err(e) => break Some(Err(e)),
+                            Ok(v) => v,
+                        };
+                        merge_part(
+                            &mut doc_comment,
+                            DocCommentPart::ExpressionBlock(exprs),
+                            source,
+                        );
+                    }
+                    o => {
+                        let doc_comment =
+                            doc_comment.map(|c| c.source.with(clean_doc_comment(c.parts)));
+                        break Some(item(ctx, doc_comment, source.with(o)));
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn clean_doc_comment(parts: Vec<DocCommentPart>) -> Vec<DocCommentPart> {
+    // Reduce doc comment parts, trimming whitespace and inserting
+    // newlines.
+    let mut parts = parts.into_iter();
+    let mut result = Vec::new();
+
+    // Use whitespace of first non-empty line of doc comment to
+    // determine trimmable whitespace from subsequent lines.
+    let mut leading_ws_offset = 0;
+    while let Some(part) = parts.next() {
+        match part {
+            DocCommentPart::String(s) => match s.find(|c: char| !c.is_whitespace()) {
+                None => continue,
+                Some(offset) => {
+                    leading_ws_offset = offset;
+                    result.push(DocCommentPart::String(
+                        unsafe { s.get_unchecked(offset..) }.into(),
+                    ));
+                    break;
+                }
+            },
+            DocCommentPart::ExpressionBlock(_) => {
+                result.push(part);
+                break;
+            }
+        }
+    }
+
+    // Get remaining lines and trim leading whitespace if necessary.
+    while let Some(part) = parts.next() {
+        match part {
+            DocCommentPart::String(ref s) => {
+                if let Some(DocCommentPart::String(l)) = result.last_mut() {
+                    let offset = std::cmp::min(
+                        leading_ws_offset,
+                        s.find(|c: char| !c.is_whitespace()).unwrap_or(s.len()),
+                    );
+                    l.push('\n');
+                    l.push_str(unsafe { s.get_unchecked(offset..) });
+                } else {
+                    result.push(part);
+                }
+            }
+            DocCommentPart::ExpressionBlock(_) => {
+                result.push(part);
+            }
+        }
+    }
+
+    // We already have done the equivalent of trim_start, so just need
+    // to trim_end.
+    if let Some(DocCommentPart::String(l)) = result.last_mut() {
+        *l = l.trim_end().into();
+    }
+    result
+}
+
+fn to_block_item<E>(ctx: ParseContext, t: Source<Tree>) -> Result<BlockItem, Source<Error<E>>> {
+    let (source, t) = t.take();
+
+    match t {
+        // string_implies should only affect direct descendants, set to None for caret and equal
+        Tree::Caret(t) => Ok(BlockItem::Merge(to_expression(
+            ctx.string_implies(StringImplies::None),
+            *t,
+        )?)),
+        Tree::Equal(a, b) => Ok(BlockItem::Bind(
+            to_expression(ctx.pattern(true).string_implies(StringImplies::Set), *a)?,
+            to_expression(ctx.string_implies(StringImplies::None), *b)?,
+        )),
+        t => to_expression(ctx, source.with(t)).map(BlockItem::Expr),
+    }
+}
+
+fn to_doc_block_item<I: Iterator<Item = Result<Source<Tree>, Source<E>>>, E>(
+    ctx: ParseContext,
+    iter: &mut I,
+) -> Option<Result<BlockItem, Source<Error<E>>>> {
+    documented(ctx, iter, |ctx, doc_comment, tree| {
+        let mut i = to_block_item(ctx, tree)?;
+        match doc_comment {
+            None => Ok(i),
+            Some(c) => match &mut i {
+                BlockItem::Expr(e) | BlockItem::Bind(_, e) => {
+                    let old_e = std::mem::replace(e, Source::builtin(Expression::unit()));
+                    *e = c.map(|parts| Expression::doc_comment(parts, old_e));
+                    Ok(i)
+                }
+                BlockItem::Merge(_) => Err(c.with(Error::BadDocComment)),
+            },
+        }
+    })
+}
+
+fn to_array_item<E>(ctx: ParseContext, t: Source<Tree>) -> Result<ArrayItem, Source<Error<E>>> {
+    let (source, t) = t.take();
+
+    match t {
+        // string_implies should only affect direct descendants, set to None for caret
+        Tree::Caret(t) => Ok(ArrayItem::Merge(to_expression(
+            ctx.string_implies(StringImplies::None),
+            *t,
+        )?)),
+        t => to_expression(ctx, source.with(t)).map(ArrayItem::Expr),
+    }
+}
+
+fn to_doc_array_item<I: Iterator<Item = Result<Source<Tree>, Source<E>>>, E>(
+    ctx: ParseContext,
+    iter: &mut I,
+) -> Option<Result<ArrayItem, Source<Error<E>>>> {
+    documented(ctx, iter, |ctx, doc_comment, tree| {
+        let mut i = to_array_item(ctx, tree)?;
+        match doc_comment {
+            None => Ok(i),
+            Some(c) => match &mut i {
+                ArrayItem::Expr(e) => {
+                    let old_e = std::mem::replace(e, Source::builtin(Expression::unit()));
+                    *e = c.map(|parts| Expression::doc_comment(parts, old_e));
+                    Ok(i)
+                }
+                ArrayItem::Merge(_) => Err(c.with(Error::BadDocComment)),
+            },
+        }
+    })
 }
 
 fn to_expression<E>(
@@ -258,173 +313,88 @@ fn to_expression<E>(
     ctx = ctx.string_implies(StringImplies::None);
     match t {
         Tree::String(s) => {
-            if ctx.binding && s == "_" {
-                Ok(source.with(Expression::BindAny))
+            if ctx.pattern && s == "_" {
+                Ok(source.with(Expression::bind_any()))
             } else {
-                let s = source.clone().with(Expression::String(s));
+                let s = source.clone().with(Expression::string(s));
                 Ok(match string_implies {
-                    StringImplies::Set => source.with(Expression::Set(s.into())),
-                    StringImplies::Get => source.with(Expression::Get(s.into())),
+                    StringImplies::Set => source.with(Expression::set(s)),
+                    StringImplies::Get => source.with(Expression::get(s)),
                     StringImplies::None => s,
                 })
             }
         }
         Tree::Bang(t) => {
-            if ctx.binding {
-                // bang equal will only change bind equality
-                let ctx = if let Tree::Equal(_, _) = &**t {
-                    ctx.bind_equal(false)
-                } else {
-                    ctx.binding(false)
-                };
-                to_expression(ctx, *t)
+            if ctx.pattern {
+                // Bang in a pattern interprets as a non-pattern expression
+                to_expression(ctx.pattern(false), *t)
             } else {
-                Ok(source.with(Expression::Force(
-                    to_expression(ctx.allow_merge(false), *t)?.into(),
-                )))
+                Ok(source.with(Expression::force(to_expression(ctx, *t)?)))
             }
         }
-        Tree::Caret(t) => {
-            if ctx.allow_merge {
-                let r = to_expression(ctx.allow_merge(false), *t)?;
-                Ok(source.with(Expression::Merge(r.into())))
-            } else {
-                Err(source.with(Error::BadCaret))
-            }
+        Tree::Caret(_) => {
+            // Caret not allowed in expressions
+            Err(source.with(Error::BadCaret))
         }
         Tree::ColonPrefix(t) => {
-            let ctx = ctx.allow_merge(false);
-            if ctx.binding {
-                Ok(source.with(Expression::Set(
-                    to_expression(ctx.binding(false), *t)?.into(),
-                )))
+            if ctx.pattern {
+                Ok(source.with(Expression::set(to_expression(ctx.pattern(false), *t)?)))
             } else {
-                Ok(source.with(Expression::Get(to_expression(ctx, *t)?.into())))
+                Ok(source.with(Expression::get(to_expression(ctx, *t)?)))
             }
         }
-        Tree::Colon(a, b) => {
-            let ctx = ctx.allow_merge(false);
-            Ok(source.with(Expression::Index(
-                to_expression(ctx.string_implies(StringImplies::Get), *a)?.into(),
-                to_expression(ctx, *b)?.into(),
-            )))
-        }
-        Tree::Equal(a, b) => {
-            if ctx.bind_equal {
-                Ok(source.with(Expression::BindEqual(
-                    to_expression(ctx, *a)?.into(),
-                    to_expression(ctx, *b)?.into(),
-                )))
-            } else {
-                let ctx = ctx.allow_merge(false);
-                Ok(source.with(Expression::Bind(
-                    to_expression(ctx.binding(true).string_implies(StringImplies::Set), *a)?.into(),
-                    to_expression(ctx.bind_equal(ctx.binding), *b)?.into(),
-                )))
-            }
-        }
-        Tree::Arrow(a, b) => {
-            let ctx = ctx.allow_merge(false);
-            Ok(source.with(Expression::Function(
-                to_expression(ctx.binding(true), *a)?.into(),
-                to_expression(ctx.binding(false), *b)?.into(),
-            )))
-        }
+        Tree::Colon(a, b) => Ok(source.with(Expression::index(
+            to_expression(ctx.string_implies(StringImplies::Get), *a)?,
+            to_expression(ctx, *b)?,
+        ))),
+        Tree::Equal(_, _) => Err(source.with(Error::BadEqual)),
+        Tree::Arrow(a, b) => Ok(source.with(Expression::function(
+            to_expression(ctx.pattern(true), *a)?,
+            to_expression(ctx.pattern(false), *b)?,
+        ))),
         Tree::ColonSuffix(f) => {
-            let f = to_expression(
-                ctx.binding(false)
-                    .allow_merge(false)
-                    .string_implies(StringImplies::Get),
-                *f,
-            )?;
-            if ctx.binding {
-                Ok(source.with(Expression::BindCommand(f.into(), vec![])))
+            let f = to_expression(ctx.pattern(false).string_implies(StringImplies::Get), *f)?;
+            if ctx.pattern {
+                Ok(source.with(Expression::bind_command(f, vec![])))
             } else {
-                Ok(source.with(Expression::Command(f.into(), vec![])))
+                Ok(source.with(Expression::command(f, vec![])))
             }
         }
         Tree::Parens(inner) => {
-            if inner.len() == 0 {
-                Ok(source.with(Expression::Empty))
-            } else if inner.len() == 1 {
-                to_expression(ctx.allow_merge(false), inner.into_iter().next().unwrap())
-            } else {
-                let mut inner = inner.into_iter();
-                let f = inner.next().unwrap();
-                let is_if = if let Tree::String(s) = &*f {
-                    s == "if"
-                } else {
-                    false
-                };
-                if is_if {
-                    let ctx = ctx.allow_merge(false);
-                    let cond = to_expression(
-                        ctx,
-                        match inner.next() {
-                            Some(v) => v,
-                            None => return Err(source.with(Error::MalformedIf)),
-                        },
-                    )?;
-                    // If cond is a Bind expression, change this to an IfBind
-                    let is_if_bind = if let Expression::Bind(_, _) = &*cond {
-                        true
+            let mut inner = inner.into_iter().peekable();
+            match inner.next() {
+                None => Ok(source.with(Expression::unit())),
+                Some(f) => {
+                    if inner.peek().is_none() {
+                        to_expression(ctx, f)
                     } else {
-                        false
-                    };
-                    let if_true = to_expression(
-                        ctx,
-                        match inner.next() {
-                            Some(v) => v,
-                            None => return Err(source.with(Error::MalformedIf)),
-                        },
-                    )?;
-                    let if_false = inner.next().map(|v| to_expression(ctx, v)).transpose()?;
-                    if inner.next().is_some() {
-                        return Err(source.with(Error::MalformedIf));
-                    }
-                    if is_if_bind {
-                        Ok(source.with(Expression::IfBind(
-                            cond.into(),
-                            if_true.into(),
-                            if_false.map(|v| v.into()),
-                        )))
-                    } else {
-                        Ok(source.with(Expression::If(
-                            cond.into(),
-                            if_true.into(),
-                            if_false.map(|v| v.into()),
-                        )))
-                    }
-                } else {
-                    let f = to_expression(
-                        ctx.binding(false)
-                            .allow_merge(false)
-                            .string_implies(StringImplies::Get),
-                        f,
-                    )?;
-                    let rest = inner
-                        .map(|v| to_expression(ctx.allow_merge(true), v))
-                        .collect::<Result<Vec<_>, _>>()?;
-                    if ctx.binding {
-                        Ok(source.with(Expression::BindCommand(f.into(), rest)))
-                    } else {
-                        Ok(source.with(Expression::Command(f.into(), rest)))
+                        let f = to_expression(
+                            ctx.pattern(false).string_implies(StringImplies::Get),
+                            f,
+                        )?;
+                        let rest = inner
+                            .map(|v| to_block_item(ctx, v))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        if ctx.pattern {
+                            Ok(source.with(Expression::bind_command(f, rest)))
+                        } else {
+                            Ok(source.with(Expression::command(f, rest)))
+                        }
                     }
                 }
             }
         }
         Tree::Curly(inner) => {
-            let exprs = Parser::with_context(
-                inner.into_iter().map(Ok),
-                ctx.allow_merge(true).bind_equal(false),
-            )
-            .collect::<Result<Vec<_>, _>>()?;
-            Ok(source.with(Expression::map_or_block(exprs)))
+            let mut inner = inner.into_iter().map(Ok);
+            let exprs = std::iter::from_fn(move || to_doc_block_item(ctx, &mut inner))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(source.with(Expression::block(exprs)))
         }
         Tree::Bracket(inner) => {
-            Parser::with_context(inner.into_iter().map(Ok), ctx.allow_merge(true))
-                .collect::<Result<Vec<_>, _>>()
-                .map(|v| source.with(Expression::Array(v)))
+            let mut inner = inner.into_iter().map(Ok);
+            let exprs = std::iter::from_fn(move || to_doc_array_item(ctx, &mut inner))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(source.with(Expression::array(exprs)))
         }
         Tree::DocString(_) | Tree::DocCurly(_) => Err(source.with(Error::BadDocComment)),
     }
@@ -437,7 +407,9 @@ mod test {
     use crate::ast::tokenize::Tokens;
     use crate::ast::tokenize_tree::TreeTokens;
 
-    use Expression::*;
+    type E = Expression;
+    type AI = ArrayItem;
+    type BI = BlockItem;
 
     fn src<T, R>(t: T) -> R
     where
@@ -450,43 +422,102 @@ mod test {
     where
         R: From<Source<Expression>>,
     {
-        src(String(s.into()))
+        src(E::string(s.into()))
     }
 
-    fn merge<R>(e: Source<Expression>) -> R
-    where
-        R: From<Source<Expression>>,
-    {
-        src(Merge(e.into()))
+    macro_rules! array_items {
+        ( @item merge($e:expr) ) => {
+            AI::Merge($e)
+        };
+        ( @item $e:expr ) => {
+            AI::Expr($e)
+        };
+        ( @go [$(($($out:tt)+))*]) => {
+            vec![$(array_items!(@item $($out)+)),*]
+        };
+        ( @go [$($out:tt)*] []) => {
+            array_items!(@go [$($out)*]);
+        };
+        ( @go [$($out:tt)*] [$($pending:tt)+]) => {
+            array_items!(@go [$($out)* ($($pending)+)]);
+        };
+        ( @go [$($out:tt)*] [$($pending:tt)+] , $($rest:tt)+ ) => {
+            array_items!(@go [$($out)* ($($pending)+)] [] $($rest)+);
+        };
+        ( @go [$($out:tt)*] [$($pending:tt)*] $in:tt $($rest:tt)* ) => {
+            array_items!(@go [$($out)*] [$($pending)* $in] $($rest)*);
+        };
+        ( $($in:tt)* ) => {
+            array_items!(@go [] [] $($in)*);
+        }
+    }
+
+    macro_rules! block_items {
+        ( @item merge($e:expr) ) => {
+            BI::Merge($e)
+        };
+        ( @item bind($b:expr, $e:expr) ) => {
+            BI::Bind($b, $e)
+        };
+        ( @item $e:expr ) => {
+            BI::Expr($e)
+        };
+        ( @go [$(($($out:tt)+))*]) => {
+            vec![$(block_items!(@item $($out)+)),*]
+        };
+        ( @go [$($out:tt)*] []) => {
+            block_items!(@go [$($out)*]);
+        };
+        ( @go [$($out:tt)*] [$($pending:tt)+]) => {
+            block_items!(@go [$($out)* ($($pending)+)]);
+        };
+        ( @go [$($out:tt)*] [$($pending:tt)+] , $($rest:tt)+ ) => {
+            block_items!(@go [$($out)* ($($pending)+)] [] $($rest)+);
+        };
+        ( @go [$($out:tt)*] [$($pending:tt)*] $in:tt $($rest:tt)* ) => {
+            block_items!(@go [$($out)*] [$($pending)* $in] $($rest)*);
+        };
+        ( $($in:tt)* ) => {
+            block_items!(@go [] [] $($in)*);
+        }
+    }
+
+    macro_rules! command_items {
+        ( $($in:tt)* ) => {
+            block_items!($($in)*);
+        }
     }
 
     #[test]
-    fn empty() {
-        assert_single("()", Empty);
+    fn unit() {
+        assert_single("()", E::unit());
     }
 
     #[test]
     fn string() {
-        assert_single("str", String("str".into()));
+        assert_single("str", E::string("str".into()));
     }
 
     #[test]
     fn command() {
-        assert_single("echo howdy", Command(src(Get(s("echo"))), vec![s("howdy")]));
+        assert_single(
+            "echo howdy",
+            E::command(src(E::get(s("echo"))), command_items![s("howdy")]),
+        );
     }
 
     #[test]
     fn nested_commands() {
         assert_single(
             "a ((b c) d) e",
-            Command(
-                src(Get(s("a"))),
-                vec![
-                    src(Command(
-                        src(Command(src(Get(s("b"))), vec![s("c")])),
-                        vec![s("d")],
+            E::command(
+                src(E::get(s("a"))),
+                command_items![
+                    src(E::command(
+                        src(E::command(src(E::get(s("b"))), command_items![s("c")])),
+                        command_items![s("d")]
                     )),
-                    s("e"),
+                    s("e")
                 ],
             ),
         );
@@ -494,10 +525,13 @@ mod test {
 
     #[test]
     fn command_no_args() {
-        assert_single("f:", Command(src(Get(s("f"))), vec![]));
+        assert_single("f:", E::command(src(E::get(s("f"))), command_items![]));
         assert_single(
             "(mod f):",
-            Command(src(Command(src(Get(s("mod"))), vec![s("f")])), vec![]),
+            E::command(
+                src(E::command(src(E::get(s("mod"))), command_items![s("f")])),
+                command_items![],
+            ),
         );
     }
 
@@ -505,11 +539,17 @@ mod test {
     fn force_command() {
         assert_single(
             "!echo howdy",
-            Force(src(Command(src(Get(s("echo"))), vec![s("howdy")]))),
+            E::force(src(E::command(
+                src(E::get(s("echo"))),
+                command_items![s("howdy")],
+            ))),
         );
         assert_single(
             "! echo howdy",
-            Force(src(Command(src(Get(s("echo"))), vec![s("howdy")]))),
+            E::force(src(E::command(
+                src(E::get(s("echo"))),
+                command_items![s("howdy")],
+            ))),
         );
     }
 
@@ -517,55 +557,70 @@ mod test {
     fn force_arg() {
         assert_single(
             "echo !howdy",
-            Command(src(Get(s("echo"))), vec![src(Force(s("howdy")))]),
-        );
-    }
-
-    #[test]
-    fn bind() {
-        assert_single(
-            ":a= echo:",
-            Bind(src(Set(s("a"))), src(Command(src(Get(s("echo"))), vec![]))),
-        );
-        assert_single("::a=a", Bind(src(Set(src(Get(s("a"))))), s("a")));
-    }
-
-    #[test]
-    fn bind_string_set() {
-        assert_single("a = b", Bind(src(Set(s("a"))), s("b")));
-        assert_single(":a = b", Bind(src(Set(s("a"))), s("b")));
-        assert_single("!a = b", Bind(s("a"), s("b")));
-    }
-
-    #[test]
-    fn bind_command() {
-        assert_single(
-            "cmd a = cmd b",
-            Bind(
-                src(BindCommand(src(Get(s("cmd"))), vec![s("a")])),
-                src(Command(src(Get(s("cmd"))), vec![s("b")])),
+            E::command(
+                src(E::get(s("echo"))),
+                command_items![src(E::force(s("howdy")))],
             ),
         );
     }
 
     #[test]
-    fn bind_equal() {
+    fn command_eq() {
         assert_single(
-            ":a = :b = c",
-            Bind(src(BindEqual(src(Set(s("a"))), src(Set(s("b"))))), s("c")),
+            "hello (name=world)",
+            E::command(
+                src(E::get(s("hello"))),
+                command_items![bind(src(E::set(s("name"))), s("world"))],
+            ),
         );
     }
 
     #[test]
+    fn bind() {
+        assert_block_item(
+            ":a= echo:",
+            BI::Bind(
+                src(E::set(s("a"))),
+                src(E::command(src(E::get(s("echo"))), command_items![])),
+            ),
+        );
+        assert_block_item("::a=a", BI::Bind(src(E::set(src(E::get(s("a"))))), s("a")));
+    }
+
+    #[test]
+    fn bind_string_set() {
+        assert_block_item("a = b", BI::Bind(src(E::set(s("a"))), s("b")));
+        assert_block_item(":a = b", BI::Bind(src(E::set(s("a"))), s("b")));
+        assert_block_item("!a = b", BI::Bind(s("a"), s("b")));
+    }
+
+    #[test]
+    fn bind_command() {
+        assert_block_item(
+            "cmd a = cmd b",
+            BI::Bind(
+                src(E::bind_command(
+                    src(E::get(s("cmd"))),
+                    command_items![s("a")],
+                )),
+                src(E::command(src(E::get(s("cmd"))), command_items![s("b")])),
+            ),
+        );
+    }
+
+    #[test]
+    fn extra_equal() {
+        assert_fail(":a = :b = c");
+    }
+
+    #[test]
     fn bind_array() {
-        assert_single(
-            "[:a,^:b,:c=d,!(:e=:f)] = v",
-            Bind(
-                src(Array(vec![
-                    src(Set(s("a"))),
-                    src(Merge(src(Set(s("b"))))),
-                    src(BindEqual(src(Set(s("c"))), s("d"))),
-                    src(Bind(src(Set(s("e"))), src(Set(s("f"))))),
+        assert_block_item(
+            "[:a,^:b] = v",
+            BI::Bind(
+                src(E::array(array_items![
+                    src(E::set(s("a"))),
+                    merge(src(E::set(s("b"))))
                 ])),
                 s("v"),
             ),
@@ -574,17 +629,14 @@ mod test {
 
     #[test]
     fn bind_map() {
-        assert_single(
-            "{a,:b=:c,!(:d=:e),:f=(:g=:h)} = v",
-            Bind(
-                src(Map(vec![
-                    src(Bind(src(Set(s("a"))), src(Set(s("a"))))),
-                    src(Bind(src(Set(s("b"))), src(Set(s("c"))))),
-                    src(Bind(src(Set(s("d"))), src(Set(s("e"))))),
-                    src(Bind(
-                        src(Set(s("f"))),
-                        src(BindEqual(src(Set(s("g"))), src(Set(s("h"))))),
-                    )),
+        assert_block_item(
+            "{a,:b=:c,:d=!:e,^:rest} = v",
+            BI::Bind(
+                src(E::block(block_items![
+                    bind(src(E::set(s("a"))), src(E::set(s("a")))),
+                    bind(src(E::set(s("b"))), src(E::set(s("c")))),
+                    bind(src(E::set(s("d"))), src(E::get(s("e")))),
+                    merge(src(E::set(s("rest"))))
                 ])),
                 s("v"),
             ),
@@ -593,15 +645,12 @@ mod test {
 
     #[test]
     fn bind_command_eq() {
-        assert_single(
-            "cmd (a=b) !(:a=:b) = v",
-            Bind(
-                src(BindCommand(
-                    src(Get(s("cmd"))),
-                    vec![
-                        src(BindEqual(s("a"), s("b"))),
-                        src(Bind(src(Set(s("a"))), src(Set(s("b"))))),
-                    ],
+        assert_block_item(
+            "cmd (a=b) = v",
+            BI::Bind(
+                src(E::bind_command(
+                    src(E::get(s("cmd"))),
+                    command_items![bind(src(E::set(s("a"))), s("b"))],
                 )),
                 s("v"),
             ),
@@ -610,24 +659,24 @@ mod test {
 
     #[test]
     fn bind_expr() {
-        assert_single("!:a = b", Bind(src(Get(s("a"))), s("b")));
+        assert_block_item("!:a = b", BI::Bind(src(E::get(s("a"))), s("b")));
     }
 
     #[test]
     fn bind_any() {
-        assert_single("_ = a", Bind(src(BindAny), s("a")));
+        assert_block_item("_ = _", BI::Bind(src(E::bind_any()), s("_")));
     }
 
     #[test]
     fn get() {
-        assert_single(":a", Get(s("a")));
+        assert_single(":a", E::get(s("a")));
     }
 
     #[test]
     fn array() {
         assert_single(
             "[ a , b ;\nc\nd ]",
-            Array(vec![s("a"), s("b"), s("c"), s("d")]),
+            E::array(array_items![s("a"), s("b"), s("c"), s("d")]),
         );
     }
 
@@ -635,15 +684,15 @@ mod test {
     fn map() {
         assert_single(
             "{ a, :c = hello }",
-            Map(vec![
-                src(Bind(src(Set(s("a"))), src(Get(s("a"))))),
-                src(Bind(src(Set(s("c"))), s("hello"))),
+            E::block(block_items![
+                bind(src(E::set(s("a"))), src(E::get(s("a")))),
+                bind(src(E::set(s("c"))), s("hello"))
             ]),
         );
-        assert_single("{}", Map(vec![]));
+        assert_single("{}", E::block(block_items![]));
         assert_single(
             "{a}",
-            Map(vec![src(Bind(src(Set(s("a"))), src(Get(s("a")))))]),
+            E::block(block_items![bind(src(E::set(s("a"))), src(E::get(s("a"))))]),
         );
     }
 
@@ -651,14 +700,14 @@ mod test {
     fn block() {
         assert_single(
             "{ a\n () \n:c = echo:\n()}",
-            Block(vec![
-                src(Bind(src(Set(s("a"))), src(Get(s("a"))))),
-                src(Empty),
-                src(Bind(
-                    src(Set(s("c"))),
-                    src(Command(src(Get(s("echo"))), vec![])),
-                )),
-                src(Empty),
+            E::block(block_items![
+                bind(src(E::set(s("a"))), src(E::get(s("a")))),
+                src(E::unit()),
+                bind(
+                    src(E::set(s("c"))),
+                    src(E::command(src(E::get(s("echo"))), command_items![]))
+                ),
+                src(E::unit())
             ]),
         );
     }
@@ -667,58 +716,57 @@ mod test {
     fn function() {
         assert_single(
             "fn ^_ -> howdy",
-            Function(
-                src(BindCommand(src(Get(s("fn"))), vec![merge(src(BindAny))])),
+            E::function(
+                src(E::bind_command(
+                    src(E::get(s("fn"))),
+                    command_items![merge(src(E::bind_any()))],
+                )),
                 s("howdy"),
             ),
         );
         assert_single(
             "a -> b -> c",
-            Function(s("a"), src(Function(s("b"), s("c")))),
+            E::function(s("a"), src(E::function(s("b"), s("c")))),
         );
         assert_single(
-            "pat :a -> :b -> (!:a = :b)",
-            Function(
-                src(BindCommand(src(Get(s("pat"))), vec![src(Set(s("a")))])),
-                src(Function(
-                    src(Set(s("b"))),
-                    src(Bind(src(Get(s("a"))), src(Get(s("b"))))),
+            "pat :a -> :b -> {!:a = :b}",
+            E::function(
+                src(E::bind_command(
+                    src(E::get(s("pat"))),
+                    command_items![src(E::set(s("a")))],
+                )),
+                src(E::function(
+                    src(E::set(s("b"))),
+                    src(E::block(block_items![bind(
+                        src(E::get(s("a"))),
+                        src(E::get(s("b")))
+                    )])),
                 )),
             ),
         );
     }
 
     #[test]
-    fn if_expr() {
-        assert_single("if a b c", If(s("a"), s("b"), Some(s("c"))));
-        assert_single("if a b", If(s("a"), s("b"), None));
-    }
-
-    #[test]
-    fn if_bind() {
-        assert_single(
-            "if (!a=b) c d",
-            IfBind(src(Bind(s("a"), s("b"))), s("c"), Some(s("d"))),
-        );
-        assert_single(
-            "if (!a=b) c",
-            IfBind(src(Bind(s("a"), s("b"))), s("c"), None),
-        );
-    }
-
-    #[test]
     fn merge_array() {
-        assert_single("[^[b]]", Array(vec![merge(src(Array(vec![s("b")])))]));
+        assert_single(
+            "[^[b]]",
+            E::array(array_items![merge(src(E::array(array_items![s("b")])))]),
+        );
+    }
+
+    #[test]
+    fn bind_in_array() {
+        assert_fail("[a=b]");
     }
 
     #[test]
     fn merge_block() {
         assert_single(
             "{^{:a=b}}",
-            Map(vec![merge(src(Map(vec![src(Bind(
-                src(Set(s("a"))),
-                s("b"),
-            ))])))]),
+            E::block(block_items![merge(src(E::block(block_items![bind(
+                src(E::set(s("a"))),
+                s("b")
+            )])))]),
         );
     }
 
@@ -726,11 +774,14 @@ mod test {
     fn merge_command() {
         assert_single(
             "a ^[b] ^{:c=d}",
-            Command(
-                src(Get(s("a"))),
-                vec![
-                    merge(src(Array(vec![s("b")]))),
-                    merge(src(Map(vec![src(Bind(src(Set(s("c"))), s("d")))]))),
+            E::command(
+                src(E::get(s("a"))),
+                command_items![
+                    merge(src(E::array(array_items![s("b")]))),
+                    merge(src(E::block(block_items![bind(
+                        src(E::set(s("c"))),
+                        s("d")
+                    )])))
                 ],
             ),
         );
@@ -740,7 +791,7 @@ mod test {
     fn doc_comment() {
         assert_single(
             "## my doc\n ##\n##   docs\n##more doc\n##\nval",
-            DocComment(
+            E::doc_comment(
                 vec![DocCommentPart::String("my doc\n\n  docs\nmore doc".into())],
                 s("val"),
             ),
@@ -749,11 +800,11 @@ mod test {
 
     #[test]
     fn doc_comment_bind() {
-        assert_single(
+        assert_block_item(
             "## my doc\n:a = b",
-            Bind(
-                src(Set(s("a"))),
-                src(DocComment(
+            BI::Bind(
+                src(E::set(s("a"))),
+                src(E::doc_comment(
                     vec![DocCommentPart::String("my doc".into())],
                     s("b"),
                 )),
@@ -765,14 +816,14 @@ mod test {
     fn doc_comment_expressions() {
         assert_single(
             "## my doc {{ comment }}\n## {{\n## more expr\n## abc def ghi }} stuff\n##   more docs\nval",
-            DocComment(
+            E::doc_comment(
                 vec![
                     DocCommentPart::String("my doc ".into()),
-                    DocCommentPart::Expression(vec![s("comment")]),
+                    DocCommentPart::ExpressionBlock(block_items![s("comment")]),
                     DocCommentPart::String("\n".into()),
-                    DocCommentPart::Expression(vec![
-                        src(Command(src(Get(s("more"))), vec![s("expr")])),
-                        src(Command(src(Get(s("abc"))), vec![s("def"), s("ghi")])),
+                    DocCommentPart::ExpressionBlock(block_items![
+                        src(E::command(src(E::get(s("more"))), command_items![s("expr")])),
+                        src(E::command(src(E::get(s("abc"))), command_items![s("def"), s("ghi")]))
                     ]),
                     DocCommentPart::String(" stuff\n  more docs".into()),
                 ],
@@ -784,17 +835,30 @@ mod test {
     fn assert_single(s: &str, expected: Expression) {
         let expr = single(s);
         dbg!(&expr);
+        assert!(expr.id_eq(&expected));
         assert!(expr == expected);
     }
 
+    fn assert_block_item(s: &str, expected: BI) {
+        let item = block_item(s);
+        dbg!(&item);
+        assert!(item == expected);
+    }
+
     fn single(s: &str) -> Expression {
+        match block_item(s) {
+            BlockItem::Expr(e) => e.unwrap(),
+            _ => panic!("unexpected block item"),
+        }
+    }
+
+    fn block_item(s: &str) -> BI {
         Parser::from(TreeParser::from(TreeTokens::from(Tokens::from(
             Source::new(super::super::StringSource::new("<string>", s.to_owned()))
                 .open()
                 .unwrap(),
         ))))
         .next()
-        .unwrap()
         .unwrap()
         .unwrap()
     }

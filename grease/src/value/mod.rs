@@ -417,6 +417,17 @@ impl Value {
         })
     }
 
+    /// Evaluate this value until it has a type.
+    pub async fn into_non_dyn(self) -> crate::Result<Value> {
+        let mut val = self;
+        loop {
+            match val.dyn_value().await? {
+                Ok(inner) => val = inner,
+                Err(val) => break Ok(val),
+            }
+        }
+    }
+
     /// Create an AnyValue from this value.
     pub fn into_any_value(self) -> AnyValue {
         AnyValue::new(self)
@@ -1010,6 +1021,11 @@ impl<T: GreaseType + Send + Sync + 'static> TypedValue<T> {
             .expect("value should have been forced")
             .expect("error should have been handled when value was previously forced")
     }
+
+    /// Create an AnyValue from this value.
+    pub fn into_any_value(self) -> AnyValue {
+        AnyValue::new(self.inner)
+    }
 }
 
 impl<T> Clone for TypedValue<T> {
@@ -1038,6 +1054,13 @@ impl<'a, T> TypedValueRef<'a, T> {
 /// A convenience trait for converting directly to a value.
 pub trait IntoValue {
     fn into_value(self) -> Value;
+
+    fn into_any_value(self) -> AnyValue
+    where
+        Self: Sized,
+    {
+        self.into_value().into_any_value()
+    }
 }
 
 impl<T> IntoValue for T

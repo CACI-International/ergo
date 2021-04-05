@@ -11,7 +11,7 @@ use abi_stable::{
 use grease::{
     bst::BstMap,
     closure::FnPtr,
-    depends, grease_trait, grease_traits_fn, match_value,
+    grease_trait, grease_traits_fn, match_value,
     runtime::Traits,
     traits::{GreaseTrait, Trait},
     type_erase::Erased,
@@ -39,7 +39,7 @@ pub async fn bind_error<T>(ctx: &grease::runtime::Context, v: Source<Value>) -> 
 
 /// Bind a value to an argument.
 pub async fn bind(ctx: &mut Runtime, v: Source<Value>, arg: Source<Value>) -> EvalResult {
-    delay_bind(ctx, v).await?.bind(arg).await
+    delay_bind(ctx, v).await?.bind_owned(arg).await
 }
 
 /// A bind which may be performed later.
@@ -53,23 +53,24 @@ pub struct DelayedBind {
 impl DelayedBind {
     /// Perform the bind.
     pub async fn bind(&self, arg: Source<Value>) -> EvalResult {
+        self.clone().bind_owned(arg).await
+    }
+
+    /// Perform the bind.
+    pub async fn bind_owned(self, arg: Source<Value>) -> EvalResult {
         let DelayedBind {
             mut trt,
             mut ctx,
             value,
-        } = self.clone();
+        } = self;
 
-        let call_site = (self.value.source(), arg.source()).into_source();
+        let call_site = (value.source(), arg.source()).into_source();
 
         // Eagerly evaluate binding
         Ok(call_site.with(
             value
-                .map_async(move |v| {
-                    let deps = depends![{ crate::namespace_id!(ergo::bind) }, *arg];
-                    v.and_then_value(
-                        move |v| async move { trt.bind(v, &mut ctx, arg).await },
-                        deps,
-                    )
+                .map_async(move |v| async move {
+                    trt.bind(v.into_non_dyn().await?, &mut ctx, arg).await
                 })
                 .await
                 .transpose_err()
