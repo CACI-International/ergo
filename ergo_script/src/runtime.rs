@@ -642,7 +642,10 @@ impl Evaluator {
     }
 
     pub fn evaluate<'a>(self, ctx: &'a mut Runtime, e: Expr) -> BoxFuture<'a, EvalResult> {
+        let mut bctx = ctx.clone();
+        ctx.task.spawn(
         async move {
+            let ctx = &mut bctx;
             let src = e.source();
             let rsrc = src.clone();
             let mut expr_type: Option<&'static str> = None;
@@ -971,7 +974,7 @@ impl Evaluator {
                     .with(format!("while evaluating value returned by {} expression", expr_type.unwrap_or("this")))
                     .imbue_error_context(v))
             })
-        }
+        })
         .boxed()
     }
 }
