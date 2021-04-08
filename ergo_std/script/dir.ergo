@@ -316,7 +316,7 @@ iter-split = fn :n :iter -> [plugin:iter:take :n :iter, plugin:iter:skip :n :ite
 
     ## Get values related to the program's runtime environment.
     ##
-    ## {{mdoc:functions :self get path-search home current-dir user-cache system-cache os}}
+    ## {{mdoc:functions :self get path-search home current-dir user-cache system-cache os arch}}
     env = plugin:env
 
     ## Interface with errors.

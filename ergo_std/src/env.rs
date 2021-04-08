@@ -11,7 +11,8 @@ pub fn module() -> Value {
         "current-dir" = current_dir_path(),
         "user-cache" = user_cache_path(),
         "system-cache" = system_cache_path(),
-        "os" = os_string()
+        "os" = os_string(),
+        "arch" = arch_string()
     }
 }
 
@@ -154,6 +155,17 @@ fn os_string() -> Value {
         "The OS running ergo.
 
 Possible values include `linux`, `macos`, and `windows`.",
+    );
+    v
+}
+
+fn arch_string() -> Value {
+    let mut v: Value = types::String::from(std::env::consts::ARCH).into();
+    Doc::set_string(
+        &mut v,
+        "The architecture for which ergo was built.
+
+Possible values include `x86_64`, `x86`, `arm`, and `aarch64`.",
     );
     v
 }

@@ -2,6 +2,10 @@
 
 ## Unreleased
 ### New Features
+* Add `std:env:arch` to get the host architecture.
+
+## 1.0.0-beta.9  -- 2021-03-09
+### New Features
 * The standard library has been restructured into a more consistent hierarchy
   (see the documentation or the migration guide for details).
 * Add `type:enum` and `type:struct` for common cases.
