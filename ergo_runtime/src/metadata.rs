@@ -1,84 +1,44 @@
 //! Common value metadata keys.
 
-use crate::ContextExt;
-use futures::future::FutureExt;
-use grease::uuid::{grease_uuid, Uuid};
-use grease::value::{MetadataKey, TypedValue};
-use grease::{depends, make_value};
+use crate::abi_stable::uuid::Uuid;
+use crate::value::{MetadataKey, Value};
 
 /// Documentation metadata key.
-///
-/// Documentation is an unbound value so that the `self` value can be bound without documentation
-/// accidentally making a reference loop.
 pub struct Doc;
 
 impl MetadataKey for Doc {
-    type Value = TypedValue<crate::types::Unbound>;
+    type Value = Value;
 
     fn id(&self) -> u128 {
-        grease_uuid(b"doc").as_u128()
+        crate::nsid!(meta::doc).as_u128()
     }
 }
 
 impl Doc {
     /// Get the documentation value for the given value.
     ///
-    /// This retrieves the documentation and binds it to the value.
+    /// This retrieves the documentation.
     ///
     /// If no documentation is available, a string indicating the (possibly dynamic) type will be returned.
-    pub async fn get(
-        ctx: &mut crate::Runtime,
-        value: &grease::Value,
-    ) -> crate::Result<TypedValue<crate::types::String>> {
-        match value.get_metadata(&Doc) {
-            Some(v) => {
-                let val = crate::traits::bind(
-                    ctx,
-                    crate::Source::builtin(v.as_ref().clone().into()),
-                    crate::Source::builtin(value.clone()),
-                )
-                .await?;
-                Ok(ctx
-                    .source_value_as::<crate::types::String>(val)
-                    .await?
-                    .unwrap())
-            }
-            None => {
-                let tp = match value.grease_type_immediate() {
-                    Some(tp) => {
-                        let ctx = ctx.clone();
-                        let tp = tp.clone();
-                        async move { crate::traits::type_name(&ctx, &tp).await }.boxed()
-                    }
-                    None => async move { Ok("<dynamic>".to_owned()) }.boxed(),
-                };
-                Ok(make_value!(tp.await.map(|s| crate::types::String::from(
-                    format!("value with type '{}'", s)
-                ))))
+    pub async fn get(ctx: &crate::Context, value: &Value) -> String {
+        if let Some(v) = value.get_metadata(&Doc) {
+            let mut v = v.owned();
+            ctx.eval(&mut v).await;
+            if let Some(v) = v.as_type::<crate::types::String>().ok() {
+                return v.to_owned().0.into();
             }
         }
+        format!("value with type '{}'", crate::traits::type_name(ctx, value))
     }
 
     /// Set a documentation string for the given value.
-    pub fn set_string<S: Into<crate::types::String>>(v: &mut grease::Value, s: S) {
-        let s = s.into();
-        Self::set_value(v, make_value!(Ok(s)));
+    pub fn set_string<S: Into<crate::types::String>>(v: &mut Value, s: S) {
+        Self::set(v, crate::types::String::new_no_doc(s.into()).into());
     }
 
-    /// Set a documentation value for the given value.
-    pub fn set_value(v: &mut grease::Value, doc: TypedValue<crate::types::String>) {
-        let deps = depends![doc];
-        v.set_metadata(
-            &Doc,
-            crate::types::Unbound::new(
-                move |_, _| {
-                    let doc = doc.clone();
-                    async move { Ok(doc.into()) }.boxed()
-                },
-                deps,
-                (),
-            ),
-        );
+    /// Set documentation for the given value.
+    pub fn set(v: &mut Value, doc: Value) {
+        v.set_metadata(&Doc, doc);
     }
 }
 
@@ -89,10 +49,10 @@ pub struct Runtime {
 }
 
 impl MetadataKey for Runtime {
-    type Value = grease::Value;
+    type Value = Value;
 
     fn id(&self) -> u128 {
-        let mut id = grease_uuid(b"any");
+        let mut id = crate::nsid!(meta::any);
         id = Uuid::new_v5(&id, self.key.to_string().as_bytes());
         id.as_u128()
     }

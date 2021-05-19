@@ -110,6 +110,21 @@ impl KeySet {
         }
     }
 
+    pub fn len(&self) -> usize {
+        let mut l = 0usize;
+        for s in self.contains.iter() {
+            l += s.count_ones() as usize;
+        }
+        l
+    }
+
+    pub fn pop(&mut self) -> Option<Key> {
+        self.iter().next().map(|key| {
+            self.remove(key);
+            key
+        })
+    }
+
     pub fn contains_set(&self, other: &Self) -> bool {
         ZipSetIter::new(self, other).all(|(a, b)| a & b == b)
     }

@@ -584,6 +584,7 @@ impl<I: Iterator<Item = char>> Iterator for Tokens<I> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use ergo_runtime::source::StringSource;
 
     #[test]
     fn symbols() -> Result<(), Source<Error>> {
@@ -776,7 +777,7 @@ mod test {
 
     fn assert_tokens(s: &str, expected: &[Token]) -> Result<(), Source<Error>> {
         let toks: Vec<_> = Tokens::from(
-            Source::new(super::super::StringSource::new("<string>", s.to_owned()))
+            Source::new(StringSource::new("<string>", s.to_owned()))
                 .open()
                 .unwrap(),
         )

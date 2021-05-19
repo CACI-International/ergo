@@ -5,11 +5,17 @@ authors = ["Alex Franchuk <afranchuk@caci.com>"]
 edition = "2018"
 
 [dependencies]
-abi_stable = "0.9"
+abi_stable = "0.9" # needed only for StableAbi derive macros to work (they reference ::abi_stable)
+abi_stable_ext = { path = "../abi_stable_ext" }
 bincode = "^1.2"
 ergo_runtime_macro = { path = "../ergo_runtime_macro" }
 futures = "^0.3"
-grease = { path = "../grease" }
 log = "^0.4"
-plugin_tls = "~0.2.1"
+num_cpus = "^1"
+pin-project = "1"
+plugin_tls = "~0.2.2"
+tokio = { version = "~0.3.4", features = ["parking_lot","rt-multi-thread","sync"] }
 uuid = { version = "0.8", features = ["v5"] }
+
+[dev-dependencies]
+plugin_tls = { version = "~0.2.2", features = ["host"] }

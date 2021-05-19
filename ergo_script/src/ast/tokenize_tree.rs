@@ -228,6 +228,7 @@ where
 mod test {
     use super::*;
     use crate::ast::tokenize::Tokens;
+    use ergo_runtime::source::StringSource;
 
     use PairedToken::*;
     use SymbolicToken::*;
@@ -391,7 +392,7 @@ mod test {
 
     fn assert_tokens(s: &str, expected: &[TreeToken]) {
         let toks: Vec<_> = TreeTokens::from(Tokens::from(
-            Source::new(super::super::StringSource::new("<string>", s.to_owned()))
+            Source::new(StringSource::new("<string>", s.to_owned()))
                 .open()
                 .unwrap(),
         ))
@@ -406,7 +407,7 @@ mod test {
 
     fn assert_fail(s: &str) {
         TreeTokens::from(Tokens::from(
-            Source::new(super::super::StringSource::new("<string>", s.to_owned()))
+            Source::new(StringSource::new("<string>", s.to_owned()))
                 .open()
                 .unwrap(),
         ))

@@ -1,71 +1,63 @@
-//! The TypeName grease trait and helper utilities.
+//! The TypeName ergo trait and helper utilities.
 
-use crate::{types, Source};
-use abi_stable::{std_types::RString, StableAbi};
-use grease::path::PathBuf;
-use grease::types::Type;
-use grease::{grease_trait, grease_traits_fn};
+use crate as ergo_runtime;
+use crate::abi_stable::std_types::RString;
+use crate::type_system::{ergo_trait, ErgoType, Type};
+use crate::{Source, Value};
 
-/// A grease trait describing the name of a type.
-#[grease_trait]
+/// An ergo trait describing the name of a type.
+#[ergo_trait]
 pub trait TypeName {
-    async fn type_name() -> RString;
+    fn type_name() -> RString;
 }
 
 /// Get a type name for the given type.
-pub async fn type_name(ctx: &grease::runtime::Context, tp: &Type) -> grease::Result<String> {
-    if let Some(mut t) = ctx.get_trait_for_type::<TypeName>(tp) {
-        t.type_name().await.map(|s| s.into())
+pub fn type_name_for(ctx: &crate::Context, tp: &Type) -> String {
+    if let Some(t) = ctx.get_trait_for_type::<TypeName>(tp) {
+        t.type_name().into()
     } else {
-        Ok(format!("<{}>", tp.id))
+        format!("<{}>", tp.id)
+    }
+}
+
+/// Get a type name for the given value.
+pub fn type_name(ctx: &crate::Context, value: &Value) -> String {
+    match value.ergo_type() {
+        Some(tp) => type_name_for(ctx, tp),
+        None => "<dynamic>".into(),
     }
 }
 
 /// Create a type error with the value's type mentioned.
-pub async fn type_error<T>(
-    ctx: &grease::runtime::Context,
-    v: Source<grease::Value>,
-    expected: &str,
-) -> crate::Result<T> {
+pub fn type_error(ctx: &crate::Context, v: Source<crate::Value>, expected: &str) -> crate::Error {
     let (src, v) = v.take();
-    let name = type_name(ctx, v.grease_type().await?).await?;
-    Err(src
-        .with(format!("type error: expected {}, got {}", expected, name))
-        .into_grease_error())
+    let name = type_name(ctx, &v);
+    src.with(format!("type error: expected {}, got {}", expected, name))
+        .into_error()
 }
 
-/// Define the GreaseTypeName trait for the given rust type.
+/// Create a type error with the value's type mentioned.
+pub fn type_error_for<T: ErgoType>(ctx: &crate::Context, v: Source<crate::Value>) -> crate::Error {
+    type_error(ctx, v, type_name_for(ctx, &T::ergo_type()).as_str())
+}
+
+/// Define the TypeName trait for the given rust type.
 ///
-/// One must still add the trait implementation to the runtime using `impl_type_name`.
+/// One must still add the trait implementation to the runtime.
 #[macro_export]
-macro_rules! grease_type_name {
+macro_rules! ergo_type_name {
     ( $traits:expr, $t:ty, $n:expr ) => {
-        $traits.add_impl_for_type::<$t, $crate::traits::TypeName>(grease::grease_trait_impl! {
-        impl $crate::traits::TypeName for $t {
-            async fn type_name() -> abi_stable::std_types::RString {
-                $n.into()
-            }
-        }});
+        $traits.add_impl_for_type::<$t, $crate::traits::TypeName>(
+            $crate::type_system::ergo_trait_impl! {
+                impl $crate::traits::TypeName for $t {
+                    fn type_name() -> abi_stable::std_types::RString {
+                        $n.into()
+                    }
+                }
+            },
+        );
     };
     ( $traits:expr, $t:ty ) => {
-        $crate::grease_type_name!($traits, $t, stringify!($t));
+        $crate::ergo_type_name!($traits, $t, stringify!($t));
     };
-}
-
-grease_traits_fn! {
-    grease_type_name!(traits, PathBuf, "Path");
-    grease_type_name!(traits, types::Unit, "Unit");
-    grease_type_name!(traits, types::Bool, "Bool");
-    grease_type_name!(traits, types::String, "String");
-    grease_type_name!(traits, types::Array, "Array");
-    grease_type_name!(traits, types::Map, "Map");
-    grease_type_name!(traits, types::MapEntry, "MapEntry");
-    grease_type_name!(traits, types::Unbound, "Function");
-    grease_type_name!(traits, types::Merge, "Merge");
-    grease_type_name!(traits, types::BindRest, "BindRest");
-    grease_type_name!(traits, types::Args, "Args");
-    grease_type_name!(traits, types::PatternArgs, "PatternArgs");
-    grease_type_name!(traits, types::Index, "Index");
-    grease_type_name!(traits, types::Unset, "Unset");
-    grease_type_name!(traits, types::Iter, "Iter");
 }

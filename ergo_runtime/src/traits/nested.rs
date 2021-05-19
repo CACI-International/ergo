@@ -1,100 +1,65 @@
-//! The Nested grease trait.
+//! The Nested ergo trait.
 //!
 //! This trait is used to expose nested Values within Value types.
 
-use crate::types;
-use abi_stable::{std_types::RVec, StableAbi};
+use crate as ergo_runtime;
+use crate::abi_stable::std_types::RVec;
+use crate::context::Traits;
+use crate::type_system::{ergo_trait, ergo_trait_impl, ErgoType};
+use crate::{Context, Value};
 use futures::future::{BoxFuture, FutureExt};
-use futures::stream::{futures_unordered::FuturesUnordered, TryStreamExt};
-use grease::{grease_trait, grease_traits_fn, runtime::Context, value::Value};
+use futures::stream::{futures_unordered::FuturesUnordered, StreamExt};
 
-/// A grease trait which exposes nested Values within a single Value's data.
-#[grease_trait]
+/// An ergo trait which exposes nested Values within a single Value's data.
+#[ergo_trait]
 pub trait Nested {
     async fn nested(&self) -> RVec<Value>;
 }
 
-grease_traits_fn! {
-    impl Nested for types::Array {
-        async fn nested(&self) -> RVec<Value> {
-            self.0.iter().cloned().collect()
-        }
-    }
+/// Get the nested values for a type.
+pub trait NestedValues {
+    fn nested_values(&self) -> Vec<&Value>;
+    fn nested_values_mut(&mut self) -> Vec<&mut Value>;
+}
 
-    impl Nested for types::Iter {
-        async fn nested(&self) -> RVec<Value> {
-            self.clone().try_collect().await?
-        }
-    }
-
-    impl Nested for types::Map {
-        async fn nested(&self) -> RVec<Value> {
-            self.0.iter().map(|t| t.1).cloned().collect()
-        }
-    }
-
-    impl Nested for types::MapEntry {
-        async fn nested(&self) -> RVec<Value> {
-            abi_stable::rvec![self.key.clone(), self.value.clone()]
-        }
+impl Nested {
+    /// Implement Nested for the given type.
+    pub fn add_impl<T: NestedValues + ErgoType>(traits: &Traits) {
+        traits.add_impl_for_type::<T, Nested>(ergo_trait_impl! {
+            impl<T: NestedValues + ErgoType> Nested for T {
+                async fn nested(&self) -> RVec<Value> {
+                    self.nested_values().into_iter().cloned().collect()
+                }
+            }
+        });
     }
 }
 
 fn add_value<'a>(
-    values: &mut FuturesUnordered<BoxFuture<'a, grease::Result<RVec<Value>>>>,
+    values: &mut FuturesUnordered<BoxFuture<'a, RVec<Value>>>,
     ctx: &'a Context,
-    v: Value,
+    mut v: Value,
 ) {
     values.push(
         async move {
-            let nested = ctx
-                .get_trait::<Nested, _, _>(&v, |_| async {
-                    Ok(grease::grease_trait_impl! {
-                        impl Nested for _ {
-                            async fn nested(&self) -> RVec<Value> {
-                                Default::default()
-                            }
-                        }
-                    })
-                })
-                .await;
-            match nested {
-                Ok(mut n) => n.nested(v).await,
-                Err(e) => Err(e),
+            v.eval(ctx).await;
+            match ctx.get_trait::<Nested>(&v) {
+                None => Default::default(),
+                Some(n) => n.nested(v).await,
             }
         }
         .boxed(),
     );
 }
 
-/// Force all Values, and all recursive Values from the Nested grease trait.
-pub async fn force_value_nested(ctx: &Context, v: Value) -> grease::Result<()> {
+/// Recursively evaluate the given value.
+pub async fn eval_nested(ctx: &Context, v: Value) {
     let mut values = FuturesUnordered::new();
-    let mut errs = vec![];
 
     add_value(&mut values, ctx, v);
-    loop {
-        match values.try_next().await {
-            Ok(Some(vals)) => {
-                for v in vals {
-                    add_value(&mut values, ctx, v);
-                }
-            }
-            Ok(None) => break,
-            Err(e) => {
-                if ctx.task.aggregate_errors() {
-                    errs.push(e);
-                } else {
-                    return Err(e);
-                }
-            }
+    while let Some(vals) = values.next().await {
+        for v in vals {
+            add_value(&mut values, ctx, v);
         }
-    }
-    if errs.len() == 1 {
-        Err(errs.into_iter().next().unwrap())
-    } else if errs.len() > 1 {
-        Err(errs.into_iter().collect())
-    } else {
-        Ok(())
     }
 }

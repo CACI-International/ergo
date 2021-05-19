@@ -406,6 +406,7 @@ mod test {
     use crate::ast::parse_tree::Parser as TreeParser;
     use crate::ast::tokenize::Tokens;
     use crate::ast::tokenize_tree::TreeTokens;
+    use ergo_runtime::source::StringSource;
 
     type E = Expression;
     type AI = ArrayItem;
@@ -854,7 +855,7 @@ mod test {
 
     fn block_item(s: &str) -> BI {
         Parser::from(TreeParser::from(TreeTokens::from(Tokens::from(
-            Source::new(super::super::StringSource::new("<string>", s.to_owned()))
+            Source::new(StringSource::new("<string>", s.to_owned()))
                 .open()
                 .unwrap(),
         ))))
@@ -865,7 +866,7 @@ mod test {
 
     fn assert_fail(s: &str) {
         Parser::from(TreeParser::from(TreeTokens::from(Tokens::from(
-            Source::new(super::super::StringSource::new("<string>", s.to_owned()))
+            Source::new(StringSource::new("<string>", s.to_owned()))
                 .open()
                 .unwrap(),
         ))))

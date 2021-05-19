@@ -1,22 +1,207 @@
-//! Byte stream type, supporting on-demand streaming.
+//! The ByteStream type.
 
-use super::shared_stream::*;
-use crate::traits as trts;
-use abi_stable::{
+use crate as ergo_runtime;
+use crate::{
+    context::{ItemContent, TaskManager},
+    io::{self, AsyncReadExt, BoxAsyncRead},
+    traits,
+    type_system::{ergo_traits_fn, ErgoType},
+    Error, Value,
+};
+
+use crate::abi_stable::{
     sabi_trait,
     sabi_trait::prelude::*,
-    std_types::{RBox, RResult, RString, RVec},
+    std_types::{RBox, RResult, RVec},
+    stream::shared_stream::*,
+    type_erase::Erased,
     StableAbi,
-};
-use grease::{
-    future::BoxAsyncRead,
-    grease_traits_fn, make_value,
-    runtime::{io::AsyncReadExt, ItemContent},
-    types::GreaseType,
-    Erased, Error, Value,
 };
 use std::pin::Pin;
 use std::sync::Arc;
+
+/// A stream of bytes.
+///
+/// Call `read()` to get a value supporting `AsyncRead`.
+#[derive(Clone, ErgoType, StableAbi)]
+#[repr(C)]
+pub struct ByteStream {
+    source: ByteStreamSource_TO<'static, RBox<()>>,
+    stream_iter: SharedStreamIter<ByteStreamBlock>,
+}
+
+impl From<super::String> for ByteStream {
+    fn from(s: super::String) -> Self {
+        Self::new(io::wrap(std::io::Cursor::new(s.0.into_bytes())))
+    }
+}
+
+impl ByteStream {
+    pub fn new<Src: io::AsyncRead + Send + 'static>(source: Src) -> Self {
+        let (stream, stream_iter) = SharedStream::new();
+        let source = ByteStreamSource_TO::from_value(
+            ByteStreamSourceImpl {
+                guard: ByteStreamSourceGuard::None,
+                source: Arc::pin(futures::lock::Mutex::new(ByteStreamSourceState {
+                    copy: None,
+                    async_read: Some(BoxAsyncRead::new(source)),
+                    block: Default::default(),
+                    _pinned: std::marker::PhantomPinned,
+                })),
+                stream: Arc::new(stream),
+            },
+            TU_Opaque,
+        );
+        ByteStream {
+            source,
+            stream_iter,
+        }
+    }
+
+    /// Get a value supporting `AsyncRead`.
+    pub fn read(&self) -> ByteStreamReader {
+        ByteStreamReader {
+            oblock: None,
+            source: self.source.clone(),
+            stream_iter: self.stream_iter.clone(),
+            bytes_read: 0,
+        }
+    }
+}
+
+ergo_traits_fn! {
+    impl traits::IntoTyped<super::String> for ByteStream {
+        async fn into_typed(self) -> Value {
+            let mut bytes = Vec::new();
+            if let Err(e) = self.as_ref().read().read_to_end(&CONTEXT.task, &mut bytes).await {
+                return e.into();
+            }
+            super::String::from(match String::from_utf8(bytes) {
+                Ok(s) => s,
+                Err(v) => String::from_utf8_lossy(v.as_bytes()).into_owned(),
+            }).into()
+        }
+    }
+
+    traits::IntoTyped::<ByteStream>::add_impl::<super::String>(traits);
+
+    impl traits::ValueByContent for ByteStream {
+        async fn value_by_content(self, _deep: bool) -> Value {
+            let data = self.clone().to_owned();
+            let mut reader = data.read();
+            let mut buf: [u8; BYTE_STREAM_BLOCK_LIMIT] =
+                unsafe { std::mem::MaybeUninit::uninit().assume_init() };
+            use crate::hash::HashFn;
+            use std::hash::Hasher;
+            let mut h = HashFn::default();
+            loop {
+                let size = match reader.read(&CONTEXT.task, &mut buf).await {
+                    Err(e) => return e.into(),
+                    Ok(v) => v
+                };
+                if size == 0 {
+                    break
+                } else {
+                    h.write(&buf[..size]);
+                }
+            }
+            let deps = crate::depends![h.finish_ext()];
+            let mut v = Value::from(self);
+            v.set_dependencies(deps);
+            v
+        }
+    }
+
+    crate::ergo_type_name!(traits, ByteStream);
+
+    impl traits::Stored for ByteStream {
+        async fn put(&self, _stored_ctx: &traits::StoredContext, item: ItemContent) -> crate::RResult<()> {
+            io::copy(
+                &CONTEXT.task,
+                &mut self.read(),
+                &mut io::Blocking::new(item),
+            )
+            .await.map(|_| ()).into()
+        }
+
+        async fn get(_stored_ctx: &traits::StoredContext, item: ItemContent) -> crate::RResult<Erased> {
+            Ok(Erased::new(ByteStream::new(io::Blocking::new(item)))).into()
+        }
+    }
+
+    impl traits::Display for ByteStream {
+        async fn fmt(&self, f: &mut traits::Formatter) -> crate::RResult<()> {
+            async move {
+                let mut reader = self.read();
+                let mut buf: [u8; BYTE_STREAM_BLOCK_LIMIT] =
+                    unsafe { std::mem::MaybeUninit::uninit().assume_init() };
+                let mut overflow: [u8; 4] =
+                    unsafe { std::mem::MaybeUninit::uninit().assume_init() };
+                let mut overflow_size = 0;
+                loop {
+                    let end = reader.read(&CONTEXT.task, &mut buf).await?;
+                    if end == 0 {
+                        break
+                    } else {
+                        let mut start = 0;
+                        while start < end {
+                            if overflow_size > 0 {
+                                overflow[overflow_size] = buf[start];
+                                start += 1;
+                                overflow_size += 1;
+                                if let Ok(s) = std::str::from_utf8(&overflow[..overflow_size]) {
+                                    f.write_str(s)?;
+                                    overflow_size = 0;
+                                }
+                                continue;
+                            }
+
+                            match std::str::from_utf8(&buf[start..end]) {
+                                Ok(s) => {
+                                    f.write_str(s)?;
+                                    break;
+                                }
+                                Err(e) => {
+                                    let ind = e.valid_up_to();
+                                    f.write_str(std::str::from_utf8(&buf[start..ind]).unwrap())?;
+                                    start = ind;
+                                    match e.error_len() {
+                                        None => {
+                                            assert!(end - ind < 4);
+                                            overflow_size = end - ind;
+                                            overflow[..overflow_size].copy_from_slice(&buf[ind..end]);
+                                            break;
+                                        }
+                                        Some(n) => {
+                                            start += n;
+                                            f.write_str(std::char::REPLACEMENT_CHARACTER.encode_utf8(&mut overflow))?;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(())
+            }.await.into()
+        }
+    }
+}
+
+/// A type supporting `std::io::Read` for a `ByteStream`.
+///
+/// Cloning the reader will result in another reader that gets an identical byte stream
+/// starting from where this reader left off.
+#[derive(Clone, StableAbi)]
+#[repr(C)]
+pub struct ByteStreamReader {
+    // Safety: oblock must be dropped prior to stream_iter
+    // SharedStreamIter guarantees that the referenced ByteStreamBlock remains valid across clones.
+    oblock: Option<&'static ByteStreamBlock>,
+    source: ByteStreamSource_TO<'static, RBox<()>>,
+    stream_iter: SharedStreamIter<ByteStreamBlock>,
+    bytes_read: usize,
+}
 
 const BYTE_STREAM_BLOCK_LIMIT: usize = 2048;
 
@@ -27,17 +212,14 @@ const BYTE_STREAM_BLOCK_LIMIT: usize = 2048;
 type ByteStreamBlock = RVec<u8>;
 
 struct CopyState {
-    task: grease::runtime::TaskManager,
-    reader:
-        grease::runtime::io::Once<grease::runtime::io::Take<&'static mut BoxAsyncRead<'static>>>,
-    writer: grease::runtime::io::TokioWrapped<&'static mut Vec<u8>>,
+    task: TaskManager,
+    reader: io::Once<io::Take<&'static mut BoxAsyncRead<'static>>>,
+    writer: io::TokioWrapped<&'static mut Vec<u8>>,
     copy: Option<
-        grease::runtime::io::Copy<
+        io::Copier<
             'static,
-            grease::runtime::io::Once<
-                grease::runtime::io::Take<&'static mut BoxAsyncRead<'static>>,
-            >,
-            grease::runtime::io::TokioWrapped<&'static mut Vec<u8>>,
+            io::Once<io::Take<&'static mut BoxAsyncRead<'static>>>,
+            io::TokioWrapped<&'static mut Vec<u8>>,
         >,
     >,
     _pinned: std::marker::PhantomPinned,
@@ -45,24 +227,21 @@ struct CopyState {
 
 impl CopyState {
     pub fn new(
-        task: grease::runtime::TaskManager,
+        task: TaskManager,
         r: &'static mut BoxAsyncRead<'static>,
         w: &'static mut Vec<u8>,
     ) -> Pin<Box<Self>> {
         let mut ret = Box::new(CopyState {
             task,
             reader: r.take(BYTE_STREAM_BLOCK_LIMIT as u64).once(),
-            writer: grease::runtime::io::wrap(w),
+            writer: io::wrap(w),
             copy: None,
             _pinned: std::marker::PhantomPinned,
         });
 
-        let cpy = grease::runtime::io::copy(&ret.task, &mut ret.reader, &mut ret.writer);
+        let cpy = io::copy(&ret.task, &mut ret.reader, &mut ret.writer);
         ret.copy = Some(unsafe {
-            std::mem::transmute::<
-                grease::runtime::io::Copy<'_, _, _>,
-                grease::runtime::io::Copy<'static, _, _>,
-            >(cpy)
+            std::mem::transmute::<io::Copier<'_, _, _>, io::Copier<'static, _, _>>(cpy)
         });
         unsafe { Pin::new_unchecked(ret) }
     }
@@ -116,17 +295,17 @@ trait ByteStreamSource: Clone + Send + Sync {
     #[sabi(last_prefix_field)]
     fn poll_data<'a>(
         &'a mut self,
-        cx: grease::future::Context,
-        task: &'a grease::runtime::TaskManager,
-    ) -> grease::future::Poll<RResult<bool, Error>>;
+        cx: crate::abi_stable::future::Context,
+        task: &'a TaskManager,
+    ) -> crate::abi_stable::future::Poll<RResult<bool, Error>>;
 }
 
 impl ByteStreamSource for ByteStreamSourceImpl {
     fn poll_data<'a>(
         &'a mut self,
-        cx: grease::future::Context,
-        task: &'a grease::runtime::TaskManager,
-    ) -> grease::future::Poll<RResult<bool, Error>> {
+        cx: crate::abi_stable::future::Context,
+        task: &'a TaskManager,
+    ) -> crate::abi_stable::future::Poll<RResult<bool, Error>> {
         use std::task::Poll::*;
         let waker = cx.into_waker();
         let mut cx = std::task::Context::from_waker(&waker);
@@ -144,7 +323,7 @@ impl ByteStreamSource for ByteStreamSourceImpl {
                 }
                 ByteStreamSourceGuard::Fut(f) => {
                     match std::future::Future::poll(Pin::new(f), &mut cx) {
-                        Pending => return grease::future::Poll::Pending,
+                        Pending => return crate::abi_stable::future::Poll::Pending,
                         Ready(g) => {
                             self.guard = ByteStreamSourceGuard::Active(g);
                         }
@@ -175,12 +354,16 @@ impl ByteStreamSource for ByteStreamSourceImpl {
                                 .map_unchecked_mut(|cs| cs.copy.as_mut().unwrap())
                         };
                         let bytes = match std::future::Future::poll(copy_pin, &mut cx) {
-                            Pending => return grease::future::Poll::Pending,
+                            Pending => return crate::abi_stable::future::Poll::Pending,
                             Ready(r) => {
                                 *copy = None;
                                 match r {
                                     Ok(v) => v,
-                                    Err(e) => return grease::future::Poll::Ready(RResult::RErr(e)),
+                                    Err(e) => {
+                                        return crate::abi_stable::future::Poll::Ready(
+                                            RResult::RErr(e),
+                                        )
+                                    }
                                 }
                             }
                         };
@@ -197,86 +380,20 @@ impl ByteStreamSource for ByteStreamSourceImpl {
                     };
 
                     self.guard = ByteStreamSourceGuard::None;
-                    return grease::future::Poll::Ready(RResult::ROk(ret));
+                    return crate::abi_stable::future::Poll::Ready(RResult::ROk(ret));
                 }
             }
         }
     }
 }
 
-/// A stream of bytes.
-///
-/// Call `read()` to get a value supporting `AsyncRead`.
-#[derive(Clone, GreaseType, StableAbi)]
-#[repr(C)]
-pub struct ByteStream {
-    source: ByteStreamSource_TO<'static, RBox<()>>,
-    stream_iter: SharedStreamIter<ByteStreamBlock>,
-}
-
-impl From<crate::types::String> for ByteStream {
-    fn from(s: crate::types::String) -> Self {
-        Self::new(grease::runtime::io::wrap(std::io::Cursor::new(
-            s.0.into_bytes(),
-        )))
-    }
-}
-
-impl ByteStream {
-    pub fn new<Src: grease::runtime::io::AsyncRead + Send + 'static>(source: Src) -> Self {
-        let (stream, stream_iter) = SharedStream::new();
-        let source = ByteStreamSource_TO::from_value(
-            ByteStreamSourceImpl {
-                guard: ByteStreamSourceGuard::None,
-                source: Arc::pin(futures::lock::Mutex::new(ByteStreamSourceState {
-                    copy: None,
-                    async_read: Some(BoxAsyncRead::new(source)),
-                    block: Default::default(),
-                    _pinned: std::marker::PhantomPinned,
-                })),
-                stream: Arc::new(stream),
-            },
-            TU_Opaque,
-        );
-        ByteStream {
-            source,
-            stream_iter,
-        }
-    }
-
-    /// Get a value supporting `AsyncRead`.
-    pub fn read(&self) -> ByteStreamReader {
-        ByteStreamReader {
-            oblock: None,
-            source: self.source.clone(),
-            stream_iter: self.stream_iter.clone(),
-            bytes_read: 0,
-        }
-    }
-}
-
-/// A type supporting `std::io::Read` for a `ByteStream`.
-///
-/// Cloning the reader will result in another reader that gets an identical byte stream
-/// starting from where this reader left off.
-#[derive(Clone, StableAbi)]
-#[repr(C)]
-pub struct ByteStreamReader {
-    // Safety: oblock must be dropped prior to stream_iter
-    // SharedStreamIter guarantees that the referenced ByteStreamBlock remains valid across clones.
-    oblock: Option<&'static ByteStreamBlock>,
-    source: ByteStreamSource_TO<'static, RBox<()>>,
-    stream_iter: SharedStreamIter<ByteStreamBlock>,
-    bytes_read: usize,
-}
-
-impl grease::runtime::io::AsyncRead for ByteStreamReader {
+impl io::AsyncRead for ByteStreamReader {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context,
-        task: &grease::runtime::TaskManager,
+        task: &TaskManager,
         buf: &mut [u8],
-    ) -> std::task::Poll<grease::Result<usize>> {
+    ) -> std::task::Poll<crate::Result<usize>> {
         let mut buf_offset = 0;
         let me = &mut *self;
         while buf_offset < buf.len() {
@@ -307,12 +424,15 @@ impl grease::runtime::io::AsyncRead for ByteStreamReader {
                 }
             } else {
                 // Try to read a block from the byte stream source.
-                let got_data = match me.source.poll_data(grease::future::Context::new(cx), task) {
-                    grease::future::Poll::Pending => {
+                let got_data = match me
+                    .source
+                    .poll_data(crate::abi_stable::future::Context::new(cx), task)
+                {
+                    crate::abi_stable::future::Poll::Pending => {
                         debug_assert!(buf_offset == 0);
                         return std::task::Poll::Pending;
                     }
-                    grease::future::Poll::Ready(v) => match v.into_result() {
+                    crate::abi_stable::future::Poll::Ready(v) => match v.into_result() {
                         Err(e) => return std::task::Poll::Ready(Err(e)),
                         Ok(v) => v,
                     },
@@ -339,128 +459,10 @@ impl grease::runtime::io::AsyncRead for ByteStreamReader {
     }
 }
 
-grease_traits_fn! {
-    impl trts::IntoTyped<crate::types::String> for ByteStream {
-        async fn into_typed(self) -> Value {
-            let v = self;
-            let task = CONTEXT.task.clone();
-            make_value!([v] {
-                let mut bytes = Vec::new();
-                v.await?.read().read_to_end(&task, &mut bytes).await?;
-
-                Ok(crate::types::String::from(match String::from_utf8(bytes) {
-                    Ok(s) => s,
-                    Err(v) => String::from_utf8_lossy(v.as_bytes()).into_owned(),
-                }))
-            }).into()
-        }
-    }
-
-    trts::IntoTyped::<ByteStream>::add_impl::<crate::types::String>(traits);
-
-    impl trts::ValueByContent for ByteStream {
-        async fn value_by_content(self, _deep: bool) -> Value {
-            let data = self.clone().await?;
-            let mut reader = data.read();
-            let mut buf: [u8; BYTE_STREAM_BLOCK_LIMIT] =
-                unsafe { std::mem::MaybeUninit::uninit().assume_init() };
-            use grease::hash::HashFn;
-            use std::hash::Hasher;
-            let mut h = HashFn::default();
-            loop {
-                let size = reader.read(&CONTEXT.task, &mut buf).await?;
-                if size == 0 {
-                    break
-                } else {
-                    h.write(&buf[..size]);
-                }
-            }
-            let deps = grease::depends![h.finish_ext()];
-            Value::from(self).set_dependencies(deps)
-        }
-    }
-
-    impl trts::TypeName for ByteStream {
-        async fn type_name() -> RString {
-            "ByteStream".into()
-        }
-    }
-
-    impl trts::Stored for ByteStream {
-        async fn put(&self, _stored_ctx: &trts::StoredContext, item: ItemContent) {
-            grease::runtime::io::copy(
-                &CONTEXT.task,
-                &mut self.read(),
-                &mut grease::runtime::io::Blocking::new(item),
-            )
-            .await?;
-        }
-
-        async fn get(_stored_ctx: &trts::StoredContext, item: ItemContent) -> Erased {
-            Erased::new(ByteStream::new(grease::runtime::io::Blocking::new(item)))
-        }
-    }
-
-    impl trts::Display for ByteStream {
-        async fn fmt(&self, f: &mut trts::Formatter) {
-            let mut reader = self.read();
-            let mut buf: [u8; BYTE_STREAM_BLOCK_LIMIT] =
-                unsafe { std::mem::MaybeUninit::uninit().assume_init() };
-            let mut overflow: [u8; 4] =
-                unsafe { std::mem::MaybeUninit::uninit().assume_init() };
-            let mut overflow_size = 0;
-            loop {
-                let end = reader.read(&CONTEXT.task, &mut buf).await?;
-                if end == 0 {
-                    break
-                } else {
-                    let mut start = 0;
-                    while start < end {
-                        if overflow_size > 0 {
-                            overflow[overflow_size] = buf[start];
-                            start += 1;
-                            overflow_size += 1;
-                            if let Ok(s) = std::str::from_utf8(&overflow[..overflow_size]) {
-                                f.write_str(s)?;
-                                overflow_size = 0;
-                            }
-                            continue;
-                        }
-
-                        match std::str::from_utf8(&buf[start..end]) {
-                            Ok(s) => {
-                                f.write_str(s)?;
-                                break;
-                            }
-                            Err(e) => {
-                                let ind = e.valid_up_to();
-                                f.write_str(std::str::from_utf8(&buf[start..ind]).unwrap())?;
-                                start = ind;
-                                match e.error_len() {
-                                    None => {
-                                        assert!(end - ind < 4);
-                                        overflow_size = end - ind;
-                                        overflow[..overflow_size].copy_from_slice(&buf[ind..end]);
-                                        break;
-                                    }
-                                    Some(n) => {
-                                        start += n;
-                                        f.write_str(std::char::REPLACEMENT_CHARACTER.encode_utf8(&mut overflow))?;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
-    use grease::runtime::io::Blocking;
+    use crate::io::Blocking;
 
     #[test]
     fn byte_stream() {
@@ -472,7 +474,7 @@ mod test {
         let mut reader1 = stream.read();
         let mut reader2 = reader1.clone();
 
-        let ctx = grease::runtime::Context::builder().build().unwrap();
+        let ctx = crate::Context::builder().build().unwrap();
 
         let mut buf: [u8; 10001] = [0; 10001];
         match ctx.task.block_on(reader1.read_exact(&ctx.task, &mut buf)) {

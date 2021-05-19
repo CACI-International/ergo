@@ -1,11 +1,12 @@
 //! Testing helpers.
 
 use crate::{Script, StringSource};
-use ergo_runtime::{source::Source, ContextExt, EvalResult, Runtime, ScriptEnv};
-use grease::types::GreaseType;
+use ergo_runtime::{
+    traits::value_by_content, type_system::ErgoType, Context, Error, Source, Value,
+};
 
 pub struct Test {
-    rt: Runtime,
+    ctx: Context,
     env: ScriptEnv,
 }
 
@@ -13,21 +14,17 @@ impl Test {
     pub fn new(
         plugin_entry: extern "C" fn(
             ergo_runtime::plugin::Context,
-            &mut Runtime,
-        ) -> abi_stable::std_types::RResult<
-            Source<grease::Value>,
-            grease::Error,
-        >,
+            &Context,
+        )
+            -> abi_stable::std_types::RResult<Source<Value>, Error>,
     ) -> Self {
-        let (mut rt, _) = crate::script_context(
-            grease::runtime::Context::builder()
-                .threads(Some(1))
-                .keep_going(false),
+        let (ctx, _) = crate::script_context(
+            Context::builder().threads(Some(1)).keep_going(false),
             vec![],
         )
         .expect("failed to create runtime");
 
-        let plugin = plugin_entry(ergo_runtime::plugin::Context::get(), &mut rt);
+        let plugin = plugin_entry(ergo_runtime::plugin::Context::get(), &ctx);
 
         let mut env = ScriptEnv::default();
         env.insert(
@@ -35,7 +32,7 @@ impl Test {
             (plugin, None.into()).into(),
         );
 
-        Test { rt, env }
+        Test { ctx, env }
     }
 
     pub fn eval(&self, script: &str) -> EvalResult {
@@ -46,23 +43,23 @@ impl Test {
         dbg!(task.block_on(script.evaluate(&self.rt)))
     }
 
-    pub fn eval_success(&self, script: &str) -> Source<grease::Value> {
+    pub fn eval_success(&self, script: &str) -> Source<Value> {
         self.eval(script).expect("expected successful eval")
     }
 
-    pub fn assert_value_eq<T: GreaseType + std::fmt::Debug + Sync + PartialEq + 'static>(
+    pub fn assert_value_eq<T: ErgoType + std::fmt::Debug + Sync + PartialEq + 'static>(
         &self,
         script: &str,
         v: &T,
     ) {
         let val = self.eval_success(script);
         let val = self
-            .rt
+            .ctx
             .task
-            .block_on(self.rt.source_value_as::<T>(val))
+            .block_on(self.ctx.eval_as::<T>(val))
             .expect("type mismatch")
             .unwrap();
-        let val = self.rt.task.block_on(val).expect("value failed");
+        let val = self.ctx.task.block_on(val).expect("value failed");
         assert_eq!(val.as_ref(), v);
     }
 
@@ -76,12 +73,12 @@ impl Test {
 
     pub fn assert_success(&self, script: &str) {
         let v = self.eval_success(script).unwrap();
-        self.rt.task.block_on(v).as_ref().expect("value failed");
+        self.ctx.task.block_on(v).as_ref().expect("value failed");
     }
 
     pub fn assert_fail(&self, script: &str) {
         let v = self.eval_success(script).unwrap();
-        self.rt
+        self.ctx
             .task
             .block_on(v)
             .as_ref()
@@ -103,12 +100,15 @@ impl Test {
     pub fn assert_content_eq(&self, a: &str, b: &str) {
         let a = self.eval(a).expect("eval error").unwrap();
         let b = self.eval(b).expect("eval error").unwrap();
-        let task = self.rt.task.clone();
-        let a = task
-            .block_on(self.rt.value_by_content(a, true))
+        let a = self
+            .ctx
+            .task
+            .block_on(value_by_content(&self.ctx, a, true))
             .expect("value error");
-        let b = task
-            .block_on(self.rt.value_by_content(b, true))
+        let b = self
+            .ctx
+            .task
+            .block_on(value_by_content(&self.ctx, b, true))
             .expect("value error");
         assert_eq!(a, b);
     }

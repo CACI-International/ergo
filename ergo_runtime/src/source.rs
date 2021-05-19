@@ -1,13 +1,18 @@
 //! Runtime source information.
 
-use abi_stable::{
+use crate::abi_stable::{
+    bst::BstMap,
     erased_types::DynTrait,
+    path::PathBuf,
     sabi_trait,
     sabi_trait::prelude::*,
     std_types::{RArc, RBox, ROption, RResult, RString},
     StableAbi,
 };
-use grease::{value::Dependency, Error};
+use crate::{
+    dependency::{AsDependency, Dependency},
+    Error, Value,
+};
 use std::fmt;
 use std::future::Future;
 use std::io::{BufRead, BufReader, Read};
@@ -43,6 +48,10 @@ pub trait SourceFactory {
     /// The name of the source.
     fn name(&self) -> String;
 
+    fn path(&self) -> Option<std::path::PathBuf> {
+        None
+    }
+
     /// Read from the source.
     fn read<'a>(&'a self) -> Result<Box<dyn Read + 'a>, String>;
 }
@@ -51,6 +60,8 @@ pub trait SourceFactory {
 trait SourceFactoryAbi: Send + Sync {
     fn name(&self) -> RString;
 
+    fn path(&self) -> ROption<PathBuf>;
+
     #[sabi(last_prefix_field)]
     fn read<'a>(&'a self) -> RResult<DynTrait<'a, RBox<()>, ReadInterface>, RString>;
 }
@@ -58,6 +69,10 @@ trait SourceFactoryAbi: Send + Sync {
 impl<T: SourceFactory + Sync + Send> SourceFactoryAbi for T {
     fn name(&self) -> RString {
         SourceFactory::name(self).into()
+    }
+
+    fn path(&self) -> ROption<PathBuf> {
+        SourceFactory::path(self).map(|v| v.into()).into()
     }
 
     fn read<'a>(&'a self) -> RResult<DynTrait<'a, RBox<()>, ReadInterface>, RString> {
@@ -88,6 +103,9 @@ pub struct FileSource(pub std::path::PathBuf);
 
 /// A builtin source.
 pub struct Builtin(Option<&'static std::panic::Location<'static>>);
+
+/// A stored source.
+pub struct Stored;
 
 /// A reference to a SourceFactory.
 #[derive(Clone, Default, StableAbi)]
@@ -144,6 +162,15 @@ impl std::iter::Sum for Location {
         iter.next()
             .map(|first| iter.fold(first, |a, b| a + b))
             .unwrap_or_default()
+    }
+}
+
+impl SourceFactoryRef {
+    pub fn path(&self) -> Option<std::path::PathBuf> {
+        match &self.0 {
+            ROption::RNone => None,
+            ROption::RSome(src) => src.path().map(|v| v.into()).into(),
+        }
     }
 }
 
@@ -227,6 +254,10 @@ impl SourceFactory for FileSource {
         format!("{}", self.0.display())
     }
 
+    fn path(&self) -> Option<std::path::PathBuf> {
+        Some(self.0.clone())
+    }
+
     fn read<'a>(&'a self) -> Result<Box<dyn Read + 'a>, String> {
         Ok(Box::new(
             std::fs::File::open(self.0.clone()).map_err(|e| e.to_string())?,
@@ -240,6 +271,16 @@ impl SourceFactory for Builtin {
             None => "builtin".into(),
             Some(l) => format!("builtin ({})", l),
         }
+    }
+
+    fn read<'a>(&'a self) -> Result<Box<dyn Read + 'a>, String> {
+        Err("no source".into())
+    }
+}
+
+impl SourceFactory for Stored {
+    fn name(&self) -> String {
+        "stored".into()
     }
 
     fn read<'a>(&'a self) -> Result<Box<dyn Read + 'a>, String> {
@@ -290,7 +331,17 @@ impl<T> Source<T> {
         } else {
             None
         }))
-        .map(|_| v)
+        .with(v)
+    }
+
+    /// Create a value that has a stored source.
+    pub fn stored(v: T) -> Self {
+        Source::new(Stored).with(v)
+    }
+
+    /// Get the path of the source, if any.
+    pub fn path(&self) -> Option<std::path::PathBuf> {
+        self.source.path()
     }
 
     /// Get the inner value.
@@ -378,9 +429,8 @@ impl<T: ToString> Source<T> {
     ///
     /// The returned value will have this extra information in the error output (if an error occurs
     /// at all).
-    pub fn imbue_error_context(&self, v: grease::value::Value) -> grease::value::Value {
-        let src = self.source().with(self.value.to_string());
-        v.map_err(move |e| e.with_context(src))
+    pub fn imbue_error_context(&self, _v: Value) -> Value {
+        todo!()
     }
 }
 
@@ -448,8 +498,8 @@ impl<E> Source<E>
 where
     E: Into<Error>,
 {
-    /// Convert a sourced error into a grease::Error.
-    pub fn into_grease_error(self) -> Error {
+    /// Convert a sourced error into a crate::Error.
+    pub fn into_error(self) -> Error {
         self.map(|v| v.into().error()).into()
     }
 }
@@ -527,9 +577,9 @@ where
     }
 }
 
-impl<T: Into<Dependency>> From<Source<T>> for Dependency {
-    fn from(v: Source<T>) -> Dependency {
-        v.unwrap().into()
+impl<T: AsDependency> AsDependency for Source<T> {
+    fn as_dependency(&self) -> Dependency {
+        self.as_ref().unwrap().as_dependency()
     }
 }
 
@@ -659,13 +709,13 @@ where
     }
 }
 
-impl<'a, T, U> IntoSource for grease::bst::BstMap<T, U>
+impl<'a, T, U> IntoSource for BstMap<T, U>
 where
     T: IntoSource,
     T::Output: Ord,
     U: IntoSource,
 {
-    type Output = grease::bst::BstMap<Source<T::Output>, Source<U::Output>>;
+    type Output = BstMap<Source<T::Output>, Source<U::Output>>;
 
     fn into_source(self) -> Source<Self::Output> {
         let (value, rest): (Vec<_>, Vec<_>) = self

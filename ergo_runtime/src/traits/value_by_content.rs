@@ -1,159 +1,61 @@
-//! The ValueByContent grease trait.
+//! The ValueByContent ergo trait.
 
-use crate::types;
-use abi_stable::StableAbi;
-use grease::{
-    depends, grease_trait, grease_trait_impl, grease_traits_fn, path::PathBuf, runtime::Traits,
-    types::GreaseType, value::Value, Error,
-};
+use super::{type_name, NestedValues};
+use crate as ergo_runtime;
+use crate::abi_stable::type_erase::Eraseable;
+use crate::context::Traits;
+use crate::type_system::{ergo_trait, ergo_trait_impl, ErgoType};
+use crate::{dependency::GetDependencies, Value};
 
-/// A grease trait which identifies a value by its content.
-#[grease_trait]
+/// An ergo trait which identifies a value by its content.
+#[ergo_trait]
 pub trait ValueByContent {
     async fn value_by_content(self, deep: bool) -> Value;
 }
 
 impl ValueByContent {
     /// Implement ValueByContent for the given type.
-    pub fn add_impl<T: GreaseType + std::hash::Hash + Send + Sync + 'static>(traits: &mut Traits) {
-        traits.add_impl_for_type::<T, ValueByContent>(grease_trait_impl! {
-            impl<T: GreaseType + Send + Sync + std::hash::Hash + 'static> ValueByContent for T {
+    pub fn add_impl<T: ErgoType + GetDependencies + Eraseable + Clone>(traits: &Traits) {
+        traits.add_impl_for_type::<T, ValueByContent>(ergo_trait_impl! {
+            impl<T: ErgoType + GetDependencies + Eraseable + Clone> ValueByContent for T {
                 async fn value_by_content(self, _deep: bool) -> Value {
-                    let data = self.clone().await?;
-                    let deps = depends![data.as_ref()];
-                    Value::from(self).set_dependencies(deps)
+                    Value::constant(self.to_owned())
+                }
+            }
+        });
+    }
+
+    /// Implement ValueByContent for the given type, taking into account nested values.
+    pub fn add_nested_impl<T: ErgoType + GetDependencies + NestedValues + Eraseable + Clone>(
+        traits: &Traits,
+    ) {
+        traits.add_impl_for_type::<T, ValueByContent>(ergo_trait_impl! {
+            impl<T: ErgoType + GetDependencies + NestedValues + Eraseable + Clone> ValueByContent for T {
+                async fn value_by_content(self, deep: bool) -> Value {
+                    let mut v = self.to_owned();
+                    if deep {
+                        CONTEXT.eval_all(v.nested_values_mut()).await;
+                        for v in v.nested_values_mut() {
+                            let old_v = std::mem::replace(v, crate::types::Unset.into());
+                            *v = super::value_by_content(CONTEXT, old_v, deep).await;
+                        }
+                    }
+                    Value::constant(v)
                 }
             }
         });
     }
 }
 
-pub async fn value_by_content(
-    ctx: &grease::runtime::Context,
-    v: Value,
-    deep: bool,
-) -> grease::Result<Value> {
-    let t_ctx = ctx.clone();
-    let mut t = ctx
-        .get_trait::<ValueByContent, _, _>(&v, move |t| {
-            let t = t.clone();
-            let ctx = t_ctx.clone();
-            async move {
-                let name = super::type_name(&ctx, &t).await?;
-                Err(format!("no value by content trait for {}", name).into())
-            }
-        })
-        .await?;
-
-    t.value_by_content(v, deep).await
-}
-
-grease_traits_fn! {
-    ValueByContent::add_impl::<types::Unit>(traits);
-    ValueByContent::add_impl::<types::Bool>(traits);
-    ValueByContent::add_impl::<types::String>(traits);
-    ValueByContent::add_impl::<PathBuf>(traits);
-
-    impl ValueByContent for types::Array {
-        async fn value_by_content(self, deep: bool) -> Value {
-            let data = self.await?;
-            let types::Array(vals) = data.as_ref();
-            let mut inner_vals = Vec::new();
-            let mut errs: Vec<Error> = Vec::new();
-            if deep {
-                for v in vals.iter() {
-                    match super::value_by_content(CONTEXT, v.clone(), true).await {
-                        Ok(v) => inner_vals.push(v),
-                        Err(e) => errs.push(e)
-                    }
-                }
-            } else {
-                inner_vals = vals.iter().cloned().collect();
-            }
-            if !errs.is_empty() {
-                Err(errs.into_iter().collect::<Error>())?
-            }
-            types::Array(inner_vals.into()).into()
+pub async fn value_by_content(ctx: &crate::Context, v: Value, deep: bool) -> Value {
+    match ctx.get_trait::<ValueByContent>(&v) {
+        None => {
+            ctx.log.sublog("ValueByContent").debug(format!(
+                "no ValueByContent trait for {}, returning the value as-is",
+                type_name(ctx, &v)
+            ));
+            v
         }
-    }
-
-    impl ValueByContent for types::Iter {
-        async fn value_by_content(self, deep: bool) -> Value {
-            let iter = self.await?.owned();
-            let vals: Vec<_> = iter.try_collect().await?;
-            let mut inner_vals = Vec::new();
-            let mut errs: Vec<Error> = Vec::new();
-            if deep {
-                for v in vals {
-                    match super::value_by_content(CONTEXT, v.clone(), true).await {
-                        Ok(v) => inner_vals.push(v),
-                        Err(e) => errs.push(e)
-                    }
-                }
-            } else {
-                inner_vals = vals;
-            }
-            if !errs.is_empty() {
-                Err(errs.into_iter().collect::<Error>())?
-            }
-            let deps = depends![^@inner_vals];
-            types::Iter::new(inner_vals.into_iter(), deps).into()
-        }
-    }
-
-    impl ValueByContent for types::Map {
-        async fn value_by_content(self, deep: bool) -> Value {
-            let data = self.await?;
-            let types::Map(vals) = data.as_ref();
-            let mut inner_vals = Vec::new();
-            let mut errs: Vec<Error> = Vec::new();
-            if deep {
-                for (k,v) in vals.iter() {
-                    match super::value_by_content(CONTEXT, v.clone(), true).await {
-                        Ok(v) => inner_vals.push((k.clone(), v)),
-                        Err(e) => errs.push(e)
-                    }
-                }
-            } else {
-                inner_vals = vals.iter().map(|(k,v)| (k.clone(), v.clone())).collect();
-            }
-            if !errs.is_empty() {
-                Err(errs.into_iter().collect::<Error>())?
-            }
-            types::Map(inner_vals.into_iter().collect()).into()
-        }
-    }
-
-    impl ValueByContent for types::MapEntry {
-        async fn value_by_content(self, deep: bool) -> Value {
-            let data = self.await?.owned();
-            if deep {
-                let (key,value) = CONTEXT.task.join(
-                    super::value_by_content(CONTEXT, data.key, true),
-                    super::value_by_content(CONTEXT, data.value, true),
-                ).await?;
-                types::MapEntry { key, value }
-            } else {
-                data.into()
-            }.into()
-        }
-    }
-
-    impl ValueByContent for types::Unbound {
-        async fn value_by_content(self, _deep: bool) -> Value {
-            self.into()
-        }
-    }
-
-    impl ValueByContent for types::Merge {
-        async fn value_by_content(self, deep: bool) -> Value {
-            let data = self.await?.owned();
-            if deep {
-                let v = data.0.map_async(|v| super::value_by_content(CONTEXT, v, true)).await.transpose_ok()?;
-                types::Merge(v)
-            } else {
-                data.into()
-            }.into()
-        }
+        Some(t) => t.value_by_content(v, deep).await,
     }
 }

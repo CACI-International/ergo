@@ -5,10 +5,8 @@ authors = ["Alex Franchuk <afranchuk@caci.com>"]
 edition = "2018"
 
 [dependencies]
-abi_stable = "0.9"
 ergo_runtime = { path = "../ergo_runtime" }
 futures = "^0.3"
-grease = { path = "../grease" }
 libloading = "^0.6"
 log = "^0.4"
 plugin_tls = { version = "~0.2.2", features = ["host"] }

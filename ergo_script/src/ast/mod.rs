@@ -3,12 +3,9 @@
 //! Expressions are erased (possibly boxed) types, to save memory use for the small, universally
 //! common expressions (strings) over having an enum of all the expressions.
 
-use ergo_runtime::source::*;
-use ergo_runtime::ResultIterator;
-use grease::{
-    depends,
-    type_erase::{Eraseable, Erased},
-};
+use ergo_runtime::abi_stable::type_erase::{Eraseable, Erased};
+use ergo_runtime::source::{IntoSource, Source};
+use ergo_runtime::{depends, Dependencies, Error, ResultIterator};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
@@ -217,7 +214,7 @@ pub enum BlockItem {
     Merge(Expr),
 }
 
-impl ergo_runtime::source::IntoSource for BlockItem {
+impl IntoSource for BlockItem {
     type Output = Self;
 
     fn into_source(self) -> Source<Self::Output> {
@@ -229,7 +226,7 @@ impl ergo_runtime::source::IntoSource for BlockItem {
     }
 }
 
-impl From<&BlockItem> for grease::value::Dependencies {
+impl From<&BlockItem> for Dependencies {
     fn from(item: &BlockItem) -> Self {
         match item {
             BlockItem::Expr(e) | BlockItem::Merge(e) => depends![*e],
@@ -311,7 +308,7 @@ impl Subexpressions for ArrayItem {
     }
 }
 
-impl From<&ArrayItem> for grease::value::Dependencies {
+impl From<&ArrayItem> for Dependencies {
     fn from(item: &ArrayItem) -> Self {
         match item {
             ArrayItem::Expr(e) | ArrayItem::Merge(e) => depends![*e],
@@ -402,6 +399,8 @@ impl std::hash::Hash for Expression {
         h.write_u128(self.id());
     }
 }
+
+ergo_runtime::HashAsDependency!(Expression);
 
 impl Expression {
     pub fn unit() -> Self {
@@ -498,7 +497,7 @@ impl Expression {
     }
 
     fn create<T: IsExpression>(t: T) -> Self {
-        use grease::hash::HashFn;
+        use ergo_runtime::hash::HashFn;
         let mut hasher = HashFn::default();
         hasher.write_u8(T::EXPRESSION_TYPE as u8);
         t.hash_content(&mut hasher);
@@ -721,7 +720,7 @@ impl Expression {
                 updated |= e.update_capture_id();
             });
             if updated {
-                use grease::hash::HashFn;
+                use ergo_runtime::hash::HashFn;
                 let mut hasher = HashFn::default();
                 hasher.write_u8(self.expr_type() as u8);
                 match_all!(self => |v| v.hash_content(&mut hasher));
@@ -832,7 +831,7 @@ pub enum ExpressionType {
 /// Expressions with source information.
 pub type Expr = Source<Expression>;
 
-impl From<&DocCommentPart> for grease::value::Dependencies {
+impl From<&DocCommentPart> for Dependencies {
     fn from(part: &DocCommentPart) -> Self {
         match part {
             DocCommentPart::String(s) => depends![s],
@@ -849,9 +848,7 @@ impl From<&DocCommentPart> for grease::value::Dependencies {
 
 impl DocCommentPart {
     /// Get the dependencies of multiple doc comment parts.
-    pub fn dependencies<'a, I: IntoIterator<Item = &'a DocCommentPart>>(
-        parts: I,
-    ) -> grease::value::Dependencies {
+    pub fn dependencies<'a, I: IntoIterator<Item = &'a DocCommentPart>>(parts: I) -> Dependencies {
         let mut deps = depends![];
         for p in parts {
             deps += p.into();
@@ -861,33 +858,49 @@ impl DocCommentPart {
 }
 
 /// Load an AST from the given character stream.
-pub fn load(src: Source<()>) -> Result<(Expr, HashMap<CaptureKey, Expression>), grease::Error> {
+///
+/// The same context must be passed among all loads of expressions that may interact with
+/// eachother.
+pub fn load(
+    src: Source<()>,
+    ctx: &mut Context,
+) -> Result<(Expr, HashMap<CaptureKey, Expression>), Error> {
     let toks = tokenize::Tokens::from(src.open()?);
     let tree_toks = tokenize_tree::TreeTokens::from(toks);
     let tree_parser = parse_tree::Parser::from(tree_toks);
     let parser = parse::Parser::from(tree_parser);
 
     let mut expr = parser
-        .map(|v| v.map_err(|e| grease::Error::from(e)))
+        .map(|v| v.map_err(|e| Error::from(e)))
         .collect_result::<Vec<_>>()
         .map(|vec| {
             vec.into_source()
                 .map(|v| Expression::block(v.into_iter().map(Source::unwrap).collect()))
         })?;
 
-    let mut compiler = ExpressionCompiler::default();
+    let mut compiler = ExpressionCompiler::with_context(ctx);
     compiler.compile_captures(&mut *expr);
     Ok((expr, compiler.into_captures()))
 }
 
-#[derive(Default)]
-struct ExpressionCompiler {
-    capture_context: keyset::Context,
+/// Global context for compilation.
+pub type Context = keyset::Context;
+
+struct ExpressionCompiler<'a> {
+    capture_context: &'a mut Context,
     captures: HashMap<Expression, CaptureKey>,
     capture_mapping: ScopeMap<u128, CaptureKey>,
 }
 
-impl ExpressionCompiler {
+impl<'a> ExpressionCompiler<'a> {
+    pub fn with_context(ctx: &'a mut Context) -> Self {
+        ExpressionCompiler {
+            capture_context: ctx,
+            captures: Default::default(),
+            capture_mapping: Default::default(),
+        }
+    }
+
     fn capture(&mut self, e: &mut Expression) {
         // Temporarily replace the expression with a unit type until we determine
         // the capture key.
@@ -1018,7 +1031,11 @@ impl ExpressionCompiler {
             Force => |v| {
                 v.subexpressions_mut(|e| self.compile_captures(e));
                 v.derive_captures();
-                self.capture(&mut *v.value);
+                if v.value.expr_type() != ExpressionType::Capture {
+                    self.capture(&mut *v.value);
+                } else {
+                    // TODO: Warn about unnecessary force
+                }
                 // Replace this expression with the capture expression (replacing _it_ with a unit
                 // placeholder; it will be dropped when `*e` is set).
                 *e = std::mem::replace(&mut *v.value, Expression::unit());
@@ -1347,7 +1364,11 @@ mod test {
         assert!(e == expected);
     }
 
-    fn load(s: &str) -> Result<(Expr, HashMap<CaptureKey, Expression>), grease::Error> {
-        super::load(Source::new(StringSource::new("<string>", s.to_owned())))
+    fn load(s: &str) -> Result<(Expr, HashMap<CaptureKey, Expression>), Error> {
+        let mut ctx = super::Context::default();
+        super::load(
+            Source::new(StringSource::new("<string>", s.to_owned())),
+            &mut ctx,
+        )
     }
 }

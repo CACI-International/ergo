@@ -1,19 +1,15 @@
-//! Stored grease trait, allowing values to be written to and read from the store.
+//! Stored ergo trait, allowing values to be written to and read from the store.
 
-use super::type_name;
-use crate::{types, Result};
-use abi_stable::{std_types::RVec, StableAbi};
-use bincode;
-use grease::{
-    bst::BstMap,
-    grease_trait, grease_traits_fn,
-    path::PathBuf,
-    runtime::{Context, Item, ItemContent},
+use super::{type_name, type_name_for};
+use crate as ergo_runtime;
+use crate::abi_stable::{
+    std_types::RArc,
     type_erase::{Erased, ErasedTrivial},
-    types::Type,
-    value::Value,
+    StableAbi,
 };
-use std::collections::BTreeMap;
+use crate::context::{Context, Item, ItemContent};
+use crate::type_system::{ergo_trait, Type};
+use crate::{Result, Value};
 
 /// Context passed to Stored traits.
 #[derive(StableAbi)]
@@ -23,10 +19,10 @@ pub struct StoredContext {
 }
 
 /// Stored trait information.
-#[grease_trait]
+#[ergo_trait]
 pub trait Stored {
-    async fn put(&self, stored_ctx: &StoredContext, item: ItemContent);
-    async fn get(stored_ctx: &StoredContext, item: ItemContent) -> Erased;
+    async fn put(&self, stored_ctx: &StoredContext, item: ItemContent) -> crate::RResult<()>;
+    async fn get(stored_ctx: &StoredContext, item: ItemContent) -> crate::RResult<Erased>;
 }
 
 impl StoredContext {
@@ -45,144 +41,18 @@ impl StoredContext {
     }
 }
 
-grease_traits_fn! {
-    impl Stored for types::Unit {
-        async fn put(&self, _stored_ctx: &StoredContext, item: ItemContent) {
-            bincode::serialize_into(item, &())?
-        }
-
-        async fn get(_stored_ctx: &StoredContext, item: ItemContent) -> Erased {
-            let _t: () = bincode::deserialize_from(item)?;
-            Erased::new(types::Unit)
-        }
-    }
-
-    impl Stored for types::Bool {
-        async fn put(&self, _stored_ctx: &StoredContext, item: ItemContent) {
-            bincode::serialize_into(item, &self.0)?
-        }
-
-        async fn get(_stored_ctx: &StoredContext, item: ItemContent) -> Erased {
-            let v: bool = bincode::deserialize_from(item)?;
-            Erased::new(types::Bool(v))
-        }
-    }
-
-    impl Stored for types::String {
-        async fn put(&self, _stored_ctx: &StoredContext, item: ItemContent) {
-            bincode::serialize_into(item, &self.0)?
-        }
-
-        async fn get(_stored_ctx: &StoredContext, item: ItemContent) -> Erased {
-            let t = types::String(bincode::deserialize_from(item)?);
-            Erased::new(t)
-        }
-    }
-
-    impl Stored for PathBuf {
-        async fn put(&self, _stored_ctx: &StoredContext, item: ItemContent) {
-            bincode::serialize_into(item, self.as_ref().as_ref())?
-        }
-
-        async fn get(_stored_ctx: &StoredContext, item: ItemContent) -> Erased {
-            let t: std::path::PathBuf = bincode::deserialize_from(item)?;
-            Erased::new(PathBuf::from(t))
-        }
-    }
-
-    impl Stored for types::Array {
-        async fn put(&self, stored_ctx: &StoredContext, item: ItemContent) {
-            let mut ids: Vec<u128> = Vec::new();
-            for v in self.0.iter().cloned() {
-                ids.push(v.id());
-                stored_ctx.write_to_store(CONTEXT, v).await?;
-            }
-            bincode::serialize_into(item, &ids)?
-        }
-
-        async fn get(stored_ctx: &StoredContext, item: ItemContent) -> Erased {
-            let ids: Vec<u128> = bincode::deserialize_from(item)?;
-            let mut vals = RVec::new();
-            for id in ids {
-                vals.push(stored_ctx.read_from_store(CONTEXT, id).await?);
-            }
-            Erased::new(types::Array(vals))
-        }
-    }
-
-    impl Stored for types::Iter {
-        async fn put(&self, stored_ctx: &StoredContext, item: ItemContent) {
-            let mut ids: Vec<u128> = Vec::new();
-            let vals: Vec<_> = self.clone().try_collect().await?;
-            for v in vals {
-                ids.push(v.id());
-                stored_ctx.write_to_store(CONTEXT, v).await?;
-            }
-            bincode::serialize_into(item, &ids)?
-        }
-
-        async fn get(stored_ctx: &StoredContext, item: ItemContent) -> Erased {
-            let ids: Vec<u128> = bincode::deserialize_from(item)?;
-            let mut vals = Vec::new();
-            for id in ids {
-                vals.push(stored_ctx.read_from_store(CONTEXT, id).await?);
-            }
-            Erased::new(types::Iter::from_iter(vals.into_iter()))
-        }
-    }
-
-    impl Stored for types::Map {
-        async fn put(&self, stored_ctx: &StoredContext, item: ItemContent) {
-            let mut ids: BTreeMap<u128, u128> = BTreeMap::new();
-            for (k, v) in self.0.iter() {
-                let k = k.clone();
-                let v = v.clone();
-                ids.insert(k.id(), v.id());
-                stored_ctx.write_to_store(CONTEXT, k).await?;
-                stored_ctx.write_to_store(CONTEXT, v).await?;
-            }
-            bincode::serialize_into(item, &ids)?
-        }
-
-        async fn get(stored_ctx: &StoredContext, item: ItemContent) -> Erased {
-            let ids: BTreeMap<u128, u128> = bincode::deserialize_from(item)?;
-            let mut vals = BstMap::new();
-            for (k_id, v_id) in ids {
-                vals.insert(stored_ctx.read_from_store(CONTEXT, k_id).await?, stored_ctx.read_from_store(CONTEXT, v_id).await?);
-            }
-            Erased::new(types::Map(vals))
-        }
-    }
-
-    impl Stored for types::MapEntry {
-        async fn put(&self, stored_ctx: &StoredContext, item: ItemContent) {
-            let ids = (self.key.id(), self.value.id());
-            stored_ctx.write_to_store(CONTEXT, self.key.clone()).await?;
-            stored_ctx.write_to_store(CONTEXT, self.value.clone()).await?;
-            bincode::serialize_into(item, &ids)?
-        }
-
-        async fn get(stored_ctx: &StoredContext, item: ItemContent) -> Erased {
-            let ids: (u128, u128) = bincode::deserialize_from(item)?;
-            let key = stored_ctx.read_from_store(CONTEXT, ids.0).await?;
-            let value = stored_ctx.read_from_store(CONTEXT, ids.1).await?;
-            Erased::new(types::MapEntry { key, value })
-        }
-    }
-}
-
 /// Read a Value from the store by id.
 pub async fn read_from_store(ctx: &Context, store_item: &Item, id: u128) -> Result<Value> {
     let item = store_item.value_id(id);
     let mut content = item.read_existing()?;
     let tp: Type = ErasedTrivial::deserialize(&mut content)?.into();
-    if let Some(mut s) = ctx.get_trait_for_type::<Stored>(&tp) {
+    if let Some(s) = ctx.get_trait_for_type::<Stored>(&tp) {
         let stored_ctx = StoredContext::new(store_item.clone());
-        let data = s.get(&stored_ctx, content).await?;
+        let data = s.get(&stored_ctx, content).await.into_result()?;
         // TODO revisit metadata
-        Ok(unsafe { Value::ready(tp.into(), std::sync::Arc::new(data), Default::default(), id) })
+        Ok(unsafe { Value::with_id(RArc::new(tp), RArc::new(data), id) })
     } else {
-        Err(format!("no stored trait for {}", type_name(ctx, &tp).await?).into())
+        Err(format!("no stored trait for {}", type_name_for(ctx, &tp)).into())
     }
 }
 
@@ -192,27 +62,19 @@ pub fn present_in_store(_ctx: &Context, store_item: &Item, id: u128) -> bool {
 }
 
 /// Write a value to the store.
-///
-/// The value must already be forced (using `force_value_nested`).
-pub async fn write_to_store(ctx: &Context, store_item: &Item, v: Value) -> Result<()> {
-    let t_ctx = ctx.clone();
-    let mut s = ctx
-        .get_trait::<Stored, _, _>(&v, move |t| {
-            let t = t.clone();
-            let ctx = t_ctx.clone();
-            async move {
-                let name = type_name(&ctx, &t).await?;
-                Err(format!("no stored trait for {}", name).into())
-            }
-        })
-        .await?;
-
+pub async fn write_to_store(ctx: &Context, store_item: &Item, mut v: Value) -> Result<()> {
     let item = store_item.value(&v);
+    // TODO should this not eval (relying on the caller to eval)?
+    ctx.eval(&mut v).await;
+    let t = ctx
+        .get_trait::<Stored>(&v)
+        .ok_or_else(|| format!("no stored trait for {}", type_name(ctx, &v)))?;
+
     let mut content = item.write()?;
 
-    let tp: ErasedTrivial = v.grease_type().await?.clone().into();
+    let tp: ErasedTrivial = v.ergo_type().unwrap().clone().into();
     tp.serialize(&mut content)?;
 
     let stored_ctx = StoredContext::new(store_item.clone());
-    s.put(v, &stored_ctx, content).await
+    t.put(v, &stored_ctx, content).await.into_result()
 }

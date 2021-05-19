@@ -719,6 +719,7 @@ mod test {
     use super::*;
     use crate::ast::tokenize::Tokens;
     use crate::ast::tokenize_tree::TreeTokens;
+    use ergo_runtime::source::StringSource;
 
     use Tree::*;
 
@@ -932,7 +933,7 @@ mod test {
 
     fn single(s: &str) -> Tree {
         Parser::from(TreeTokens::from(Tokens::from(
-            Source::new(super::super::StringSource::new("<string>", s.to_owned()))
+            Source::new(StringSource::new("<string>", s.to_owned()))
                 .open()
                 .unwrap(),
         )))
@@ -944,7 +945,7 @@ mod test {
 
     fn assert_fail(s: &str) {
         Parser::from(TreeTokens::from(Tokens::from(
-            Source::new(super::super::StringSource::new("<string>", s.to_owned()))
+            Source::new(StringSource::new("<string>", s.to_owned()))
                 .open()
                 .unwrap(),
         )))
