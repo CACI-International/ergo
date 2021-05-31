@@ -1,13 +1,14 @@
 //! Testing helpers.
 
-use crate::{Script, StringSource};
+use crate::StringSource;
 use ergo_runtime::{
-    traits::value_by_content, type_system::ErgoType, Context, Error, Source, Value,
+    traits::value_by_content, type_system::ErgoType, Context, RResult, Result, Source, Value,
 };
+use std::collections::BTreeMap;
 
 pub struct Test {
-    ctx: Context,
-    env: ScriptEnv,
+    env: BTreeMap<String, Source<Value>>,
+    runtime: crate::Runtime,
 }
 
 impl Test {
@@ -15,32 +16,27 @@ impl Test {
         plugin_entry: extern "C" fn(
             ergo_runtime::plugin::Context,
             &Context,
-        )
-            -> abi_stable::std_types::RResult<Source<Value>, Error>,
+        ) -> RResult<Source<Value>>,
     ) -> Self {
-        let (ctx, _) = crate::script_context(
+        let rt = crate::Runtime::new(
             Context::builder().threads(Some(1)).keep_going(false),
             vec![],
         )
         .expect("failed to create runtime");
 
-        let plugin = plugin_entry(ergo_runtime::plugin::Context::get(), &ctx);
+        let plugin = plugin_entry(ergo_runtime::plugin::Context::get(), &rt.ctx)
+            .expect("plugin failed to load");
 
-        let mut env = ScriptEnv::default();
-        env.insert(
-            ergo_runtime::types::String::from("self").into(),
-            (plugin, None.into()).into(),
-        );
+        let env = vec![("self".into(), plugin)].into_iter().collect();
 
-        Test { ctx, env }
+        Test { env, runtime: rt }
     }
 
-    pub fn eval(&self, script: &str) -> EvalResult {
+    pub fn eval(&self, script: &str) -> Result<Source<Value>> {
         let source = Source::new(StringSource::new("<test>", script.to_owned()));
-        let mut script = Script::load(source)?;
-        script.top_level_env(self.env.clone());
-        let task = self.rt.task.clone();
-        dbg!(task.block_on(script.evaluate(&self.rt)))
+        let mut script = self.runtime.load(source)?;
+        script.extend_top_level_env(self.env.clone());
+        dbg!(self.block_on(script.evaluate(&self.runtime.ctx)))
     }
 
     pub fn eval_success(&self, script: &str) -> Source<Value> {
@@ -54,12 +50,9 @@ impl Test {
     ) {
         let val = self.eval_success(script);
         let val = self
-            .ctx
-            .task
-            .block_on(self.ctx.eval_as::<T>(val))
+            .block_on(self.runtime.ctx.eval_as::<T>(val))
             .expect("type mismatch")
             .unwrap();
-        let val = self.ctx.task.block_on(val).expect("value failed");
         assert_eq!(val.as_ref(), v);
     }
 
@@ -72,16 +65,14 @@ impl Test {
     }
 
     pub fn assert_success(&self, script: &str) {
-        let v = self.eval_success(script).unwrap();
-        self.ctx.task.block_on(v).as_ref().expect("value failed");
+        let mut v = self.eval_success(script).unwrap();
+        self.block_on(self.runtime.ctx.eval(&mut v))
+            .expect("value failed");
     }
 
     pub fn assert_fail(&self, script: &str) {
-        let v = self.eval_success(script).unwrap();
-        self.ctx
-            .task
-            .block_on(v)
-            .as_ref()
+        let mut v = self.eval_success(script).unwrap();
+        self.block_on(self.runtime.ctx.eval(&mut v))
             .expect_err("value succeeded");
     }
 
@@ -100,17 +91,13 @@ impl Test {
     pub fn assert_content_eq(&self, a: &str, b: &str) {
         let a = self.eval(a).expect("eval error").unwrap();
         let b = self.eval(b).expect("eval error").unwrap();
-        let a = self
-            .ctx
-            .task
-            .block_on(value_by_content(&self.ctx, a, true))
-            .expect("value error");
-        let b = self
-            .ctx
-            .task
-            .block_on(value_by_content(&self.ctx, b, true))
-            .expect("value error");
+        let a = self.block_on(value_by_content(&self.runtime.ctx, a, true));
+        let b = self.block_on(value_by_content(&self.runtime.ctx, b, true));
         assert_eq!(a, b);
+    }
+
+    fn block_on<R, Fut: std::future::Future<Output = R>>(&self, fut: Fut) -> R {
+        self.runtime.ctx.task.block_on(fut)
     }
 }
 

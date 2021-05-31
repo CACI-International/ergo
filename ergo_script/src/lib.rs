@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 mod ast;
 mod base;
 mod eval;
-//pub mod testing;
+pub mod testing;
 
 pub mod constants {
     macro_rules! program_name {
@@ -130,6 +130,11 @@ impl Script {
     /// Set the top-level environment.
     pub fn top_level_env(&mut self, env: BTreeMap<String, Source<Value>>) {
         self.top_level_env = env;
+    }
+
+    /// Extend the top-level environment.
+    pub fn extend_top_level_env(&mut self, env: BTreeMap<String, Source<Value>>) {
+        self.top_level_env.extend(env);
     }
 
     /// Evaluate the script with the given runtime and additional load paths.
