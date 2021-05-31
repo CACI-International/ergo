@@ -23,7 +23,7 @@ impl Doc {
     pub async fn get(ctx: &crate::Context, value: &Value) -> String {
         if let Some(v) = value.get_metadata(&Doc) {
             let mut v = v.owned();
-            ctx.eval(&mut v).await;
+            drop(ctx.eval(&mut v).await);
             if let Some(v) = v.as_type::<crate::types::String>().ok() {
                 return v.to_owned().0.into();
             }

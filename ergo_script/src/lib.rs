@@ -582,10 +582,7 @@ mod test {
         let runtime = make_runtime()?;
         let mut should_fail = block_on(script_eval(&runtime, s))?;
         assert!(block_on(async move {
-            runtime.ctx.eval(&mut should_fail).await;
-            dbg!(ergo_runtime::traits::type_name(&runtime.ctx, &should_fail));
-            dbg!(&should_fail);
-            should_fail.is_type::<types::Error>()
+            runtime.ctx.eval(&mut should_fail).await.is_err()
         }));
         Ok(())
     }
@@ -610,18 +607,8 @@ mod test {
         expected: ScriptResult,
     ) -> BoxFuture<'a, Result<(), String>> {
         dbg!(&v);
-        let mut v = Source::builtin(v);
+        let v = Source::builtin(v);
         async move {
-            {
-                ctx.eval(&mut v).await;
-                let mut s = String::new();
-                let mut f = ergo_runtime::traits::Formatter::new(&mut s);
-                ergo_runtime::traits::display(ctx, v.clone().unwrap(), &mut f)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                drop(f);
-                dbg!(s);
-            }
             match expected {
                 SRUnit => match ctx.eval_as::<types::Unit>(v).await {
                     Err(e) => Err(e.to_string()),

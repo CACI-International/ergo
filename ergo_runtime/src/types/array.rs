@@ -98,12 +98,12 @@ ergo_traits_fn! {
         async fn bind(&self, arg: Source<Value>) -> Value {
             let (source, mut arg) = arg.take();
 
-            CONTEXT.eval(&mut arg).await;
+            crate::try_result!(CONTEXT.eval(&mut arg).await);
 
             crate::value::match_value! { arg,
                 super::Index(ind) => {
                     // Return value at index
-                    let (ind_source, ind) = crate::err_return_value!(CONTEXT.eval_as::<super::String>(ind).await).take();
+                    let (ind_source, ind) = crate::try_result!(CONTEXT.eval_as::<super::String>(ind).await).take();
                     source.with(match isize::from_str(ind.as_ref()) {
                         Err(_) => return ind_source.with("non-integer index").into_error().into(),
                         Ok(mut ind) => {
@@ -123,7 +123,7 @@ ergo_traits_fn! {
                     .transpose_err_with_context("while indexing array").into()
                 },
                 Array(arr) => {
-                    crate::err_return_value!(traits::bind_array(CONTEXT, self.0.clone(),
+                    crate::try_result!(traits::bind_array(CONTEXT, self.0.clone(),
                         source.clone().with(
                             arr.clone()
                         ),

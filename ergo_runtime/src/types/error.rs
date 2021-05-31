@@ -21,7 +21,7 @@ impl From<Error> for TypedValue<Error> {
 
 /// Return any error as an Error-typed Value.
 #[macro_export]
-macro_rules! err_return_value {
+macro_rules! try_result {
     ( $e:expr ) => {
         match $e {
             Ok(v) => v,
@@ -61,7 +61,7 @@ where
 {
     /// Convert a result to a value.
     fn from(result: Result<T, E>) -> Self {
-        err_return_value!(result).into()
+        try_result!(result).into()
     }
 }
 

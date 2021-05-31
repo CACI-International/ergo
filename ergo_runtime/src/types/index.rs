@@ -28,7 +28,7 @@ ergo_traits_fn! {
 
     impl traits::Bind for Index {
         async fn bind(&self, arg: Source<Value>) -> Value {
-            let ind = crate::err_return_value!(CONTEXT.eval_as::<Index>(arg).await).unwrap().to_owned().0;
+            let ind = crate::try_result!(CONTEXT.eval_as::<Index>(arg).await).unwrap().to_owned().0;
             traits::bind(CONTEXT, self.0.clone(), ind).await;
             super::Unit.into()
         }

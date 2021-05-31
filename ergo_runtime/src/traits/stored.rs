@@ -65,7 +65,7 @@ pub fn present_in_store(_ctx: &Context, store_item: &Item, id: u128) -> bool {
 pub async fn write_to_store(ctx: &Context, store_item: &Item, mut v: Value) -> Result<()> {
     let item = store_item.value(&v);
     // TODO should this not eval (relying on the caller to eval)?
-    ctx.eval(&mut v).await;
+    ctx.eval(&mut v).await?;
     let t = ctx
         .get_trait::<Stored>(&v)
         .ok_or_else(|| format!("no stored trait for {}", type_name(ctx, &v)))?;

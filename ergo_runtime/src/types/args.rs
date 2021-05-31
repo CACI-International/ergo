@@ -310,7 +310,7 @@ where
 }
 
 async fn args_index(ctx: &Context, ind: Source<Value>, args: &UncheckedArguments) -> Value {
-    let (src, ind) = crate::err_return_value!(ctx.eval_as::<super::String>(ind).await).take();
+    let (src, ind) = crate::try_result!(ctx.eval_as::<super::String>(ind).await).take();
     let s = ind.as_ref().as_str();
     if s == "positional" {
         let mut pos = args.positional.clone();
@@ -330,7 +330,7 @@ ergo_traits_fn! {
     impl traits::Bind for Args {
         async fn bind(&self, arg: Source<Value>) -> Value {
             let (src, mut arg) = arg.take();
-            CONTEXT.eval(&mut arg).await;
+            crate::try_result!(CONTEXT.eval(&mut arg).await);
 
             crate::value::match_value!{ arg,
                 Args { args } => {
@@ -347,7 +347,7 @@ ergo_traits_fn! {
     impl traits::Bind for PatternArgs {
         async fn bind(&self, arg: Source<Value>) -> Value {
             let (src, mut arg) = arg.take();
-            CONTEXT.eval(&mut arg).await;
+            crate::try_result!(CONTEXT.eval(&mut arg).await);
 
             crate::value::match_value!{ arg,
                 PatternArgs { args } => {

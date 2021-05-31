@@ -168,7 +168,7 @@ impl Parser for ErgoFnLike {
             let v_as_type = match ty {
                 None => quote! { v },
                 Some(ref ty) => quote! {
-                    ergo_runtime::err_return_value!(CONTEXT.eval_as::<#ty>(v).await)
+                    ergo_runtime::try_result!(CONTEXT.eval_as::<#ty>(v).await)
                 }
             };
             let typed_val = if optional {
@@ -182,7 +182,7 @@ impl Parser for ErgoFnLike {
                 quote! {
                     match #get_arg {
                         Some(v) => #v_as_type,
-                        None => ergo_runtime::err_return_value!(Err(
+                        None => ergo_runtime::try_result!(Err(
                                 std::concat!("not enough arguments, expected ", std::stringify!(#ty), " ", std::stringify!(#bind))
                         ))
                     }
@@ -199,7 +199,7 @@ impl Parser for ErgoFnLike {
             }
         } else {
             quote! {
-                ergo_runtime::err_return_value!(__ergo_fn_args.unused_arguments());
+                ergo_runtime::try_result!(__ergo_fn_args.unused_arguments());
                 drop(__ergo_fn_args);
             }
         };
@@ -217,7 +217,7 @@ impl Parser for ErgoFnLike {
                 ergo_runtime::types::Unbound::new(move |CONTEXT, __ergo_fn_arg| {
                     #(#clones)*
                     ergo_runtime::future::FutureExt::boxed(async move {
-                        let (ARGS_SOURCE, __ergo_fn_args) = ergo_runtime::err_return_value!(CONTEXT.eval_as::<#which>(__ergo_fn_arg).await).take();
+                        let (ARGS_SOURCE, __ergo_fn_args) = ergo_runtime::try_result!(CONTEXT.eval_as::<#which>(__ergo_fn_arg).await).take();
                         let mut __ergo_fn_args = __ergo_fn_args.to_owned().args;
                         #(#args)*
                         #rest_or_check

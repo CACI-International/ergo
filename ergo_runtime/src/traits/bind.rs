@@ -39,7 +39,9 @@ pub fn bind_error(ctx: &Context, v: Source<Value>) -> crate::Error {
 pub async fn bind(ctx: &Context, mut v: Source<Value>, arg: Source<Value>) -> Source<Value> {
     let call_site = (v.source(), arg.source()).into_source();
 
-    ctx.eval(&mut v).await;
+    if let Err(e) = ctx.eval(&mut v).await {
+        return v.source().with(e.into());
+    }
     call_site.with(match ctx.get_trait::<Bind>(&v) {
         None => bind_error(ctx, v).into(),
         Some(t) => t.bind(v.unwrap(), arg).await,
@@ -48,8 +50,7 @@ pub async fn bind(ctx: &Context, mut v: Source<Value>, arg: Source<Value>) -> So
 
 async fn bind_no_error(ctx: &Context, v: Source<Value>, arg: Source<Value>) -> crate::Result<()> {
     let mut result = bind(ctx, v, arg).await.unwrap();
-    ctx.eval(&mut result).await;
-    crate::try_value!(result);
+    ctx.eval(&mut result).await?;
     Ok(())
 }
 

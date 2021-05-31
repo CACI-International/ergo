@@ -75,8 +75,8 @@ ergo_traits_fn! {
     impl traits::Bind for MapEntry {
         async fn bind(&self, arg: Source<Value>) -> Value {
             // TODO pattern errors?
-            let ind = crate::err_return_value!(CONTEXT.eval_as::<super::Index>(arg).await).unwrap().to_owned().0;
-            let (src, ind) = crate::err_return_value!(CONTEXT.eval_as::<super::String>(ind).await).take();
+            let ind = crate::try_result!(CONTEXT.eval_as::<super::Index>(arg).await).unwrap().to_owned().0;
+            let (src, ind) = crate::try_result!(CONTEXT.eval_as::<super::String>(ind).await).take();
             let s = ind.as_ref().as_str();
             if s == "key" {
                 self.key.as_ref().unwrap().clone()

@@ -3,8 +3,8 @@
 use crate::constants::{DIR_NAME, EXTENSION, PLUGIN_ENTRY, WORKSPACE_NAME};
 use ergo_runtime::abi_stable::external_types::RMutex;
 use ergo_runtime::{
-    depends, err_return_value, error::RResult, nsid, source::FileSource, traits,
-    type_system::ErgoType, types, value::match_value, Context, Source, Value,
+    depends, error::RResult, nsid, source::FileSource, traits, try_result, type_system::ErgoType,
+    types, value::match_value, Context, Source, Value,
 };
 use futures::future::FutureExt;
 use libloading as dl;
@@ -178,7 +178,7 @@ impl LoadFunctions {
             /// provided, the resulting value is called with them.
             #[cloning(ld)]
             async fn load(mut path: _, ...) -> Value {
-                CONTEXT.eval(&mut path).await;
+                ergo_runtime::try_result!(CONTEXT.eval(&mut path).await);
                 let (target_source, path) = path.take();
                 let target = match_value!{path,
                     types::String(s) => s.as_str().into(),
@@ -262,7 +262,7 @@ impl LoadFunctions {
 
                     let resolved = ctx.shared_state.get(|| Ok(ResolvedWorkspaces::default())).unwrap();
 
-                    let path = err_return_value!({
+                    let path = try_result!({
                         let mut guard = resolved.map.lock();
                         match guard.get(&path_basis) {
                             Some(v) => v.clone(),

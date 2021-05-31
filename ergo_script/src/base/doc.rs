@@ -1,8 +1,8 @@
 //! Doc-related functions.
 
 use ergo_runtime::{
-    depends, err_return_value, metadata::Doc, nsid, traits, types, value::match_value, Context,
-    Error, Result, Source, Value,
+    depends, metadata::Doc, nsid, traits, try_result, types, value::match_value, Context, Error,
+    Result, Source, Value,
 };
 use futures::future::FutureExt;
 use std::path::PathBuf;
@@ -111,7 +111,7 @@ pub fn doc() -> Value {
         /// Returns the doc Path, or Unset if no Path is present (documentation is not being
         /// written to the filesystem).
         async fn path() -> Value {
-            match err_return_value!(DocPath::get(CONTEXT).await) {
+            match try_result!(DocPath::get(CONTEXT).await) {
                 None => Error::from("no doc root set").into(),
                 Some(p) => types::Path::from(p.current()).into()
             }
@@ -133,7 +133,7 @@ pub fn doc() -> Value {
             };
 
             if let Some(parent) = doc_path.parent() {
-                err_return_value!(std::fs::create_dir_all(parent));
+                try_result!(std::fs::create_dir_all(parent));
             }
             let doc = {
                 let doc_ctx = DocPath::new(path_source.with(doc_path.clone())).context(CONTEXT, ARGS_SOURCE);
@@ -145,7 +145,7 @@ pub fn doc() -> Value {
             } else {
                 doc_path.set_extension("md");
             }
-            err_return_value!(std::fs::write(&doc_path, doc.as_bytes()));
+            try_result!(std::fs::write(&doc_path, doc.as_bytes()));
             types::Path::from(doc_path).into()
         }
     };
@@ -165,7 +165,7 @@ pub fn doc() -> Value {
                 v => return traits::type_error(CONTEXT, path_source.with(v), "String or Path").into()
             };
 
-            match err_return_value!(DocPath::get(CONTEXT).await) {
+            match try_result!(DocPath::get(CONTEXT).await) {
                 None => types::Path::from(path).into(),
                 Some(mut doc_path) => {
                     let mut rel_path = std::path::PathBuf::new();
@@ -181,7 +181,7 @@ pub fn doc() -> Value {
                     doc_path.join(path_source.with(&rel_path));
                     let new_path = doc_path.current();
                     if let Some(parent) = new_path.parent() {
-                        err_return_value!(std::fs::create_dir_all(parent));
+                        try_result!(std::fs::create_dir_all(parent));
                     }
                     let doc = {
                         let doc_ctx = doc_path.context(CONTEXT, ARGS_SOURCE);
@@ -194,7 +194,7 @@ pub fn doc() -> Value {
                         rel_path.set_extension("md");
                     }
                     let output_file = old_doc_path.join(&rel_path);
-                    err_return_value!(std::fs::write(&output_file, doc.as_bytes()));
+                    try_result!(std::fs::write(&output_file, doc.as_bytes()));
                     types::Path::from(rel_path).into()
                 }
             }
@@ -210,13 +210,13 @@ pub fn doc() -> Value {
                 let (source, v) = v.take();
                 match_value!{v,
                     types::Args { mut args } => {
-                        let to_doc = err_return_value!(args.next().ok_or("no value to document"));
-                        err_return_value!(args.unused_arguments());
+                        let to_doc = try_result!(args.next().ok_or("no value to document"));
+                        try_result!(args.unused_arguments());
 
                         types::String::from(Doc::get(ctx, &to_doc).await).into()
                     },
                     types::Index(ind) => {
-                        let (src, ind) = err_return_value!(ctx.eval_as::<types::String>(ind).await).take();
+                        let (src, ind) = try_result!(ctx.eval_as::<types::String>(ind).await).take();
                         let s = ind.as_ref().as_str();
                         if s == "path" {
                             path

@@ -117,7 +117,7 @@ ergo_traits_fn! {
         async fn bind(&self, arg: Source<Value>) -> Value {
             let (source, mut arg) = arg.take();
 
-            CONTEXT.eval(&mut arg).await;
+            crate::try_result!(CONTEXT.eval(&mut arg).await);
 
             crate::value::match_value! { arg,
                 super::Index(ind) => {
@@ -129,7 +129,7 @@ ergo_traits_fn! {
                     }
                 },
                 Map(map) => {
-                    crate::err_return_value!(traits::bind_map(CONTEXT, self.0.clone(), source.clone().with(map.clone()), false).await);
+                    crate::try_result!(traits::bind_map(CONTEXT, self.0.clone(), source.clone().with(map.clone()), false).await);
                     super::Unit.into()
                 },
                 v => traits::bind_error(CONTEXT, source.with(v)).into()

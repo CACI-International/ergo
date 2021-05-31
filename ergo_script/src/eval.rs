@@ -9,7 +9,8 @@ use ergo_runtime::abi_stable::external_types::RMutex;
 use ergo_runtime::source::Source;
 use ergo_runtime::Result;
 use ergo_runtime::{
-    depends, metadata, nsid, traits, types, value::match_value, Context, Dependencies, Value,
+    depends, metadata, nsid, traits, try_result, types, value::match_value, Context, Dependencies,
+    Value,
 };
 use futures::future::{join_all, BoxFuture, FutureExt};
 use log::error;
@@ -382,7 +383,7 @@ impl Evaluator {
                         )
                         .await
                         .take();
-                    ctx.eval(&mut val).await;
+                    drop(ctx.eval(&mut val).await);
                     match_value! { val.clone(),
                         types::Array(arr) => {
                             // TODO should this implicitly evaluate to a unit type when the array is
@@ -410,12 +411,14 @@ impl Evaluator {
                                 }
                             }
                         }
+                        e@types::Error {..} => {
+                            has_errors = true;
+                            errs.push(e);
+                        }
                         v => {
                             has_errors = true;
-                            if !v.is_type::<types::Error>() {
-                                let name = traits::type_name(ctx, &v);
-                                errs.push(val_source.with(format!("cannot merge value with type {}", name)).into_error());
-                            }
+                            let name = traits::type_name(ctx, &v);
+                            errs.push(val_source.with(format!("cannot merge value with type {}", name)).into_error());
                         }
                     }
                 }
@@ -450,8 +453,8 @@ impl Evaluator {
                     let bind_deps = depends![*b, *e];
                     let ctx_c = ctx.clone();
                     let to_bind = async move {
-                        let mut v = traits::bind(&ctx_c, b, e).await;
-                        ctx_c.eval(&mut v).await;
+                        let mut v = traits::bind(&ctx_c, b, e).await.unwrap();
+                        try_result!(ctx_c.eval(&mut v).await);
                         v
                     }
                     .shared();
@@ -474,7 +477,7 @@ impl Evaluator {
                                 Value::dyn_new(
                                     move |_| async move {
                                         let bind_result = to_bind.await;
-                                        ergo_runtime::return_if_error!(bind_result.unwrap());
+                                        ergo_runtime::return_if_error!(bind_result);
                                         v
                                     },
                                     deps,
@@ -565,7 +568,7 @@ impl Evaluator {
                                         // bindings).
                                         if has_val {
                                             let mut last = last.unwrap().unwrap();
-                                            ctx.eval(&mut last).await;
+                                            ctx.eval(&mut last).await?;
                                             traits::display(ctx, last, &mut formatter).await?;
                                         }
                                     }
@@ -595,10 +598,8 @@ impl Evaluator {
                         // TODO check for error values?
                         let sets = sets.into_inner();
 
-                        let mut bind_result = traits::bind(ctx, bind, v).await;
-                        ctx.eval(&mut bind_result).await;
-
-                        ergo_runtime::return_if_error!(bind_result.unwrap());
+                        let mut bind_result = traits::bind(ctx, bind, v).await.unwrap();
+                        try_result!(ctx.eval(&mut bind_result).await);
 
                         let (new_captures, local_env): (Vec<_>, LocalEnv) = sets.into_iter().map(|(cap, k, v)| {
                             (cap.map(|c| (c, v.clone())), (k, v))
@@ -686,7 +687,9 @@ impl Evaluator {
                     {
                         Err(e) => e.into(),
                         Ok((pos, keyed, _)) => {
-                            ctx.eval(&mut function).await;
+                            if let Err(e) = ctx.eval(&mut function).await {
+                                return src.with(e.into());
+                            }
                             let args = types::args::Arguments::new(pos, keyed).unchecked();
                             // TODO use a different source for args?
                             traits::bind(ctx, function, src.with(types::$arg_type { args }.into()))
@@ -721,18 +724,20 @@ impl Evaluator {
                                 }
                                 ast::ArrayItem::Merge(e) => {
                                     let (val_source, mut val) = self.evaluate_with_env(ctx, e, captures, None, sets).take();
-                                    ctx.eval(&mut val).await;
+                                    drop(ctx.eval(&mut val).await);
                                     match_value! { val.clone(),
                                         types::Array(arr) => results.extend(arr),
                                         types::Unbound {..} => {
                                             results.push(val_source.clone().with(types::BindRest(val_source.with(val)).into()));
                                         }
+                                        e@types::Error {..} => {
+                                            has_errors = true;
+                                            errs.push(e);
+                                        }
                                         v => {
                                             has_errors = true;
-                                            if !v.is_type::<types::Error>() {
-                                                let name = traits::type_name(ctx, &v);
-                                                errs.push(val_source.with(format!("cannot merge value with type {}", name)).into_error());
-                                            }
+                                            let name = traits::type_name(ctx, &v);
+                                            errs.push(val_source.with(format!("cannot merge value with type {}", name)).into_error());
                                         }
                                     }
                                 }
@@ -763,7 +768,9 @@ impl Evaluator {
                     Index => |ind| {
                         let mut value = self.evaluate_with_env(ctx, ind.value.clone(), &captures, None, sets);
                         let index = self.evaluate_with_env(ctx, ind.index.clone(), &captures, None, sets);
-                        ctx.eval(&mut value).await;
+                        if let Err(e) = ctx.eval(&mut value).await {
+                            return value.source().with(e.into());
+                        }
                         traits::bind(ctx, value, index.source().with(types::Index(index).into())).await.unwrap()
                     },
                     Command => |cmd| command_impl!(cmd, Args),

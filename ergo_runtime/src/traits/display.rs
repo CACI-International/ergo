@@ -47,7 +47,7 @@ pub trait Display {
 
 /// Display the given value to the Formatter.
 pub async fn display(ctx: &Context, mut v: Value, f: &mut Formatter<'_>) -> crate::Result<()> {
-    ctx.eval(&mut v).await;
+    ctx.eval(&mut v).await?;
     match ctx.get_trait::<Display>(&v) {
         None => {
             write!(f, "<cannot display values of type {}>", type_name(ctx, &v))?;
