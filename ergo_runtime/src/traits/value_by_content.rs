@@ -34,7 +34,7 @@ impl ValueByContent {
                 async fn value_by_content(self, deep: bool) -> Value {
                     let mut v = self.to_owned();
                     if deep {
-                        CONTEXT.eval_all(v.nested_values_mut()).await;
+                        crate::try_result!(CONTEXT.eval_all(v.nested_values_mut()).await);
                         for v in v.nested_values_mut() {
                             let old_v = std::mem::replace(v, crate::types::Unset.into());
                             *v = super::value_by_content(CONTEXT, old_v, deep).await;

@@ -1,6 +1,6 @@
 //! Application runtime options.
 
-use grease::runtime::LogLevel;
+use ergo_runtime::context::LogLevel;
 pub use structopt::StructOpt;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]

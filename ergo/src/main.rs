@@ -1,14 +1,17 @@
-use abi_stable::std_types::{RDuration, ROption, RSlice, RString};
-use ergo_runtime::{source::Source, ContextExt};
+use ergo_runtime::abi_stable::std_types::{RDuration, ROption, RSlice, RString};
+use ergo_runtime::{
+    context::{LogEntry, LogTarget, LogTaskKey},
+    source::StringSource,
+    try_value, Error, Source,
+};
 use ergo_script::constants::{PROGRAM_NAME, WORKSPACE_NAME};
-use grease::runtime::*;
+use ergo_script::Runtime;
 use simplelog::WriteLogger;
 use std::io::Write;
 use std::str::FromStr;
 
 mod options;
 mod output;
-mod script;
 mod sync;
 
 /// Constant values shared throughout the program.
@@ -21,7 +24,6 @@ mod constants {
 
 use options::*;
 use output::{error as error_output, output, Output};
-use script::{Script, StringSource};
 
 trait AppErr {
     type Output;
@@ -144,7 +146,7 @@ fn run(opts: Opts) -> Result<String, String> {
     }
 
     // Get initial load path from exe location and user directories.
-    let initial_load_path = {
+    let load_path = {
         let mut load_paths = Vec::new();
 
         // Add neighboring share directories when running in a [prefix]/bin directory.
@@ -198,30 +200,40 @@ fn run(opts: Opts) -> Result<String, String> {
     // on values cleaning up after themselves.
     let weak_logger = std::sync::Arc::downgrade(&logger);
 
-    // Create runtime context
-    let (mut ctx, control) = script::script_context(
-        Context::builder()
-            .logger(WeakLogTarget(weak_logger.clone()))
+    let error_logger = weak_logger.clone();
+
+    // Create script runtime.
+    let runtime = Runtime::new(
+        ergo_runtime::Context::builder()
+            .logger(WeakLogTarget(weak_logger))
             .storage_directory(storage_directory)
             .threads(opts.jobs)
-            .keep_going(!opts.stop),
-        initial_load_path,
+            .keep_going(!opts.stop)
+            .error_handler(move |e: Error| {
+                if let Some(logger) = error_logger.upgrade() {
+                    if let Ok(mut logger) = logger.lock() {
+                        logger.new_error(e);
+                    }
+                }
+            }),
+        load_path,
     )
     .expect("failed to create script context");
 
-    ctx.lint = opts.lint;
+    // TODO opts.lint
 
     // Set interrupt signal handler to abort tasks.
     //
     // Keep _task in scope until the end of the function. After the function exits,
     // the ctrlc handler will not hold onto the context task manager, which is important for
     // cleanup.
-    let (_task, task_ref) = sync::Scoped::new_pair(ctx.task.clone());
+    let (_task, task_ref) = sync::Scoped::new_pair(runtime.ctx.task.clone());
     {
         ctrlc::set_handler(move || task_ref.with(|t| t.abort()))
             .app_err_result("failed to set signal handler")?;
     }
 
+    // Build script string to evaluate
     let mut eval_args = String::new();
     let no_args = opts.args.is_empty();
     for arg in opts.args {
@@ -230,9 +242,6 @@ fn run(opts: Opts) -> Result<String, String> {
         }
         eval_args.push_str(&arg);
     }
-
-    // Ensure load path is set for path resolution done below.
-    ctx.reset_load_path();
 
     let mut to_eval = if opts.expression {
         if no_args {
@@ -262,7 +271,7 @@ fn run(opts: Opts) -> Result<String, String> {
                 eval_args.len()
             };
             let first_arg = &eval_args[0..first_arg_end];
-            let function = if ergo_script::resolve_script_path(&ctx, first_arg.as_ref()).is_none() {
+            let function = if runtime.resolve_script_path(first_arg.as_ref()).is_none() {
                 "workspace:command"
             } else {
                 PROGRAM_NAME
@@ -278,60 +287,45 @@ fn run(opts: Opts) -> Result<String, String> {
     }
 
     let source = Source::new(StringSource::new("<command line>", to_eval));
-    let loaded = Script::load(source).app_err_result("failed to parse script file")?;
-
-    // Setup error observer to display in logging.
-    let on_error = move |e: grease::Error| {
-        if let Some(logger) = weak_logger.upgrade() {
-            if let Ok(mut logger) = logger.lock() {
-                logger.new_error(e);
-            }
-        }
-    };
-
-    let task = ctx.task.clone();
-    let script_output = task.block_on(grease::value::Errored::observe(
-        on_error.clone(),
-        loaded.evaluate(&ctx),
-    ));
+    let loaded = runtime.ctx.task.block_on(runtime.evaluate(source));
 
     // We *must* keep the context around because it holds onto plugins, which may have functions referenced in values.
     // Likewise, our return from this function is "flattened" to strings to ensure any references to plugins are used when the plugins are still loaded.
 
-    let value_to_execute = script_output.and_then(|script_output| {
-        task.block_on(grease::value::Errored::observe(
-            on_error.clone(),
-            script::final_value(&mut ctx, script_output),
-        ))
-        .map(Source::unwrap)
+    let value_to_execute = loaded.and_then(|script_output| {
+        let v = runtime
+            .ctx
+            .task
+            .block_on(runtime.final_value(script_output))
+            .unwrap();
+        Ok(try_value!(v))
     });
 
-    // Clear context, which removes any unneeded values that may be held.
-    //
-    // This is *important* as some values (like those returned by exec or task) behave differently
-    // based on their lifetime.
-    ctx.clear_env();
-
-    // Clear load cache, again so that lifetimes optimistically dropped. It's not very likely that
+    /*
+    // Clear load cache, so that lifetimes are optimistically dropped. It's not very likely that
     // stuff will be loaded while executing the final value, but if so it'll just take the hit of
     // reloading the scripts.
     control.clear_load_cache();
+    */
 
     let ret = value_to_execute.and_then(|value| {
-        task.block_on(grease::value::Errored::observe(on_error, async {
-            ctx.force_value_nested(value.clone()).await?;
+        runtime.ctx.task.block_on(async {
+            use ergo_runtime::traits::{display, eval_nested, Formatter};
+            eval_nested(&runtime.ctx, value.clone()).await;
             let mut s = String::new();
             {
-                let mut formatter = ergo_runtime::traits::Formatter::new(&mut s);
-                ctx.display(value, &mut formatter).await?;
+                let mut formatter = Formatter::new(&mut s);
+                display(&runtime.ctx, value, &mut formatter).await?;
             }
             Ok(s)
-        }))
+        })
     });
 
     // Before the context is destroyed (unloading plugins), clear the thread-local storage in case
     // there are values which were allocated in the plugins.
     ergo_runtime::plugin::Context::reset();
+
+    drop(runtime);
 
     // Drop the logger prior to the context dropping, so that any stored state (like errors) can
     // free with the plugins still loaded.
@@ -343,25 +337,29 @@ fn run(opts: Opts) -> Result<String, String> {
                 drop(l);
                 break;
             }
-            Err(l) => logger = Some(l),
+            Err(l) => {
+                logger = Some(l);
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
         }
     }
 
     // Write error output to stderr.
+    // TODO get error(s) from error scope rather than return value?
+    //      or make `eval_nested` aggregate errors
     match ret {
         Ok(v) => Ok(v),
         Err(e) => {
-            use grease::error::BoxGreaseError;
+            use ergo_runtime::error::{self, BoxErgoError, ErrorContext};
 
             // For each error root, display a certain number of backtrace contexts.
             fn display_errors<'a>(
-                e: &'a BoxGreaseError,
+                e: &'a BoxErgoError,
                 out: &mut Box<term::StderrTerminal>,
-                contexts: &mut Vec<&'a grease::error::Context>,
+                contexts: &mut Vec<&'a error::Context>,
                 limit: &Option<usize>,
             ) {
-                let had_context = if let Some(ctx) = e.downcast_ref::<grease::error::ErrorContext>()
-                {
+                let had_context = if let Some(ctx) = e.downcast_ref::<ErrorContext>() {
                     contexts.push(ctx.context());
                     true
                 } else {
@@ -375,7 +373,7 @@ fn run(opts: Opts) -> Result<String, String> {
                     write!(out, "error:").expect("failed to write to stderr");
                     out.reset().expect("failed to reset output");
                     writeln!(out, " {}", e).expect("failed to write to stderr");
-                    let write_context = |ctx: &&grease::error::Context| {
+                    let write_context = |ctx: &&error::Context| {
                         out.fg(term::color::BRIGHT_WHITE)
                             .expect("failed to set output color");
                         write!(out, "note:").expect("failed to write to stderr");
@@ -465,16 +463,6 @@ fn main() {
         } else {
             app.print_long_help().app_err("writing help text failed");
         }
-        println!();
-
-        if long_help {
-            // Document load command.
-            println!(
-                "\n`ergo` command documentation:\n{}",
-                script::LOAD_DOCUMENTATION
-            );
-        }
-
         std::process::exit(0);
     }
 

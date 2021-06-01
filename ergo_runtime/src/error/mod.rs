@@ -428,7 +428,7 @@ impl ErgoError for ErrorContext {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct HashBySource(Error);
 
 impl HashBySource {
@@ -455,7 +455,7 @@ impl PartialEq for HashBySource {
 impl Eq for HashBySource {}
 
 /// A set to track errors with referentially-unique sources.
-#[derive(Default, Debug)]
+#[derive(Clone, Default, Debug)]
 pub struct UniqueErrorSources(HashSet<HashBySource>);
 
 impl UniqueErrorSources {

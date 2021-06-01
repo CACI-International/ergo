@@ -1,6 +1,7 @@
 //! Plain text output.
 
-use grease::runtime::{LogEntry, LogLevel, LogTarget};
+use ergo_runtime::context::{LogEntry, LogLevel, LogTarget};
+use ergo_runtime::Error;
 use std::io::Write;
 
 pub struct Output {
@@ -22,7 +23,7 @@ impl super::Output for Output {
         self.log_level = log_level;
     }
 
-    fn new_error(&mut self, _err: grease::Error) {}
+    fn new_error(&mut self, _err: Error) {}
 
     fn interrupt(&mut self) {}
 }

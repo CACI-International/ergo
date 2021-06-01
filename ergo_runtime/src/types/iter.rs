@@ -96,7 +96,7 @@ ergo_traits_fn! {
             if deep {
                 let mut_vals = vals.iter_mut().map(|src_v| &mut **src_v).collect::<Vec<_>>();
                 let mut mut_vals = mut_vals.into_iter();
-                CONTEXT.eval_all(mut_vals.by_ref()).await;
+                crate::try_result!(CONTEXT.eval_all(mut_vals.by_ref()).await);
                 for v in mut_vals {
                     let old_v = std::mem::replace(v, super::Unset.into());
                     *v = traits::value_by_content(CONTEXT, old_v, deep).await;
@@ -119,7 +119,7 @@ ergo_traits_fn! {
             let mut ret = BstMap::default();
             let mut errs = vec![];
             let mut_vals = vals.iter_mut().map(|src_v| &mut **src_v).collect::<Vec<_>>();
-            CONTEXT.eval_all(mut_vals).await;
+            drop(CONTEXT.eval_all(mut_vals).await);
             for v in vals {
                 let (source, v) = v.take();
                 crate::value::match_value! { v,

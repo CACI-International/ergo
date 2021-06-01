@@ -1,5 +1,6 @@
-use abi_stable::std_types::{RDuration, ROption, RSlice, RString};
-use grease::runtime::{LogEntry, LogLevel, LogTarget, LogTaskKey};
+use ergo_runtime::abi_stable::std_types::{RDuration, ROption, RSlice, RString};
+use ergo_runtime::context::{LogEntry, LogLevel, LogTarget, LogTaskKey};
+use ergo_runtime::Error;
 
 mod interface;
 mod plain;
@@ -7,7 +8,7 @@ mod terminal;
 
 pub trait Output: LogTarget {
     fn set_log_level(&mut self, log_level: LogLevel);
-    fn new_error(&mut self, err: grease::Error);
+    fn new_error(&mut self, err: Error);
     fn interrupt(&mut self);
 }
 
@@ -45,7 +46,7 @@ impl Output for OutputInstance {
         self.inner.set_log_level(log_level)
     }
 
-    fn new_error(&mut self, err: grease::Error) {
+    fn new_error(&mut self, err: Error) {
         self.inner.new_error(err)
     }
 

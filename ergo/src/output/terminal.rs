@@ -1,8 +1,9 @@
 //! Terminal outputs.
 
 use super::interface::{render::*, TerminalOutput};
-use abi_stable::std_types::{RDuration, ROption, RSlice, RString, RVec};
-use grease::runtime::{LogEntry, LogLevel, LogTarget, LogTaskKey};
+use ergo_runtime::abi_stable::std_types::{RDuration, ROption, RSlice, RString, RVec};
+use ergo_runtime::context::{LogEntry, LogLevel, LogTarget, LogTaskKey};
+use ergo_runtime::{error::UniqueErrorSources, Error};
 use log::warn;
 use slab::Slab;
 use std::collections::HashMap;
@@ -30,7 +31,7 @@ struct Progress {
 }
 
 struct Errors {
-    errors: grease::error::UniqueErrorSources,
+    errors: UniqueErrorSources,
     prompt_abort: bool,
     interrupts: u8,
 }
@@ -77,7 +78,7 @@ impl super::Output for Output {
         self.log_level = log_level;
     }
 
-    fn new_error(&mut self, err: grease::Error) {
+    fn new_error(&mut self, err: Error) {
         self.errors.update(err);
         self.update();
     }
@@ -223,7 +224,7 @@ impl Errors {
         }
     }
 
-    pub fn update(&mut self, err: grease::Error) {
+    pub fn update(&mut self, err: Error) {
         self.errors.insert(err);
     }
 }

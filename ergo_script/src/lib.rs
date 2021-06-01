@@ -77,6 +77,39 @@ impl Runtime {
         script.evaluate(&self.ctx).await
     }
 
+    /// Resolve a path to the full script path, based on the load path.
+    ///
+    /// If resolution succeeds, the returned path will be to a file (not directory).
+    pub fn resolve_script_path(&self, path: &std::path::Path) -> Option<std::path::PathBuf> {
+        self.load_data.resolve_script_path(path)
+    }
+
+    /// Get the final value.
+    ///
+    /// This will apply any Unbound values on empty Args.
+    pub async fn final_value(&self, mut val: Source<Value>) -> Source<Value> {
+        loop {
+            drop(self.ctx.eval(&mut val).await);
+            if val.is_type::<ergo_runtime::types::Unbound>() {
+                let src = val.source();
+                val = ergo_runtime::traits::bind(
+                    &self.ctx,
+                    val,
+                    src.with(
+                        ergo_runtime::types::Args {
+                            args: Default::default(),
+                        }
+                        .into(),
+                    ),
+                )
+                .await;
+            } else {
+                break;
+            }
+        }
+        val
+    }
+
     /// Clear the load cache of any loaded scripts.
     pub fn clear_load_cache(&self) {
         self.load_data.load_cache.lock().clear();
@@ -102,18 +135,6 @@ pub struct Script {
 ///
 /// This will apply any unbound values on empty Args.
 pub async fn final_value(ctx: &Context, mut val: Source<Value>) -> Value {
-    while val.grease_type().await? == &types::Unbound::grease_type() {
-        let src = val.source();
-        val = traits::bind(
-            ctx,
-            val,
-            src.with(grease::value::IntoValue::into_value(types::Args {
-                args: Default::default(),
-            })),
-        )
-        .await?;
-    }
-    Ok(val)
 }
 */
 

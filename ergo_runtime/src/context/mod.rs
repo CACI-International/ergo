@@ -8,6 +8,7 @@ use crate::{
 use std::fmt;
 
 mod dynamic_scope;
+mod error_scope;
 mod log;
 mod shared_state;
 mod store;
@@ -26,6 +27,7 @@ pub use self::log::{
     RecordingWork, Work,
 };
 pub use dynamic_scope::DynamicScope;
+pub use error_scope::ErrorScope;
 pub use shared_state::SharedState;
 pub use store::{Item, ItemContent, ItemName, Store};
 pub use task::{
@@ -40,6 +42,8 @@ pub use traits::{TraitGenerator, TraitGeneratorByTrait, TraitGeneratorByType, Tr
 pub struct Context {
     /// The dynamic scoping interface.
     pub dynamic_scope: DynamicScope,
+    /// The error propagation interface.
+    pub error_scope: ErrorScope,
     /// The logging interface.
     pub log: Log,
     /// The shared state interface.
@@ -59,6 +63,7 @@ pub struct ContextBuilder {
     store_dir: Option<std::path::PathBuf>,
     threads: Option<usize>,
     aggregate_errors: Option<bool>,
+    error_scope: Option<ErrorScope>,
 }
 
 /// An error produced by the ContextBuilder.
@@ -110,10 +115,20 @@ impl ContextBuilder {
         self
     }
 
+    /// Set the top-level error handler of the context.
+    pub fn error_handler<F>(mut self, on_error: F) -> Self
+    where
+        F: Fn(crate::Error) + Send + Sync + 'static,
+    {
+        self.error_scope = Some(ErrorScope::new(on_error));
+        self
+    }
+
     /// Create a Context.
     pub fn build(self) -> Result<Context, BuilderError> {
         Ok(Context {
             dynamic_scope: Default::default(),
+            error_scope: self.error_scope.unwrap_or_default(),
             log: Log::new(
                 self.logger
                     .unwrap_or_else(|| logger_ref(EmptyLogTarget).into()),
@@ -150,7 +165,15 @@ impl Context {
     /// Evaluate a value.
     pub async fn eval(&self, value: &mut Value) -> crate::Result<()> {
         value.eval(self).await;
-        crate::try_value!(value.clone());
+        if value.is_type::<crate::types::Error>() {
+            let error = value
+                .clone()
+                .as_type::<crate::types::Error>()
+                .unwrap()
+                .to_owned();
+            self.error_scope.error(&error);
+            return Err(error);
+        }
         Ok(())
     }
 
@@ -159,17 +182,15 @@ impl Context {
         value.eval_once(self).await
     }
 
-    /// Evaluate all values, returning whether they all evaluated to non-Error values.
-    pub async fn eval_all<'a, I>(&self, values: I) -> bool
+    /// Evaluate all values.
+    pub async fn eval_all<'a, I>(&self, values: I) -> crate::Result<()>
     where
         I: IntoIterator<Item = &'a mut Value>,
     {
         self.task
-            .join_all(values.into_iter().map(|v| async move {
-                v.eval(self).await;
-                !v.is_type::<crate::types::Error>()
-            }))
+            .join_all(values.into_iter().map(|v| self.eval(v)))
             .await
+            .map(|_| ())
     }
 
     /// Evaluate a value expecting a specific type, returning an error if it does not evaluate to a
@@ -190,6 +211,16 @@ impl Context {
     pub fn with_dynamic_binding(&self, key: Source<Value>, value: Source<Value>) -> Self {
         let mut ctx = self.clone();
         ctx.dynamic_scope.set(key, value);
+        ctx
+    }
+
+    /// Create a new context with the given error handler.
+    pub fn with_error_handler<F>(&self, on_error: F) -> Self
+    where
+        F: Fn(crate::Error) + Send + Sync + 'static,
+    {
+        let mut ctx = self.clone();
+        ctx.error_scope = ErrorScope::new(on_error);
         ctx
     }
 }
