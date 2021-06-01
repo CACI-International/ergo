@@ -56,13 +56,11 @@ macro_rules! typical_test {
     };
 }
 
-typical_test!(basic_no_ext);
-typical_test!(basic_ext);
-typical_test!(directory);
-typical_test!(directory_ext);
-typical_test!(directory_dir);
-typical_test!(workspace_load);
-typical_test!(workspace_with_dir);
-typical_test!(workspace_access, "workspace_access/subdir/mod");
-typical_test!(workspace_command);
-typical_test!(workspace_parent, "workspace_parent/subdir");
+typical_test!(basic_no_ext); // Loading a file (ergo X => {X})
+typical_test!(basic_ext); // Loading with an extension (ergo X => {X.ergo})
+typical_test!(directory); // Loading a directory (ergo X => {X/dir.ergo})
+typical_test!(directory_ext); // Loading a directory with an extension (ergo X => {X.ergo/dir.ergo})
+typical_test!(workspace_load, "workspace_load/workspace.ergo"); // Loading a sibling from a workspace
+typical_test!(workspace_access, "workspace_access/subdir/mod"); // Accessing a workspace from an child
+typical_test!(workspace_command); // Fallback to `workspace:command` when loading fails (ergo X => workspace:command X)
+typical_test!(workspace_parent, "workspace_parent/subdir/workspace.ergo"); // Loading a parent workspace from a workspace

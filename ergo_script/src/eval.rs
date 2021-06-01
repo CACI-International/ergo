@@ -677,6 +677,9 @@ impl Evaluator {
         sets: &'a Sets,
     ) -> BoxFuture<'a, Source<Value>> {
         async move {
+            let (source, e) = e.take();
+
+            let cmd_source = source.clone();
             macro_rules! command_impl {
                 ( $cmd:expr, $arg_type:ident ) => {{
                     let src = $cmd.function.source();
@@ -691,16 +694,13 @@ impl Evaluator {
                                 return src.with(e.into());
                             }
                             let args = types::args::Arguments::new(pos, keyed).unchecked();
-                            // TODO use a different source for args?
-                            traits::bind(ctx, function, src.with(types::$arg_type { args }.into()))
+                            traits::bind(ctx, function, cmd_source.with(types::$arg_type { args }.into()))
                                 .await
                                 .unwrap()
                         }
                     }
                 }};
             }
-
-            let (source, e) = e.take();
 
             crate::match_expression!(e,
                 Unit => |_| self.evaluate_with_env(ctx, source.with(e), captures, local_env, sets),

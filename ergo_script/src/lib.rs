@@ -80,8 +80,12 @@ impl Runtime {
     /// Resolve a path to the full script path, based on the load path.
     ///
     /// If resolution succeeds, the returned path will be to a file (not directory).
-    pub fn resolve_script_path(&self, path: &std::path::Path) -> Option<std::path::PathBuf> {
-        self.load_data.resolve_script_path(path)
+    pub fn resolve_script_path(
+        &self,
+        working_dir: Option<&std::path::Path>,
+        path: &std::path::Path,
+    ) -> Option<std::path::PathBuf> {
+        self.load_data.resolve_script_path(working_dir, path)
     }
 
     /// Get the final value.

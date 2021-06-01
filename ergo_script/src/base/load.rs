@@ -48,10 +48,17 @@ impl LoadData {
     /// Resolve a path to the full script path, based on the load path.
     ///
     /// If resolution succeeds, the returned path will be to a file (not directory).
-    pub fn resolve_script_path(&self, path: &Path) -> Option<PathBuf> {
-        self.load_path
-            .iter()
-            .find_map(|p| script_path_exists(path, true)(p.as_ref()))
+    pub fn resolve_script_path<P: AsRef<Path>>(
+        &self,
+        working_dir: Option<P>,
+        path: &Path,
+    ) -> Option<PathBuf> {
+        let get = script_path_exists(path, true);
+        match working_dir {
+            Some(dir) => get(dir.as_ref()),
+            None => std::env::current_dir().ok().and_then(|p| get(p.as_ref())),
+        }
+        .or_else(|| self.load_path.iter().find_map(|p| get(p.as_ref())))
     }
 
     /// Load a script at the given path.
@@ -186,8 +193,11 @@ impl LoadFunctions {
                     v => return traits::type_error(CONTEXT, target_source.with(v), "String or Path").into()
                 };
 
+                let working_dir = ARGS_SOURCE.path();
+                let working_dir = working_dir.as_ref().and_then(|p| p.parent());
+
                 // Try to find target in the load path.
-                let target = match ld.resolve_script_path(&target) {
+                let target = match ld.resolve_script_path(working_dir, &target) {
                     Some(path) => path,
                     None => {
                         return target_source.with(format!("could not resolve script path: {}", target.display())).into_error().into();
@@ -218,7 +228,10 @@ impl LoadFunctions {
             move |ctx, v| {
                 let ld = ld.clone();
                 async move {
-                    let path = match ld.resolve_script_path("std".as_ref()) {
+                    let working_dir = v.path();
+                    let working_dir = working_dir.as_ref().and_then(|p| p.parent());
+
+                    let path = match ld.resolve_script_path(working_dir, "std".as_ref()) {
                         Some(path) => path,
                         None => {
                             return v.source().with("could not find std library").into_error().into();
@@ -399,7 +412,7 @@ impl Default for ResolvedWorkspaces {
 fn script_path_exists<'a, P: 'a + AsRef<Path>>(
     name: P,
     try_add_extension: bool,
-) -> impl FnMut(&Path) -> Option<PathBuf> + 'a {
+) -> impl Fn(&Path) -> Option<PathBuf> + 'a {
     move |path| {
         if try_add_extension {
             if let Some(file_name) = name.as_ref().file_name() {

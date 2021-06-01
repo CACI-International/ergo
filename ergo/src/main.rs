@@ -227,7 +227,7 @@ fn run(opts: Opts) -> Result<String, String> {
     // Keep _task in scope until the end of the function. After the function exits,
     // the ctrlc handler will not hold onto the context task manager, which is important for
     // cleanup.
-    let (_task, task_ref) = sync::Scoped::new_pair(runtime.ctx.task.clone());
+    let (signal_handler_task, task_ref) = sync::Scoped::new_pair(runtime.ctx.task.clone());
     {
         ctrlc::set_handler(move || task_ref.with(|t| t.abort()))
             .app_err_result("failed to set signal handler")?;
@@ -271,7 +271,7 @@ fn run(opts: Opts) -> Result<String, String> {
                 eval_args.len()
             };
             let first_arg = &eval_args[0..first_arg_end];
-            let function = if runtime.resolve_script_path(first_arg.as_ref()).is_none() {
+            let function = if runtime.resolve_script_path(None, first_arg.as_ref()).is_none() {
                 "workspace:command"
             } else {
                 PROGRAM_NAME
@@ -288,9 +288,6 @@ fn run(opts: Opts) -> Result<String, String> {
 
     let source = Source::new(StringSource::new("<command line>", to_eval));
     let loaded = runtime.ctx.task.block_on(runtime.evaluate(source));
-
-    // We *must* keep the context around because it holds onto plugins, which may have functions referenced in values.
-    // Likewise, our return from this function is "flattened" to strings to ensure any references to plugins are used when the plugins are still loaded.
 
     let value_to_execute = loaded.and_then(|script_output| {
         let v = runtime
@@ -325,6 +322,7 @@ fn run(opts: Opts) -> Result<String, String> {
     // there are values which were allocated in the plugins.
     ergo_runtime::plugin::Context::reset();
 
+    drop(signal_handler_task);
     drop(runtime);
 
     // Drop the logger prior to the context dropping, so that any stored state (like errors) can
