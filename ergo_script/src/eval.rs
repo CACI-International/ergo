@@ -385,6 +385,10 @@ impl Evaluator {
                         .take();
                     drop(ctx.eval(&mut val).await);
                     match_value! { val.clone(),
+                        s@types::String(_) => {
+                            last_normal = false;
+                            env.insert(val_source.clone().with(s.into()), val_source.with(types::Unit.into()));
+                        }
                         types::Array(arr) => {
                             // TODO should this implicitly evaluate to a unit type when the array is
                             // empty?

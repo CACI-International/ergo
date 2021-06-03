@@ -410,6 +410,11 @@ mod test {
         }
 
         #[test]
+        fn block_with_string() -> Result<(), String> {
+            script_eval_to("{^something}", SRMap(&[("something", SRUnit)]))
+        }
+
+        #[test]
         fn command_array() -> Result<(), String> {
             script_eval_to(
                 ":to_array = fn ^:args -> args:positional\nto_array a ^[b,c] d ^[e,f]",
@@ -431,19 +436,14 @@ mod test {
                 SRArray(&[SRString("a"), SRString("b")]),
             )?;
             script_eval_to(
-                ":kw = fn ^:args -> args:keyed\nkw a ^{k=3} (d=4) b",
-                SRMap(&[("k", SRString("3")), ("d", SRString("4"))]),
+                ":kw = fn ^:args -> args:keyed\nkw a ^{k=3} (d=4) b ^e",
+                SRMap(&[("k", SRString("3")), ("d", SRString("4")), ("e", SRUnit)]),
             )?;
             script_eval_to(
                 ":kw = fn ^{something} -> :something\nkw (something = hi)",
                 SRString("hi"),
             )?;
             Ok(())
-        }
-
-        #[test]
-        fn command_invalid() -> Result<(), String> {
-            script_fail(":f = fn ^_ -> a\nf ^hello")
         }
     }
 
