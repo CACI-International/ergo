@@ -106,9 +106,6 @@ scripts reside.
   specification of which flags have required args). This is convenient for
   things that want to pass flags to a program but also might need to easily
   inspect/manipulate the flags.
-* Change `<|` to have lower precedence than `|`/`|>`, that seems the more useful
-  choice.
-* Only resolve directories to `dir.ergo` (not `workspace.ergo`).
 * Fix interaction of persistent caching and metadata (metadata not persisted).
 
 ### Optimizations

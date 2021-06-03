@@ -302,8 +302,8 @@ where
         //   Bang/Caret Prefix
         //   Bang Expression Prefix
         //   Arrow (Right assoc)
-        //   PipeLeft (Right assoc macro)
         //   Pipe/PipeRight (Left assoc macro)
+        //   PipeLeft (Right assoc macro)
         //   Equal (Left assoc)
         //   Caret Expression Prefix
 
@@ -571,47 +571,9 @@ where
             toks.iter_mut().map(|v| v.as_mut().map(|v| v.take()))
         }
 
-        fn pipe_left<E>(toks: &mut Toks) -> TResult<E> {
-            let mut rewritten = Vec::new();
-            let next = arrow;
-
-            let mut to_append: Option<Source<TreeOrSymbol>> = None;
-            let mut remaining = toks;
-            while let Some(pos) = remaining.iter().rposition(|t| t.is_leftward_pipe()) {
-                let (a, b) = remaining.split_at_mut(pos);
-                let (t, b) = b.split_at_mut(1);
-                let t = unsafe { t.get_unchecked_mut(0) }
-                    .as_mut()
-                    .map(|t| t.take())
-                    .unwrap();
-                remaining = a;
-                rewritten.extend(consume(b));
-                if let Some(t) = to_append.take() {
-                    rewritten.push(t);
-                }
-                let b_tree = to_tree(next(&mut rewritten)?).map(TreeOrSymbol::Tree);
-                rewritten.clear();
-                match t {
-                    TreeOrSymbol::Symbol(SymbolicToken::PipeLeft) => {
-                        to_append = Some(b_tree);
-                    }
-                    _ => panic!("unexpected token"),
-                }
-            }
-
-            if !rewritten.is_empty() || to_append.is_some() {
-                rewritten.extend(consume(remaining));
-                if let Some(t) = to_append.take() {
-                    rewritten.push(t);
-                }
-                remaining = &mut rewritten;
-            }
-            next(remaining)
-        }
-
         fn pipe_right<E>(toks: &mut Toks) -> TResult<E> {
             let mut rewritten = Vec::new();
-            let next = pipe_left;
+            let next = arrow;
 
             let mut to_append: Option<Source<TreeOrSymbol>> = None;
             let mut remaining = toks;
@@ -650,11 +612,49 @@ where
             next(remaining)
         }
 
+        fn pipe_left<E>(toks: &mut Toks) -> TResult<E> {
+            let mut rewritten = Vec::new();
+            let next = pipe_right;
+
+            let mut to_append: Option<Source<TreeOrSymbol>> = None;
+            let mut remaining = toks;
+            while let Some(pos) = remaining.iter().rposition(|t| t.is_leftward_pipe()) {
+                let (a, b) = remaining.split_at_mut(pos);
+                let (t, b) = b.split_at_mut(1);
+                let t = unsafe { t.get_unchecked_mut(0) }
+                    .as_mut()
+                    .map(|t| t.take())
+                    .unwrap();
+                remaining = a;
+                rewritten.extend(consume(b));
+                if let Some(t) = to_append.take() {
+                    rewritten.push(t);
+                }
+                let b_tree = to_tree(next(&mut rewritten)?).map(TreeOrSymbol::Tree);
+                rewritten.clear();
+                match t {
+                    TreeOrSymbol::Symbol(SymbolicToken::PipeLeft) => {
+                        to_append = Some(b_tree);
+                    }
+                    _ => panic!("unexpected token"),
+                }
+            }
+
+            if !rewritten.is_empty() || to_append.is_some() {
+                rewritten.extend(consume(remaining));
+                if let Some(t) = to_append.take() {
+                    rewritten.push(t);
+                }
+                remaining = &mut rewritten;
+            }
+            next(remaining)
+        }
+
         fn eq<E>(toks: &mut Toks) -> TResult<E> {
             left_bin_op(
                 toks,
                 |v| v.is_symbol(&SymbolicToken::Equal),
-                pipe_right,
+                pipe_left,
                 |_, a, b| {
                     single((a, b).into_source().map(|(a, b)| {
                         Tree::Equal(to_tree(a.unwrap()).into(), to_tree(b.unwrap()).into())
@@ -857,7 +857,7 @@ mod test {
         assert_same("a b <| c", "a b c");
         assert_same(
             "a | b <| c <| d | e |> f <| g | h",
-            "h ((e (b (c (d a)))) f g)",
+            "b (c ((e d) f (h g))) a"
         );
         assert_same("a b |>:<| c d", "(a b):(c d)");
         assert_same("a b <|", "a b ()");
