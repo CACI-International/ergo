@@ -320,6 +320,8 @@ impl PartialEq<Source<Self>> for Token {
 pub enum Error {
     /// A quoted string is missing a closing quote.
     UnfinishedQuotedString,
+    /// A raw string is missing a closing sequence.
+    UnfinishedRawString,
     /// An escape sequence in a quoted string was not recognized.
     UnrecognizedEscapeSequence,
 }
@@ -328,6 +330,7 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Error::UnfinishedQuotedString => write!(f, "unfinished quoted string"),
+            Error::UnfinishedRawString => write!(f, "unfinished raw string"),
             Error::UnrecognizedEscapeSequence => write!(f, "unrecognized escape sequence"),
         }
     }
@@ -372,11 +375,25 @@ impl DocComment {
     }
 }
 
+#[derive(Debug)]
+enum Pending {
+    None,
+    String(String, ergo_runtime::source::Location),
+    Result(Result<Source<Token>, Source<Error>>),
+}
+
+impl Default for Pending {
+    fn default() -> Self {
+        Pending::None
+    }
+}
+
 /// Iterator producing tokens or errors.
 pub struct Tokens<I: Iterator> {
     iter: LookaheadIterator<I>,
     source: Source<()>,
     doc_comment: DocComment,
+    pending: Pending,
 }
 
 impl<I: Iterator, T> From<Source<T>> for Tokens<I>
@@ -389,6 +406,7 @@ where
             iter: LookaheadIterator::new(i.into_iter()),
             source,
             doc_comment: DocComment::default(),
+            pending: Pending::None,
         }
     }
 }
@@ -408,10 +426,34 @@ impl<I: Iterator> Tokens<I> {
     }
 }
 
-impl<I: Iterator<Item = char>> Iterator for Tokens<I> {
-    type Item = Result<Source<Token>, Source<Error>>;
+impl<I: Iterator<Item = char>> Tokens<I> {
+    fn push_str(&mut self, c: char) {
+        match &mut self.pending {
+            Pending::None => {
+                self.pending = Pending::String(c.into(), self.source.location.clone());
+            }
+            Pending::String(s, l) => {
+                s.push(c);
+                *l = &*l + &self.source.location;
+            }
+            Pending::Result(_) => panic!("cannot push string"),
+        }
+    }
 
-    fn next(&mut self) -> Option<Self::Item> {
+    fn extend_str(&mut self, s: String) {
+        match &mut self.pending {
+            Pending::None => {
+                self.pending = Pending::String(s, self.source.location.clone());
+            }
+            Pending::String(st, l) => {
+                st.push_str(&s);
+                *l = &*l + &self.source.location;
+            }
+            Pending::Result(_) => panic!("cannot extend string"),
+        }
+    }
+
+    fn next_non_string(&mut self) -> Option<Result<Source<Token>, Source<Error>>> {
         self.reset_source_start();
 
         // If in doc comment string mode, _always_ consume everything until newline/doc curly (even
@@ -460,41 +502,8 @@ impl<I: Iterator<Item = char>> Iterator for Tokens<I> {
                 // The remaining parsing will always result in some token based on the consumed
                 // character(s).
                 let tokentype =
-                    // Quoted strings
-                    if c == '"' {
-                        let mut s = String::new();
-                        let mut escape = false;
-                        while let Some(c) = self.next_source() {
-                            // Escape sequence
-                            if escape {
-                                if "\"\\".contains(c) {
-                                    s.push(c)
-                                } else if c == 'n' {
-                                    s.push('\n')
-                                } else if c == 't' {
-                                    s.push('\t')
-                                } else {
-                                    let mut val = self.source.clone().with(Error::UnrecognizedEscapeSequence);
-                                    val.location.start = val.location.start + val.location.length - 2;
-                                    val.location.length = 2;
-                                    return Some(Err(val));
-                                }
-                                escape = false;
-                            // Normal character
-                            } else {
-                                if c == '"' {
-                                    return Some(Ok(self.source.clone().with(Token::string(s))));
-                                } else if c == '\\' {
-                                    escape = true;
-                                } else {
-                                    s.push(c);
-                                }
-                            }
-                        }
-                        Err(Error::UnfinishedQuotedString)
-                    }
                     // Newlines
-                    else if c == '\n' {
+                    if c == '\n' {
                         self.doc_comment.active = false;
                         Ok(Token::Newline)
                     }
@@ -558,19 +567,71 @@ impl<I: Iterator<Item = char>> Iterator for Tokens<I> {
                     } else if c == '<' && self.iter.peek_match(&['|']) {
                         self.next_source();
                         Ok(Token::pipe_left())
-                    } else {
-                        // Words
-                        let mut s = String::new();
-                        s.push(c);
-                        while let Some(c) = self.iter.peek() {
-                            if c.is_whitespace() || "[](){},;=^|:!".contains(*c) || self.iter.peek_match(&['<','|'])
-                                || self.iter.peek_match(&['-','>']) {
-                                break;
+                    }
+                    // Quoted strings
+                    else if c == '"' {
+                        let mut s = String::default();
+                        let mut escape = false;
+                        while let Some(c) = self.next_source() {
+                            // Escape sequence
+                            if escape {
+                                if "\"\\".contains(c) {
+                                    s.push(c)
+                                } else if c == 'n' {
+                                    s.push('\n')
+                                } else if c == 't' {
+                                    s.push('\t')
+                                } else {
+                                    let mut val = self.source.clone().with(Error::UnrecognizedEscapeSequence);
+                                    val.location.start = val.location.start + val.location.length - 2;
+                                    val.location.length = 2;
+                                    return Some(Err(val));
+                                }
+                                escape = false;
+                            // Normal character
                             } else {
-                                s.push(self.next_source().unwrap());
+                                if c == '"' {
+                                    self.extend_str(s);
+                                    return self.next_non_string();
+                                } else if c == '\\' {
+                                    escape = true;
+                                } else {
+                                    s.push(c);
+                                }
                             }
                         }
-                        Ok(Token::string(s))
+                        Err(Error::UnfinishedQuotedString)
+                    }
+                    // Raw strings
+                    else if c == '\'' {
+                        let mut s = String::default();
+                        let mut count = 1;
+                        while let Some('\'') = self.iter.peek() {
+                            count += 1;
+                            self.next_source();
+                        }
+                        let close_count = count;
+                        while let Some(c) = self.next_source() {
+                            s.push(c);
+                            if c == '\'' {
+                                count -= 1;
+                                if count == 0 {
+                                    break
+                                }
+                            } else {
+                                count = close_count;
+                            }
+                        }
+                        if count != 0 {
+                            Err(Error::UnfinishedRawString)
+                        } else {
+                            s.truncate(s.len() - close_count);
+                            self.extend_str(s);
+                            return self.next_non_string();
+                        }
+                    } else {
+                        self.push_str(c);
+                        return self.next_non_string();
                     };
                 Some(match tokentype {
                     Ok(t) => Ok(self.source.clone().with(t)),
@@ -578,6 +639,35 @@ impl<I: Iterator<Item = char>> Iterator for Tokens<I> {
                 })
             }
         })
+    }
+}
+
+impl<I: Iterator<Item = char>> Iterator for Tokens<I> {
+    type Item = Result<Source<Token>, Source<Error>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match std::mem::take(&mut self.pending) {
+            Pending::String(s, l) => {
+                let mut src = self.source.clone();
+                src.location = l;
+                return Some(Ok(src.with(Token::string(s))));
+            }
+            Pending::Result(r) => {
+                return Some(r);
+            }
+            _ => (),
+        }
+
+        let next = self.next_non_string();
+
+        if let Pending::String(s, l) = std::mem::take(&mut self.pending) {
+            self.pending = next.map(Pending::Result).unwrap_or(Pending::None);
+            let mut src = self.source.clone();
+            src.location = l;
+            Some(Ok(src.with(Token::string(s))))
+        } else {
+            next
+        }
     }
 }
 
@@ -638,6 +728,21 @@ mod test {
                 Token::string("escape\"quote\n"),
             ],
         )
+    }
+
+    #[test]
+    fn raw_strings() -> Result<(), Source<Error>> {
+        assert_tokens(r"'hello \\\n world'", &[Token::string(r"hello \\\n world")])?;
+        assert_tokens(
+            r#"'''with ' quotes '' "123'''"#,
+            &[Token::string(r#"with ' quotes '' "123"#)],
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn quote_concat_strings() -> Result<(), Source<Error>> {
+        assert_tokens("hello\"world\"'hi'", &[Token::string("helloworldhi")])
     }
 
     #[test]
