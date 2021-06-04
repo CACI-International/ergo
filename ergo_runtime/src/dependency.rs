@@ -45,7 +45,14 @@ macro_rules! HashAsDependency {
 HashAsDependency!(crate::abi_stable::uuid::Uuid);
 HashAsDependency!(String);
 HashAsDependency!(&'_ str);
+HashAsDependency!(u32);
+HashAsDependency!(i32);
+HashAsDependency!(u64);
+HashAsDependency!(i64);
+HashAsDependency!(usize);
+HashAsDependency!(isize);
 HashAsDependency!(u128);
+HashAsDependency!(i128);
 HashAsDependency!(Type);
 HashAsDependency!(Trait);
 
@@ -72,6 +79,15 @@ impl<T: AsDependency> AsDependency for &'_ T {
 impl<T: AsDependency> AsDependency for &'_ mut T {
     fn as_dependency(&self) -> Dependency {
         (&**self).as_dependency()
+    }
+}
+
+impl<T: AsDependency> AsDependency for Option<T> {
+    fn as_dependency(&self) -> Dependency {
+        match self {
+            None => Dependency::Hashed(0.into()),
+            Some(v) => v.as_dependency(),
+        }
     }
 }
 
@@ -198,7 +214,7 @@ where
 
 /// Create Dependencies from the given values.
 ///
-/// Values are always accessed by reference in the normal form.
+/// Values are always accessed by reference in the normal form, and must implement `AsDependency`.
 /// Prepending '^' to an item will instead attempt to convert the value to `Dependencies` directly.
 /// Prepending '^@' to an item will convert each item in the value to a `Dependency` (by reference using
 /// `.iter()`) and add those as ordered dependencies.

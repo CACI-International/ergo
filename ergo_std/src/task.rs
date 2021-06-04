@@ -1,129 +1,133 @@
 //! Concurrent task creation.
 
-use abi_stable::{
+use ergo_runtime::abi_stable::{
     external_types::RMutex,
     std_types::{RArc, RString},
     StableAbi,
 };
-use ergo_runtime::{ergo_function, types, ContextExt};
-use grease::error::UniqueErrorSources;
-use grease::future::eager::Eager;
-use grease::runtime::{
-    LogTask, RecordingWork, ScopeTaskLocal, TaskLocal, TaskLocalRef, TaskPermit,
+use ergo_runtime::context::{
+    DynamicScopeKey, Log, LogTask, RecordingWork, TaskManager, TaskPermit, Work,
 };
-use grease::task_local_key;
-use grease::value::{Errored, Value};
+use ergo_runtime::{nsid, try_result, types, Value};
 use std::str::FromStr;
-use std::sync::{Arc, Mutex};
 
-pub fn function() -> Value {
-    ergo_function!(independent std::task,
-    r"Run the given value as a concurrent task.
+pub const SCRIPT_TASK_PRIORITY_OFFSET: u32 = 1000;
 
-Arguments: `(String :description) :value`
+#[types::ergo_fn]
+/// Evaluate the given value as a concurrent task.
+///
+/// Arguments: `(String :description) :value`
+///
+/// Keyed Arguments:
+/// * `String :count`: A numeric string indicating the number of task slots the task should use.
+/// Defaults to 0.
+/// * `:track-work-by`: A value the identity of which is used as the identifier for work tracking.
+/// If unset, the task value identity is used. For instance, you might use this to indicate the
+/// values which affect a task's runtime, so that progress estimation may be able to predict how
+/// long the task will take based on prior runs.
+/// * `String :priority`: A numeric string from 1 to 1000 indicating the priority of the task. Lower
+/// numbers have higher priority (will run earlier). Default 500.
+///
+/// Returns the result of evaluating `value` by running it in a concurrent task (which may run on a
+/// separate thread) that is described by `description`.
+///
+/// When a value running in a task waits on another task, it is considered inactive. A task is considered a single unit of
+/// work in the runtime progress tracking. An active task takes up `task-count` slots out of the total permitted number of
+/// concurrent tasks at a single time (as configured in the runtime). If there are not enough slots, the task will wait
+/// until more become available. If the requested number is greater than the maximum, it will be limited to the maximum.
+pub async fn function(
+    description: types::String,
+    value: _,
+    (count): [types::String],
+    (track_work_by): [_],
+    (priority): [types::String],
+) -> Value {
+    let count = match count {
+        Some(v) => try_result!(v
+            .map(|s| u32::from_str(s.as_ref()).map_err(|_| "expected unsigned integer"))
+            .transpose_err()
+            .map_err(|e| e.into_error())),
+        None => 0,
+    };
 
-Keyword Arguments:
-* `String :task-count`: A numeric string indicating the number of task slots the task should use.
-  Defaults to 0.
-* `:track-work-by`: A value the identity of which is used as the identifier for work tracking. If unset, the task value
-  identity is used. For instance, you might use this to indicate the values which affect a task's runtime, so that
-  progress estimation may be able to predict how long the task will take based on prior runs.
+    let mut priority = match priority {
+        Some(v) => {
+            let src = v.source();
+            let priority = try_result!(v
+                .map(|s| u32::from_str(s.as_ref()).map_err(|_| "expected unsigned integer"))
+                .transpose_err()
+                .map_err(|e| e.into_error()));
+            if priority < 1 || priority > 1000 {
+                return src
+                    .with("priority must fall in [1,1000]")
+                    .into_error()
+                    .into();
+            }
+            priority
+        }
+        None => 500,
+    };
 
-Returns a value identical to `value` (including the identity), however evaluating the value will run it in a concurrent
-task (which may run on a separate thread) that is described by `description`.
+    priority += SCRIPT_TASK_PRIORITY_OFFSET;
 
-When a value running in a task waits on another task, it is considered inactive. A task is considered a single unit of
-work in the runtime progress tracking. An active task takes up `task-count` slots out of the total permitted number of
-concurrent tasks at a single time (as configured in the runtime). If there are not enough slots, the task will wait
-until more become available. If the requested number is greater than the maximum, it will be limited to the maximum.",
-    |ctx, args| {
-        let desc = args.next().ok_or("no task description")?;
-        let val = args.next().ok_or("no argument to task")?.unwrap();
+    let work_id = match track_work_by {
+        Some(v) => v.id(),
+        None => value.id(),
+    };
 
-        let task_count = if let Some(v) = args.kw("task-count") {
-            let v = ctx.source_value_as::<types::String>(v);
-            let v = v.await?.await.transpose_ok()?;
-            v.map(|v| u32::from_str(v.as_ref()).map_err(|_| "expected unsigned integer")).transpose_err()
-                .map_err(|e| e.into_grease_error())?
-        } else {
-            0
-        };
+    let description = description.unwrap().to_owned().0;
 
-        let work_id = if let Some(v) = args.kw("track-work-by") {
-            v.id()
-        } else {
-            val.id()
-        };
+    // XXX if more than one task relies on a single task, the task state of only one of them will
+    // be correct (the others will not correctly be suspended because only one will actually
+    // execute the `task ...` function)
+    let log = CONTEXT.log.sublog("task");
+    let work = RArc::new(RMutex::new(log.work(format!("{:x}", work_id))));
 
-        args.unused_arguments()?;
-
-        let desc = ctx.source_value_as::<types::String>(desc);
-        let desc = desc.await?.unwrap();
-
-        let observed_errors = Arc::new(Mutex::new(ObservedErrors::default()));
-        let observed_errors_each = observed_errors.clone();
-        let task = ctx.task.clone();
-        let log = ctx.log.sublog("task");
-        let work = log.work(format!("{:x}", work_id));
-        val.map_data(move |inner| Eager::Pending(async move {
-            let task_inner = task.clone();
-
-            task.spawn(Errored::observe(move |e| {
-                if let Ok(mut oe) = observed_errors.lock() { oe.call(e) }
-            }, async move {
-                let s = desc.await?;
-                let work = RArc::new(RMutex::new(work));
-                let parent_task = ParentTask::new(s.clone().owned().0, task_count, log.clone(), work.clone(), task_inner.clone());
-                log.info(format!("starting: {}", s.clone()));
-                let ret = parent_task.run_scoped(inner.into_future()).await;
+    let fut = async {
+        let parent_task = ParentTask::new(
+            description.clone(),
+            count,
+            log.clone(),
+            work.clone(),
+            &CONTEXT.task,
+        )
+        .await;
+        let ctx = CONTEXT.with_dynamic_binding(&ARGS_SOURCE.with(ParentTaskKey), parent_task);
+        let mut value = value.unwrap();
+        CONTEXT
+            .task
+            .spawn(priority, async move {
+                log.info(format!("starting: {}", &description));
+                let ret = ctx.eval(&mut value).await;
                 let errored = ret.is_err();
                 if errored {
                     work.lock().err();
                 }
-                log.info(format!("complete{}: {}", if errored { " (failed)" } else { "" }, s));
-                ret
-            }))
+                log.info(format!(
+                    "complete{}: {}",
+                    if errored { " (failed)" } else { "" },
+                    description
+                ));
+                ret?;
+                Ok(value)
+            })
             .await
-        })).for_each(|| {
-            match ParentTask::task_local() {
-                None => None,
-                Some(v) => Some(&*v as *const ParentTask as usize)
-            }
-        }, move |res| {
-            let observed_errors_each = observed_errors_each.clone();
-            async move {
-                if let Some(e) = Errored::task_local() {
-                    if let Ok(mut oe) = observed_errors_each.lock() {
-                        oe.register(e);
-                    }
-                }
-                res.await
-            }
-        })
-    })
-    .into()
+    };
+
+    let res = match CONTEXT.dynamic_scope.get(&ParentTaskKey) {
+        Some(p) => p.suspend(&CONTEXT.task, fut).await,
+        None => fut.await,
+    };
+    try_result!(res)
 }
 
-#[derive(Default)]
-struct ObservedErrors {
-    errors: UniqueErrorSources,
-    observers: Vec<grease::runtime::TaskLocalRef<Errored>>,
-}
+pub struct ParentTaskKey;
 
-impl ObservedErrors {
-    pub fn call(&mut self, err: grease::Error) {
-        if self.errors.insert(err.clone()) {
-            for o in self.observers.iter() {
-                o.call(err.clone());
-            }
-        }
-    }
+impl DynamicScopeKey for ParentTaskKey {
+    type Value = ParentTask;
 
-    pub fn register(&mut self, observer: grease::runtime::TaskLocalRef<Errored>) {
-        for e in self.errors.iter() {
-            observer.call(e.clone());
-        }
-        self.observers.push(observer);
+    fn id(&self) -> u128 {
+        nsid!(std::task::key).as_u128()
     }
 }
 
@@ -131,157 +135,90 @@ impl ObservedErrors {
 #[repr(C)]
 pub struct ParentTask {
     pub description: RString,
-    task_count: u32,
-    log: grease::runtime::Log,
-    work: RArc<RMutex<grease::runtime::Work>>,
-    task_manager: grease::runtime::TaskManager,
+    count: u32,
+    log: Log,
+    work: RArc<RMutex<Work>>,
     state: RMutex<ParentTaskState>,
-}
-
-impl TaskLocal for ParentTask {
-    fn task_local_key() -> u128 {
-        task_local_key!(ergo_std::parent_task)
-    }
 }
 
 impl Drop for ParentTask {
     fn drop(&mut self) {
         // Change state to inactive to record any final values bound to dropping (like that of
         // RecordingWork). It should already be inactive generally.
-        *self.state.lock() = ParentTaskState::Inactive;
+        *self.state.lock() = ParentTaskState::Suspended(0);
     }
 }
 
 #[derive(StableAbi)]
 #[repr(C)]
 enum ParentTaskState {
-    Active(usize, LogTask, RecordingWork, TaskPermit),
-    ActivePending(grease::future::BoxFuture<'static, grease::runtime::TaskPermit>),
-    Inactive,
-}
-
-/// A handle to an active task.
-///
-/// While this is retained, the attributed task is considered active.
-pub struct ActiveTask {
-    task: TaskLocalRef<ParentTask>,
-}
-
-impl Drop for ActiveTask {
-    fn drop(&mut self) {
-        let mut guard = self.task.state.lock();
-        match &mut *guard {
-            ParentTaskState::Active(0, _, _, _) => *guard = ParentTaskState::Inactive,
-            ParentTaskState::Active(n, _, _, _) => *n -= 1,
-            _ => panic!("invalid task state"),
-        }
-    }
-}
-
-pub struct Run<Fut>(Fut);
-
-impl<Fut: std::future::Future> std::future::Future for Run<Fut> {
-    type Output = Fut::Output;
-
-    fn poll(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context,
-    ) -> std::task::Poll<Fut::Output> {
-        let task = ParentTask::task_local().expect("ParentTask not set");
-        let _active = {
-            {
-                let mut guard = task.state.lock();
-                loop {
-                    match &mut *guard {
-                        ParentTaskState::Active(n, _, _, _) => {
-                            *n += 1;
-                            break;
-                        }
-                        ParentTaskState::ActivePending(p) => {
-                            // Safety: p is a BoxFuture, it will not move
-                            match std::future::Future::poll(
-                                unsafe { std::pin::Pin::new_unchecked(p) },
-                                cx,
-                            ) {
-                                std::task::Poll::Pending => return std::task::Poll::Pending,
-                                std::task::Poll::Ready(task_permit) => {
-                                    *guard = ParentTaskState::Active(
-                                        0,
-                                        task.log.task(task.description.clone()),
-                                        task.work.lock().start(),
-                                        task_permit,
-                                    );
-                                    break;
-                                }
-                            }
-                        }
-                        ParentTaskState::Inactive => {
-                            *guard = ParentTaskState::ActivePending(
-                                // Safety: the inner state is cleared prior to being dropped, and holds the reference to the task manager.
-                                unsafe {
-                                    std::mem::transmute::<
-                                        grease::future::BoxFuture<'_, _>,
-                                        grease::future::BoxFuture<'static, _>,
-                                    >(
-                                        grease::future::BoxFuture::new(
-                                            task.task_manager.task_acquire(task.task_count),
-                                        ),
-                                    )
-                                },
-                            );
-                        }
-                    }
-                }
-            }
-
-            ActiveTask { task }
-        };
-
-        unsafe { self.map_unchecked_mut(|p| &mut p.0) }.poll(cx)
-    }
+    Active(LogTask, RecordingWork, TaskPermit),
+    Suspended(usize),
 }
 
 impl ParentTask {
-    /// Create a new (inactive) ParentTask.
-    pub fn new(
+    /// Create a new ParentTask and start it.
+    pub async fn new(
         description: RString,
-        task_count: u32,
-        log: grease::runtime::Log,
-        work: RArc<RMutex<grease::runtime::Work>>,
-        task_manager: grease::runtime::TaskManager,
+        count: u32,
+        log: Log,
+        work: RArc<RMutex<Work>>,
+        task_manager: &TaskManager,
     ) -> Self {
-        ParentTask {
+        let pt = ParentTask {
             description,
-            task_count,
+            count,
             log,
             work,
-            task_manager,
-            state: RMutex::new(ParentTaskState::Inactive),
-        }
+            state: RMutex::new(ParentTaskState::Suspended(0)),
+        };
+        pt.start(task_manager).await;
+        pt
     }
 
-    /// Consider the current task active until the returned guard is dropped.
-    ///
-    /// Returns None if there is no active task.
-    pub fn remain_active() -> Option<ActiveTask> {
-        let task = match Self::task_local() {
-            None => return None,
-            Some(task) => task,
-        };
+    /// Suspend the task while running the given future.
+    pub async fn suspend<Fut: std::future::Future>(
+        &self,
+        task_manager: &TaskManager,
+        f: Fut,
+    ) -> Fut::Output {
         {
-            let mut guard = task.state.lock();
-            match &mut *guard {
-                ParentTaskState::Active(n, _, _, _) => *n += 1,
-                _ => panic!("invalid task state"),
+            let mut state = self.state.lock();
+            match &mut *state {
+                ParentTaskState::Suspended(n) => *n += 1,
+                _ => *state = ParentTaskState::Suspended(1),
             }
         }
-        Some(ActiveTask { task })
+        let ret = f.await;
+        let start = {
+            let mut guard = self.state.lock();
+            match &mut *guard {
+                ParentTaskState::Suspended(n) => {
+                    *n -= 1;
+                    *n == 0
+                }
+                _ => panic!("invalid parent task state"),
+            }
+        };
+        if start {
+            self.start(task_manager).await;
+        }
+        ret
     }
 
-    /// Run the given future with this ParentTask.
-    ///
-    /// This must be used for `remain_active` to work.
-    pub fn run_scoped<Fut: std::future::Future>(self, fut: Fut) -> ScopeTaskLocal<Run<Fut>> {
-        self.scoped(Run(fut))
+    /// Start the task if applicable.
+    async fn start(&self, task_manager: &TaskManager) {
+        let task_permit = task_manager.task_acquire(self.count).await;
+        let mut guard = self.state.lock();
+        match &mut *guard {
+            ParentTaskState::Suspended(0) => {
+                *guard = ParentTaskState::Active(
+                    self.log.task(self.description.clone()),
+                    self.work.lock().start(),
+                    task_permit,
+                );
+            }
+            _ => drop(task_permit),
+        }
     }
 }

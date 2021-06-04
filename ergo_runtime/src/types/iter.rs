@@ -47,7 +47,7 @@ impl Iter {
     where
         I: Iterator<Item = Source<Value>> + Send + Sync + 'static,
     {
-        TypedValue::constant_deps(Self::from_iter(iter), deps)
+        TypedValue::constant_deps(Self::from_iter(iter), depends![Self::ergo_type(), ^deps])
     }
 
     /// Create a new Iter value from a Stream with the given dependencies.
@@ -55,7 +55,10 @@ impl Iter {
     where
         S: Stream<Item = Source<Value>> + Send + 'static,
     {
-        TypedValue::constant_deps(Self::from_stream(stream), deps)
+        TypedValue::constant_deps(
+            Self::from_stream(stream),
+            depends![Self::ergo_type(), ^deps],
+        )
     }
 
     /// Create an Iter from an iterator.
@@ -84,6 +87,25 @@ impl Iter {
 }
 
 ergo_traits_fn! {
+    impl traits::Display for Iter {
+        async fn fmt(&self, f: &mut traits::Formatter) -> crate::error::RResult<()> {
+            async move {
+                let items: Vec<_> = self.clone().collect().await;
+                let mut iter = items.into_iter();
+                write!(f, "[")?;
+                if let Some(v) = iter.next() {
+                    traits::display(CONTEXT, v.unwrap(), f).await?;
+                }
+                for v in iter {
+                    write!(f, ", ")?;
+                    traits::display(CONTEXT, v.unwrap(), f).await?;
+                }
+                write!(f, "]")?;
+                Ok(())
+            }.await.into()
+        }
+    }
+
     impl traits::Nested for Iter {
         async fn nested(&self) -> RVec<Value> {
             self.clone().collect::<Vec<_>>().await.into_iter().map(Source::unwrap).collect()
@@ -94,14 +116,13 @@ ergo_traits_fn! {
         async fn value_by_content(self, deep: bool) -> Value {
             let mut vals: Vec<_> = self.to_owned().collect().await;
             if deep {
-                let mut_vals = vals.iter_mut().map(|src_v| &mut **src_v).collect::<Vec<_>>();
-                let mut mut_vals = mut_vals.into_iter();
-                crate::try_result!(CONTEXT.eval_all(mut_vals.by_ref()).await);
-                for v in mut_vals {
-                    let old_v = std::mem::replace(v, super::Unset.into());
-                    *v = traits::value_by_content(CONTEXT, old_v, deep).await;
-                }
+                CONTEXT.task.join_all(vals.iter_mut().map(|v| async move {
+                    let old_v = std::mem::replace(&mut **v, super::Unset.into());
+                    **v = traits::value_by_content(CONTEXT, old_v, deep).await;
+                    Ok(())
+                })).await.unwrap();
             }
+            dbg!(&vals);
             let deps = depends![^@vals];
             Iter::new(vals.into_iter(), deps).into()
         }

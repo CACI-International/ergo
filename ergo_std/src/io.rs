@@ -1,14 +1,12 @@
 /// I/O utilities.
-use ergo_runtime::{ergo_function, types, ContextExt};
+use ergo_runtime::{depends, io, nsid, traits, try_result, types, Value};
 use futures::lock::{Mutex, MutexGuard};
-use grease::runtime::io;
-use grease::{make_value, value::Value};
 
 pub fn module() -> Value {
-    crate::grease_string_map! {
-        "stdin" = stdin_fn(),
-        "stdout" = stdout_fn(),
-        "stderr" = stderr_fn()
+    crate::make_string_map! {
+        "stdin" = stdin(),
+        "stdout" = stdout(),
+        "stderr" = stderr()
     }
 }
 
@@ -30,9 +28,9 @@ impl<'a> io::AsyncRead for Stdin<'a> {
     fn poll_read(
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context,
-        task: &grease::runtime::TaskManager,
+        task: &ergo_runtime::context::TaskManager,
         buf: &mut [u8],
-    ) -> std::task::Poll<grease::Result<usize>> {
+    ) -> std::task::Poll<ergo_runtime::Result<usize>> {
         io::AsyncRead::poll_read(
             unsafe { self.map_unchecked_mut(|v| &mut v.inner) },
             cx,
@@ -47,81 +45,64 @@ lazy_static::lazy_static! {
     static ref STDOUT_MUTEX: Mutex<()> = Mutex::new(());
 }
 
-fn stdin_fn() -> Value {
-    ergo_function!(
-        std::io::stdin,
-        r"Get the standard input ByteStream of the process.
+static STDIN_ID: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-Arguments: (none)
-Returns a ByteStream that, when read, takes exclusive access of the process standard input.",
-        |ctx, args| {
-            args.unused_arguments()?;
-
-            // Derive identity from random integer; stdin may contain anything.
-            make_value!([rand::random::<u64>()] {
-                let guard = STDIN_MUTEX.lock().await;
-                Ok(types::ByteStream::new(Stdin::new(guard)))
-            })
-            .into()
-        }
+#[types::ergo_fn]
+/// Get the standard input ByteStream of the process.
+///
+/// Arguments: (none)
+///
+/// Returns a ByteStream that takes exclusive access of the process standard input.
+async fn stdin() -> Value {
+    let id = STDIN_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let guard = STDIN_MUTEX.lock().await;
+    Value::constant_deps(
+        types::ByteStream::new(Stdin::new(guard)),
+        depends![nsid!(io::stdin), id],
     )
-    .into()
 }
 
-fn stdout_fn() -> Value {
-    ergo_function!(std::io::stdout,
-    r"Write a ByteStream to the process standard output.
-
-Arguments: `(ByteStream :bytes)`
-When the returned unit value is evaluated, takes exclusive access of the process standard output (pausing logging) and writes
-the ByteStream to it.",
-    |ctx,args| {
-        let data = args.next().ok_or("'data' missing")?;
-
-        args.unused_arguments()?;
-
-        let data = ctx.into_sourced::<types::ByteStream>(data);
-        let data = data.await?.unwrap();
-
-        let log = ctx.log.clone();
-        let task = ctx.task.clone();
-
-        make_value!([data] {
-            let data = data.await?;
-            let _guard = STDOUT_MUTEX.lock().await;
-            let paused = log.pause();
-            io::copy_interactive(&task, &mut data.read(), &mut io::Blocking::new(std::io::stdout())).await?;
-            drop(paused);
-            Ok(types::Unit)
-        })
-        .into()
-    })
-    .into()
+#[types::ergo_fn]
+/// Write a ByteStream to the process standard output.
+///
+/// Arguments: `(Into<ByteStream> :bytes)`
+///
+/// Takes exclusive access of the process standard output (pausing logging) and writes the ByteStream to it.
+async fn stdout(bytes: _) -> Value {
+    let bytes =
+        try_result!(traits::into_sourced::<types::ByteStream>(CONTEXT, bytes).await).unwrap();
+    {
+        let _guard = STDOUT_MUTEX.lock().await;
+        let _paused = CONTEXT.log.pause();
+        try_result!(
+            io::copy_interactive(
+                &CONTEXT.task,
+                &mut bytes.as_ref().read(),
+                &mut io::Blocking::new(std::io::stdout())
+            )
+            .await
+        );
+    }
+    types::Unit.into()
 }
 
-fn stderr_fn() -> Value {
-    ergo_function!(std::io::stderr,
-    r"Write a ByteStream to the process standard error.
-
-Arguments: `(ByteStream :bytes)`
-When the returned unit value is evaluated, writes the ByteStream to the process standard error. This does not have any
-exlusive access guarantees like `stdin` and `stdout`.",
-    |ctx,args| {
-        let data = args.next().ok_or("'data' missing")?;
-
-        args.unused_arguments()?;
-
-        let data = ctx.into_sourced::<types::ByteStream>(data);
-        let data = data.await?.unwrap();
-
-        let task = ctx.task.clone();
-
-        make_value!([data] {
-            let data = data.await?;
-            io::copy_interactive(&task, &mut data.read(), &mut io::Blocking::new(std::io::stderr())).await?;
-            Ok(types::Unit)
-        })
-        .into()
-    })
-    .into()
+#[types::ergo_fn]
+/// Write a ByteStream to the process standard error.
+///
+/// Arguments: `(ByteStream :bytes)`
+///
+/// Writes the ByteStream to the process standard error. This does not have any exclusive access
+/// guarantees like `stdin` and `stdout`.
+async fn stderr(bytes: _) -> Value {
+    let bytes =
+        try_result!(traits::into_sourced::<types::ByteStream>(CONTEXT, bytes).await).unwrap();
+    try_result!(
+        io::copy_interactive(
+            &CONTEXT.task,
+            &mut bytes.as_ref().read(),
+            &mut io::Blocking::new(std::io::stderr())
+        )
+        .await
+    );
+    types::Unit.into()
 }

@@ -1,9 +1,7 @@
 //! Testing helpers.
 
 use crate::StringSource;
-use ergo_runtime::{
-    traits::value_by_content, type_system::ErgoType, Context, RResult, Result, Source, Value,
-};
+use ergo_runtime::{traits, type_system::ErgoType, Context, RResult, Result, Source, Value};
 use std::collections::BTreeMap;
 
 pub struct Test {
@@ -76,24 +74,62 @@ impl Test {
             .expect_err("value succeeded");
     }
 
-    pub fn assert_eq(&self, a: &str, b: &str) {
+    pub fn assert_script_eq(&self, a: &str, b: &str) {
         let a = self.eval(a).expect("eval error");
         let b = self.eval(b).expect("eval error");
+        self.dbg(&a);
+        self.dbg(&b);
+        assert_eq!(a, b);
+    }
+
+    pub fn assert_script_ne(&self, a: &str, b: &str) {
+        let a = self.eval(a).expect("eval error");
+        let b = self.eval(b).expect("eval error");
+        self.dbg(&a);
+        self.dbg(&b);
+        assert_ne!(a, b);
+    }
+
+    pub fn assert_eq(&self, a: &str, b: &str) {
+        let mut a = self.eval(a).expect("eval error");
+        let mut b = self.eval(b).expect("eval error");
+        drop(self.block_on(self.runtime.ctx.eval(&mut a)));
+        drop(self.block_on(self.runtime.ctx.eval(&mut b)));
+        self.dbg(&a);
+        self.dbg(&b);
         assert_eq!(a, b);
     }
 
     pub fn assert_ne(&self, a: &str, b: &str) {
-        let a = self.eval(a).expect("eval error");
-        let b = self.eval(b).expect("eval error");
+        let mut a = self.eval(a).expect("eval error");
+        let mut b = self.eval(b).expect("eval error");
+        drop(self.block_on(self.runtime.ctx.eval(&mut a)));
+        drop(self.block_on(self.runtime.ctx.eval(&mut b)));
+        self.dbg(&a);
+        self.dbg(&b);
         assert_ne!(a, b);
     }
 
     pub fn assert_content_eq(&self, a: &str, b: &str) {
         let a = self.eval(a).expect("eval error").unwrap();
         let b = self.eval(b).expect("eval error").unwrap();
-        let a = self.block_on(value_by_content(&self.runtime.ctx, a, true));
-        let b = self.block_on(value_by_content(&self.runtime.ctx, b, true));
+        let a = self.block_on(traits::value_by_content(&self.runtime.ctx, a, true));
+        let b = self.block_on(traits::value_by_content(&self.runtime.ctx, b, true));
+        self.dbg(&a);
+        self.dbg(&b);
         assert_eq!(a, b);
+    }
+
+    fn dbg(&self, v: &Value) {
+        dbg!(traits::type_name(&self.runtime.ctx, v));
+        match self.block_on(traits::to_string(&self.runtime.ctx, v.clone())) {
+            Ok(s) => {
+                dbg!(s);
+            }
+            Err(e) => {
+                dbg!(e);
+            }
+        }
     }
 
     fn block_on<R, Fut: std::future::Future<Output = R>>(&self, fut: Fut) -> R {

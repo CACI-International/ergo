@@ -1,71 +1,62 @@
 //! Environment variable functions.
 
-use ergo_runtime::{ergo_function, metadata::Doc, traits, types, ContextExt};
-use grease::{make_value, match_value, path::PathBuf, value::Value};
+use ergo_runtime::{metadata::Doc, traits, try_result, types, value::match_value, Value};
 
 pub fn module() -> Value {
-    crate::grease_string_map! {
-        "get" = get_fn(),
-        "home" = home_path(),
-        "path-search" = path_search_fn(),
-        "current-dir" = current_dir_path(),
-        "user-cache" = user_cache_path(),
-        "system-cache" = system_cache_path(),
-        "os" = os_string(),
-        "arch" = arch_string()
+    crate::make_string_map! {
+        "get" = get(),
+        "home" = home(),
+        "path-search" = path_search(),
+        "current-dir" = current_dir(),
+        "user-cache" = user_cache(),
+        "system-cache" = system_cache(),
+        "os" = os(),
+        "arch" = arch()
     }
 }
 
-fn get_fn() -> Value {
-    ergo_function!(independent std::env::get,
-    r"Get an environment variable.
-
-Arguments: `(String :environment-variable-name)`
-If the environment variable is not set, returns `Unset`. Otherwise returns the value of the environment variable as a
-string, where the string is identified by the environment variable's content.",
-    |ctx,args| {
-        let name = args.next()
-            .ok_or("environment variable name not provided")?;
-
-        args.unused_arguments()?;
-
-        let name = ctx.source_value_as::<types::String>(name);
-        let name = name.await?.unwrap();
-
-        match std::env::var_os(name.await?.as_ref().as_str()) {
-            None => types::Unset::new().into(),
-            Some(v) => types::String::from(
-                v.into_string()
-                    .map_err(|_| "environment variable value is not valid unicode")?,
-            )
-            .into(),
-        }
-    })
-    .into()
+#[types::ergo_fn]
+/// Get an environment variable.
+///
+/// Arguments: `(String :environment-variable-name)`
+///
+/// If the environment variable is not set, returns `Unset`. Otherwise returns the value of the
+/// environment variable as a string, where the string is identified by the environment variable's
+/// content.
+async fn get(name: types::String) -> Value {
+    match std::env::var_os(name.value().as_ref().0.as_str()) {
+        None => types::Unset.into(),
+        Some(v) => types::String::from(try_result!(v.into_string().map_err(|_| name
+            .source()
+            .with("environment variable value is not valid unicode")
+            .into_error())))
+        .into(),
+    }
 }
 
-fn current_dir_path() -> Value {
-    let path = std::env::current_dir().ok();
-    let mut v = make_value!([ergo_runtime::namespace_id!(std::env::current_dir), path] {
-        path.map(|d| PathBuf::from(d)).ok_or("current directory path could not be retrieved".into())
-    });
+fn current_dir() -> Value {
+    let mut v = match std::env::current_dir().ok() {
+        Some(path) => types::Path::from(path).into(),
+        None => types::Error::from("the current working directory could not be retrieved").into(),
+    };
     Doc::set_string(
         &mut v,
         "The current working directory of the process, as a path.",
     );
-    v.into()
+    v
 }
 
-fn user_cache_path() -> Value {
+fn user_cache() -> Value {
     let path = directories::ProjectDirs::from("", "", "ergo").map(|d| d.cache_dir().to_owned());
-    let mut v = make_value!([ergo_runtime::namespace_id!(std::env::user_cache), path] {
-        path.map(|d| PathBuf::from(d)).ok_or("user cache path could not be retrieved".into())
-    });
+    let mut v = match path {
+        Some(path) => types::Path::from(path).into(),
+        None => types::Error::from("the user cache directory could not be retrieved").into(),
+    };
     Doc::set_string(&mut v, "A user-level cache directory path.");
-    v.into()
+    v
 }
 
-fn system_cache_path() -> Value {
+fn system_cache() -> Value {
     let mut path = if cfg!(unix) {
         Some(std::path::Path::new("/var/cache/ergo"))
     } else if cfg!(windows) {
@@ -88,67 +79,56 @@ fn system_cache_path() -> Value {
         directories::ProjectDirs::from("", "", "ergo").map(|d| d.cache_dir().to_owned())
     });
 
-    let mut v = make_value!([ergo_runtime::namespace_id!(std::env::system_cache), path] {
-        path.map(|d| PathBuf::from(d)).ok_or("system cache path could not be retrieved".into())
-    });
+    let mut v = match path {
+        Some(path) => types::Path::from(path).into(),
+        None => types::Error::from("the system cache directory could not be retrieved").into(),
+    };
     Doc::set_string(&mut v, "A system-level cache directory path.");
-    v.into()
+    v
 }
 
-fn home_path() -> Value {
+fn home() -> Value {
     let path = directories::BaseDirs::new().map(|d| d.home_dir().to_owned());
-    let mut v = make_value!([ergo_runtime::namespace_id!(std::env::home), path] {
-        path.map(|d| PathBuf::from(d)).ok_or("home path could not be retrieved".into())
-    });
+    let mut v = match path {
+        Some(path) => types::Path::from(path).into(),
+        None => types::Error::from("the home path could not be retrieved").into(),
+    };
     Doc::set_string(&mut v, "The current user's home directory path.");
     v.into()
 }
 
-fn path_search_fn() -> Value {
-    ergo_function!(
-        std::env::path_search,
-        r"Find a file in the binary lookup path.
+#[types::ergo_fn]
+/// Find a file in the binary lookup path.
+///
+/// Arguments: `(StringOrPath :name)`
+///
+/// If a Path is passed, it will simply be returned as-is. If a String is passed, a Path value is
+/// returned that, when evaluated, will search for the string in PATH. If not found, an error
+/// occurs. Otherwise the path of the resolved file is returned.
+async fn path_search(mut string_or_path: _) -> Value {
+    try_result!(CONTEXT.eval(&mut string_or_path).await);
+    let (src, string_or_path) = string_or_path.take();
+    match_value! { string_or_path,
+        p@types::Path(_) => p.into(),
+        types::String(name) => {
+                let paths = std::env::var_os("PATH")
+                    .map(|path| std::env::split_paths(&path).collect())
+                    .unwrap_or(vec![]);
 
-Arguments: `(StringOrPath :name)`
-If a Path is passed, it will simply be returned as-is.
-If a String is passed, a Path value is returned that, when evaluated, will searched for the string
-in PATH. If not found, an error occurs. Otherwise the path of the resolved file is returned.",
-        |ctx, args| {
-            let arg = args.next().ok_or("no search argument provided")?;
-
-            args.unused_arguments()?;
-
-            let (arg_source, arg) = arg.take();
-            match_value!(arg => {
-                PathBuf => |v| v,
-                types::String => |name| {
-                    let paths = std::env::var_os("PATH")
-                        .map(|path| std::env::split_paths(&path).collect())
-                        .unwrap_or(vec![]);
-
-                    make_value!([paths, name] {
-                        let name = name.await?;
-
-                        for p in paths {
-                            let path = p.join(name.as_ref().as_str());
-                            if path.is_file() {
-                                return Ok(PathBuf::from(path));
-                            }
-                        }
-
-                        Err(format!("could not find {} in PATH", name.as_ref().as_str()).into())
-                    })
+                for p in paths {
+                    let path = p.join(name.as_str());
+                    if path.is_file() {
+                        return types::Path::from(path).into();
+                    }
                 }
-                => |other| traits::type_error(ctx, arg_source.with(other), "String or Path").await?
-            })
-            .await?
-            .into()
+
+                ARGS_SOURCE.with(format!("could not find {} in PATH", name.as_str())).into_error().into()
         }
-    )
-    .into()
+        other => traits::type_error(CONTEXT, src.with(other), "String or Path").into()
+    }
 }
 
-fn os_string() -> Value {
+fn os() -> Value {
     let mut v: Value = types::String::from(std::env::consts::OS).into();
     Doc::set_string(
         &mut v,
@@ -159,7 +139,7 @@ Possible values include `linux`, `macos`, and `windows`.",
     v
 }
 
-fn arch_string() -> Value {
+fn arch() -> Value {
     let mut v: Value = types::String::from(std::env::consts::ARCH).into();
     Doc::set_string(
         &mut v,

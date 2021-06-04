@@ -57,6 +57,13 @@ pub async fn display(ctx: &Context, mut v: Value, f: &mut Formatter<'_>) -> crat
     }
 }
 
+/// Display a value to a string.
+pub async fn to_string(ctx: &Context, v: Value) -> crate::Result<String> {
+    let mut s = String::new();
+    display(ctx, v, &mut Formatter::new(&mut s)).await?;
+    Ok(s)
+}
+
 #[macro_export]
 macro_rules! ergo_display_basic {
     ( $traits:expr, $t:ty ) => {

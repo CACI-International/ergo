@@ -1,76 +1,39 @@
 //! Doc-related functions.
 
 use ergo_runtime::{
-    depends, metadata::Doc, nsid, traits, try_result, types, value::match_value, Context, Error,
-    Result, Source, Value,
+    context::{DynamicScopeKey, DynamicScopeRef},
+    depends,
+    metadata::Doc,
+    nsid, traits, try_result, types,
+    value::match_value,
+    Context, Error, Source, Value,
 };
 use futures::future::FutureExt;
 use std::path::PathBuf;
 
-/*
-#[derive(Clone, StableAbi)]
-#[repr(C)]
-struct DocPath {
-    root: PathBuf,
-    relative: PathBuf,
-}
+struct DocPathKey;
 
-impl TaskLocal for DocPath {
-    fn task_local_key() -> u128 {
-        task_local_key!(ergo::doc::path)
+impl DynamicScopeKey for DocPathKey {
+    type Value = DocPath;
+
+    fn id(&self) -> u128 {
+        nsid!(doc::key).as_u128()
     }
 }
 
-impl DocPath {
-    pub fn new(root: PathBuf) -> Self {
-        DocPath {
-            root,
-            relative: Default::default(),
-        }
-    }
-
-    pub fn join(&mut self, p: &std::path::Path) {
-        self.relative = self.relative.as_ref().join(p).into();
-    }
-
-    pub fn current(&self) -> PathBuf {
-        self.root.as_ref().join(self.relative.as_ref()).into()
-    }
-}
-*/
-
-fn doc_root_key() -> Value {
-    types::String::from("doc:root").into()
-}
-
-fn doc_path_key() -> Value {
-    types::String::from("doc:path").into()
-}
-
+#[derive(Clone, Debug)]
 struct DocPath {
     pub root: Source<PathBuf>,
     pub path: Source<PathBuf>,
 }
 
 impl DocPath {
-    pub async fn get(ctx: &Context) -> Result<Option<Self>> {
-        match ctx.dynamic_scope.get(&doc_root_key()).cloned() {
-            None => Ok(None),
-            Some(v) => {
-                let root: Source<PathBuf> = ctx
-                    .eval_as::<types::Path>(v)
-                    .await?
-                    .map(|v| v.to_owned().0.into());
-                let path = if let Some(path) = ctx.dynamic_scope.get(&doc_path_key()).cloned() {
-                    ctx.eval_as::<types::Path>(path)
-                        .await?
-                        .map(|p| p.to_owned().0.into())
-                } else {
-                    root.source().with(Default::default())
-                };
-                Ok(Some(DocPath { root, path }))
-            }
-        }
+    pub fn get(ctx: &Context) -> Option<DynamicScopeRef<Self>> {
+        ctx.dynamic_scope.get(&DocPathKey)
+    }
+
+    pub fn owned(ctx: &Context) -> Option<Self> {
+        Self::get(ctx).map(|r| r.owned())
     }
 
     pub fn new(root: Source<PathBuf>) -> Self {
@@ -87,17 +50,8 @@ impl DocPath {
         self.root.as_ref().join(self.path.as_ref().unwrap())
     }
 
-    pub fn context(&self, ctx: &Context, key_source: Source<()>) -> Context {
-        let root = self
-            .root
-            .source()
-            .with(types::Path::from(self.root.as_path()).into());
-        let path = self
-            .path
-            .source()
-            .with(types::Path::from(self.path.as_path()).into());
-        ctx.with_dynamic_binding(key_source.clone().with(doc_root_key().clone()), root)
-            .with_dynamic_binding(key_source.with(doc_path_key().clone()), path)
+    pub fn context(self, ctx: &Context, key_source: Source<()>) -> Context {
+        ctx.with_dynamic_binding(&key_source.with(DocPathKey), self)
     }
 }
 
@@ -111,7 +65,7 @@ pub fn doc() -> Value {
         /// Returns the doc Path, or Unset if no Path is present (documentation is not being
         /// written to the filesystem).
         async fn path() -> Value {
-            match try_result!(DocPath::get(CONTEXT).await) {
+            match DocPath::get(CONTEXT) {
                 None => Error::from("no doc root set").into(),
                 Some(p) => types::Path::from(p.current()).into()
             }
@@ -165,7 +119,7 @@ pub fn doc() -> Value {
                 v => return traits::type_error(CONTEXT, path_source.with(v), "String or Path").into()
             };
 
-            match try_result!(DocPath::get(CONTEXT).await) {
+            match DocPath::owned(CONTEXT) {
                 None => types::Path::from(path).into(),
                 Some(mut doc_path) => {
                     let mut rel_path = std::path::PathBuf::new();

@@ -161,7 +161,7 @@ impl Parser for ErgoFnLike {
             let (bind, get_arg) = match arg {
                 Arg::Positional(p) => (p, quote! { __ergo_fn_args.next() }),
                 Arg::Keyed(i) => {
-                    let key = syn::LitStr::new(&i.ident.to_string(), i.span());
+                    let key = syn::LitStr::new(&i.ident.to_string().replace('_', "-"), i.span());
                     (i.into(), quote! { __ergo_fn_args.kw(#key) })
                 }
             };
@@ -195,7 +195,7 @@ impl Parser for ErgoFnLike {
 
         let rest_or_check = if has_rest {
             quote! {
-                let REST = __ergo_fn_args;
+                let mut REST = __ergo_fn_args;
             }
         } else {
             quote! {

@@ -26,7 +26,7 @@ pub use self::log::{
     logger_ref, Log, LogEntry, LogLevel, LogTarget, LogTask, LogTaskKey, Logger, LoggerRef,
     RecordingWork, Work,
 };
-pub use dynamic_scope::DynamicScope;
+pub use dynamic_scope::{DynamicScope, DynamicScopeKey, DynamicScopeRef};
 pub use error_scope::ErrorScope;
 pub use shared_state::SharedState;
 pub use store::{Item, ItemContent, ItemName, Store};
@@ -208,7 +208,11 @@ impl Context {
     }
 
     /// Create a new context with the given dynamic binding set.
-    pub fn with_dynamic_binding(&self, key: Source<Value>, value: Source<Value>) -> Self {
+    pub fn with_dynamic_binding<K: DynamicScopeKey>(
+        &self,
+        key: &Source<K>,
+        value: K::Value,
+    ) -> Self {
         let mut ctx = self.clone();
         ctx.dynamic_scope.set(key, value);
         ctx

@@ -38,7 +38,12 @@ pub fn type_error(ctx: &crate::Context, v: Source<crate::Value>, expected: &str)
 
 /// Create a type error with the value's type mentioned.
 pub fn type_error_for<T: ErgoType>(ctx: &crate::Context, v: Source<crate::Value>) -> crate::Error {
-    type_error(ctx, v, type_name_for(ctx, &T::ergo_type()).as_str())
+    type_error_for_t(ctx, v, &T::ergo_type())
+}
+
+/// Create a type error with the value's type mentioned.
+pub fn type_error_for_t(ctx: &crate::Context, v: Source<crate::Value>, tp: &Type) -> crate::Error {
+    type_error(ctx, v, type_name_for(ctx, tp).as_str())
 }
 
 /// Define the TypeName trait for the given rust type.

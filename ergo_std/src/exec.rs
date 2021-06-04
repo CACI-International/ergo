@@ -1,32 +1,23 @@
 //! Execute (possibly with path-lookup) external programs.
 
-use abi_stable::{std_types::ROption, StableAbi};
+use ergo_runtime::abi_stable::{ffi::OsString, std_types::ROption, type_erase::Erased, StableAbi};
 use ergo_runtime::{
-    context_ext::AsContext, ergo_function, namespace_id, traits, traits::IntoTyped, types,
-    ContextExt,
+    context::ItemContent,
+    depends,
+    io::{self, wrap, Blocking, TokioWrapped},
+    nsid, traits, try_result,
+    type_system::ErgoType,
+    types, Dependencies, Error, Source, Value,
 };
 use futures::channel::oneshot::channel;
 use futures::future::FutureExt;
 use futures::stream::StreamExt;
-use grease::{
-    depends,
-    ffi::OsString,
-    make_value,
-    path::PathBuf,
-    runtime::{
-        io::{wrap, Blocking, TokioWrapped},
-        ItemContent,
-    },
-    types::GreaseType,
-    value::{Dependencies, Value},
-    Error,
-};
 use std::process::{Command, Stdio};
 
 /// Strings used for commands and arguments.
-#[derive(Clone, Debug, GreaseType, Hash, StableAbi)]
+#[derive(Clone, Debug, ErgoType, Hash, StableAbi)]
 #[repr(C)]
-pub struct CommandString(OsString);
+pub struct CommandString(pub OsString);
 
 impl From<types::String> for CommandString {
     fn from(s: types::String) -> Self {
@@ -34,14 +25,16 @@ impl From<types::String> for CommandString {
     }
 }
 
-impl From<PathBuf> for CommandString {
-    fn from(p: PathBuf) -> Self {
-        CommandString(p.into())
+impl From<types::Path> for CommandString {
+    fn from(p: types::Path) -> Self {
+        CommandString(p.0.into())
     }
 }
 
+ergo_runtime::HashAsDependency!(CommandString);
+
 /// The exit status of a command.
-#[derive(Clone, Debug, Eq, PartialEq, Hash, GreaseType, StableAbi)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash, ErgoType, StableAbi)]
 #[repr(C)]
 pub struct ExitStatus(pub ROption<i32>);
 
@@ -69,6 +62,319 @@ impl From<std::process::ExitStatus> for ExitStatus {
 impl From<ExitStatus> for types::Bool {
     fn from(e: ExitStatus) -> Self {
         types::Bool(e.success())
+    }
+}
+
+impl From<ExitStatus> for ergo_runtime::TypedValue<ExitStatus> {
+    fn from(e: ExitStatus) -> Self {
+        ergo_runtime::TypedValue::constant(e)
+    }
+}
+
+impl From<&'_ ExitStatus> for Dependencies {
+    fn from(e: &'_ ExitStatus) -> Self {
+        depends![ExitStatus::ergo_type(), e]
+    }
+}
+
+ergo_runtime::HashAsDependency!(ExitStatus);
+
+#[types::ergo_fn]
+/// Execute an external program.
+///
+/// Arguments: `:program ^:arguments`
+///
+/// Both `program` and `arguments` must be convertible to `CommandString`. By default `String`, `Path`, and `ByteStream` satisfy
+/// this.
+///
+/// Keyed Arguments:
+/// * `Map :env`: A map of Strings to Strings where key-value pairs define the environment
+/// variables to set while executing the program (default empty).
+/// * `Into<Path> :pwd`: The working directory to set while executing the program (default none).
+/// * `Into<ByteStream> :stdin`: The stdin to pipe into the program (default none).
+/// * `:retain-terminal`: If set, the spawned child is kept in the same terminal session.
+///
+/// This returns a Map with the following indices:
+/// * `:stdout`: The standard output stream from the program, as a `ByteStream`.
+/// * `:stderr`: The standard error stream from the program, as a `ByteStream`.
+/// * `:exit-status`: The exit status of the program, as an `ExitStatus`.
+/// * `:complete`: Waits for the program to complete successfully, evaluating to `Unit` or an
+/// `Error`.
+///
+/// Note that the `complete` value will not evaluate to an error if `exit-status` is used in the
+/// script. It also won't include each of stdout or stderr in the error string if they are used in
+/// the script.
+///
+/// The `ExitStatus` type can be converted to `Bool` to check whether the program returned a successful status.
+pub async fn function(
+    cmd: _,
+    (env): [types::Map],
+    (pwd): [_],
+    (stdin): [_],
+    (retain_terminal): [_],
+    ...
+) -> Value {
+    let mut args = Vec::default();
+    args.push(traits::into_sourced::<CommandString>(CONTEXT, cmd));
+    while let Some(arg) = REST.next() {
+        args.push(traits::into_sourced::<CommandString>(CONTEXT, arg));
+    }
+
+    let args: Vec<_> = try_result!(CONTEXT.task.join_all(args).await)
+        .into_iter()
+        .map(Source::unwrap)
+        .collect();
+
+    let pwd = match pwd {
+        Some(v) => {
+            Some(try_result!(traits::into_sourced::<types::Path>(CONTEXT, v).await).unwrap())
+        }
+        // TODO set dir if not specified?
+        None => None,
+    };
+
+    let stdin = match stdin {
+        Some(v) => {
+            Some(try_result!(traits::into_sourced::<types::ByteStream>(CONTEXT, v).await).unwrap())
+        }
+        None => None,
+    };
+
+    let retain_terminal = match retain_terminal {
+        Some(v) => {
+            try_result!(traits::into_sourced::<types::Bool>(CONTEXT, v).await)
+                .unwrap()
+                .as_ref()
+                .0
+        }
+        None => false,
+    };
+
+    try_result!(REST.unused_arguments());
+
+    let log = CONTEXT.log.sublog("exec");
+
+    let deps = depends![^@args, { env, pwd, stdin }];
+
+    let mut args = args.iter();
+    let cmd = args.next().unwrap();
+
+    let mut command = Command::new(cmd.as_ref().0.as_ref());
+    command.args(args.map(|v| v.as_ref().0.as_ref()));
+    command.env_clear();
+    if let Some(v) = env {
+        let v = v.unwrap();
+        let types::Map(env) = v.to_owned();
+        for (k, v) in env {
+            let k = try_result!(CONTEXT.eval_as::<types::String>(k).await)
+                .unwrap()
+                .to_owned()
+                .into_string();
+            let v = try_result!(traits::into_sourced::<CommandString>(CONTEXT, v).await);
+            command.env(k, v.value().as_ref().0.as_ref());
+        }
+    }
+    if let Some(v) = pwd {
+        command.current_dir(v.as_ref().as_ref());
+    }
+
+    if stdin.is_some() {
+        command.stdin(Stdio::piped());
+    }
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
+
+    if !retain_terminal {
+        // Disown process group so signals don't go to children.
+        disown_pgroup(&mut command);
+    }
+
+    // Create channels for outputs
+    let (send_stdout, rcv_stdout) = channel();
+    let (send_stderr, rcv_stderr) = channel();
+    let (send_status, rcv_status) = channel();
+
+    let task = CONTEXT.task.clone();
+    let run_command = async move {
+        log.debug(format!("spawning child process: {:?}", command));
+
+        let mut child = command.spawn()?;
+
+        // Handle stdin
+        let stdin = stdin.map(|v| v.as_ref().read());
+        let input = if let (Some(input), Some(mut v)) = (child.stdin.take(), stdin) {
+            let mut b = Blocking::new(input);
+            let task = task.clone();
+            async move { ergo_runtime::io::copy_interactive(&task, &mut v, &mut b).await }.boxed()
+        } else {
+            futures::future::ok(0).boxed()
+        };
+
+        // Handle stdout
+        let (mut out_pipe_send, out_pipe_recv) = pipe();
+        let mut cstdout = Blocking::new(child.stdout.take().unwrap());
+        let output = ergo_runtime::io::copy_interactive(&task, &mut cstdout, &mut out_pipe_send);
+        let out_pipe_recv = if !send_stdout.is_canceled() {
+            drop(send_stdout.send(out_pipe_recv));
+            None
+        } else {
+            Some(out_pipe_recv)
+        };
+
+        // Handle stderr
+        let (mut err_pipe_send, err_pipe_recv) = pipe();
+        let mut cstderr = Blocking::new(child.stderr.take().unwrap());
+        let error = io::copy_interactive(&task, &mut cstderr, &mut err_pipe_send);
+        let err_pipe_recv = if !send_stderr.is_canceled() {
+            drop(send_stderr.send(err_pipe_recv));
+            None
+        } else {
+            Some(err_pipe_recv)
+        };
+
+        // Handle running the child and getting the exit status
+        let exit_status = task
+            .spawn_blocking(move || child.wait().map_err(Error::from))
+            .map(|r| r.and_then(|v| v));
+
+        // Only run stdin while waiting for exit status
+        let exit_status = BoundTo::new(exit_status, input);
+
+        // Finally await everything
+        let exit_status = {
+            // TODO let _guard = super::task::ParentTask::remain_active();
+            futures::future::try_join3(exit_status, output, error)
+                .await?
+                .0
+        };
+
+        // These pipes should be dropped here so that, if an error occurred, the recv pipes
+        // terminate correctly if gathering stdout/stderr.
+        drop(out_pipe_send);
+        drop(err_pipe_send);
+
+        // Produce the final result
+        if send_status.is_canceled() {
+            if !exit_status.success() {
+                macro_rules! fetch_named {
+                    ( $output:expr, $name:expr ) => {
+                        if let Some(mut recv_pipe) = $output {
+                            let mut s = String::new();
+                            use io::AsyncReadExt;
+                            if recv_pipe.read_to_string(&task, &mut s).await.is_ok() {
+                                if !s.is_empty() {
+                                    Some(format!("\n{}:\n{}", $name, s))
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                        .unwrap_or_default()
+                    };
+                }
+                let stdout = fetch_named!(out_pipe_recv, "stdout");
+                let stderr = fetch_named!(err_pipe_recv, "stderr");
+                return Err(
+                    format!("command returned failure exit status{}{}", stdout, stderr).into(),
+                );
+            }
+        } else {
+            drop(send_status.send(exit_status));
+        }
+
+        ergo_runtime::Result::Ok(())
+    }
+    .shared();
+
+    // Create output values
+    let complete = {
+        let run_command = run_command.clone();
+        Value::dyn_new(
+            |_| async move {
+                try_result!(run_command.await);
+                types::Unit.into()
+            },
+            depends![^deps.clone(), nsid!(exec::complete)],
+        )
+    };
+
+    let stdout = Value::constant_deps(
+        types::ByteStream::new(ReadWhile::new(
+            ChannelRead::new(rcv_stdout),
+            run_command.clone(),
+        )),
+        depends![^deps.clone(), nsid!(exec::stdout)],
+    );
+
+    let stderr = Value::constant_deps(
+        types::ByteStream::new(ReadWhile::new(
+            ChannelRead::new(rcv_stderr),
+            run_command.clone(),
+        )),
+        depends![^deps.clone(), nsid!(exec::stderr)],
+    );
+
+    let exit_status = Value::dyn_new(
+        |_| async move {
+            try_result!(run_command.await);
+            ExitStatus::from(try_result!(rcv_status.await)).into()
+        },
+        depends![^deps, nsid!(exec::exit_status)],
+    );
+
+    crate::make_string_map! {
+        "stdout" = stdout,
+        "stderr" = stderr,
+        "exit-status" = exit_status,
+        "complete" = complete
+    }
+}
+
+#[cfg(unix)]
+fn disown_pgroup(cmd: &mut Command) {
+    use std::os::unix::process::CommandExt;
+    unsafe {
+        cmd.pre_exec(|| {
+            if libc::setsid() == -1 {
+                Err(errno::errno().into())
+            } else {
+                Ok(())
+            }
+        });
+    }
+}
+
+#[cfg(windows)]
+fn disown_pgroup(cmd: &mut Command) {}
+
+ergo_runtime::type_system::ergo_traits_fn! {
+    // CommandString traits
+    traits::IntoTyped::<CommandString>::add_impl::<types::String>(traits);
+    traits::IntoTyped::<CommandString>::add_impl::<types::String>(traits);
+    ergo_runtime::ergo_type_name!(traits, CommandString);
+
+    // ExitStatus traits
+    traits::IntoTyped::<types::Bool>::add_impl::<ExitStatus>(traits);
+    ergo_runtime::ergo_display_basic!(traits, ExitStatus);
+    ergo_runtime::ergo_type_name!(traits, ExitStatus);
+    traits::ValueByContent::add_impl::<ExitStatus>(traits);
+
+    impl traits::Stored for ExitStatus {
+        async fn put(&self, _ctx: &traits::StoredContext, mut into: ItemContent) -> ergo_runtime::RResult<()> {
+            bincode::serialize_into(&mut into, &self.0.clone().into_option()).map_err(|e| e.into()).into()
+        }
+
+        async fn get(_ctx: &traits::StoredContext, mut from: ItemContent) -> ergo_runtime::RResult<Erased>
+        {
+            bincode::deserialize_from(&mut from)
+                .map(|status: Option<i32>| Erased::new(ExitStatus(status.into())))
+                .map_err(|e| e.into())
+                .into()
+        }
     }
 }
 
@@ -144,20 +450,20 @@ enum ChannelRead<R> {
     Read(R),
 }
 
-impl<R: grease::runtime::io::AsyncRead + std::marker::Unpin> ChannelRead<R> {
+impl<R: ergo_runtime::io::AsyncRead + std::marker::Unpin> ChannelRead<R> {
     pub fn new(channel: futures::channel::oneshot::Receiver<R>) -> Self {
         ChannelRead::Waiting(channel)
     }
 }
 
-impl<R> grease::runtime::io::AsyncRead for ChannelRead<R>
+impl<R> ergo_runtime::io::AsyncRead for ChannelRead<R>
 where
-    R: grease::runtime::io::AsyncRead + std::marker::Unpin,
+    R: ergo_runtime::io::AsyncRead + std::marker::Unpin,
 {
     fn poll_read(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context,
-        task: &grease::runtime::TaskManager,
+        task: &ergo_runtime::context::TaskManager,
         buf: &mut [u8],
     ) -> std::task::Poll<Result<usize, Error>> {
         let me = &mut *self;
@@ -195,15 +501,15 @@ impl<R, Fut> ReadWhile<R, Fut> {
     }
 }
 
-impl<T, R, Fut> grease::runtime::io::AsyncRead for ReadWhile<R, Fut>
+impl<T, R, Fut> ergo_runtime::io::AsyncRead for ReadWhile<R, Fut>
 where
-    R: grease::runtime::io::AsyncRead + std::marker::Unpin,
+    R: ergo_runtime::io::AsyncRead + std::marker::Unpin,
     Fut: futures::future::Future<Output = Result<T, Error>> + std::marker::Unpin,
 {
     fn poll_read(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context,
-        task: &grease::runtime::TaskManager,
+        task: &ergo_runtime::context::TaskManager,
         buf: &mut [u8],
     ) -> std::task::Poll<Result<usize, Error>> {
         use std::task::Poll::*;
@@ -279,307 +585,6 @@ where
         }
 
         std::pin::Pin::new(&mut me.master).poll(cx)
-    }
-}
-
-pub fn function() -> Value {
-    ergo_function!(independent std::exec,
-        "Execute an external program.
-
-Arguments: `:program ^:arguments`
-
-Both `program` and `arguments` must be convertible to `CommandString`. By default `String`, `Path`, and `ByteStream` satisfy
-this. 
-
-Keyword Arguments:
-* `Map :env`: A map of Strings to Strings where key-value pairs define the environment variables to
-  set while executing the program.
-* `Into<Path> :pwd`: The working directory to set while executing the program.
-* `Into<ByteStream> :stdin`: The stdin to pipe into the program.
-* `Bool :retain-terminal`: If true, the spawned child is kept in the same terminal session.
-
-Programs are by default run without any working directory or environment variables.
-
-This returns a map with the following keys:
-* `ByteStream :stdout`: The standard output stream from the program.
-* `ByteStream :stderr`: The standard output stream from the program.
-* `ExitStatus :exit-status`: The exit status of the program.
-* `Unit :complete`: A value which returns successfully when the program does.
-
-Note that `complete` _won't_ cause an error to occur if `exit-status` is used in the script.
-Also note that if `complete` throws an error, it will include the stdout or stderr values if they are unused in the
-script.
-
-The `ExitStatus` type can be converted to `Bool` to check whether the program returned a successful status.",
-    |ctx,cargs| {
-        let cmd = cargs.next().ok_or("no command provided")?;
-
-        let cmd = ctx.into_sourced::<CommandString>(cmd);
-        let cmd = cmd.await?.unwrap();
-
-        let mut args = Vec::default();
-        while let Some(arg) = cargs.next() {
-            args.push(
-                {
-                    let arg = ctx.into_sourced::<CommandString>(arg);
-                    arg.await?.unwrap()
-                }
-            );
-        }
-
-        let env = match cargs.kw("env") {
-            Some(v) => {
-                let env = ctx.source_value_as::<types::Map>(v);
-                Some(env.await?)
-            }
-            None => None
-        };
-
-        let dir = match cargs.kw("pwd") {
-            Some(v) => {
-                let pwd = ctx.into_sourced::<PathBuf>(v);
-                Some(pwd.await?.unwrap())
-            }
-            // TODO set dir if not specified?
-            None => None
-        };
-
-        let stdin = match cargs.kw("stdin") {
-            Some(v) => {
-                let stdin = ctx.into_sourced::<types::ByteStream>(v);
-                Some(stdin.await?.unwrap())
-            }
-            None => None
-        };
-
-        let retain_terminal = match cargs.kw("retain-terminal") {
-            Some(v) => {
-                let v = ctx.into_sourced::<types::Bool>(v);
-                Some(v.await?.unwrap())
-            }
-            None => None
-        };
-
-        cargs.unused_arguments()?;
-
-        let mut deps = depends![cmd, ^@args];
-        let mut unordered_deps = Vec::new();
-        if let Some(v) = &env {
-            unordered_deps.push((&**v).into());
-        }
-        if let Some(v) = &dir {
-            unordered_deps.push(v.into());
-        }
-        if let Some(v) = &stdin {
-            unordered_deps.push(v.into());
-        }
-        deps += Dependencies::unordered(unordered_deps);
-
-        let rt = ctx;
-        let ctx: grease::runtime::Context = rt.as_context().clone();
-        let log = ctx.log.sublog("exec");
-
-        // Create channels for outputs
-        let (send_stdout, rcv_stdout) = channel();
-        let (send_stderr, rcv_stderr) = channel();
-        let (send_status, rcv_status) = channel();
-
-        let run_command = make_value!([namespace_id!(std::exec::complete), ^deps] {
-            let mut vals: Vec<Value> = Vec::new();
-            vals.push(cmd.clone().into());
-            for v in &args {
-                vals.push(v.clone().into());
-            }
-            if let Some(v) = &env {
-                vals.push((**v).clone().into());
-            }
-            if let Some(v) = &dir {
-                vals.push(v.clone().into());
-            }
-            if let Some(v) = &stdin {
-                vals.push(v.clone().into());
-            }
-            if let Some(v) = &retain_terminal {
-                vals.push(v.clone().into());
-            }
-            ctx.task.join_all(vals).await?;
-
-            let mut command = Command::new(cmd.forced_value().0.as_ref());
-            let arg_vals: Vec<_> = args.iter().map(|a| a.forced_value()).collect();
-            command.args(arg_vals.iter().map(|v| v.0.as_ref()));
-            command.env_clear();
-            if let Some(v) = env {
-                let (source, v) = v.take();
-                let types::Map(env) = v.forced_value().owned();
-                for (k,v) in env {
-                    let k = ctx.source_value_as::<types::String>(source.clone().with(k));
-                    let k = k.await?.unwrap().await?.owned().into_string();
-                    let v = ctx.into_typed::<CommandString>(v).await
-                        .map_err(|e| format!("env key {}: {}", k, e))?;
-                    command.env(k, v.await?.0.as_ref());
-                }
-            }
-            if let Some(v) = dir {
-                command.current_dir(v.forced_value().as_ref().as_ref());
-            }
-
-            if stdin.is_some() {
-                command.stdin(Stdio::piped());
-            }
-            command.stdout(Stdio::piped());
-            command.stderr(Stdio::piped());
-
-            log.debug(format!("spawning child process: {:?}", command));
-
-            let retain_terminal = match retain_terminal {
-                Some(v) => v.forced_value().as_ref().0,
-                None => false,
-            };
-            if !retain_terminal {
-                // Disown process group so signals don't go to children.
-                disown_pgroup(&mut command);
-            }
-
-            let mut child = command.spawn()?;
-
-            let stdin = stdin.map(|v| v.forced_value().read());
-
-            let input = if let (Some(input),Some(mut v)) = (child.stdin.take(), stdin) {
-                let mut b = Blocking::new(input);
-                let task = ctx.task.clone();
-                async move {
-                    grease::runtime::io::copy_interactive(&task, &mut v, &mut b).await
-                }.boxed()
-            } else {
-                futures::future::ok(0).boxed()
-            };
-
-            let (mut out_pipe_send, out_pipe_recv) = pipe();
-            let mut cstdout = Blocking::new(child.stdout.take().unwrap());
-            let output = grease::runtime::io::copy_interactive(&ctx.task, &mut cstdout, &mut out_pipe_send);
-            let out_pipe_recv = if !send_stdout.is_canceled() {
-                drop(send_stdout.send(out_pipe_recv));
-                None
-            } else {
-                Some(out_pipe_recv)
-            };
-
-            let (mut err_pipe_send, err_pipe_recv) = pipe();
-            let mut cstderr = Blocking::new(child.stderr.take().unwrap());
-            let error = grease::runtime::io::copy_interactive(&ctx.task, &mut cstderr, &mut err_pipe_send);
-            let err_pipe_recv = if !send_stderr.is_canceled() {
-                drop(send_stderr.send(err_pipe_recv));
-                None
-            } else {
-                Some(err_pipe_recv)
-            };
-
-            let exit_status = ctx.task.spawn_blocking(move || {
-                child.wait().map_err(Error::from)
-            }).map(|r| r.and_then(|v| v));
-
-            // Only run stdin while waiting for exit status
-            let exit_status = BoundTo::new(exit_status, input);
-
-            let (exit_status, _) = {
-                let _guard = super::task::ParentTask::remain_active();
-                ctx.task.join(exit_status, ctx.task.join(output, error)).await?
-            };
-
-            log.debug(format!("child process exited: {:?}", command));
-
-            // These pipes should be dropped here so that, if an error occurred, the recv pipes
-            // terminate correctly if gathering stdout/stderr.
-            drop(out_pipe_send);
-            drop(err_pipe_send);
-
-            macro_rules! fetch_named {
-                ( $output:expr, $name:expr ) => {
-                    if let Some(mut recv_pipe) = $output {
-                        let mut s = String::new();
-                        use grease::runtime::io::AsyncReadExt;
-                        if recv_pipe.read_to_string(&ctx.task, &mut s).await.is_ok() {
-                            if !s.is_empty() {
-                                Some(format!("\n{}:\n{}", $name, s))
-                            }
-                            else { None }
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }.unwrap_or_default()
-                }
-            }
-
-            if send_status.is_canceled() {
-                if !exit_status.success() {
-                    let stdout = fetch_named!(out_pipe_recv, "stdout");
-                    let stderr = fetch_named!(err_pipe_recv, "stderr");
-                    return Err(format!("command returned failure exit status{}{}", stdout, stderr).into());
-                }
-            } else {
-                drop(send_status.send(exit_status));
-            }
-            Ok(types::Unit)
-        });
-
-        let stdout = make_value!((run_command) [namespace_id!(std::exec::stdout)] {
-            Ok(types::ByteStream::new(ReadWhile::new(ChannelRead::new(rcv_stdout), run_command)))
-        });
-        let stderr = make_value!((run_command) [namespace_id!(std::exec::stderr)] {
-            Ok(types::ByteStream::new(ReadWhile::new(ChannelRead::new(rcv_stderr), run_command)))
-        });
-        let exit_status = make_value!((run_command) [namespace_id!(std::exec::exit_status)] { run_command.await?; Ok(ExitStatus::from(rcv_status.await?)) });
-
-        crate::grease_string_map! {
-            "stdout" = stdout.into(),
-            "stderr" = stderr.into(),
-            "exit-status" = exit_status.into(),
-            "complete" = run_command.into()
-        }
-    })
-    .into()
-}
-
-#[cfg(unix)]
-fn disown_pgroup(cmd: &mut Command) {
-    use std::os::unix::process::CommandExt;
-    unsafe {
-        cmd.pre_exec(|| {
-            if libc::setsid() == -1 {
-                Err(errno::errno().into())
-            } else {
-                Ok(())
-            }
-        });
-    }
-}
-
-#[cfg(windows)]
-fn disown_pgroup(cmd: &mut Command) {}
-
-grease::grease_traits_fn! {
-    // CommandString traits
-    IntoTyped::<CommandString>::add_impl::<types::String>(traits);
-    IntoTyped::<CommandString>::add_impl::<PathBuf>(traits);
-    ergo_runtime::grease_type_name!(traits, CommandString);
-
-    // ExitStatus traits
-    IntoTyped::<types::Bool>::add_impl::<ExitStatus>(traits);
-    ergo_runtime::grease_display_basic!(traits, ExitStatus);
-    ergo_runtime::grease_type_name!(traits, ExitStatus);
-    traits::ValueByContent::add_impl::<ExitStatus>(traits);
-
-    impl traits::Stored for ExitStatus {
-        async fn put(&self, _ctx: &traits::StoredContext, mut into: ItemContent) {
-            bincode::serialize_into(&mut into, &self.0.clone().into_option())?
-        }
-
-        async fn get(_ctx: &traits::StoredContext, mut from: ItemContent) -> grease::type_erase::Erased {
-            let p: Option<i32> = bincode::deserialize_from(&mut from)?;
-            grease::type_erase::Erased::new(ExitStatus(p.into()))
-        }
     }
 }
 

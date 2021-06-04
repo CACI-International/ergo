@@ -60,8 +60,9 @@ pub async fn into_sourced<T: ErgoType + StableAbi + Eraseable>(
 /// Convert the given value into another type.
 pub async fn into<T: ErgoType + StableAbi + Eraseable>(
     ctx: &Context,
-    v: Value,
+    mut v: Value,
 ) -> crate::Result<TypedValue<T>> {
+    drop(ctx.eval(&mut v).await);
     let t = ctx.get_trait::<IntoTyped<T>>(&v).ok_or_else(|| {
         let from_t = type_name(ctx, &v);
         let to_t = type_name_for(&ctx, &T::ergo_type());

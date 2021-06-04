@@ -48,7 +48,12 @@ pub async fn bind(ctx: &Context, mut v: Source<Value>, arg: Source<Value>) -> So
     })
 }
 
-async fn bind_no_error(ctx: &Context, v: Source<Value>, arg: Source<Value>) -> crate::Result<()> {
+/// Bind a value to an argument, evaluating the result and checking for an error.
+pub async fn bind_no_error(
+    ctx: &Context,
+    v: Source<Value>,
+    arg: Source<Value>,
+) -> crate::Result<()> {
     let mut result = bind(ctx, v, arg).await.unwrap();
     ctx.eval(&mut result).await?;
     Ok(())

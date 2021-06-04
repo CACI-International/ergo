@@ -173,6 +173,11 @@ impl Value {
             .insert(key.id().into(), RArc::new(Erased::new(value)));
     }
 
+    /// Copy the metadata from another value.
+    pub fn copy_metadata(&mut self, from: &Self) {
+        self.metadata = from.metadata.clone();
+    }
+
     /// Clear a metadata entry for this value.
     pub fn clear_metadata<T: MetadataKey>(&mut self, key: &T) {
         self.metadata.remove(&key.id());

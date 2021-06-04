@@ -1,328 +1,208 @@
 //! Value-related intrinsics.
 
-use abi_stable::{external_types::RRwLock, std_types::RArc};
-use ergo_runtime::{context_ext::AsContext, ergo_function, metadata::Runtime, types, ContextExt};
-use grease::{depends, item_name, types::GreaseType, value::Value};
+use ergo_runtime::abi_stable::external_types::RMutex;
+use ergo_runtime::{
+    context::item_name, depends, metadata::Runtime, traits, type_system::ErgoType, types, Value,
+};
 use std::collections::HashMap as CacheMap;
 use std::sync::Arc;
 
 pub fn module() -> Value {
-    crate::grease_string_map! {
-        "by-content" = by_content_fn(),
-        "cache" = cache_fn(),
-        "debug" = debug_fn(),
-        "dynamic" = dyn_fn(),
-        "meta" = crate::grease_string_map! {
-            "get" = meta_get_fn(),
-            "set" = meta_set_fn()
+    crate::make_string_map! {
+        "by-content" = by_content(),
+        "cache" = cache(),
+        "debug" = debug(),
+        "meta" = crate::make_string_map! {
+            "get" = meta_get(),
+            "set" = meta_set()
         },
-        "typed" = typed_fn(),
-        "variable" = variable_fn()
+        "eval" = eval(),
+        "variable" = variable()
     }
 }
 
-fn by_content_fn() -> Value {
-    ergo_function!(independent std::value::force,
-    r"Identify a value by its content.
-
-Arguments: `:value`
-
-Returns a new value which has the same type and result as the given value, but has an identity derived from the result
-(typically by forcing the value and any inner values).",
-    |ctx, args| {
-        let val = args.next().ok_or("value not provided")?;
-
-        args.unused_arguments()?;
-
-        let (source, val) = val.take();
-        let val = ctx.value_by_content(val, true);
-        val.await.map_err(move |e| source.with(e).into_grease_error())?
-    })
-    .into()
+#[types::ergo_fn]
+/// Identify a value by its content.
+///
+/// Arguments: `:value`
+///
+/// Returns a new value which has the same type and result as the given value, but has an identity
+/// derived from the result (typically by forcing the value and any inner values).
+async fn by_content(value: _) -> Value {
+    traits::value_by_content(CONTEXT, value.unwrap(), true).await
 }
 
-#[derive(GreaseType)]
+#[derive(ErgoType)]
 struct Cached {
-    map: Arc<RRwLock<CacheMap<u128, Value>>>,
+    map: RMutex<CacheMap<u128, Arc<futures::lock::Mutex<Option<Value>>>>>,
 }
 
 impl Default for Cached {
     fn default() -> Self {
         Cached {
-            map: Arc::new(RRwLock::new(Default::default())),
+            map: RMutex::new(Default::default()),
         }
     }
 }
 
-fn cache_fn() -> Value {
-    ergo_function!(independent std::value::cache,
-    r"Cache a value by identity.
+#[types::ergo_fn]
+/// Cache a value by identity.
+///
+/// Arguments: `:value`
+///
+/// Keyed Arguments:
+/// * `:no-persist`: If present, the caching will not be persisted (only runtime caching will occur).
+///
+/// Caches the given value both at runtime and to persistent storage (to be cached across invocations).
+///
+/// Returns a value identical to the argument, however possibly loads the value from a persisted store
+/// rather than evaluating it. If not yet persisted, when the returned value is evaluated it will
+/// evaluate the inner value and persist it. Multiple values with the same id will be normalized to the
+/// same single runtime value.
+async fn cache(value: _, (no_persist): [_]) -> Value {
+    let value = value.unwrap();
+    let id = value.id();
 
-Arguments: `:value`
+    let no_persist = no_persist.is_some();
 
-Keyword Arguments:
-* `:no-persist`: If present, the caching will not be persisted (only runtime caching will be done).
+    let cached = CONTEXT.shared_state.get(|| Ok(Cached::default())).unwrap();
 
-Caches the given value both at runtime and to persistent storage (to be cached across invocations).
-
-Returns a value identical to the argument, however possibly loads the value from a persisted store
-rather than evaluating it. If not yet persisted, when the returned value is evaluated it will
-evaluate the inner value and persist it. Multiple values with the same id will be normalized to the
-same single runtime value.",
-    |ctx, args| {
-        let to_cache = args.next().ok_or("no argument to cache")?.unwrap();
-        let no_persist = args.kw("no-persist").is_some();
-
-        args.unused_arguments()?;
-
-        let id = to_cache.id();
-
-        let cached = ctx.shared_state(|| Ok(Cached::default()))?;
-
-        let mut guard = cached.map.read();
-        if !guard.contains_key(&id) {
-            let val = if no_persist {
-                to_cache
-            } else {
-                let store = ctx.store.item(item_name!("cache"));
-                let log = ctx.log.sublog("cache");
-                let ctx = ctx.as_context().clone();
-                match (ctx.present_in_store(&store, id), to_cache.grease_type_immediate()) {
-                    // If the value is present in the store, return a value which simply reads it
-                    // (so the original value can be dropped).
-                    (true, Some(tp)) => unsafe {
-                        let tp = tp.clone();
-                        Value::with_id(RArc::new(tp.clone()), async move {
-                            match ctx.read_from_store(&store, id).await {
-                                Ok(val) => {
-                                    log.debug(format!(
-                                        "successfully read cached value for {}",
-                                        id
-                                    ));
-                                    if val.grease_type_immediate() != Some(&tp) {
-                                        Err("cached value had different value type".into())
-                                    } else {
-                                        Ok(val
-                                            .await
-                                            .expect("value should have success value from cache"))
-                                    }
-                                }
-                                Err(e) => Err(format!("cache value disappeared: {}", e).into()),
-                            }
-                        }, id)
-                    },
-                    (true, None) => Value::dyn_with_id(async move {
-                        match ctx.read_from_store(&store, id).await {
-                            Ok(val) => {
-                                log.debug(format!(
-                                    "successfully read cached value for {}",
-                                    id
-                                ));
-                                Ok(val.into_any_value())
-                            }
-                            Err(e) => Err(format!("cache value disappeared: {}", e).into()),
-                        }
-                    }, id),
-                    (false, Some(tp)) => unsafe {
-                        Value::with_id(RArc::new(tp.clone()), async move {
-                            let err = match ctx.read_from_store(&store, id).await {
-                                Ok(val) => {
-                                    log.debug(format!(
-                                        "successfully read cached value for {}",
-                                        id
-                                    ));
-                                    if val.grease_type_immediate() != to_cache.grease_type_immediate() {
-                                        "cached value had different value type".into()
-                                    } else {
-                                        return Ok(val
-                                            .await
-                                            .expect("value should have success value from cache"));
-                                    }
-                                }
-                                Err(e) => e,
-                            };
-                            log.debug(format!("failed to read cache value for {}, (re)caching: {}", id, err));
-                            ctx.force_value_nested(to_cache.clone()).await?;
-                            if let Err(e) = ctx.write_to_store(&store, to_cache.clone()).await
-                            {
-                                log.warn(format!("failed to cache value for {}: {}", id, e));
-                            }
-                            log.debug(format!("wrote cache value for {}", id));
-                            Ok(to_cache
-                                .await
-                                .expect("error should have been caught previously"))
-                        }, id)
-                    },
-                    (false, None) => Value::dyn_with_id(async move {
-                        let err = match ctx.read_from_store(&store, id).await {
-                            Ok(val) => {
-                                log.debug(format!(
-                                    "successfully read cached value for {}",
-                                    id
-                                ));
-                                return Ok(val.into_any_value());
-                            }
-                            Err(e) => e,
-                        };
-                        log.debug(format!("failed to read cache value for {}, (re)caching: {}", id, err));
-                        ctx.force_value_nested(to_cache.clone()).await?;
-                        if let Err(e) = ctx.write_to_store(&store, to_cache.clone()).await
-                        {
-                            log.warn(format!("failed to cache value for {}: {}", id, e));
-                        }
-                        log.debug(format!("wrote cache value for {}", id));
-                        Ok(to_cache.into_any_value())
-                    }, id)
-                }
-            };
-            drop(guard);
-            cached.map.write().insert(id, val);
-            guard = cached.map.read();
-        }
-        guard.get(&id).unwrap().clone()
-    })
-    .into()
-}
-
-fn variable_fn() -> Value {
-    ergo_function!(independent std::value::variable,
-    r"Change the identity of a value.
-
-Arguments: `:value`
-
-Keyword Arguments:
-* `:depends`: A value whose identity will be used to set the identity of the returne value.
-
-Returns a value identical to the argument, but with a different identity. If `depends` is not set, the value will have
-a fixed identity derived from nothing else.",
-    |ctx, args| {
-        let val = args.next().ok_or("no argument to variable")?.unwrap();
-
-        let deps = if let Some(v) = args.kw("depends") {
-            depends![*v]
+    let entry = cached
+        .map
+        .lock()
+        .entry(id)
+        .or_insert_with(|| Arc::new(futures::lock::Mutex::new(None)))
+        .clone();
+    let mut guard = entry.lock().await;
+    if guard.is_none() {
+        let value = if no_persist {
+            value
         } else {
-            Default::default()
-        };
+            let store = CONTEXT.store.item(item_name!("cache"));
+            let log = CONTEXT.log.sublog("cache");
 
-        args.unused_arguments()?;
-
-        val.set_dependencies(deps)
-    })
-    .into()
-}
-
-fn debug_fn() -> Value {
-    ergo_function!(independent std::value::debug,
-            r"Print a value's type (if immediately available) and identity to the debug log.
-
-Arguments: `:value`
-
-Returns the argument exactly as-is. The logging occurs immediately.",
-    |ctx, args| {
-        let val = args.next().ok_or("value not provided")?;
-
-        args.unused_arguments()?;
-
-        let name = match val.grease_type_immediate() {
-            Some(tp) => {
-                let tp = ctx.type_name(tp);
-                tp.await?
+            match traits::read_from_store(CONTEXT, &store, id).await {
+                Ok(mut val) => {
+                    log.debug(format!("successfully read cached value for {}", id));
+                    val.copy_metadata(&value);
+                    val
+                }
+                Err(err) => {
+                    log.debug(format!(
+                        "failed to read cache value for {}, (re)caching: {}",
+                        id, err
+                    ));
+                    traits::eval_nested(CONTEXT, value.clone()).await;
+                    if let Err(e) = traits::write_to_store(CONTEXT, &store, value.clone()).await {
+                        log.warn(format!("failed to cache value for {}: {}", id, e));
+                    } else {
+                        log.debug(format!("wrote cache value for {}", id));
+                    }
+                    value
+                }
             }
-            None => "<dynamic>".into(),
         };
-
-        ctx.log.debug(
-            val.as_ref()
-                .map(|v| format!("type: {}, id: {}", name, v.id()))
-                .to_string(),
-        );
-
-        val.unwrap()
-    })
-    .into()
+        *guard = Some(value);
+    }
+    guard.as_ref().unwrap().clone()
 }
 
-fn dyn_fn() -> Value {
-    ergo_function!(independent std::value::dynamic,
-    r"Return a dynamically-typed value which evaluates to the given value.
+#[types::ergo_fn]
+/// Change the identity of a value.
+///
+/// Arguments: `:value`
+///
+/// Keyed Arguments:
+/// * `:depends`: A value whose identity will be used to set the identity of the returned value.
+///
+/// Returns a value identical to the argument, but with a different identity. If `depends` is not set, the value will have
+/// a fixed identity derived from nothing else.
+async fn variable(mut value: _, (depends): [_]) -> Value {
+    let deps = if let Some(v) = depends {
+        depends![*v]
+    } else {
+        Default::default()
+    };
 
-Arguments: `:value`",
-    |ctx, args| {
-        let val = args.next().ok_or("no value argument")?.unwrap();
-
-        args.unused_arguments()?;
-
-        let deps = depends![val];
-        Value::dyn_new(async move { Ok(val.into_any_value()) }, deps)
-    })
-    .into()
+    value.set_dependencies(deps);
+    value.unwrap()
 }
 
-fn typed_fn() -> Value {
-    ergo_function!(independent std::value::typed,
-    r"Evaluate a value until it has a static type (thus is not dynamically typed).
+#[types::ergo_fn]
+/// Print a value's type, identity, and (if typed) display output to the debug log.
+///
+/// Arguments: `:value`
+///
+/// Returns the argument as-is.
+async fn debug(value: _) -> Value {
+    let name = traits::type_name(CONTEXT, &value);
 
-Arguments: `:value`
-
-Evaluation occurs immediately, and the typed value is returned.",
-    |ctx, args| {
-        let mut val = args.next().ok_or("no value argument")?.unwrap();
-
-        args.unused_arguments()?;
-
-        loop {
-            match val.dyn_value().await? {
-                Ok(inner) => val = inner,
-                Err(val) => break val,
+    let rest = if value.is_evaluated() {
+        let mut s = String::from(", value: ");
+        {
+            let mut formatter = traits::Formatter::new(&mut s);
+            if let Err(e) = traits::display(CONTEXT, value.value().clone(), &mut formatter).await {
+                drop(formatter);
+                s.push_str("<error: ");
+                s.push_str(&e.to_string());
+                s.push('>');
             }
         }
-    })
-    .into()
+        s
+    } else {
+        Default::default()
+    };
+
+    CONTEXT.log.debug(
+        value
+            .as_ref()
+            .map(|v| format!("type: {}{}, id: {}", name, rest, v.id()))
+            .to_string(),
+    );
+
+    value.unwrap()
 }
 
-fn meta_get_fn() -> Value {
-    ergo_function!(independent std::value::meta::get,
-    r"Get metadata of a value.
-
-Arguments: `:value :metadata-key`
-
-Returns the metadata value or `Unset` if no key is set.",
-    |ctx, args| {
-        let val = args.next().ok_or("no value argument")?.unwrap();
-        let key = args.next().ok_or("no metadata key provided")?.unwrap();
-
-        args.unused_arguments()?;
-
-        match val.get_metadata(&Runtime { key: key.id() }) {
-            Some(v) => v.as_ref().clone(),
-            None => types::Unset::new().into()
-        }
-    })
-    .into()
+#[types::ergo_fn]
+/// Evaluate a value.
+///
+/// Arguments: `:value`
+async fn eval(mut value: _) -> Value {
+    drop(CONTEXT.eval(&mut value).await);
+    value.unwrap()
 }
 
-fn meta_set_fn() -> Value {
-    ergo_function!(independent std::value::meta::set,
-    r"Set metadata of a value.
+#[types::ergo_fn]
+/// Get metadata of a value.
+///
+/// Arguments: `:value :metadata-key`
+///
+/// Returns the metadata value or `Unset` if no key is set.
+async fn meta_get(value: _, metadata_key: _) -> Value {
+    match value.get_metadata(&Runtime {
+        key: metadata_key.id(),
+    }) {
+        Some(v) => v.as_ref().clone(),
+        None => types::Unset.into(),
+    }
+}
 
-Arguments: `:value :metadata-key (Optional :metadata-value)`
-You may omit the metadata value to unset a metadata key.",
-    |ctx, args| {
-        let mut val = args.next().ok_or("no value argument")?.unwrap();
-        let key = args.next().ok_or("no metadata key provided")?.unwrap();
-        let meta = args.next().map(|v| v.unwrap());
+#[types::ergo_fn]
+/// Set metadata of a value.
+///
+/// Arguments: `:value :metadata-key (Optional :metadata-value)`
+///
+/// You may omit the metadata value to unset a metadata key.
+async fn meta_set(mut value: _, metadata_key: _, metadata_value: [_]) -> Value {
+    let key = Runtime {
+        key: metadata_key.id(),
+    };
 
-        args.unused_arguments()?;
-
-        let key = Runtime { key: key.id() };
-
-        match meta {
-            Some(meta) => val.set_metadata(&key, meta),
-            None => val.clear_metadata(&key),
-        }
-        val
-    })
-    .into()
+    match metadata_value {
+        Some(meta) => value.set_metadata(&key, meta.unwrap()),
+        None => value.clear_metadata(&key),
+    }
+    value.unwrap()
 }
 
 #[cfg(test)]
@@ -334,10 +214,9 @@ mod test {
     }
 
     ergo_script::test! {
-        fn typed(t) {
-            t.assert_ne("self:value:dynamic str", "str");
-            t.assert_eq("self:value:typed <| self:value:dynamic str", "str");
-            t.assert_eq("self:value:typed str", "str");
+        fn eval(t) {
+            t.assert_script_ne("fn :a -> :a |> str", "str");
+            t.assert_eq("self:value:eval <| fn :a -> :a |> str", "str");
         }
     }
 }

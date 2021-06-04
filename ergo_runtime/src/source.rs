@@ -344,6 +344,11 @@ impl<T> Source<T> {
         self.source.path()
     }
 
+    /// Get the inner value by reference.
+    pub fn value(&self) -> &T {
+        &self.value
+    }
+
     /// Get the inner value.
     pub fn unwrap(self) -> T {
         self.value

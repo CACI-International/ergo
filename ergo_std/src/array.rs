@@ -1,27 +1,21 @@
 //! Array functions.
 
-use ergo_runtime::{ergo_function, types, ContextExt};
-use grease::Value;
+use ergo_runtime::{traits, types, Value};
 
 pub fn module() -> Value {
-    crate::grease_string_map! {
-        "from" = from_fn()
+    crate::make_string_map! {
+        "from" = from()
     }
 }
 
-fn from_fn() -> Value {
-    ergo_function!(independent std::array::from,
-    r"Convert a value into an Array.
-
-Arguments: `:value`",
-    |ctx, args| {
-        let value = args.next().ok_or("value not provided")?;
-
-        args.unused_arguments()?;
-
-        ctx.into_sourced::<types::Array>(value).await?.unwrap().into()
-    })
-    .into()
+#[types::ergo_fn]
+/// Convert a value into an Array.
+///
+/// Arguments: `:value`
+async fn from(value: _) -> Value {
+    ergo_runtime::try_result!(traits::into_sourced::<types::Array>(CONTEXT, value).await)
+        .unwrap()
+        .into()
 }
 
 #[cfg(test)]

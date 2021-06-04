@@ -265,6 +265,15 @@ struct Sets {
     inner: Option<std::sync::Arc<RMutex<Vec<SetsItem>>>>,
 }
 
+impl std::fmt::Debug for Sets {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match &self.inner {
+            None => write!(f, "None"),
+            Some(a) => write!(f, "{:?}", a.lock()),
+        }
+    }
+}
+
 impl Sets {
     pub fn new() -> Self {
         Sets {
@@ -585,7 +594,7 @@ impl Evaluator {
                 metadata::Doc::set(&mut val, doc);
                 val
             },
-            Capture => |capture| captures.get(capture.0).expect("internal capture error").clone(),
+            Capture => |capture| captures.get(capture.0).ok_or_else(|| capture.0).expect("internal capture error").clone(),
             Function => |func| {
                 let captures = captures.subset(&func.captures);
                 let deps = depends![e, ^&captures];
@@ -599,11 +608,16 @@ impl Evaluator {
                         let sets = Sets::new();
                         let bind = self.evaluate_now_with_env(ctx, bind, &captures, None, &sets).await;
                         let bind = bind.map_async(|bind| traits::value_by_content(ctx, bind, true)).await;
-                        // TODO check for error values?
-                        let sets = sets.into_inner();
+                        try_result!(traits::bind_no_error(ctx, bind, v).await);
 
-                        let mut bind_result = traits::bind(ctx, bind, v).await.unwrap();
-                        try_result!(ctx.eval(&mut bind_result).await);
+                        let mut sets = sets.into_inner();
+
+                        // The sets values will each evaluate to the bound value; we want to
+                        // evaluate them immediately to properly get value identities.
+                        ctx.task.join_all((&mut sets).iter_mut().map(|s| async move {
+                            ctx.eval_once(&mut s.2).await;
+                            Ok(())
+                        })).await.unwrap();
 
                         let (new_captures, local_env): (Vec<_>, LocalEnv) = sets.into_iter().map(|(cap, k, v)| {
                             (cap.map(|c| (c, v.clone())), (k, v))
@@ -634,7 +648,7 @@ impl Evaluator {
                         Ok(v) => v,
                         Err(_) => types::Unset.into()
                     }
-                }, depends![nsid!(ergo::get)]));
+                }, depends![nsid!(ergo::get), k]));
                 sets.add(set.capture_key.clone(), k_source.with(k.clone()), v);
 
                 let send_result = std::sync::Arc::new(std::sync::Mutex::new(Some(send_result)));
@@ -648,7 +662,7 @@ impl Evaluator {
                             v.source().with("cannot bind a setter more than once").into_error().into()
                         }
                     }.boxed()
-                }, depends![nsid!(ergo::set)]).into())
+                }, depends![nsid!(ergo::set), k]).into())
             },
             _ => {
                 let val_captures = e

@@ -1,284 +1,180 @@
 //! String manipulation functions.
 
-use ergo_runtime::{context_ext::AsContext, ergo_function, traits, types, ContextExt};
-use grease::{make_value, value::Value};
+use ergo_runtime::{traits, try_result, types, Value};
 
 pub fn module() -> Value {
-    crate::grease_string_map! {
-        "format" = format_fn(),
-        "from" = from_fn(),
-        "join" = join_fn(),
-        "split" = split_fn(),
-        "trim" = trim_fn()
+    crate::make_string_map! {
+        "format" = format(),
+        "from" = from(),
+        "join" = join(),
+        "split" = split(),
+        "trim" = trim()
     }
 }
 
-#[derive(Debug)]
-enum StringFragment {
-    Literal(String),
-    Value(Value),
-}
+#[types::ergo_fn]
+/// Create a string based on a format specification.
+///
+/// Arguments: `(String :format-string) ^:arguments`
+///
+/// The format string may contain curly brackets to indicate arguments to insert in the string. The
+/// curly brackets may be empty (`{}`) or may contain a numeric index to indicate which positional
+/// argument to use, or a string index to indicate which keyed argument to use. Empty brackets will
+/// use the next positional argument unused by other empty brackets. Note that since the curly
+/// brackets are syntactically-significant, a format string containing them will need to be quoted.
+/// To insert a literal open curly bracket, use `{{`, and likewise `}}` for a literal close curly
+/// bracket.
+///
+/// ### Examples
+/// * `format "hello {}" world` => `"hello world"`
+/// * `format "hello {name}" (name = billy)` => `"hello billy"`
+/// * `format "{}, {a}, {}, {0}, and {{{}}}" (a = alice) bob cal daisy` => `"bob, alice, cal, bob, and {daisy}"`
+async fn format(format_string: types::String, ...) -> Value {
+    let pos_args: Vec<_> = REST.by_ref().collect();
+    let keyed_args = std::mem::take(&mut REST.keyed);
 
-#[derive(Debug, Default)]
-struct Fragments {
-    fragments: Vec<StringFragment>,
-}
+    try_result!(REST.unused_arguments());
 
-impl Fragments {
-    pub fn push(&mut self, c: char) {
-        match self.fragments.last_mut() {
-            Some(StringFragment::Literal(ref mut s)) => s.push(c),
-            _ => self.fragments.push(StringFragment::Literal(c.to_string())),
-        }
-    }
+    let mut result = String::new();
+    let mut formatter = traits::Formatter::new(&mut result);
 
-    pub fn push_value(&mut self, v: Value) {
-        self.fragments.push(StringFragment::Value(v))
-    }
+    let (source, fmt) = format_string.take();
 
-    pub fn iter(&self) -> std::slice::Iter<StringFragment> {
-        self.fragments.iter()
-    }
-}
-
-impl From<&'_ StringFragment> for grease::value::Dependency {
-    fn from(sf: &StringFragment) -> Self {
-        match sf {
-            StringFragment::Literal(s) => s.into(),
-            StringFragment::Value(s) => s.into(),
-        }
-    }
-}
-
-impl<'a> IntoIterator for &'a Fragments {
-    type Item = &'a StringFragment;
-    type IntoIter = std::slice::Iter<'a, StringFragment>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        (&self.fragments).into_iter()
-    }
-}
-
-fn format_fn() -> Value {
-    ergo_function!(std::string::format,
-    r#"Create a string based on a format specification.
-
-Arguments: `(String :format-string) ^:arguments`
-
-Keyword Arguments: `^:kwargs`
-
-The format string may contain curly brackets to indicate arguments to insert in the string. The curly brackets may be
-empty (`{}`) or may contain a numeric index to indicate which positional argument to use, or a string index to indicate
-which non-positional (keyword) argument to use. Empty brackets will use the next positional argument unused by other empty
-brackets. Note that since the curly brackets are syntactically-significant, a format string containing them will need
-to be quoted. To insert a literal open curly bracket, use `{{`, and likewise `}}` for a literal close curly bracket.
-
-### Examples
-* `format "hello {}" world` => `"hello world"`
-* `format "hello {name}" ^{name = billy}` => `"hello billy"`
-* `format "{}, {a}, {}, {0}, and {{{}}}" ^{a = alice} bob cal daisy` => `"bob, alice, cal, bob, and {daisy}"`"#,
-    |ctx, args| {
-        let format_str = args.next().ok_or("no format string provided")?;
-        let source = format_str.source();
-        let format_str = {
-            let s = ctx.source_value_as::<types::String>(format_str);
-            s.await?.await.unwrap()?
-        };
-
-        let pos_args: Vec<_> = args.by_ref().collect();
-        let kw_args = std::mem::take(&mut args.non_positional);
-
-        args.unused_arguments()?;
-
-        let mut fragments = Fragments::default();
-
-        let mut arg: Option<String> = None;
-
-        let mut pos_arg_next = 0;
-
-        let format_str = format_str.owned().into_string();
-        let mut iter = format_str.chars().peekable();
-        while let Some(c) = iter.next() {
-            if c == '{' {
-                if arg.is_some() {
-                    return Err(source.with("invalid format string: '{' found within a format argument").into_grease_error());
-                }
-                else if let Some('{') = iter.peek() {
-                    iter.next().unwrap();
-                    fragments.push('{');
-                } else {
-                    arg = Some(Default::default());
-                }
-            } else if c == '}' {
-                match arg {
-                    None => {
-                        if let Some('}') = iter.peek() {
-                            iter.next().unwrap();
-                            fragments.push('}');
-                        } else {
-                            return Err(source.with("invalid format string: '}' found without preceding '{'").into_grease_error());
-                        }
-                    },
-                    Some(v) => {
-                        let (val,disp) = if v.is_empty() {
-                            let v = (pos_args.get(pos_arg_next), pos_arg_next.to_string());
-                            pos_arg_next += 1;
-                            v
-                        } else if let Ok(i) = v.parse::<usize>() {
-                            (pos_args.get(i),v)
-                        } else {
-                            (kw_args.get(&crate::grease_string(v.as_str())),v)
-                        };
-                        match val {
-                            None => {
-                                return Err(format!("format string argument '{}' not found", disp).into());
-                            },
-                            Some(v) => {
-                                fragments.push_value(v.as_ref().unwrap().clone());
-                                arg = None;
-                            }
-                        }
+    let mut arg: Option<String> = None;
+    let mut pos_arg_next = 0;
+    let fmt = fmt.to_owned().into_string();
+    let mut iter = fmt.chars().peekable();
+    use std::fmt::Write;
+    while let Some(c) = iter.next() {
+        if c == '{' {
+            if arg.is_some() {
+                return source
+                    .with("invalid format string: '{' found within a format argument")
+                    .into_error()
+                    .into();
+            } else if let Some('{') = iter.peek() {
+                iter.next().unwrap();
+                try_result!(formatter.write_char('{'));
+            } else {
+                arg = Some(Default::default());
+            }
+        } else if c == '}' {
+            match arg {
+                None => {
+                    if let Some('}') = iter.peek() {
+                        iter.next().unwrap();
+                        try_result!(formatter.write_char('}'));
+                    } else {
+                        return source
+                            .with("invalid format string: '}' found without preceding '{'")
+                            .into_error()
+                            .into();
                     }
                 }
-            } else {
-                match &mut arg {
-                    None => fragments.push(c),
-                    Some(ref mut s) => s.push(c),
+                Some(v) => {
+                    let (val, disp) = if v.is_empty() {
+                        let v = (pos_args.get(pos_arg_next), pos_arg_next.to_string());
+                        pos_arg_next += 1;
+                        v
+                    } else if let Ok(i) = v.parse::<usize>() {
+                        (pos_args.get(i), v)
+                    } else {
+                        (keyed_args.get(&crate::make_string(v.as_str())), v)
+                    };
+                    match val {
+                        None => {
+                            return source
+                                .with(format!("format string argument '{}' not found", disp))
+                                .into_error()
+                                .into();
+                        }
+                        Some(v) => {
+                            try_result!(
+                                traits::display(CONTEXT, v.value().clone(), &mut formatter).await
+                            );
+                            arg = None;
+                        }
+                    }
                 }
             }
-        }
-
-        if arg.is_some() {
-            return Err("'{' without matching '}'".into())
         } else {
-            let ctx = ctx.as_context().clone();
-            let deps = grease::depends![^@fragments];
-            make_value!([^deps] {
-                let values: Vec<_> = fragments.into_iter().filter_map(|v| match v { StringFragment::Value(v) => Some(v), _ => None })
-                    .map(|v| ctx.force_value_nested(v.clone()))
-                    .collect();
-                ctx.task.join_all(values).await?;
-
-                let mut result = String::new();
-                let mut formatter = traits::Formatter::new(&mut result);
-                for f in fragments.into_iter() {
-                    match f {
-                        StringFragment::Literal(s) => formatter.write_str(&s)?,
-                        StringFragment::Value(v) => ctx.display(v.clone(), &mut formatter).await?
-                    }
-                }
-                drop(formatter);
-                Ok(types::String::from(result))
-            }).into()
+            match &mut arg {
+                None => try_result!(formatter.write_char(c)),
+                Some(ref mut s) => s.push(c),
+            }
         }
-    }).into()
+    }
+
+    if arg.is_some() {
+        return source.with("'{' without matching '}'").into_error().into();
+    }
+
+    drop(formatter);
+
+    types::String::from(result).into()
 }
 
-fn from_fn() -> Value {
-    ergo_function!(independent std::string::from,
-    r"Convert a value into a string.
-
-Arguments: `(Into<String> :value)`
-
-Returns the result of converting the value into a string.",
-    |ctx, args| {
-        let value = args.next().ok_or("value not provided")?;
-
-        args.unused_arguments()?;
-
-        let v = ctx.into_sourced::<types::String>(value);
-        v.await?.unwrap().into()
-    })
-    .into()
-}
-
-fn split_fn() -> Value {
-    ergo_function!(std::string::split,
-    r"Split a string on a substring.
-
-Arguments: `(String :pattern) (String :str)`
-
-Returns an `Array` of `String` representing the segments of `str` separated by `pattern`.",
-    |ctx, args| {
-        let pat = args.next().ok_or("split pattern not provided")?;
-        let s = args.next().ok_or("string not provided")?;
-
-        args.unused_arguments()?;
-
-        let pat = ctx.source_value_as::<types::String>(pat);
-        let pat = pat.await?.unwrap();
-        let s = ctx.source_value_as::<types::String>(s);
-        let s = s.await?.unwrap();
-
-        let task = ctx.task.clone();
-        make_value!([s, pat] {
-            let (s, pat) = task.join(s,pat).await?;
-            let v = s.as_ref().as_str().split(pat.as_ref().as_str()).map(|s| types::String::from(s).into()).collect();
-            Ok(types::Array(v))
-        })
+#[types::ergo_fn]
+/// Convert a value into a string.
+///
+/// Arguments: `:value`
+async fn from(value: _) -> Value {
+    ergo_runtime::try_result!(traits::into_sourced::<types::String>(CONTEXT, value).await)
+        .unwrap()
         .into()
-    })
-    .into()
 }
 
-fn join_fn() -> Value {
-    ergo_function!(std::string::split,
-    r"Join an array of strings.
-
-Arguments: `(String :separator) (Iter :iter)`
-
-Returns a `String` representing the strings in `iter` separated by `separator`.",
-    |ctx, args| {
-        let sep = args.next().ok_or("join separator not provided")?;
-        let iter = args.next().ok_or("iter not provided")?;
-
-        args.unused_arguments()?;
-
-        let sep = ctx.source_value_as::<types::String>(sep).await?.unwrap();
-        let (iter_source, iter) = ctx.into_sourced::<types::Iter>(iter).await?.take();
-
-        let ctx = ctx.empty();
-        make_value!([sep, iter] {
-            let (sep, iter) = ctx.task.join(sep,iter).await?;
-            let iter = iter.owned();
-            let vals: Vec<_> = iter.try_collect().await?;
-            let strs: Vec<_> = vals.into_iter().map(|v| ctx.source_value_as::<types::String>(iter_source.clone().with(v))).collect();
-            // Evaluate source_value_as
-            let strs = ctx.task.join_all(strs).await?.into_iter().map(|sv| sv.unwrap());
-            // Evaluate resulting TypedValue<types::String>
-            let strs = ctx.task.join_all(strs).await?;
-            let strs = strs.iter().map(|v| v.as_str()).collect::<Vec<_>>();
-            Ok(types::String::from(strs.join(sep.0.as_str())))
-        })
-        .into()
-    })
-    .into()
+#[types::ergo_fn]
+/// Split a string on a substring.
+///
+/// Arguments: `(String :pattern) (String :str)`
+///
+/// Returns an `Array` of `String` representing the segments of `str` separated by `pattern`.
+async fn split(pattern: types::String, s: types::String) -> Value {
+    let v = s
+        .value()
+        .as_ref()
+        .as_str()
+        .split(pattern.value().as_ref().as_str())
+        .map(|s| ARGS_SOURCE.clone().with(types::String::from(s).into()))
+        .collect();
+    types::Array(v).into()
 }
 
-fn trim_fn() -> Value {
-    ergo_function!(
-        std::string::trim,
-        r"Trim whitespace from the beginning and end of a string.
+#[types::ergo_fn]
+/// Join an array of strings.
+///
+/// Arguments: `(String :separator) (Into<Iter> :iter)`
+///
+/// Returns a `String` representing the strings in `iter` separated by `separator`.
+async fn join(separator: types::String, iter: _) -> Value {
+    let iter = try_result!(traits::into_sourced::<types::Iter>(CONTEXT, iter).await).unwrap();
 
-Arguments: `(String :str)`
+    let vals: Vec<_> = iter.to_owned().collect().await;
+    let strs = try_result!(
+        CONTEXT
+            .task
+            .join_all(
+                vals.into_iter()
+                    .map(|v| CONTEXT.eval_as::<types::String>(v))
+            )
+            .await
+    );
+    let strs = strs
+        .iter()
+        .map(|v| v.value().as_ref().as_str())
+        .collect::<Vec<_>>();
+    types::String::from(strs.join(separator.value().as_ref().as_str())).into()
+}
 
-Returns the trimmed string.",
-        |ctx, args| {
-            let s = args.next().ok_or("string not provided")?;
-
-            args.unused_arguments()?;
-
-            let s = ctx.source_value_as::<types::String>(s);
-            let s = s.await?.unwrap();
-
-            make_value!([s] {
-                let s = s.await?;
-                Ok(types::String::from(s.as_ref().as_str().trim()))
-            })
-            .into()
-        }
-    )
-    .into()
+#[types::ergo_fn]
+/// Trim whitespace from the beginning and end of a string.
+///
+/// Arguments: `(String :str)`
+///
+/// Returns the trimmed string.
+async fn trim(s: types::String) -> Value {
+    types::String::from(s.value().as_ref().as_str().trim()).into()
 }
 
 #[cfg(test)]
@@ -294,11 +190,11 @@ mod test {
                 &String::from("howdy hi"),
             );
             t.assert_value_eq("self:string:format \"{{{{}}\"", &String::from("{{}"));
-            t.assert_script_fail("self:string:format \"{\"");
-            t.assert_script_fail("self:string:format \"}\"");
-            t.assert_script_fail("self:string:format \"{}\"");
-            t.assert_script_fail("self:string:format \"{named}\" ^{:not-named=1}");
-            t.assert_script_fail("self:string:format \"{{{}}\" a");
+            t.assert_fail("self:string:format \"{\"");
+            t.assert_fail("self:string:format \"}\"");
+            t.assert_fail("self:string:format \"{}\"");
+            t.assert_fail("self:string:format \"{named}\" ^{:not-named=1}");
+            t.assert_fail("self:string:format \"{{{}}\" a");
         }
     }
 

@@ -468,7 +468,7 @@ impl Expression {
         })
     }
 
-    pub fn bind_command(function: Expr, args: Vec<CommandItem>) -> Self {
+    pub fn pat_command(function: Expr, args: Vec<CommandItem>) -> Self {
         Self::create(PatternCommand {
             function,
             args,
@@ -1234,6 +1234,48 @@ mod test {
     }
 
     #[test]
+    fn function_pattern_and_body_overlap() {
+        let mut ctx = keyset::Context::default();
+        let a_key = ctx.key();
+        let ab_key = ctx.key();
+        let abc_key = ctx.key();
+        let d_key = ctx.key();
+        let abe_key = ctx.key();
+        assert_captures(
+            "a:b:c :d -> a:b:e :d",
+            E::block(vec![BI::Expr(src(E::function(
+                src(E::pat_command(
+                    src(E::capture(abc_key)),
+                    vec![CI::Expr(src(E::set_with_capture(s("d"), d_key)))],
+                )
+                .set_captures(vec![abc_key])),
+                src(E::command(
+                    src(E::capture(abe_key)),
+                    vec![CI::Expr(src(E::capture(d_key)))],
+                )
+                .set_captures(vec![abe_key, d_key])),
+            )
+            .set_captures(vec![abc_key, abe_key])))])
+            .set_captures(vec![abc_key, abe_key]),
+            vec![
+                (a_key, E::get(s("a"))),
+                (
+                    ab_key,
+                    E::index(src(E::capture(a_key)), s("b")).set_captures(vec![a_key]),
+                ),
+                (
+                    abc_key,
+                    E::index(src(E::capture(ab_key)), s("c")).set_captures(vec![ab_key]),
+                ),
+                (
+                    abe_key,
+                    E::index(src(E::capture(ab_key)), s("e")).set_captures(vec![ab_key]),
+                ),
+            ],
+        )
+    }
+
+    #[test]
     fn unbound_capture() {
         let mut ctx = keyset::Context::default();
         let a_key = ctx.key();
@@ -1289,7 +1331,7 @@ mod test {
         assert_captures(
             "fn :a -> !std:something :a",
             E::block(vec![BI::Expr(src(E::function(
-                src(E::bind_command(
+                src(E::pat_command(
                     src(E::capture(fn_key)),
                     vec![CI::Expr(src(E::set_with_capture(s("a"), a_key)))],
                 )

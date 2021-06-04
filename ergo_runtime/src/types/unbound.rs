@@ -47,8 +47,7 @@ impl Unbound {
             + Sync
             + 'static,
     {
-        let mut v =
-            TypedValue::constant_deps(Unbound(UnboundAbi_TO::from_value(bind, TU_Opaque)), deps);
+        let mut v = Self::new_no_doc(bind, deps);
         Doc::set_string(&mut v, doc.into());
         v
     }
@@ -62,7 +61,10 @@ impl Unbound {
             + Sync
             + 'static,
     {
-        TypedValue::constant_deps(Unbound(UnboundAbi_TO::from_value(bind, TU_Opaque)), deps)
+        TypedValue::constant_deps(
+            Unbound(UnboundAbi_TO::from_value(bind, TU_Opaque)),
+            crate::depends![Self::ergo_type(), ^deps],
+        )
     }
 
     /// Bind the value.

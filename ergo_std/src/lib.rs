@@ -1,10 +1,9 @@
 ///! Ergo standard module plugin.
-use ergo_runtime::{plugin_entry, source::Source, EvalResult, Runtime};
+use ergo_runtime::{plugin_entry, types, Context, Source, Value};
 
 mod array;
 mod bool;
 mod env;
-mod error;
 mod exec;
 mod fs;
 mod io;
@@ -15,41 +14,39 @@ mod map;
 mod match_;
 mod net;
 mod path;
-mod script;
-mod seq;
 mod string;
 pub mod task;
 #[path = "type.rs"]
 mod type_;
 mod value;
 
-pub use exec::ExitStatus;
+//pub use exec::ExitStatus;
 
-fn grease_string(s: &str) -> grease::value::Value {
-    ergo_runtime::types::String::from(s).into()
+fn make_string(s: &str) -> Value {
+    types::String::from(s).into()
 }
 
 #[macro_export]
-macro_rules! grease_string_map {
+macro_rules! make_string_map {
     ( $( $s:literal = $v:expr ),* ) => {
         {
-            let mut m: grease::bst::BstMap<grease::value::Value,grease::value::Value> = Default::default();
-            $( m.insert(crate::grease_string($s), $v); )*
-            ergo_runtime::types::Map(m).into()
+            use ergo_runtime::{Source,Value};
+            let mut m: ergo_runtime::abi_stable::bst::BstMap<Source<Value>,Source<Value>> = Default::default();
+            $( m.insert(Source::builtin(crate::make_string($s)), Source::builtin($v)); )*
+            types::Map(m).into()
         }
     };
 }
 
 #[plugin_entry]
-fn entry(ctx: &mut Runtime) -> EvalResult {
+fn entry(ctx: &Context) -> ergo_runtime::Result<Source<Value>> {
     // Add trait implementations
-    exec::traits(&mut ctx.traits);
+    exec::ergo_traits(&ctx.traits);
 
-    Ok(Source::builtin(grease_string_map! {
+    Ok(Source::builtin(make_string_map! {
         "array" = array::module(),
         "bool" = bool::module(),
         "env" = env::module(),
-        "error" = error::module(),
         "exec" = exec::function(),
         "fs" = fs::module(),
         "io" = io::module(),
@@ -59,8 +56,6 @@ fn entry(ctx: &mut Runtime) -> EvalResult {
         "match" = match_::function(),
         "net" = net::module(),
         "path" = path::module(),
-        "script" = script::module(),
-        "seq" = seq::function(),
         "string" = string::module(),
         "task" = task::function(),
         "type" = type_::module(),

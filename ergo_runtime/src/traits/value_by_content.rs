@@ -34,11 +34,11 @@ impl ValueByContent {
                 async fn value_by_content(self, deep: bool) -> Value {
                     let mut v = self.to_owned();
                     if deep {
-                        crate::try_result!(CONTEXT.eval_all(v.nested_values_mut()).await);
-                        for v in v.nested_values_mut() {
+                        CONTEXT.task.join_all(v.nested_values_mut().into_iter().map(|v| async move {
                             let old_v = std::mem::replace(v, crate::types::Unset.into());
                             *v = super::value_by_content(CONTEXT, old_v, deep).await;
-                        }
+                            Ok(())
+                        })).await.unwrap();
                     }
                     Value::constant(v)
                 }
@@ -47,7 +47,8 @@ impl ValueByContent {
     }
 }
 
-pub async fn value_by_content(ctx: &crate::Context, v: Value, deep: bool) -> Value {
+pub async fn value_by_content(ctx: &crate::Context, mut v: Value, deep: bool) -> Value {
+    drop(ctx.eval(&mut v).await);
     match ctx.get_trait::<ValueByContent>(&v) {
         None => {
             ctx.log.sublog("ValueByContent").debug(format!(

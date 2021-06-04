@@ -355,7 +355,7 @@ fn to_expression<E>(
         Tree::ColonSuffix(f) => {
             let f = to_expression(ctx.pattern(false).string_implies(StringImplies::Get), *f)?;
             if ctx.pattern {
-                Ok(source.with(Expression::bind_command(f, vec![])))
+                Ok(source.with(Expression::pat_command(f, vec![])))
             } else {
                 Ok(source.with(Expression::command(f, vec![])))
             }
@@ -376,7 +376,7 @@ fn to_expression<E>(
                             .map(|v| to_block_item(ctx, v))
                             .collect::<Result<Vec<_>, _>>()?;
                         if ctx.pattern {
-                            Ok(source.with(Expression::bind_command(f, rest)))
+                            Ok(source.with(Expression::pat_command(f, rest)))
                         } else {
                             Ok(source.with(Expression::command(f, rest)))
                         }
@@ -596,11 +596,11 @@ mod test {
     }
 
     #[test]
-    fn bind_command() {
+    fn pat_command() {
         assert_block_item(
             "cmd a = cmd b",
             BI::Bind(
-                src(E::bind_command(
+                src(E::pat_command(
                     src(E::get(s("cmd"))),
                     command_items![s("a")],
                 )),
@@ -645,11 +645,11 @@ mod test {
     }
 
     #[test]
-    fn bind_command_eq() {
+    fn pat_command_eq() {
         assert_block_item(
             "cmd (a=b) = v",
             BI::Bind(
-                src(E::bind_command(
+                src(E::pat_command(
                     src(E::get(s("cmd"))),
                     command_items![bind(src(E::set(s("a"))), s("b"))],
                 )),
@@ -718,7 +718,7 @@ mod test {
         assert_single(
             "fn ^_ -> howdy",
             E::function(
-                src(E::bind_command(
+                src(E::pat_command(
                     src(E::get(s("fn"))),
                     command_items![merge(src(E::bind_any()))],
                 )),
@@ -732,7 +732,7 @@ mod test {
         assert_single(
             "pat :a -> :b -> {!:a = :b}",
             E::function(
-                src(E::bind_command(
+                src(E::pat_command(
                     src(E::get(s("pat"))),
                     command_items![src(E::set(s("a")))],
                 )),

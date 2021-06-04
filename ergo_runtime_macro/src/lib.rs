@@ -73,7 +73,7 @@ pub fn ergo_pat_value(ts: TokenStream) -> TokenStream {
 
 /// Mark a function as the plugin entrypoint.
 ///
-/// The function must take a single `&Context` argument and return a `RResult<Source<Value>>`.
+/// The function must take a single `&Context` argument and return a `Result<Source<Value>>`.
 #[proc_macro_attribute]
 pub fn plugin_entry(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let f = parse_macro_input!(item as ItemFn);
