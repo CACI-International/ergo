@@ -1,4 +1,4 @@
-^workspace:
+plugin = ergo plugin
 
 ## Open a remote archive file.
 ##
@@ -7,12 +7,13 @@
 ## The url can resolve to anything that `fs:unarchive` accepts.
 ## Caches the result, only downloading a particular url once.
 ## Returns the unpacked remote archive directory.
-unarchive-remote = fn :url -> value:cache {
-    out = path:new:
-    archive = seq (net:download :url :out) :out
-    unpacked-dir = path:new:
-    remove-out = fs:remove :out
-    seq (fs:unarchive :archive :unpacked-dir) :remove-out :unpacked-dir
+unarchive-remote = fn :url -> plugin:value:cache {
+    out = plugin:path:new:
+    unpacked-dir = plugin:path:new:
+    plugin:net:download :url :out
+    plugin:fs:unarchive :archive :unpacked-dir
+    plugin:fs:remove :out
+    :unpacked-dir
 }
 
 {unarchive-remote}

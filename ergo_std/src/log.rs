@@ -7,21 +7,6 @@ pub fn function(ctx: &Context) -> Value {
     logger(ctx.log.clone())
 }
 
-// TODO document in script
-/* A runtime logging interface.
-
-    ## Indices
-    * `sublog` - A function taking The next argument gives the name of the sublogger to create, and the function returns a new logging function.
-The first argument is a command, one of: `sublog`, `debug`, `info`, `warn`, or `error`.
-
-### `sublog`
-
-### `debug`, `info`, `warn`, `error`
-The next argument gives the string to log to the appropriate output verbosity level.
-
-Note that like other functions, these logging functions don't occur immediately. They return a
-unit-typed value that, when evaluated, will log to the output.")
-*/
 fn logger(log: Log) -> Value {
     types::Unbound::new_no_doc(
         move |ctx, arg| {

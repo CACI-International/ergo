@@ -1,4 +1,4 @@
-^workspace:
+plugin = ergo plugin
 
 ## Get the summary documentation of a value.
 ##
@@ -6,7 +6,7 @@
 ##
 ## The summary documentation is the first paragraph of documentation (where paragraphs are separated
 ## by two newlines).
-summary = fn :val -> (string:split "\n\n" (doc :val)):0
+summary = fn :val -> (plugin:string:split "\n\n" (doc :val)):0
 
 ## Document a module.
 ##
@@ -16,11 +16,11 @@ summary = fn :val -> (string:split "\n\n" (doc :val)):0
 ## If generating documentation, this will generate the module documentation separately and provide a
 ## link. It will display a summary of the module documentation.
 module = fn :self :name -> {
-    first = !match doc:path: ^[
-        type:Unset -> :name
-        _ -> string:format "[{}]({})" :name (doc:child :name self::name)
+    first = !plugin:match doc:path: [
+        plugin:type:Unset -> :name
+        _ -> plugin:string:format "[{}]({})" :name (doc:child :name self::name)
     ]
-    string:format "{}: {}" :first (summary self::name)
+    plugin:string:format "{}: {}" :first (summary self::name)
 }
 
 ## Document module indices of a value.
@@ -30,7 +30,7 @@ module = fn :self :name -> {
 ## Document multiple modules as an unordered list, with links to separate pages for each module if
 ## generating documentation. `modules` must be indices of `value`.
 modules = fn :self ^:names -> {
-    iter:map (fn :n -> string:format "* {}" <| module :self :n) :names | string:join "\n"
+    plugin:iter:map (fn :n -> plugin:string:format "* {}" <| module :self :n) names:positional | plugin:string:join "\n"
 }
 
 ## Document function indices of a value.
@@ -40,15 +40,17 @@ modules = fn :self ^:names -> {
 ## Document multiple functions as an unordered list with summaries, or as inline sections if
 ## generating documentation. `functions` must be indices of `value`.
 functions = fn :self ^:names -> {
-    !match doc:path: ^[
-        type:Unset -> {
-            iter:map (fn :n -> string:format "* {}: {}" :n (summary self::n)) :names | string:join "\n"
+    !plugin:match doc:path: [
+        plugin:type:Unset -> {
+            plugin:iter:map (fn :n -> plugin:string:format "* {}: {}" :n (summary self::n)) names:positional | plugin:string:join "\n"
         }
         _ -> {
             # Build an unordered list of links to the functions
-            list = iter:map (fn :n -> string:format "* [{0}](#{0}): {1}" :n (summary self::n)) :names | string:join "\n"
-            content = iter:map (fn :n -> string:format "<div class='function'>\n\n## {}\n{}\n\n</div>" :n (doc self::n)) :names | string:join "\n\n"
-            string:format "{}\n\n{}" :list :content
+            list = (plugin:iter:map (fn :n -> plugin:string:format "* [{0}](#{0}): {1}" :n (summary self::n)) :names
+                    | plugin:string:join "\n")
+            content = (plugin:iter:map (fn :n -> plugin:string:format "<div class='function'>\n\n## {}\n{}\n\n</div>" :n (doc self::n)) :names
+                    | plugin:string:join "\n\n")
+            plugin:string:format "{}\n\n{}" :list :content
         }
     ]
 }

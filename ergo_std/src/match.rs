@@ -15,6 +15,7 @@ pub async fn function(mut value: _, bindings: types::Array) -> Value {
 
     // Do not propagate errors while trying the bindings
     let ctx = CONTEXT.with_error_handler(|_| ());
+    drop(ctx.eval(&mut value).await);
     let mut had_error = None;
     for b in bindings {
         let result = traits::bind(&ctx, b, value.clone()).await.unwrap();
@@ -31,15 +32,12 @@ pub async fn function(mut value: _, bindings: types::Array) -> Value {
 
     let err = match had_error {
         Some(e) => e,
-        None => {
-            if let Err(e) = CONTEXT.eval(&mut value).await {
-                e
-            } else {
-                bindings_source
-                    .with("no bindings matched the value")
-                    .into_error()
-            }
-        }
+        None => match value.unwrap().as_type::<types::Error>() {
+            Ok(e) => e.to_owned(),
+            Err(_) => bindings_source
+                .with("no bindings matched the value")
+                .into_error(),
+        },
     };
 
     CONTEXT.error_scope.error(&err);

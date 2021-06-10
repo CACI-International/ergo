@@ -4,10 +4,10 @@ native-doc = :doc
 
 ## Create a value that will evaluate to the first argument which successfully binds.
 ## 
-## Arguments: `^:cases`
+## Arguments: `(Array :cases)`
 ##
-## This is a shortcut for `:a -> match :a ^:cases`.
-matches = fn ^:cases -> :a -> !plugin:match :a ^:cases
+## This is a shortcut for `:a -> match :a :cases`.
+matches = fn :cases -> :a -> !plugin:match :a :cases
 
 mdoc = ergo doc
 mnet = ergo net
@@ -42,18 +42,16 @@ pass = :v -> :v
 ## ```
 default = matches ^[
     fn :v as :default-value -> {
-        !plugin:match :v (plugin:type:Unset -> :default-value) :pass
+        !plugin:match :v [plugin:type:Unset -> :default-value, :pass]
     }
     pat :out as :default-value -> :v -> {
-        !:out = !plugin:match :v (plugin:type:Unset -> :default-value) :pass
+        bind :out <| !plugin:match :v [plugin:type:Unset -> :default-value, :pass]
     }
 ]
 
 ## Partially apply a function.
 ##
 ## Arguments: `(Function :func) ^:args`
-##
-## Keyword Arguments: `^:kwargs`
 ##
 ## Returns a `Function` that, when called, will call the original function with the original arguments
 ## and any extra arguments of the call.
@@ -65,7 +63,7 @@ default = matches ^[
 ## [1,2,3] = part 3
 ## [1,2,a] = part a
 ## ```
-partial = fn :f ^:args ^{^:kwargs}-> fn ^:args2 ^{^:kwargs2} -> f ^:args ^:args2 ^:kwargs ^:kwargs2
+partial = fn :f ^:args -> fn ^:args2 -> f ^:args ^:args2
 
 ## Run a command that produces an output path, where the path to create is passed as an argument to
 ## the given function.
@@ -81,7 +79,7 @@ partial = fn :f ^:args ^{^:kwargs}-> fn ^:args2 ^{^:kwargs2} -> f ^:args ^:args2
 ## ```
 with-output-path = fn :f -> {
     file = plugin:path:new:
-    plugin:seq (f :file) :file
+    { !f :file, :file }
 }
 
 ## Create a recursive function. The passed function will be passed itself as the first argument, and
@@ -105,7 +103,7 @@ with-output-path = fn :f -> {
 ## # External call
 ## func 1 2
 ## ```
-recursive = fn :f -> fn ^:args ^{^:kwargs} -> f :f ^:args ^:kwargs
+recursive = fn :f -> fn ^:args -> f :f ^:args
 
 ## Memoize a function (cache the function results based purely on arguments).
 ##
@@ -114,10 +112,7 @@ recursive = fn :f -> fn ^:args ^{^:kwargs} -> f :f ^:args ^:kwargs
 ## Returns a function which will share results based on the arguments. Thus, if you call the
 ## function more than once on the same arguments, it will only be evaluated once with those
 ## arguments.
-memoize = fn (plugin:type:Function :f) -> fn ^:args ^{^:kwargs} -> {
-    delayed = plugin:value:dynamic <| fn: -> f ^:args ^:kwargs
-    !(plugin:value:cache (no-persist=true) delayed:)
-}
+memoize = fn (plugin:type:Function :f) -> fn ^:args -> plugin:value:cache (no-persist=true) <| f ^:args
 
 ## Import values by index in a binding expression.
 ##
@@ -142,9 +137,9 @@ memoize = fn (plugin:type:Function :f) -> fn ^:args ^{^:kwargs} -> {
 ## ```
 import = {
     inner = recursive <| fn :self :descr -> :v -> {
-        !plugin:match :descr ^[
-            plugin:type:Map :m -> !plugin:iter:map (fn (plugin:type:MapEntry: :key :value) -> { mtype:required !(self :self :value) = v::key; () }) :m
-            :other -> { !:other = :v; () }
+        !plugin:match :descr [
+            plugin:type:Map :m -> !plugin:iter:map (fn (plugin:type:MapEntry: :key :value) -> { fn (mtype:required !(self :self :value)) -> () |> v::key }) :m
+            :other -> bind :other :v
         ]
     }
 
@@ -152,9 +147,9 @@ import = {
 }
 
 match-indices = fn :fallback :from -> {
-    matches ^[
-        index :i -> !plugin:match from::i ^[
-            plugin:type:Unset -> !plugin:error:throw <| plugin:string:format "missing index: {}" :i
+    matches [
+        index :i -> !plugin:match from::i [
+            plugin:type:Unset -> TODO #!plugin:error:throw <| plugin:string:format "missing index: {}" :i
             :pass
         ]
         :fallback
@@ -176,7 +171,7 @@ type."
 "If called without arguments, returns a composition function which can be used to compose or
 decompose instances of the type."
     )
-    matches ^[
+    matches [
         fn: -> :binding
         fn :args -> plugin:string:format "{}\n\n{}\nArguments: {}" :binding :compose :args
     ]
@@ -203,8 +198,8 @@ iter-split = fn :n :iter -> [plugin:iter:take :n :iter, plugin:iter:skip :n :ite
 ## {{mdoc:modules :self doc env error fs io meta net script type}}
 ##
 ## # Functions
-## {{(mdoc:functions :self by-content cache debug default dynamic ergo-remote
-##    exec import log match optional required seq task typed variable)}}
+## {{(mdoc:functions :self by-content cache debug default ergo-remote
+##    exec import log match optional required seq task eval variable)}}
 {
     ## The Any type.
     ##
@@ -255,7 +250,7 @@ iter-split = fn :n :iter -> [plugin:iter:take :n :iter, plugin:iter:skip :n :ite
     ##   (mdoc:functions :self from fold filter flatten map map-all skip skip-while
     ##    split take take-while unique zip)
     ## }}
-    Iter = (match-indices plugin:type:Iter {^plugin:iter, split = :iter-split})
+    Iter = match-indices plugin:type:Iter {^plugin:iter, split = :iter-split}
 
     ## The Map type and related functions.
     ##
@@ -337,6 +332,12 @@ iter-split = fn :n :iter -> [plugin:iter:take :n :iter, plugin:iter:skip :n :ite
     ## {{mdoc:functions :self stdin stdout stderr}}
     io = plugin:io
 
+    ## The runtime logging interface.
+    ##
+    ## # Functions
+    ## {{mdoc:functions :self sublog debug info warn error}}
+    log = plugin:log
+
     ## Manipulate value metadata.
     ##
     ## Values can have arbitrary metadata attached to them at runtime. This metadata can be
@@ -367,18 +368,16 @@ iter-split = fn :n :iter -> [plugin:iter:take :n :iter, plugin:iter:skip :n :ite
     }
 
     # Functions
-    import {by-content,cache,debug,dynamic,typed,variable} = plugin:value
+    import {by-content,cache,debug,eval,variable} = plugin:value
     import {optional,required} = :mtype
     default
     ergo-remote
     exec = plugin:exec
     import
-    log = plugin:log
     ## {{native-doc plugin:match}}
     ##
     ## # Functions
     ## {{mdoc:functions :self value}}
     match = match-indices plugin:match {value = :matches}
-    seq = plugin:seq
     task = plugin:task
 }

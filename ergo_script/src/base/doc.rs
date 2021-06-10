@@ -6,7 +6,7 @@ use ergo_runtime::{
     metadata::Doc,
     nsid, traits, try_result, types,
     value::match_value,
-    Context, Error, Source, Value,
+    Context, Source, Value,
 };
 use futures::future::FutureExt;
 use std::path::PathBuf;
@@ -66,7 +66,7 @@ pub fn doc() -> Value {
         /// written to the filesystem).
         async fn path() -> Value {
             match DocPath::get(CONTEXT) {
-                None => Error::from("no doc root set").into(),
+                None => types::Unset.into(),
                 Some(p) => types::Path::from(p.current()).into()
             }
         }

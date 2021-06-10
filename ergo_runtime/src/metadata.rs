@@ -1,7 +1,8 @@
 //! Common value metadata keys.
 
+use crate as ergo_runtime;
 use crate::abi_stable::uuid::Uuid;
-use crate::value::{MetadataKey, Value};
+use crate::value::{match_value, MetadataKey, Value};
 
 /// Documentation metadata key.
 pub struct Doc;
@@ -21,14 +22,25 @@ impl Doc {
     ///
     /// If no documentation is available, a string indicating the (possibly dynamic) type will be returned.
     pub async fn get(ctx: &crate::Context, value: &Value) -> String {
+        let mut value = value.clone();
+        while value.get_metadata(&Doc).is_none() && !value.is_evaluated() {
+            ctx.eval_once(&mut value).await;
+        }
+
         if let Some(v) = value.get_metadata(&Doc) {
             let mut v = v.owned();
             drop(ctx.eval(&mut v).await);
-            if let Some(v) = v.as_type::<crate::types::String>().ok() {
-                return v.to_owned().0.into();
+
+            match_value! {v,
+                crate::types::String(s) => return s.into(),
+                e@crate::types::Error {..} => return format!("error generating docs: {}", e),
+                _ => ()
             }
         }
-        format!("value with type '{}'", crate::traits::type_name(ctx, value))
+        format!(
+            "value with type '{}'",
+            crate::traits::type_name(ctx, &value)
+        )
     }
 
     /// Set a documentation string for the given value.

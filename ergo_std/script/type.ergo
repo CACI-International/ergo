@@ -1,61 +1,59 @@
-^workspace:
+{type,match,map,iter,array,eval,^_} = ergo plugin
 
-^{
-    basic-type = fn :check -> :a -> !match :a ^[
-        :check
-        fn (check :m) -> :m
-        (check _) -> ()
-    ]
-    
-    ## Match maps with specific keys and value types.
-    ## 
-    ## Arguments: `(Map :map)`
-    ## `map` should contain the expected keys and their corresponding value types.
-    ##
-    ## Returns a type that will check arguments like typical type functions.
-    MapValues = fn (type:Map :fields) -> basic-type <| pat :out -> type:Map :m -> {
-        !:out = !map:from <| iter:map (fn (type:MapEntry: :k :v) -> type:MapEntry: :k (fields::k :v)) :m
+basic-type = fn :check -> :a -> !match :a [
+    :check
+    fn (check :m) -> :m
+    (check _) -> ()
+]
+
+## Match maps with specific keys and value types.
+## 
+## Arguments: `(Map :map)`
+##
+## `map` should contain the expected keys and their corresponding value types.
+##
+## Returns a type that will check arguments like typical type functions.
+MapValues = fn (type:Map :fields) -> basic-type <| pat :out -> type:Map :m -> {
+    bind :out <| !map:from <| iter:map (fn (type:MapEntry: :k :v) -> type:MapEntry: :k (fields::k :v)) :m
+}
+
+## Match maps where all keys match a specific type and all values match a specific type.
+## 
+## Arguments: `(Function :key-type) (Function :value-type)`
+##
+## Returns a type that will check arguments like typical type functions.
+MapOf = fn (type:Function :keys) (type:Function :values) -> {
+    basic-type <| pat :out -> type:Map :m -> {
+        bind :out <| !map:from <| iter:map (fn (type:MapEntry: (keys :k) (values :v)) -> type:MapEntry: :k :v) :m
     }
+}
 
-    ## Match maps where all keys match a specific type and all values match a specific type.
-    ## 
-    ## Arguments: `(Function :key-type) (Function :value-type)`
-    ##
-    ## Returns a type that will check arguments like typical type functions.
-    MapOf = fn (type:Function :keys) (type:Function :values) -> {
-        basic-type <| pat :out -> type:Map :m -> {
-            !:out = !map:from <| iter:map (fn (type:MapEntry: (keys :k) (values :v)) -> type:MapEntry: :k :v) :m
-        }
-    }
+## Match arrays with specific value types.
+## 
+## Arguments: `(Array :array)`
+##
+## `array` should contain the expected value types for each entry in the array.
+##
+## Returns a type that will check arguments like typical type functions.
+ArrayValues = fn (type:Array :tps) -> basic-type <| pat :out -> type:Array :a -> {
+    bind :out <| !array:from <| iter:map (fn [:f,:v] -> f :v ) <| iter:zip :tps :a
+}
 
-    ## Match arrays with specific value types.
-    ## 
-    ## Arguments: `(Array :array)`
-    ## `array` should contain the expected value types for each entry in the array.
-    ##
-    ## Returns a type that will check arguments like typical type functions.
-    ArrayValues = fn (type:Array :tps) -> basic-type <| pat :out -> type:Array :a -> {
-        !:out = !array:from <| iter:map (fn [:f,:v] -> f :v ) <| iter:zip :tps :a
-    }
-
-    ## Match arrays where all values match a specific type.
-    ## 
-    ## Arguments: `(Function :type)`
-    ##
-    ## Returns a type that will check arguments like typical type functions.
-    ArrayOf = fn (type:Function :tp) -> {
-        basic-type (pat :out -> type:Array :a -> { !:out = !array:from <| iter:map :tp :a })
-    }
-
-    {MapValues, MapOf, ArrayValues, ArrayOf}
+## Match arrays where all values match a specific type.
+## 
+## Arguments: `(Function :type)`
+##
+## Returns a type that will check arguments like typical type functions.
+ArrayOf = fn (type:Function :tp) -> {
+    basic-type (pat :out -> type:Array :a -> { bind :out <| !array:from <| iter:map :tp :a })
 }
 
 ## Match a value allowing `Unset` values.
 ##
 ## Pattern Arguments: `:target`
-optional = pat :out -> :v -> !match :v ^[
+optional = pat :out -> :v -> !match :v [
     type:Unset -> ()
-    :other -> {!:out = :other}
+    :other -> bind :out :other
 ]
 
 ## Match a value disallowing `Unset` values.
@@ -63,9 +61,9 @@ optional = pat :out -> :v -> !match :v ^[
 ## This is only useful if the binding argument would normally accept an `Unset` value.
 ##
 ## Pattern Arguments: `:target`
-required = pat :out -> :v -> !match :v ^[
-    type:Unset :x -> !error:throw (pattern=true) "required value missing"
-    :other -> {!:out = :other}
+required = pat :out -> :v -> !match :v [
+    type:Unset :x -> TODO #!error:throw (pattern=true) "required value missing"
+    :other -> bind :out :other
 ]
 
 ## Create an enumeration type.
@@ -82,25 +80,25 @@ required = pat :out -> :v -> !match :v ^[
 ## }
 ## ok = MapResult:Ok {}
 ## err = MapResult:Error "oh no"
-## !:MapResult = :ok
-## !:MapResult = :err
+## MapResult :r = :ok
+## MapResult :e = :err
 ## MapResult:Ok :m = :ok
 ## ```
 ## The variant values should be values supporting function calls and binding/pattern calls.
 enum = fn (type:String :name) (type:Map :variants) -> {
     # Create new type for enum
-    tp = type:new :name <| :a -> !match :a ^[
-        fn :which ^:args ^{^:kwargs} -> { ::which = variants::which ^:args ^:kwargs }
-        pat :which ^:args ^{^:kwargs} -> { ::which = variants::which ^!:args ^!:kwargs } -> ()
+    tp = type:new :name <| :a -> !match :a [
+        fn :which ^:args -> { ::which = variants::which ^:args }
+        pat :which ^:args -> { ::which = variants::which ^!:args } -> ()
     ]
     # Create map interface for enum variants
-    key-to-accessor = fn :key -> :a -> !match :a ^[
-        fn ^:args ^{^:kwargs} -> tp: :key ^:args ^:kwargs
-        pat ^:args ^{^:kwargs} -> tp: !:key ^!:args ^!:kwargs -> ()
+    key-to-accessor = fn :key -> :a -> !match :a [
+        fn ^:args -> tp: :key ^:args
+        pat ^:args -> tp: !:key ^!:args -> ()
     ]
-    accessor = !(:variants | iter:map (fn (type:MapEntry: :key _) -> type:MapEntry: :key (key-to-accessor :key)) | map:from)
+    accessor = eval <| :variants | iter:map (fn (type:MapEntry: :key _) -> type:MapEntry: :key (key-to-accessor :key)) | map:from
     # Wrap the accessor to add a way to check for `tp` using it.
-    :a -> !match :a (index :arg -> accessor::arg) :tp
+    :a -> !match :a [index :arg -> accessor::arg,:tp]
 }
 
 ## Create a structured type.
