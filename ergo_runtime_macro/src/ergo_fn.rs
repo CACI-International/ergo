@@ -47,17 +47,33 @@ impl Parser for ErgoFnLike {
         }
 
         let doc = {
-            let ind = f.attrs.iter().position(|a| match a.parse_meta() {
-                Ok(syn::Meta::NameValue(nv)) => nv.path.is_ident("doc"),
-                _ => false,
-            });
-            ind.map(|i| {
-                if let Ok(syn::Meta::NameValue(nv)) = f.attrs.swap_remove(i).parse_meta() {
-                    nv.lit
-                } else {
-                    panic!("`position` incorrect");
+            let mut strip_leading_ws = None;
+            let mut docstr = String::new();
+            for attr in f.attrs.iter() {
+                match attr.parse_meta() {
+                    Ok(syn::Meta::NameValue(nv)) if nv.path.is_ident("doc") => {
+                        if let syn::Lit::Str(s) = nv.lit {
+                            let s = s.value();
+                            match (strip_leading_ws, s.find(|c: char| !c.is_whitespace())) {
+                                (None, None) => (),
+                                (None, Some(offset)) => {
+                                    strip_leading_ws = Some(offset);
+                                    docstr.push_str(unsafe { s.get_unchecked(offset..) });
+                                }
+                                (Some(_), None) => docstr.push('\n'),
+                                (Some(a), Some(b)) => {
+                                    docstr.push('\n');
+                                    docstr.push_str(unsafe {
+                                        s.get_unchecked(std::cmp::min(a, b)..)
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    _ => (),
                 }
-            })
+            }
+            docstr.trim().to_owned()
         };
 
         let clones = {

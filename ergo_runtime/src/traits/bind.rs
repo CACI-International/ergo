@@ -10,7 +10,6 @@ use crate::abi_stable::{
 };
 use crate::type_system::{ergo_trait, ergo_traits_fn, ErgoTrait, Trait, Type};
 use crate::{
-    error::PatternError,
     source::IntoSource,
     types,
     value::{match_value, IntoValue},
@@ -24,15 +23,11 @@ pub trait Bind {
 }
 
 /// Create a bind error result for the given value.
-///
-/// The error is wrapped as a PatternError.
 pub fn bind_error(ctx: &Context, v: Source<Value>) -> crate::Error {
     let (src, v) = v.take();
     let name = type_name(ctx, &v);
-    PatternError::wrap(
-        src.with(format!("cannot bind to value with type '{}'", name))
-            .into_error(),
-    )
+    src.with(format!("cannot bind to value with type '{}'", name))
+        .into_error()
 }
 
 /// Bind a value to an argument.
@@ -90,7 +85,7 @@ where
                 match_value!{t,
                     types::BindRest(rest) => {
                         match to.next_back() {
-                            None => Err(PatternError::wrap(t_source.with("undecidable merge").into_error()))?,
+                            None => Err(t_source.with("undecidable merge").into_error())?,
                             Some(to_v) => {
                                 // Keep taking until we find a match
                                 let mut vals = Vec::new();
@@ -103,7 +98,7 @@ where
                                                 break;
                                             }
                                         }
-                                        None => Err(PatternError::wrap(to_v.source().with("no value matches this binding").into_error()))?
+                                        None => Err(to_v.source().with("no value matches this binding").into_error())?
                                     }
                                 }
                                 // Values were pushed in reverse order
@@ -115,7 +110,7 @@ where
                     }
                     to_v => {
                         match from.next_back() {
-                            None => Err(PatternError::wrap(t_source.with("no value matches this binding").into_error()))?,
+                            None => Err(t_source.with("no value matches this binding").into_error())?,
                             Some(from_v) => bind_no_error(ctx, t_source.with(to_v), from_v).await?,
                         }
                     }
@@ -150,7 +145,7 @@ where
                         }
                         to_v => {
                             match from.next() {
-                                None => Err(PatternError::wrap(t_source.with("no value matches this binding").into_error()))?,
+                                None => Err(t_source.with("no value matches this binding").into_error())?,
                                 Some(from_v) => {
                                     bind_no_error(ctx, t_source.with(to_v), from_v).await?;
                                 }
@@ -163,7 +158,7 @@ where
                 if !remaining.is_empty() {
                     let mut errs = Vec::new();
                     for v in remaining {
-                        errs.push(PatternError::wrap(v.with("no binding matches this value").into_error()));
+                        errs.push(v.with("no binding matches this value").into_error());
                     }
                     Err(crate::Error::aggregate(errs))
                 } else {
@@ -213,9 +208,7 @@ pub(crate) async fn bind_map(
             } else {
                 let mut errs = Vec::new();
                 for (k, _) in from.into_iter() {
-                    errs.push(PatternError::wrap(
-                        k.with("key missing in binding").into_error(),
-                    ));
+                    errs.push(k.with("key missing in binding").into_error());
                 }
                 Err(crate::Error::aggregate(errs))
             }
@@ -257,7 +250,7 @@ ergo_traits_fn! {
                             arg_source.with(format!("cannot index value with type {}", name)).into_error().into()
                         }
                         _ => {
-                            PatternError::wrap(arg_source.with("mismatched value in binding").into_error()).into()
+                            arg_source.with("mismatched value in binding").into_error().into()
                         }
                     }
                 } else {

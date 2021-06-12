@@ -18,10 +18,6 @@ use crate::type_system::ErgoType;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 
-mod pattern_error;
-
-pub use pattern_error::PatternError;
-
 /// An external error.
 pub type ExternalError = dyn std::error::Error + Send + Sync;
 

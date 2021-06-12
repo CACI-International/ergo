@@ -271,7 +271,10 @@ fn run(opts: Opts) -> Result<String, String> {
                 eval_args.len()
             };
             let first_arg = &eval_args[0..first_arg_end];
-            let function = if runtime.resolve_script_path(None, first_arg.as_ref()).is_none() {
+            let function = if runtime
+                .resolve_script_path(None, first_arg.as_ref())
+                .is_none()
+            {
                 "workspace:command"
             } else {
                 PROGRAM_NAME
@@ -308,7 +311,7 @@ fn run(opts: Opts) -> Result<String, String> {
     let ret = value_to_execute.and_then(|value| {
         runtime.ctx.task.block_on(async {
             use ergo_runtime::traits::{display, eval_nested, Formatter};
-            eval_nested(&runtime.ctx, value.clone()).await;
+            drop(eval_nested(&runtime.ctx, value.clone()).await);
             let mut s = String::new();
             {
                 let mut formatter = Formatter::new(&mut s);

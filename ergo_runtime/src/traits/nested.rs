@@ -36,30 +36,41 @@ impl Nested {
 }
 
 fn add_value<'a>(
-    values: &mut FuturesUnordered<BoxFuture<'a, RVec<Value>>>,
+    values: &mut FuturesUnordered<BoxFuture<'a, crate::Result<RVec<Value>>>>,
     ctx: &'a Context,
     mut v: Value,
 ) {
     values.push(
         async move {
-            v.eval(ctx).await;
-            match ctx.get_trait::<Nested>(&v) {
+            ctx.eval(&mut v).await?;
+            Ok(match ctx.get_trait::<Nested>(&v) {
                 None => Default::default(),
                 Some(n) => n.nested(v).await,
-            }
+            })
         }
         .boxed(),
     );
 }
 
 /// Recursively evaluate the given value.
-pub async fn eval_nested(ctx: &Context, v: Value) {
+pub async fn eval_nested(ctx: &Context, v: Value) -> crate::Result<()> {
     let mut values = FuturesUnordered::new();
+    let mut errs = vec![];
 
     add_value(&mut values, ctx, v);
-    while let Some(vals) = values.next().await {
-        for v in vals {
-            add_value(&mut values, ctx, v);
+    while let Some(result) = values.next().await {
+        match result {
+            Ok(vals) => {
+                for v in vals {
+                    add_value(&mut values, ctx, v);
+                }
+            }
+            Err(e) => errs.push(e),
         }
+    }
+    if errs.is_empty() {
+        Ok(())
+    } else {
+        Err(crate::Error::aggregate(errs))
     }
 }

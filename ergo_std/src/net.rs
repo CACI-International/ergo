@@ -26,7 +26,7 @@ async fn download(url: types::String, path: types::Path, (headers): [types::Map]
     let mut http_headers = HeaderMap::new();
     if let Some(headers) = headers {
         let headers = headers.unwrap();
-        traits::eval_nested(CONTEXT, headers.clone().into()).await;
+        drop(traits::eval_nested(CONTEXT, headers.clone().into()).await);
         for (k, v) in headers.to_owned().0.into_iter() {
             let k = try_result!(CONTEXT.eval_as::<types::String>(k).await);
             let v = try_result!(CONTEXT.eval_as::<types::String>(v).await);

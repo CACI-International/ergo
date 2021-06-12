@@ -6,6 +6,7 @@ use crate::abi_stable::type_erase::Eraseable;
 use crate::context::Traits;
 use crate::type_system::{ergo_trait, ergo_trait_impl, ErgoType};
 use crate::{dependency::GetDependencies, Value};
+use log::debug;
 
 /// An ergo trait which identifies a value by its content.
 #[ergo_trait]
@@ -51,10 +52,10 @@ pub async fn value_by_content(ctx: &crate::Context, mut v: Value, deep: bool) ->
     drop(ctx.eval(&mut v).await);
     match ctx.get_trait::<ValueByContent>(&v) {
         None => {
-            ctx.log.sublog("ValueByContent").debug(format!(
+            debug!(
                 "no ValueByContent trait for {}, returning the value as-is",
                 type_name(ctx, &v)
-            ));
+            );
             v
         }
         Some(t) => t.value_by_content(v, deep).await,

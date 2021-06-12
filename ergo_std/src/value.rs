@@ -92,7 +92,7 @@ async fn cache(value: _, (no_persist): [_]) -> Value {
                         "failed to read cache value for {}, (re)caching: {}",
                         id, err
                     ));
-                    traits::eval_nested(CONTEXT, value.clone()).await;
+                    drop(traits::eval_nested(CONTEXT, value.clone()).await);
                     if let Err(e) = traits::write_to_store(CONTEXT, &store, value.clone()).await {
                         log.warn(format!("failed to cache value for {}: {}", id, e));
                     } else {

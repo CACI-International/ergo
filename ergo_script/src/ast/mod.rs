@@ -57,26 +57,6 @@ pub trait IsExpression: Eraseable + Subexpressions {
             SubExpr::SubExpr(e) => std::hash::Hash::hash(e, h),
         });
     }
-
-    fn derive_captures(&mut self) {}
-}
-
-fn captures_from_expr(captures: &mut CaptureSet, expr: &Expression) {
-    if let Some(Capture(key)) = expr.as_ref::<Capture>() {
-        captures.insert(*key);
-    } else if let Some(exprs) = expr.captures() {
-        captures.union_with(exprs);
-    }
-}
-
-fn auto_derive_captures<T: IsExpression>(e: &T) -> CaptureSet {
-    let mut set = CaptureSet::default();
-    e.subexpressions(|e| {
-        if let SubExpr::SubExpr(e) = e {
-            captures_from_expr(&mut set, e);
-        }
-    });
-    set
 }
 
 macro_rules! expression_types {
@@ -197,10 +177,6 @@ macro_rules! expression_types {
 
         impl IsExpression for $t {
             const EXPRESSION_TYPE: ExpressionType = ExpressionType::$t;
-
-            fn derive_captures(&mut self) {
-                self.captures = auto_derive_captures(self);
-            }
         }
         expression_types!($($rest)*);
     };
@@ -864,7 +840,7 @@ impl DocCommentPart {
 pub fn load(
     src: Source<()>,
     ctx: &mut Context,
-) -> Result<(Expr, HashMap<CaptureKey, Expression>), Error> {
+) -> Result<(Expr, HashMap<CaptureKey, (Expression, CaptureSet)>), Error> {
     let toks = tokenize::Tokens::from(src.open()?);
     let tree_toks = tokenize_tree::TreeTokens::from(toks);
     let tree_parser = parse_tree::Parser::from(tree_toks);
@@ -879,7 +855,7 @@ pub fn load(
         })?;
 
     let mut compiler = ExpressionCompiler::with_context(ctx);
-    compiler.compile_captures(&mut *expr);
+    compiler.compile_captures(&mut *expr, &mut Default::default());
     Ok((expr, compiler.into_captures()))
 }
 
@@ -888,8 +864,81 @@ pub type Context = keyset::Context;
 
 struct ExpressionCompiler<'a> {
     capture_context: &'a mut Context,
-    captures: HashMap<Expression, CaptureKey>,
+    captures: HashMap<Expression, (CaptureKey, CaptureSet)>,
+    needed_by: HashMap<CaptureKey, CaptureSet>,
     capture_mapping: ScopeMap<u128, CaptureKey>,
+}
+
+// We have a two competing goals for capture calculation to satisfy. These are:
+//
+// 1. We need to know which captures a particular capture depends on. This is used to determine
+//    when a capture can be evaluated: when all dependent captures have been evaluated, it can be.
+//    On the surface this may seem like it would be all captures that are within a captured
+//    expression, but if a captured expression introduces values within subscopes, those captures
+//    should not be included (because they would never be evaluated first). For this reason, having
+//    _only_ the set of direct captures is not sufficient, because you may need some subset of
+//    secondary captures (those that don't rely on introduced captures). For instance, in `!f (fn
+//    :x -> y::x)` the outermost capture (from the forced expression) must rely on `y`, but
+//    _cannot_ rely on `:x` nor `y::x`.
+//
+// 2. We need to be able to select the subset of captures needed for a subexpression. This is
+//    essential to correctly (and efficiently) calculating the identities of subexpressions, taking
+//    into account the captured (possibly evaluated) values. Importantly, if a capture _is_
+//    evaluated, any sub-captures of that capture should not be included. For example, in `hello
+//    (!something (!a b c))`, if `!something (!a b c)` has been evaluated to a value, the identity
+//    should be derived from the literal `hello` and _only_ that value, excluding the value that
+//    `!a b c` produced.
+//
+// The easiest way to satify (1) is to track the set of free captures (those not relying on values
+// introduced within any subexpressions). To efficiently remove non-free captures when a capture
+// key is determined as introduced within a scope, we use a map of backward-dependencies (i.e. we
+// track which captures need each individual capture). Thus we use the map to determine which
+// ancestor captures must be removed, and to calculate the map we aggregate a map of _all_ captures
+// under an expression (since all of those captures will be needed by a new capture if introduced).
+// This is the `all` CaptureSet. The free captures are in the `free` capture set, and are
+// calculated from the union of free captures of each subexpression and then removing any
+// introduced captures. The set of free captures are stored with the expression when a new capture
+// is created.
+//
+// To satisfy (2), it is best to keep a tree structure to captures (so we can implicitly disregard
+// sub-captures when a particular capture has been evaluated), so we also must track the set of
+// direct captures of each _expression_ (not capture), since we must use them to determine which
+// captures should be retained as we evaluate expressions. When a new capture is introduced, the
+// set of direct captures is reduced to that solitary capture (disregarding any prior direct
+// captures as they are now "children" of the new capture). This is the `direct` CaptureSet, which
+// is stored in each expression as it has its captures compiled (for expressions that can contain
+// captures). Like the `free` capture set, any captures introduced in a scope are removed from the
+// `direct` CaptureSet (since you wouldn't be able to propagate a value that is introduced within
+// the expression).
+#[derive(Debug, Default, Clone)]
+struct Captures {
+    all: CaptureSet,
+    direct: CaptureSet,
+    free: CaptureSet,
+}
+
+impl Captures {
+    pub fn insert_free(&mut self, key: CaptureKey) {
+        self.all.insert(key);
+        self.direct.insert(key);
+        self.free.insert(key);
+    }
+}
+
+impl std::ops::BitOrAssign<&'_ Self> for Captures {
+    fn bitor_assign(&mut self, other: &'_ Self) {
+        self.all.union_with(&other.all);
+        self.direct.union_with(&other.direct);
+        self.free.union_with(&other.free);
+    }
+}
+
+impl std::ops::BitOrAssign<&'_ Captures> for &'_ mut Captures {
+    fn bitor_assign(&mut self, other: &'_ Captures) {
+        self.all.union_with(&other.all);
+        self.direct.union_with(&other.direct);
+        self.free.union_with(&other.free);
+    }
 }
 
 impl<'a> ExpressionCompiler<'a> {
@@ -897,11 +946,12 @@ impl<'a> ExpressionCompiler<'a> {
         ExpressionCompiler {
             capture_context: ctx,
             captures: Default::default(),
+            needed_by: Default::default(),
             capture_mapping: Default::default(),
         }
     }
 
-    fn capture(&mut self, e: &mut Expression) {
+    fn capture(&mut self, e: &mut Expression, e_caps: &mut Captures) {
         // Temporarily replace the expression with a unit type until we determine
         // the capture key.
         let mut old_e = std::mem::replace(e, Expression::unit());
@@ -911,62 +961,85 @@ impl<'a> ExpressionCompiler<'a> {
             capture_context,
             ..
         } = self;
+        // TODO expr_caps from all caps
         let key = captures
             .entry(old_e)
-            .or_insert_with(|| capture_context.key());
-        *e = Expression::capture(*key);
+            .or_insert_with(|| (capture_context.key(), e_caps.free.clone()))
+            .0;
+        for cap in e_caps.all.iter() {
+            self.needed_by.entry(cap).or_default().insert(key);
+        }
+        *e = Expression::capture(key);
+        e_caps.direct.clear();
+        e_caps.insert_free(key);
     }
 
-    pub fn into_captures(self) -> HashMap<CaptureKey, Expression> {
-        self.captures.into_iter().map(|(k, v)| (v, k)).collect()
+    pub fn into_captures(self) -> HashMap<CaptureKey, (Expression, CaptureSet)> {
+        self.captures
+            .into_iter()
+            .map(|(e, (k, c))| (k, (e, c)))
+            .collect()
     }
 
-    pub fn compile_captures(&mut self, e: &mut Expression) {
+    pub fn compile_captures(&mut self, e: &mut Expression, mut caps: &mut Captures) {
         match_expression_mut!(e,
-            Unit => |v| {
-                v.subexpressions_mut(|e| self.compile_captures(e));
-                v.derive_captures();
-            },
-            BindAny => |v| {
-                v.subexpressions_mut(|e| self.compile_captures(e));
-                v.derive_captures();
-            },
-            String => |v| {
-                v.subexpressions_mut(|e| self.compile_captures(e));
-                v.derive_captures();
-            },
+            Unit => |_| (),
+            BindAny => |_| (),
+            String => |_| (),
             Array => |v| {
-                v.subexpressions_mut(|e| self.compile_captures(e));
-                v.derive_captures();
+                let mut e_caps = Captures::default();
+                v.subexpressions_mut(|e| self.compile_captures(e, &mut e_caps));
+                caps |= &e_caps;
+                v.captures = e_caps.direct;
             },
             Block => |v| {
                 self.capture_mapping.down();
+                let mut e_caps = Captures::default();
                 for i in &mut v.items {
                     match i {
                         BlockItem::Bind(b, e) => {
-                            self.compile_captures(&mut *e);
+                            self.compile_captures(&mut *e, &mut e_caps);
                             let old_scope = self.capture_mapping.current_as_set_scope();
-                            self.compile_captures(&mut *b);
+                            self.compile_captures(&mut *b, &mut e_caps);
                             self.capture_mapping.restore_set_scope(old_scope);
                         }
-                        BlockItem::Expr(e) | BlockItem::Merge(e) => self.compile_captures(&mut *e)
+                        BlockItem::Expr(e) | BlockItem::Merge(e) => self.compile_captures(&mut *e, &mut e_caps)
                     }
                 }
                 let in_scope = self.capture_mapping.up();
+                let in_scope_captures = in_scope.into_iter().map(|v| v.1).collect();
 
-                v.derive_captures();
-                v.captures.difference_with(&in_scope.into_iter().map(|(_,v)| v).collect());
+                e_caps.free.difference_with(&in_scope_captures);
+                for c in in_scope_captures.iter() {
+                    if let Some(set) = self.needed_by.get(&c) {
+                        e_caps.free.difference_with(set);
+                    }
+                }
+
+                e_caps.direct.difference_with(&in_scope_captures);
+                caps |= &e_caps;
+                v.captures = e_caps.direct;
             },
             Function => |v| {
                 self.capture_mapping.down();
                 let old_scope = self.capture_mapping.current_as_set_scope();
-                self.compile_captures(&mut *v.bind);
-                self.compile_captures(&mut *v.body);
+                let mut e_caps = Captures::default();
+                self.compile_captures(&mut *v.bind, &mut e_caps);
+                self.compile_captures(&mut *v.body, &mut e_caps);
                 self.capture_mapping.restore_set_scope(old_scope);
                 let in_scope = self.capture_mapping.up();
+                let in_scope_captures = in_scope.into_iter().map(|v| v.1).collect();
 
-                v.derive_captures();
-                v.captures.difference_with(&in_scope.into_iter().map(|(_,v)| v).collect());
+                e_caps.free.difference_with(&in_scope_captures);
+                for c in in_scope_captures.iter() {
+                    if let Some(set) = self.needed_by.get(&c) {
+                        e_caps.free.difference_with(set);
+                    }
+                }
+
+                e_caps.direct.difference_with(&in_scope_captures);
+                caps |= &e_caps;
+                v.captures = e_caps.direct;
             },
             Set => |v| {
                 if v.value.expr_type() == ExpressionType::String {
@@ -974,8 +1047,10 @@ impl<'a> ExpressionCompiler<'a> {
                     self.capture_mapping.insert(v.value.id(), key);
                     v.capture_key = Some(key);
                 } else {
-                    v.subexpressions_mut(|e| self.compile_captures(e));
-                    v.derive_captures();
+                    let mut e_caps = Captures::default();
+                    v.subexpressions_mut(|e| self.compile_captures(e, &mut e_caps));
+                    caps |= &e_caps;
+                    v.captures = e_caps.direct;
                 }
             },
             Get => |v| {
@@ -984,68 +1059,78 @@ impl<'a> ExpressionCompiler<'a> {
                     // If the id is in the capture environment, use it directly
                     let key = self.capture_mapping.get(&v.value.id()).map(|v| *v);
                     match key {
-                        Some(key) => *e = Expression::capture(key),
-                        None => self.capture(e),
+                        Some(key) => {
+                            *e = Expression::capture(key);
+                            caps.insert_free(key);
+                        }
+                        None => self.capture(e, caps),
                     }
                 } else {
-                    v.subexpressions_mut(|e| self.compile_captures(e));
-                    v.derive_captures();
+                    let mut e_caps = Captures::default();
+                    v.subexpressions_mut(|e| self.compile_captures(e, &mut e_caps));
+                    caps |= &e_caps;
+                    v.captures = e_caps.direct;
                 }
             },
             Index => |v| {
                 // Index expressions are considered forced.
-                v.subexpressions_mut(|e| self.compile_captures(e));
-                v.derive_captures();
-                self.capture(e);
+                let mut e_caps = Captures::default();
+                v.subexpressions_mut(|e| self.compile_captures(e, &mut e_caps));
+                v.captures = e_caps.direct.clone();
+                self.capture(e, &mut e_caps);
+                caps |= &e_caps;
             },
             Command => |v| {
-                self.compile_captures(&mut v.function);
+                let mut e_caps = Captures::default();
+                self.compile_captures(&mut v.function, &mut e_caps);
                 for i in &mut v.args {
                     match i {
                         CommandItem::Bind(b, e) => {
-                            self.compile_captures(&mut *e);
+                            self.compile_captures(&mut *e, &mut e_caps);
                             let old_scope = self.capture_mapping.disjoint_set_scope();
-                            self.compile_captures(&mut *b);
+                            self.compile_captures(&mut *b, &mut e_caps);
                             self.capture_mapping.restore_set_scope(old_scope);
                         }
-                        BlockItem::Expr(e) | BlockItem::Merge(e) => self.compile_captures(&mut *e)
+                        BlockItem::Expr(e) | BlockItem::Merge(e) => self.compile_captures(&mut *e, &mut e_caps)
                     }
                 }
-                v.derive_captures();
+                caps |= &e_caps;
+                v.captures = e_caps.direct;
             },
             PatternCommand => |v| {
-                self.compile_captures(&mut v.function);
+                let mut e_caps = Captures::default();
+                self.compile_captures(&mut v.function, &mut e_caps);
                 for i in &mut v.args {
                     match i {
                         CommandItem::Bind(b, e) => {
-                            self.compile_captures(&mut *e);
+                            self.compile_captures(&mut *e, &mut e_caps);
                             let old_scope = self.capture_mapping.disjoint_set_scope();
-                            self.compile_captures(&mut *b);
+                            self.compile_captures(&mut *b, &mut e_caps);
                             self.capture_mapping.restore_set_scope(old_scope);
                         }
-                        BlockItem::Expr(e) | BlockItem::Merge(e) => self.compile_captures(&mut *e)
+                        BlockItem::Expr(e) | BlockItem::Merge(e) => self.compile_captures(&mut *e, &mut e_caps)
                     }
                 }
-                v.derive_captures();
+                caps |= &e_caps;
+                v.captures = e_caps.direct;
             },
             Force => |v| {
-                v.subexpressions_mut(|e| self.compile_captures(e));
-                v.derive_captures();
+                let mut e_caps = Captures::default();
+                self.compile_captures(&mut *v.value, &mut e_caps);
                 if v.value.expr_type() != ExpressionType::Capture {
-                    self.capture(&mut *v.value);
+                    self.capture(&mut *v.value, &mut e_caps);
                 } else {
                     // TODO: Warn about unnecessary force
                 }
+                caps |= &e_caps;
                 // Replace this expression with the capture expression (replacing _it_ with a unit
                 // placeholder; it will be dropped when `*e` is set).
                 *e = std::mem::replace(&mut *v.value, Expression::unit());
             },
             Capture => |_| panic!("unexpected capture"),
             DocComment => |v| {
-                v.subexpressions_mut(|e| self.compile_captures(e));
-
-                v.captures.clear();
-                captures_from_expr(&mut v.captures, &*v.value);
+                let mut e_caps = Captures::default();
+                v.subexpressions_mut(|e| self.compile_captures(e, &mut e_caps));
 
                 self.capture_mapping.down();
 
@@ -1063,16 +1148,13 @@ impl<'a> ExpressionCompiler<'a> {
                             for i in block {
                                 match i {
                                     BlockItem::Bind(b, e) => {
-                                        self.compile_captures(&mut *e);
+                                        self.compile_captures(&mut *e, &mut e_caps);
                                         let old_scope = self.capture_mapping.current_as_set_scope();
-                                        self.compile_captures(&mut *b);
+                                        self.compile_captures(&mut *b, &mut e_caps);
                                         self.capture_mapping.restore_set_scope(old_scope);
-                                        captures_from_expr(&mut v.captures, &*e);
-                                        captures_from_expr(&mut v.captures, &*b);
                                     }
                                     BlockItem::Expr(e) | BlockItem::Merge(e) => {
-                                        self.compile_captures(&mut *e);
-                                        captures_from_expr(&mut v.captures, &*e);
+                                        self.compile_captures(&mut *e, &mut e_caps);
                                     }
                                 }
                             }
@@ -1081,8 +1163,18 @@ impl<'a> ExpressionCompiler<'a> {
                     }
                 }
                 let in_scope = self.capture_mapping.up();
+                let in_scope_captures = in_scope.into_iter().map(|v| v.1).collect();
 
-                v.captures.difference_with(&in_scope.into_iter().map(|(_,v)| v).collect());
+                e_caps.free.difference_with(&in_scope_captures);
+                for c in in_scope_captures.iter() {
+                    if let Some(set) = self.needed_by.get(&c) {
+                        e_caps.free.difference_with(set);
+                    }
+                }
+
+                v.captures.difference_with(&in_scope_captures);
+                caps |= &e_caps;
+                v.captures = e_caps.direct;
             },
         );
     }
@@ -1258,18 +1350,21 @@ mod test {
             .set_captures(vec![abc_key, abe_key])))])
             .set_captures(vec![abc_key, abe_key]),
             vec![
-                (a_key, E::get(s("a"))),
+                (a_key, E::get(s("a")), vec![]),
                 (
                     ab_key,
                     E::index(src(E::capture(a_key)), s("b")).set_captures(vec![a_key]),
+                    vec![a_key],
                 ),
                 (
                     abc_key,
                     E::index(src(E::capture(ab_key)), s("c")).set_captures(vec![ab_key]),
+                    vec![a_key, ab_key],
                 ),
                 (
                     abe_key,
                     E::index(src(E::capture(ab_key)), s("e")).set_captures(vec![ab_key]),
+                    vec![a_key, ab_key],
                 ),
             ],
         )
@@ -1287,7 +1382,7 @@ mod test {
             )
             .set_captures(vec![a_key])))])
             .set_captures(vec![a_key]),
-            vec![(a_key, E::get(s("a")))],
+            vec![(a_key, E::get(s("a")), vec![])],
         );
     }
 
@@ -1311,10 +1406,12 @@ mod test {
                 (
                     ind1_key,
                     E::index(src(E::capture(a_key)), s("b")).set_captures(vec![a_key]),
+                    vec![a_key],
                 ),
                 (
                     ind2_key,
                     E::index(src(E::capture(ind1_key)), s("c")).set_captures(vec![ind1_key]),
+                    vec![a_key, ind1_key],
                 ),
             ],
         );
@@ -1348,15 +1445,54 @@ mod test {
                         vec![CI::Expr(src(E::capture(a_key)))],
                     )
                     .set_captures(vec![ind_key, a_key]),
+                    vec![std_key, ind_key, a_key],
                 ),
                 (
                     ind_key,
                     E::index(src(E::capture(std_key)), s("something")).set_captures(vec![std_key]),
+                    vec![std_key],
                 ),
-                (std_key, E::get(s("std"))),
-                (fn_key, E::get(s("fn"))),
+                (std_key, E::get(s("std")), vec![]),
+                (fn_key, E::get(s("fn")), vec![]),
             ],
         );
+    }
+
+    #[test]
+    fn nested_forced() {
+        let mut ctx = keyset::Context::default();
+        let fn_key = ctx.key();
+        let n_key = ctx.key();
+        let a_key = ctx.key();
+        let ind_key = ctx.key();
+        let force_key = ctx.key();
+        assert_captures(
+            "!(fn :n -> a::n)",
+            E::block(vec![BI::Expr(src(E::capture(force_key)))]).set_captures(vec![force_key]),
+            vec![
+                (fn_key, E::get(s("fn")), vec![]),
+                (a_key, E::get(s("a")), vec![]),
+                (
+                    force_key,
+                    E::function(
+                        src(E::pat_command(
+                            src(E::capture(fn_key)),
+                            vec![CI::Expr(src(E::set_with_capture(s("n"), n_key)))],
+                        )
+                        .set_captures(vec![fn_key])),
+                        src(E::capture(ind_key)),
+                    )
+                    .set_captures(vec![fn_key, ind_key]),
+                    vec![fn_key, a_key],
+                ),
+                (
+                    ind_key,
+                    E::index(src(E::capture(a_key)), src(E::capture(n_key)))
+                        .set_captures(vec![a_key, n_key]),
+                    vec![a_key, n_key],
+                ),
+            ],
+        )
     }
 
     #[test]
@@ -1374,20 +1510,23 @@ mod test {
             ])
             .set_captures(vec![format_key, from_key]),
             vec![
-                (std_key, E::get(s("std"))),
+                (std_key, E::get(s("std")), vec![]),
                 (
                     format_key,
                     E::index(src(E::capture(str_ind_key)), s("format"))
                         .set_captures(vec![str_ind_key]),
+                    vec![str_ind_key, std_key],
                 ),
                 (
                     from_key,
                     E::index(src(E::capture(str_ind_key)), s("from"))
                         .set_captures(vec![str_ind_key]),
+                    vec![str_ind_key, std_key],
                 ),
                 (
                     str_ind_key,
                     E::index(src(E::capture(std_key)), s("String")).set_captures(vec![std_key]),
+                    vec![std_key],
                 ),
             ],
         );
@@ -1397,16 +1536,26 @@ mod test {
         assert_captures(s, expected, vec![]);
     }
 
-    fn assert_captures(s: &str, expected: E, expected_captures: Vec<(CaptureKey, E)>) {
+    fn assert_captures(
+        s: &str,
+        expected: E,
+        expected_captures: Vec<(CaptureKey, E, Vec<CaptureKey>)>,
+    ) {
         let (e, captures) = load(s).unwrap();
         let e = e.unwrap();
         dbg!(&e);
         dbg!(&captures);
-        assert!(captures == expected_captures.into_iter().collect::<HashMap<_, _>>());
+        assert!(
+            captures
+                == expected_captures
+                    .into_iter()
+                    .map(|(key, e, free)| (key, (e, free.into_iter().collect())))
+                    .collect::<HashMap<_, _>>()
+        );
         assert!(e == expected);
     }
 
-    fn load(s: &str) -> Result<(Expr, HashMap<CaptureKey, Expression>), Error> {
+    fn load(s: &str) -> Result<(Expr, HashMap<CaptureKey, (Expression, CaptureSet)>), Error> {
         let mut ctx = super::Context::default();
         super::load(
             Source::new(StringSource::new("<string>", s.to_owned())),

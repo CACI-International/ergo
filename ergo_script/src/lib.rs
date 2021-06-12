@@ -25,8 +25,6 @@ pub mod constants {
 
 use eval::*;
 
-//pub use base::{resolve_script_path, LOAD_DOCUMENTATION};
-
 /// Script runtime functions.
 pub struct Runtime {
     load_data: base::LoadData,
@@ -368,6 +366,19 @@ mod test {
         Ok(())
     }
 
+    #[test]
+    fn forced_function_capture() -> Result<(), String> {
+        script_eval_to("b = {a = 1}; f = !(fn :x -> b::x); f a", SRString("1"))
+    }
+
+    #[test]
+    fn forced_expr_capture() -> Result<(), String> {
+        script_eval_to(
+            "b = {a = 1}; q = fn :p -> :p; f = !q (fn :x -> b::x); f a",
+            SRString("1"),
+        )
+    }
+
     mod merge {
         use super::*;
 
@@ -444,6 +455,14 @@ mod test {
                 SRString("hi"),
             )?;
             Ok(())
+        }
+
+        #[test]
+        fn command_args() -> Result<(), String> {
+            script_eval_to(
+                "to_array = fn ^:args -> args:positional\np = fn _ ^:rest -> to_array ^:rest\np 1 2 3",
+                SRArray(&[SRString("2"), SRString("3")])
+            )
         }
     }
 
@@ -591,6 +610,19 @@ mod test {
             )?;
             Ok(())
         }
+
+        #[test]
+        fn nested_binds() -> Result<(), String> {
+            script_eval_to(
+                "p = pat :a -> :b -> bind :a :b; p [:k] = [1]; :k",
+                SRString("1"),
+            )?;
+            script_eval_to(
+                "p = pat :a -> :b -> bind :a :b; p {k} = {k=1}; :k",
+                SRString("1"),
+            )?;
+            Ok(())
+        }
     }
 
     fn script_eval_to(s: &str, expected: ScriptResult) -> Result<(), String> {
@@ -681,6 +713,7 @@ mod test {
                     Err(e) => Err(e.to_string()),
                     Ok(map) => {
                         let mut map = map.unwrap().to_owned().0;
+                        dbg!(&map);
                         if map.len() != entries.len() {
                             Err("map length mismatch".into())
                         } else {

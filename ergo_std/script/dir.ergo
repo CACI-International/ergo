@@ -40,7 +40,7 @@ pass = :v -> :v
 ## default :my-value as [] = :maybe-an-array
 ## func = fn (opt-arg = default :arg as []) -> {...}
 ## ```
-default = matches ^[
+default = matches [
     fn :v as :default-value -> {
         !plugin:match :v [plugin:type:Unset -> :default-value, :pass]
     }
@@ -137,8 +137,11 @@ memoize = fn (plugin:type:Function :f) -> fn ^:args -> plugin:value:cache (no-pe
 ## ```
 import = {
     inner = recursive <| fn :self :descr -> :v -> {
-        !plugin:match :descr [
-            plugin:type:Map :m -> !plugin:iter:map (fn (plugin:type:MapEntry: :key :value) -> { fn (mtype:required !(self :self :value)) -> () |> v::key }) :m
+        plugin:match :descr [
+            plugin:type:Map :m -> {
+                plugin:iter:map (fn (plugin:type:MapEntry: :key :value) -> { fn (mtype:required !(self :self :value)) -> () |> v::key }) :m
+                ()
+            }
             :other -> bind :other :v
         ]
     }
@@ -199,7 +202,7 @@ iter-split = fn :n :iter -> [plugin:iter:take :n :iter, plugin:iter:skip :n :ite
 ##
 ## # Functions
 ## {{(mdoc:functions :self by-content cache debug default ergo-remote
-##    exec import log match optional required seq task eval variable)}}
+##    exec import log match optional required task eval variable)}}
 {
     ## The Any type.
     ##
@@ -228,7 +231,7 @@ iter-split = fn :n :iter -> [plugin:iter:take :n :iter, plugin:iter:skip :n :ite
     ## {{mdoc:functions :self from true false}}
     Bool = match-indices plugin:type:Bool plugin:bool
 
-    ## The Function tpye and related functions.
+    ## The Function type and related functions.
     ##
     ## {{type-function:}}
     ##
