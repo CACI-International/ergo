@@ -6,12 +6,11 @@ The project includes a few separate rust crates:
 * [`ergo`](ergo) - The main executable, using the other crates.
 * [`ergo-repo`](ergo-repo) - A web server allowing `ergo repo` commands to be run
   automatically, triggered by repository state changes.
-* [`ergo_runtime`](ergo_runtime) - The ergo runtime, building a type system with
-  `grease`.
+* [`ergo_runtime`](ergo_runtime) - The ergo runtime, containing the ergo type
+  system, trait system, basic types, basic traits, and runtime context.
 * [`ergo_runtime_macro`](ergo_runtime_macro) - Procedural macros exposed by
   `ergo_runtime`.
+* [`ergo_script`](ergo_script) - The ergo script library, containing script
+  parsing and evaluation functionality.
 * [`ergo_std`](ergo_std) - The ergo standard library plugin.
-* [`grease`](grease) - An abi-stable dynamic-typing runtime library and type
-  trait system.
-* [`grease_macro`](grease_macro) - Procedural macros exposed by `grease`.
 

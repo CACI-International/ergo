@@ -1,8 +1,39 @@
 # ergo_std changelog
 
-## Unreleased
+## 1.0.0-rc.0  -- Unreleased
 ### New Features
 * Add `std:env:arch` to get the host architecture.
+* `std:log` uses the `Display` ergo trait to write values, which is far more
+  useful than requiring a `String` argument.
+* `std:dynamic` has been removed as all expressions are dynamically-typed.
+* `std:typed` has been renamed to `std:eval`, since getting a typed version of a
+  value is the same as evaluating the value.
+* `std:seq` is removed as sequencing values is a syntax-level feature.
+* `std:error` is removed as errors are first-class types.
+* `std:script` is removed as the runtime no longer supports
+
+### Improvements
+* `std:match` now takes an array of cases rather than using the remaining
+  arguments as the cases.
+  * It was basically always used with a merged array anyway.
+* `std:log` has an interface like other modules, using indexing for `sublog`,
+  `debug`, `info`, `warn`, and `error` rather than taking them as the first
+  argument to the command.
+* All functions have new implementations taking into account the new runtime
+  semantics. In particular, when they are applied to arguments they will execute
+  the function immediately rather than returning a value which will execute the
+  function as before.
+
+### Migration Guide
+* `std:match` cases should be passed as an array.
+* `std:log` should be accessed with an index operation.
+* Language semantics have changed, so the use of value-level functions (like
+  `std:dynamic`, `std:typed`, etc) should be examined.
+* `std:seq` should be replaced with a syntax block.
+* `std:error:throw` should be replaced with `std:Error:new`.
+* `std:error:catch` should be replaced with `std:match` with a `std:Error` case.
+* `std:script` functions should be replaced with different means to get path
+  information.
 
 ## 1.0.0-beta.9  -- 2021-03-09
 ### New Features

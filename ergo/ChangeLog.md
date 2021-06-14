@@ -1,5 +1,119 @@
 # ergo changelog
 
+## 1.0.0-rc.0  -- Unreleased
+Most of the changes listed below are breaking changes, so there is no separate
+section for those. They also could all probably be considered as new features or
+improvements, so no such distinction is made.
+
+* The runtime has been completely refactored and rewritten, with many lessons
+  learned from prior version. This refactor results in different semantics for
+  the scripting language, which are described below. A number of syntax changes
+  were made as well, but in general the syntax is almost identical to before.
+* Removed the `BindEqual` parsed expression type, as it was barely ever used and
+  prevented other more intuitive use cases (and could be implemented as a
+  function).
+* Removed the `If` and `IfBind` parsed expression types, as they can be
+  implemented as functions now.
+  * The reason they were parsed was so that the condition expressions could have
+    delayed evaluation; now that everything has delayed evaluation, this is
+    unnecessary.
+* Parsing was changed to make bind statements (note the nomenclature: _not_
+  expressions as before) only valid in blocks and commands.
+  * You can no longer bind values in arrays. They do not have their own binding
+    scope.
+* A merge of an unbound value in a function pattern (e.g. the `rest` in `fn :a
+  ^:rest -> ...`) will now be bound with an `Args`- or `PatternArgs`-typed
+  value, which captures both the positional and keyed arguments that remain. If
+  more than one is present, the _first_ gets the keyed arguments, whereas
+  positional arguments are grouped and matched as before. This is far more
+  elegant than the prior `fn a ^:rest ^{^:kw}` forms.
+* The `Args` and `PatternArgs` types support indexing with `positional` and
+  `keyed` to get the `Array` and `Map` of arguments, respectively.
+* A merge of a `String`-typed value in a command or a block will bind the item to
+  a unit value, e.g. `a b ^c` will be the same as `a b (c=())`, and `{ ^v }`
+  will be the same as `{ v = () }`. This is useful shorthand for toggle flags.
+* Blocks are now used to sequence values/operations (see `Evaluation
+  Semantics`) since evaluation is delayed.
+* A merge of an `Array`-typed value into a block will sequence the items in the
+  array as if they were items in the block inserted at the merge point.
+* Raw quoted strings are supported. Some number of repeated single quotes are
+  used to open a raw quoted string, and the same number will close one. They do
+  not interpret any escape sequences.
+  * For example: `'my raw \quoted\nstring'`, `''This has a literal ' in it.''`
+* Quoted and raw quoted strings simply change the tokenizer mode, such that if
+  they follow eachother or normal string tokens without spaces, they will be
+  considered part of the same evaluated string.
+  * For example: `e"="mc'^'2` evaluates to the string `e=mc^2`.
+* Directories will now only resolve to `dir.ergo` when being loaded
+  (`workspace.ergo` is now strictly used for workspace resolution rather than
+  also being used in directory resolution).
+* `<|` now has lower precedence than `|`/`|>`, as it is used much more in
+  practice and this is the more useful behavior.
+* Dynamically-scoped bindings are supported by the runtime. These are bindings
+  which are present for any values which are evaluated after they are set. The
+  runtime does not account for these when calculating value identities, so care
+  must be taken to use them correctly based on the intended semantics.
+* All script evaluation happens concurrently as tasks on the thread pool (with a
+  fixed, high priority).
+
+### Evaluation Semantics
+The new evaluation semantics and data model are a drastic simplification over
+the old runtime. Now, _all_ syntactic evaluation is delayed. What this means is
+that, for example, if you have a script with the following:
+```
+f = fn :a -> std:String:format "Hello, {}" :a
+f World
+```
+When you load this script, a dynamically-typed value is returned which
+represents the execution of the top-level block. When that is evaluated (once),
+it binds `:f` to a dynamic value that will evaluate to the function as written,
+and then returns a dynamic value which will apply `f` on `World`. Once that
+value is evaluated again, it will bind `World` to `:a` in the function, and
+return a dynamic value that will apply `std:String:format`, and finally when
+evaluated again `format` will be called and a `String`-typed value will be
+returned.
+
+Importantly, throughout all of this evaluation the runtime tracks subexpression
+captures such that the dynamically-typed values have identities that are derived
+from (parts of) the literal syntax and the bound values. The implication is that
+value identities still accurately and uniquely represent the value that would be
+returned if the expression is fully evaluated to a typed value.
+
+#### The Force (`!`) Operator
+The `!` symbol is no longer an evaluation-level operator. It is instead a
+syntax-level operator, indicating that the following expression should be
+evaluated _as soon as possible_ rather than being delayed in a value. The old
+runtime implementation made `!` very confusing to use (but often necessary).
+Now, it should be much clearer when to use it. In particular, `!` should _only_
+be used to affect a dependent identity (because the identity of the evaluated
+value will be used), or to make some side-effect happen at a certain time. _As
+soon as possible_ pertains to binding availability: `fn :a -> !std:log:debug :a`
+will evaluate `std:log:debug :a` as soon as the function is called (normally it
+would simply return a delayed value which would later perform the log).
+
+Generally, `!` will be less prevalent, and it should be somewhat obvious when to
+use it. You also should never really need to use it when writing many classes of
+functions where resulting identities of delayed values are not that relevant (or
+more accurately, only depend on inputs), e.g. data-manipulation functions. These
+can be considered pure functions with regard to value identity, in the sense
+that the output identity strictly depends on the input identities.
+
+#### Data Model
+Values have changed in the runtime such that a dynamically-typed value can be
+evaluated to return a new (possibly dynamically-typed) value, and typed values
+represent a value which cannot be further evaluated (though a typed value _can_
+contain other values which can then be evaluated, e.g. items in an `Array`-typed
+values). This change was made to both simplify runtime semantics but also to
+allow runtime errors to be lifted to first-class types. Previously in the
+runtime, a typed value might still need to be evaluated to get the value data,
+however that evaluation could result in an error, and there would be no way to
+transform a value typed as one type to an `Error`-typed value. Changing typed
+values to strictly _not_ have any further evaluation necessary allows for the
+moments where you _do_ evaluate values (which would have to be
+dynamically-typed) to produce `Error`-typed values representing any errors.
+
+Types and traits still exist as before and operate in the same ways.
+
 ## 1.0.0-beta.9.1  -- 2021-04-05
 ### Improvements
 * Evaluate scripts concurrently to avoid stack overflows.
