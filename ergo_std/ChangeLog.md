@@ -11,6 +11,8 @@
 * `std:seq` is removed as sequencing values is a syntax-level feature.
 * `std:error` is removed as errors are first-class types.
 * `std:script` is removed as the runtime no longer supports
+* Add `std:if`, which works the same as the old built-in (though without
+  equivalent IfBind support).
 
 ### Improvements
 * `std:match` now takes an array of cases rather than using the remaining
@@ -34,6 +36,8 @@
 * `std:error:catch` should be replaced with `std:match` with a `std:Error` case.
 * `std:script` functions should be replaced with different means to get path
   information.
+* Use `std:if` in place of old `if` expressions. If the `if` expression was
+  using a binding, use `std:match`.
 
 ## 1.0.0-beta.9  -- 2021-03-09
 ### New Features

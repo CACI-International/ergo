@@ -188,6 +188,18 @@ decompose instances of the type."
 ## second is an Iter with all remaining values.
 iter-split = fn :n :iter -> [plugin:iter:take :n :iter, plugin:iter:skip :n :iter]
 
+## Conditionally return a value.
+##
+## Arguments: `(Into<Bool> :condition) :if_true (optional :if_false)`
+##
+## If `condition` evaluates to true, `if_true` is returned. Otherwise `if_false` is returned. If
+## `if_false` is omitted, an Unset value will be returned.
+if = fn :cond :if_true ^:if_false -> plugin:match [plugin:bool:from :cond, :if_false] [
+    [plugin:bool:true, _] -> :if_true
+    [plugin:bool:false, []] -> plugin:type:Unset:
+    [plugin:bool:false, [:if_false]] -> :if_false
+]
+
 ## The ergo standard library.
 ##
 ## This library provides a number of submodules that group related functions, as well as some
@@ -202,7 +214,7 @@ iter-split = fn :n :iter -> [plugin:iter:take :n :iter, plugin:iter:skip :n :ite
 ##
 ## # Functions
 ## {{(mdoc:functions :self by-content cache debug default ergo-remote
-##    exec import log match optional required task eval variable)}}
+##    exec if import log match optional required task eval variable)}}
 {
     ## The Any type.
     ##
@@ -377,6 +389,7 @@ iter-split = fn :n :iter -> [plugin:iter:take :n :iter, plugin:iter:skip :n :ite
     ergo-remote
     exec = plugin:exec
     import
+    if
     ## {{native-doc plugin:match}}
     ##
     ## # Functions

@@ -102,8 +102,6 @@ scripts reside.
   specification of which flags have required args). This is convenient for
   things that want to pass flags to a program but also might need to easily
   inspect/manipulate the flags.
-* Fix interaction of persistent caching and metadata (metadata not persisted).
-* Add `std:if`.
 * Change `std:net:download` to be a general-purpose `std:net:http`.
 * Support `std:fs:archive`.
 * Support string deconstruction with a `std:String:format` pattern function.
