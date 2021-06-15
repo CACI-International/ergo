@@ -40,9 +40,10 @@ modules = fn :self ^:names -> {
 ## Document multiple functions as an unordered list with summaries, or as inline sections if
 ## generating documentation. `functions` must be indices of `value`.
 functions = fn :self ^:names -> {
+    names = names:positional
     !plugin:match doc:path: [
         plugin:type:Unset -> {
-            plugin:iter:map (fn :n -> plugin:string:format "* {}: {}" :n (summary self::n)) names:positional | plugin:string:join "\n"
+            plugin:iter:map (fn :n -> plugin:string:format "* {}: {}" :n (summary self::n)) :names | plugin:string:join "\n"
         }
         _ -> {
             # Build an unordered list of links to the functions

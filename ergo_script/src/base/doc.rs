@@ -91,7 +91,7 @@ pub fn doc() -> Value {
             }
             let doc = {
                 let doc_ctx = DocPath::new(path_source.with(doc_path.clone())).context(CONTEXT, ARGS_SOURCE);
-                Doc::get(&doc_ctx, &value).await
+                try_result!(Doc::get(&doc_ctx, &value).await)
             };
 
             if doc_path.is_dir() {
@@ -139,7 +139,7 @@ pub fn doc() -> Value {
                     }
                     let doc = {
                         let doc_ctx = doc_path.context(CONTEXT, ARGS_SOURCE);
-                        Doc::get(&doc_ctx, &value).await
+                        try_result!(Doc::get(&doc_ctx, &value).await)
                     };
 
                     if new_path.is_dir() {
@@ -167,7 +167,7 @@ pub fn doc() -> Value {
                         let to_doc = try_result!(args.next().ok_or("no value to document"));
                         try_result!(args.unused_arguments());
 
-                        types::String::from(Doc::get(ctx, &to_doc).await).into()
+                        types::String::from(try_result!(Doc::get(ctx, &to_doc).await)).into()
                     },
                     types::Index(ind) => {
                         let (src, ind) = try_result!(ctx.eval_as::<types::String>(ind).await).take();

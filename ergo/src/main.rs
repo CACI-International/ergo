@@ -444,10 +444,8 @@ fn main() {
     }
 
     // Parse arguments
-    let mut app = Opts::clap().settings(&[
-        structopt::clap::AppSettings::TrailingVarArg,
-    ]);
-    let mut opts = Opts::from_clap(&app.clone().get_matches());
+    let app = Opts::clap().settings(&[structopt::clap::AppSettings::TrailingVarArg]);
+    let mut opts = Opts::from_clap(&app.get_matches());
 
     // Additional opts logic.
     if opts.doc {

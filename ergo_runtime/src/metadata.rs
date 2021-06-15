@@ -21,7 +21,7 @@ impl Doc {
     /// This retrieves the documentation.
     ///
     /// If no documentation is available, a string indicating the (possibly dynamic) type will be returned.
-    pub async fn get(ctx: &crate::Context, value: &Value) -> String {
+    pub async fn get(ctx: &crate::Context, value: &Value) -> crate::Result<String> {
         let mut value = value.clone();
         while value.get_metadata(&Doc).is_none() && !value.is_evaluated() {
             ctx.eval_once(&mut value).await;
@@ -29,18 +29,17 @@ impl Doc {
 
         if let Some(v) = value.get_metadata(&Doc) {
             let mut v = v.owned();
-            drop(ctx.eval(&mut v).await);
+            ctx.eval(&mut v).await?;
 
             match_value! {v,
-                crate::types::String(s) => return s.into(),
-                e@crate::types::Error {..} => return format!("error generating docs: {}", e),
+                crate::types::String(s) => return Ok(s.into()),
                 _ => ()
             }
         }
-        format!(
+        Ok(format!(
             "value with type '{}'",
             crate::traits::type_name(ctx, &value)
-        )
+        ))
     }
 
     /// Set a documentation string for the given value.

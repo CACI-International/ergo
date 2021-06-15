@@ -210,11 +210,11 @@ if = fn :cond :if_true ^:if_false -> plugin:match [plugin:bool:from :cond, :if_f
 ## {{mdoc:modules :self Any Array Bool Error Function Iter Map MapEntry Path String Unit Unset}}
 ##
 ## # Modules
-## {{mdoc:modules :self doc env fs io meta net type}}
+## {{mdoc:modules :self doc env fs io log meta net type}}
 ##
 ## # Functions
 ## {{(mdoc:functions :self by-content cache debug default ergo-remote
-##    exec if import log match optional required source-path task eval variable)}}
+##    exec if import match optional required source-path task eval variable)}}
 {
     ## The Any type.
     ##

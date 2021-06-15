@@ -108,7 +108,7 @@ struct ScriptTypeData {
 /// my-type:a
 /// ```
 async fn new(id: types::String, interface: _, (bind): [_]) -> Value {
-    let interface_doc = Doc::get(CONTEXT, interface.value()).await;
+    let interface_doc = try_result!(Doc::get(CONTEXT, interface.value()).await);
 
     let mut tp = Type::named(id.value().as_ref().as_str().as_bytes());
     let id = id.unwrap().to_owned().0;
