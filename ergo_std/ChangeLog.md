@@ -25,6 +25,9 @@
   semantics. In particular, when they are applied to arguments they will execute
   the function immediately rather than returning a value which will execute the
   function as before.
+* Add `std:Error` to handle Errors as first-class types. Allow construction of
+  errors with an explicit source location with the optional `source` keyed
+  argument.
 
 ### Migration Guide
 * `std:match` cases should be passed as an array.
@@ -32,7 +35,7 @@
 * Language semantics have changed, so the use of value-level functions (like
   `std:dynamic`, `std:typed`, etc) should be examined.
 * `std:seq` should be replaced with a syntax block.
-* `std:error:throw` should be replaced with `std:Error:new`.
+* `std:error:throw` should be replaced with `std:Error:`.
 * `std:error:catch` should be replaced with `std:match` with a `std:Error` case.
 * `std:script` functions should be replaced with different means to get path
   information.

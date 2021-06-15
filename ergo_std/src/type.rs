@@ -416,10 +416,41 @@ fn match_function() -> Value {
 }
 
 fn match_error() -> Value {
+    let construct: Value =
+        types::Unbound::new_no_doc(
+            |ctx, arg| {
+                async move {
+                    let (arg_source, arg) = arg.take();
+                    match_value!{ arg,
+                        types::Args { mut args } => {
+                            let (msg_source, message) = try_result!(args.next().ok_or("no message")).take();
+                            let source = args.kw("source");
+                            try_result!(args.unused_arguments());
+
+                            let source = match source {
+                                None => msg_source,
+                                Some(v) => v.source()
+                            };
+
+                            let message = try_result!(traits::to_string(ctx, message).await);
+                            source.with(message).into_error().into()
+                        },
+                        v => traits::bind_error(ctx, arg_source.with(v)).into()
+                    }
+                }
+                .boxed()
+            },
+            depends![nsid!(std::type::Error::construct)],
+        )
+        .into();
     make_match_fn(
         types::Error::ergo_type(),
-        Err("cannot compose; use indices".into()),
-        "Matches an Error value.",
+        Ok(construct),
+        "Matches an Error value.
+
+If called with no arguments, returns an error constructor which takes an error message and an
+optional `source` keyed argument with a value from which source information will be used for the
+error. The function can only be used in calls: you cannot destructure Errors in pattern calls.",
     )
 }
 
@@ -457,6 +488,13 @@ mod test {
     ergo_script::test! {
         fn bool(t) {
             t.assert_success("fn (self:type:Bool :b) -> () |> self:bool:true");
+        }
+    }
+
+    ergo_script::test! {
+        fn error(t) {
+            t.assert_eq("bind (self:type:Error :e -> ()) (self:type:Error: doh)", "()");
+            t.assert_eq("a=1; bind (self:type:Error :e -> ()) (self:type:Error: (source = :a) doh)", "()");
         }
     }
 
