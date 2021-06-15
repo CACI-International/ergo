@@ -176,7 +176,7 @@ decompose instances of the type."
     )
     matches [
         fn: -> :binding
-        fn :args -> plugin:string:format "{}\n\n{}\nArguments: {}" :binding :compose :args
+        fn :args -> plugin:string:format "{}\n\n{}\nArguments: `{}`" :binding :compose :args
     ]
 }
 
@@ -207,14 +207,14 @@ if = fn :cond :if_true ^:if_false -> plugin:match [plugin:bool:from :cond, :if_f
 ## instance with `^ergo std`.
 ##
 ## # Types
-## {{mdoc:modules :self Any Array Bool Function Iter Map MapEntry Path String Unit Unset}}
+## {{mdoc:modules :self Any Array Bool Error Function Iter Map MapEntry Path String Unit Unset}}
 ##
 ## # Modules
-## {{mdoc:modules :self doc env error fs io meta net script type}}
+## {{mdoc:modules :self doc env fs io meta net type}}
 ##
 ## # Functions
 ## {{(mdoc:functions :self by-content cache debug default ergo-remote
-##    exec if import log match optional required task eval variable)}}
+##    exec if import log match optional required source-path task eval variable)}}
 {
     ## The Any type.
     ##
@@ -242,6 +242,11 @@ if = fn :cond :if_true ^:if_false -> plugin:match [plugin:bool:from :cond, :if_f
     ## # Functions
     ## {{mdoc:functions :self from true false}}
     Bool = match-indices plugin:type:Bool plugin:bool
+
+    ## The Error type.
+    ##
+    ## {{type-function "(source) :message"}}
+    Error = plugin:type:Error
 
     ## The Function type and related functions.
     ##
@@ -285,7 +290,7 @@ if = fn :cond :if_true ^:if_false -> plugin:match [plugin:bool:from :cond, :if_f
     ##
     ## This type supports indexing with `key` and `value`.
     ##
-    ## {{type-function "key value"}}
+    ## {{type-function ":key :value"}}
     MapEntry = plugin:type:MapEntry
 
     ## The Path type and related functions.
@@ -329,11 +334,6 @@ if = fn :cond :if_true ^:if_false -> plugin:match [plugin:bool:from :cond, :if_f
     ## {{mdoc:functions :self get path-search home current-dir user-cache system-cache os arch}}
     env = plugin:env
 
-    ## Interface with errors.
-    ##
-    ## {{mdoc:functions :self catch throw}}
-    error = plugin:error
-
     ## Interact with the local filesystem.
     ##
     ## {{
@@ -369,11 +369,6 @@ if = fn :cond :if_true ^:if_false -> plugin:match [plugin:bool:from :cond, :if_f
         import {unarchive-remote} = :mnet
     }
 
-    ## Script runtime functions.
-    ##
-    ## {{mdoc:functions :self bindings dir path load-path set-load-path}}
-    script = plugin:script
-
     ## Type creation.
     ##
     ## {{mdoc:functions :self new enum struct}}
@@ -383,7 +378,7 @@ if = fn :cond :if_true ^:if_false -> plugin:match [plugin:bool:from :cond, :if_f
     }
 
     # Functions
-    import {by-content,cache,debug,eval,variable} = plugin:value
+    import {by-content,cache,debug,eval,source-path,variable} = plugin:value
     import {optional,required} = :mtype
     default
     ergo-remote

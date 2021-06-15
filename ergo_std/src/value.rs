@@ -12,11 +12,12 @@ pub fn module() -> Value {
         "by-content" = by_content(),
         "cache" = cache(),
         "debug" = debug(),
+        "eval" = eval(),
         "meta" = crate::make_string_map! {
             "get" = meta_get(),
             "set" = meta_set()
         },
-        "eval" = eval(),
+        "source-path" = source_path(),
         "variable" = variable()
     }
 }
@@ -205,6 +206,20 @@ async fn meta_set(mut value: _, metadata_key: _, metadata_value: [_]) -> Value {
     value.unwrap()
 }
 
+#[types::ergo_fn]
+/// Get the source path of a value.
+///
+/// Arguments: `:value`
+///
+/// Returns the Path of the script file from which the value originates, or Unset if no path is
+/// available.
+async fn source_path(value: _) -> Value {
+    match value.path() {
+        None => types::Unset.into(),
+        Some(p) => types::Path::from(p).into(),
+    }
+}
+
 #[cfg(test)]
 mod test {
     ergo_script::test! {
@@ -217,6 +232,12 @@ mod test {
         fn eval(t) {
             t.assert_script_ne("fn :a -> :a |> str", "str");
             t.assert_eq("self:value:eval <| fn :a -> :a |> str", "str");
+        }
+    }
+
+    ergo_script::test! {
+        fn source_path(t) {
+            t.assert_eq("x = 1; self:value:source-path :x", "self:type:Unset:");
         }
     }
 }

@@ -13,6 +13,8 @@
 * `std:script` is removed as the runtime no longer supports
 * Add `std:if`, which works the same as the old built-in (though without
   equivalent IfBind support).
+* Add `std:source-path` to get the source script of any value as a Path, if
+  available.
 
 ### Improvements
 * `std:match` now takes an array of cases rather than using the remaining
