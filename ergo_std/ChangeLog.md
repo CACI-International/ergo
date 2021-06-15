@@ -34,7 +34,9 @@
   between 1 and 1000 for a task.
 
 ### Breaking Changes
-* Rename the `task-count` argument of `task` to `count`.
+* Renamed the `task-count` keyed argument of `task` to `count`.
+* Renamed `Iter:map-all` to `Iter:map` (that should be preferred), and `Iter:map`
+  to `Iter:map-lazy`.
 
 ### Migration Guide
 * `std:match` cases should be passed as an array.
@@ -49,6 +51,10 @@
 * Use `std:if` in place of old `if` expressions. If the `if` expression was
   using a binding, use `std:match`.
 * Use `count` rather than `task-count` in keyed arguments to `task`.
+* `std:Iter:map` should be replaced with `std:Iter:map-lazy`, and
+  `std:Iter:map-all` should be replaced with `std:Iter:map`.
+  * You should also review whether you really want `map-lazy`; in general (if
+    you will eventually use all values) `map` is preferred.
 
 ## 1.0.0-beta.9  -- 2021-03-09
 ### New Features
