@@ -152,7 +152,7 @@ import = {
 match-indices = fn :fallback :from -> {
     matches [
         index :i -> !plugin:match from::i [
-            plugin:type:Unset -> TODO #!plugin:error:throw <| plugin:string:format "missing index: {}" :i
+            plugin:type:Unset -> !plugin:type:Error: (source = :from) <| plugin:string:format "missing index: {}" :i
             :pass
         ]
         :fallback

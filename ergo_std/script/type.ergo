@@ -61,8 +61,8 @@ optional = pat :out -> :v -> !match :v [
 ## This is only useful if the binding argument would normally accept an `Unset` value.
 ##
 ## Pattern Arguments: `:target`
-required = pat :out -> :v -> match :v [
-    type:Unset :x -> TODO #!error:throw (pattern=true) "required value missing"
+required = pat :out -> :v -> !match :v [
+    type:Unset -> !type:Error: (source=:out) "required value missing"
     :other -> bind :out :other
 ]
 
