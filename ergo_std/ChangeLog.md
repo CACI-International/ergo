@@ -28,6 +28,11 @@
 * Add `std:Error` to handle Errors as first-class types. Allow construction of
   errors with an explicit source location with the optional `source` keyed
   argument.
+* Add a `priority` keyed argument to `task`, which allows setting a priority
+  between 1 and 1000 for a task.
+
+### Breaking Changes
+* Rename the `task-count` argument of `task` to `count`.
 
 ### Migration Guide
 * `std:match` cases should be passed as an array.
@@ -41,6 +46,7 @@
   information.
 * Use `std:if` in place of old `if` expressions. If the `if` expression was
   using a binding, use `std:match`.
+* Use `count` rather than `task-count` in keyed arguments to `task`.
 
 ## 1.0.0-beta.9  -- 2021-03-09
 ### New Features
