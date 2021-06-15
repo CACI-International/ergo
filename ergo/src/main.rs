@@ -443,9 +443,8 @@ fn main() {
         .unwrap();
     }
 
-    // Parse arguments (we handle help flags ourselves)
+    // Parse arguments
     let mut app = Opts::clap().settings(&[
-        structopt::clap::AppSettings::DisableHelpFlags,
         structopt::clap::AppSettings::TrailingVarArg,
     ]);
     let mut opts = Opts::from_clap(&app.clone().get_matches());
@@ -453,18 +452,6 @@ fn main() {
     // Additional opts logic.
     if opts.doc {
         opts.page ^= true;
-    }
-
-    // Handle help flags
-    // We explicitly handle them to add the documentation of the ergo function to `--help`.
-    if opts.help {
-        let long_help = std::env::args_os().any(|a| a == "--help");
-        if !long_help {
-            app.print_help().app_err("writing help text failed");
-        } else {
-            app.print_long_help().app_err("writing help text failed");
-        }
-        std::process::exit(0);
     }
 
     let paging_enabled = opts.page;
