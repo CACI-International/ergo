@@ -154,8 +154,6 @@ pub async fn function(
 
     let log = CONTEXT.log.sublog("exec");
 
-    let deps = depends![^@args, { env, pwd, stdin }];
-
     let mut args = args.iter();
     let cmd = args.next().unwrap();
 
@@ -248,6 +246,8 @@ pub async fn function(
                 .0
         };
 
+        log.debug(format!("child process exited: {:?}", command));
+
         // These pipes should be dropped here so that, if an error occurred, the recv pipes
         // terminate correctly if gathering stdout/stderr.
         drop(out_pipe_send);
@@ -298,7 +298,7 @@ pub async fn function(
                 try_result!(run_command.await);
                 types::Unit.into()
             },
-            depends![^deps.clone(), nsid!(exec::complete)],
+            depends![^CALL_DEPENDS.clone(), nsid!(exec::complete)],
         )
     };
 
@@ -307,7 +307,7 @@ pub async fn function(
             ChannelRead::new(rcv_stdout),
             run_command.clone(),
         )),
-        depends![^deps.clone(), nsid!(exec::stdout)],
+        depends![^CALL_DEPENDS.clone(), nsid!(exec::stdout)],
     );
 
     let stderr = Value::constant_deps(
@@ -315,7 +315,7 @@ pub async fn function(
             ChannelRead::new(rcv_stderr),
             run_command.clone(),
         )),
-        depends![^deps.clone(), nsid!(exec::stderr)],
+        depends![^CALL_DEPENDS.clone(), nsid!(exec::stderr)],
     );
 
     let exit_status = Value::dyn_new(
@@ -323,10 +323,10 @@ pub async fn function(
             try_result!(run_command.await);
             ExitStatus::from(try_result!(rcv_status.await)).into()
         },
-        depends![^deps, nsid!(exec::exit_status)],
+        depends![^CALL_DEPENDS, nsid!(exec::exit_status)],
     );
 
-    crate::make_string_map! {
+    crate::make_string_map! { source ARGS_SOURCE,
         "stdout" = stdout,
         "stderr" = stderr,
         "exit-status" = exit_status,

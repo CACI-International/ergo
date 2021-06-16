@@ -41,6 +41,59 @@ pub trait AsyncWrite {
     ) -> Poll<Result<()>>;
 }
 
+/// An AsyncRead wrapper for a std::io::Read type.
+pub struct Reader<R>(pub R);
+
+impl<R> AsyncRead for Reader<R>
+where
+    R: std::io::Read + std::marker::Unpin,
+{
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context,
+        _task: &TaskManager,
+        buf: &mut [u8],
+    ) -> Poll<Result<usize>> {
+        let me = &mut *self;
+        Poll::Ready(me.0.read(buf).map_err(|e| e.into()))
+    }
+}
+
+/// An AsyncWrite wrapper for a std::io::Write type.
+pub struct Writer<W>(pub W);
+
+impl<W> AsyncWrite for Writer<W>
+where
+    W: std::io::Write + std::marker::Unpin,
+{
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context,
+        _task: &TaskManager,
+        buf: &[u8],
+    ) -> Poll<Result<usize>> {
+        let me = &mut *self;
+        Poll::Ready(me.0.write(buf).map_err(|e| e.into()))
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context,
+        _task: &TaskManager,
+    ) -> Poll<Result<()>> {
+        let me = &mut *self;
+        Poll::Ready(me.0.flush().map_err(|e| e.into()))
+    }
+
+    fn poll_shutdown(
+        self: Pin<&mut Self>,
+        _cx: &mut Context,
+        _task: &TaskManager,
+    ) -> Poll<Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+}
+
 pub struct Copier<'a, R: ?Sized, W: ?Sized> {
     reader: &'a mut R,
     read_done: bool,

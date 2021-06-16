@@ -15,6 +15,9 @@
   equivalent IfBind support).
 * Add `std:source-path` to get the source script of any value as a Path, if
   available.
+* Add `std:net:http`, which is mostly HTTP-feature-complete.
+  * `std:net:download` still exists, but is implemented using `std:net:http` and
+    now supports all keyed argments that `std:net:http` does.
 
 ### Improvements
 * `std:match` now takes an array of cases rather than using the remaining

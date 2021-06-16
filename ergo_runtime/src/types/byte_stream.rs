@@ -32,7 +32,19 @@ pub struct ByteStream {
 
 impl From<super::String> for ByteStream {
     fn from(s: super::String) -> Self {
-        Self::new(io::wrap(std::io::Cursor::new(s.0.into_bytes())))
+        Self::from(s.0.into_bytes())
+    }
+}
+
+impl From<Vec<u8>> for ByteStream {
+    fn from(v: Vec<u8>) -> Self {
+        Self::new(io::wrap(std::io::Cursor::new(v)))
+    }
+}
+
+impl From<RVec<u8>> for ByteStream {
+    fn from(v: RVec<u8>) -> Self {
+        Self::new(io::wrap(std::io::Cursor::new(v)))
     }
 }
 

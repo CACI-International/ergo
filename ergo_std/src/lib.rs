@@ -28,13 +28,17 @@ fn make_string(s: &str) -> Value {
 
 #[macro_export]
 macro_rules! make_string_map {
-    ( $( $s:literal = $v:expr ),* ) => {
+    ( source $src:expr, $( $s:literal = $v:expr ),* ) => {
         {
+            let src = $src;
             use ergo_runtime::{Source,Value};
             let mut m: ergo_runtime::abi_stable::bst::BstMap<Source<Value>,Source<Value>> = Default::default();
-            $( m.insert(Source::builtin(crate::make_string($s)), Source::builtin($v)); )*
+            $( m.insert(src.clone().with(crate::make_string($s)), src.clone().with($v)); )*
             types::Map(m).into()
         }
+    };
+    ( $( $s:literal = $v:expr ),* ) => {
+        $crate::make_string_map! { source Source::builtin(()), $( $s = $v ),* }
     };
 }
 

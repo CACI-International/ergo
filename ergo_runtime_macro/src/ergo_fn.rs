@@ -230,17 +230,19 @@ impl Parser for ErgoFnLike {
 
         f.block = Box::new(parse_quote! {
             {
+                let fn_id = ergo_runtime::nsid!(function, std::concat!(std::module_path!(),"::",std::stringify!(#id)).as_bytes());
                 ergo_runtime::types::Unbound::new(move |CONTEXT, __ergo_fn_arg| {
                     #(#clones)*
                     ergo_runtime::future::FutureExt::boxed(async move {
                         let (ARGS_SOURCE, __ergo_fn_args) = ergo_runtime::try_result!(CONTEXT.eval_as::<#which>(__ergo_fn_arg).await).take();
+                        let CALL_DEPENDS = ergo_runtime::depends![fn_id, __ergo_fn_args.id()];
                         let mut __ergo_fn_args = __ergo_fn_args.to_owned().args;
                         #(#args)*
                         #rest_or_check
                         #inner_block
                     })
                 },
-                ergo_runtime::depends![ergo_runtime::nsid!(function, std::concat!(std::module_path!(),"::",std::stringify!(#id)).as_bytes())],
+                ergo_runtime::depends![fn_id],
                 #doc
                 ).into()
             }

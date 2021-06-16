@@ -527,8 +527,8 @@ impl TaskManager {
     /// operation). The concurrent task is spawned on the IO thread pool.
     pub fn spawn_blocking<F, R>(&self, f: F) -> impl Future<Output = Result<R, Error>> + 'static
     where
-        F: FnOnce() -> R + Send + Sync + 'static,
-        R: Send + Sync + 'static,
+        F: FnOnce() -> R + Eraseable,
+        R: Eraseable,
     {
         self.pool
             .spawn_blocking((|| Erased::new(f())).into())

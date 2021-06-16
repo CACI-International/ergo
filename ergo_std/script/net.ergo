@@ -1,5 +1,18 @@
 plugin = ergo plugin
 
+## Download a file over HTTP or HTTPS.
+##
+## Arguments: `(String :url) (Path :target)`
+##
+## Keyed Arguments: All keyed arguments supported by `std:net:http`.
+##
+## Returns a Unit value, or an error if a non-successful status code is received.
+download = fn (plugin:type:String :url) (plugin:type:Path :target) ^:rest -> {
+    result = plugin:net:http :url ^:rest
+    result:complete
+    plugin:fs:write :target result:body
+}
+
 ## Open a remote archive file.
 ##
 ## Arguments: `(String :url)`
