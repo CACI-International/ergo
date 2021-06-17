@@ -1,8 +1,9 @@
 //! Network module.
 
-use ergo_runtime::abi_stable::{bst::BstMap, StableAbi};
+use ergo_runtime::abi_stable::{bst::BstMap, type_erase::Erased, StableAbi};
 use ergo_runtime::{
-    depends, io, nsid, traits, try_result, type_system::ErgoType, types, Dependencies, Error, Value,
+    context::ItemContent, depends, io, nsid, traits, try_result, type_system::ErgoType, types,
+    Dependencies, Error, Value,
 };
 use reqwest::{
     blocking::Client,
@@ -36,7 +37,8 @@ pub fn module() -> Value {
 /// Returns a Map with the following indices:
 /// * `:body`: The response body, as a `ByteStream`.
 /// * `:status-code`: The HTTP response status code, as an `HttpStatus`.
-/// * `:headers`: The response headers, as a map of String to ByteStream.
+/// * `:headers`: The response headers, as a map of String to ByteStream. The keys are always
+/// lowercase.
 /// * `:complete`: Waits for the response to complete with a successful status code, evaluating to
 /// `Unit` or an `Error`.
 ///
@@ -83,7 +85,7 @@ async fn http(
         match auth.find(':') {
             Some(ind) => {
                 let (username, password) = auth.split_at(ind);
-                request = request.basic_auth(username, Some(password));
+                request = request.basic_auth(username, Some(&password[1..]));
             }
             None => request = request.basic_auth::<&str, &str>(auth, None),
         }
@@ -238,6 +240,12 @@ impl From<HttpStatus> for types::Bool {
     }
 }
 
+impl From<HttpStatus> for types::String {
+    fn from(e: HttpStatus) -> Self {
+        types::String(e.0.to_string().into())
+    }
+}
+
 impl From<HttpStatus> for ergo_runtime::TypedValue<HttpStatus> {
     fn from(e: HttpStatus) -> Self {
         ergo_runtime::TypedValue::constant(e)
@@ -251,3 +259,116 @@ impl From<&'_ HttpStatus> for Dependencies {
 }
 
 ergo_runtime::HashAsDependency!(HttpStatus);
+
+ergo_runtime::type_system::ergo_traits_fn! {
+    traits::IntoTyped::<types::Bool>::add_impl::<HttpStatus>(traits);
+    traits::IntoTyped::<types::String>::add_impl::<HttpStatus>(traits);
+    ergo_runtime::ergo_display_basic!(traits, HttpStatus);
+    ergo_runtime::ergo_type_name!(traits, HttpStatus);
+    traits::ValueByContent::add_impl::<HttpStatus>(traits);
+
+    impl traits::Stored for HttpStatus {
+        async fn put(&self, _ctx: &traits::StoredContext, mut into: ItemContent) -> ergo_runtime::RResult<()> {
+            bincode::serialize_into(&mut into, &self.0).map_err(|e| e.into()).into()
+        }
+
+        async fn get(_ctx: &traits::StoredContext, mut from: ItemContent) -> ergo_runtime::RResult<Erased>
+        {
+            bincode::deserialize_from(&mut from)
+                .map(|status| Erased::new(HttpStatus(status)))
+                .map_err(|e| e.into())
+                .into()
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use httpmock::{Method, MockServer};
+
+    ergo_script::test! {
+        fn http_get(t) {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(Method::GET)
+                    .path("/hi");
+                then.status(200)
+                    .header("myheader", "42")
+                    .body("hello world");
+            });
+            t.assert_content_eq(&format!(r#"self:net:http "{}" |>:complete"#, server.url("/hi")), "()");
+            t.assert_content_eq(&format!(r#"self:net:http "{}" |>:headers:myheader | self:string:from"#, server.url("/hi")), "42");
+            t.assert_content_eq(&format!(r#"self:net:http "{}" |>:body | self:string:from"#, server.url("/hi")), "'hello world'");
+            t.assert_content_eq(&format!(r#"self:net:http "{}" |>:status-code | self:string:from"#, server.url("/hi")), "200");
+        }
+    }
+
+    ergo_script::test! {
+        fn http_basic_auth(t) {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(Method::GET)
+                    .path("/auth")
+                    .header("Authorization", "Basic YWxhZGRpbjpvcGVuc2VzYW1l");
+                then.status(200);
+            });
+            t.assert_content_eq(&format!(r#"self:net:http (basic-auth = "aladdin:opensesame") "{}" |>:complete"#, server.url("/auth")), "()");
+        }
+    }
+
+    ergo_script::test! {
+        fn http_bearer_auth(t) {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(Method::GET)
+                    .path("/auth")
+                    .header("Authorization", "Bearer 12345");
+                then.status(200);
+            });
+            t.assert_content_eq(&format!(r#"self:net:http (bearer-auth = 12345) "{}" |>:complete"#, server.url("/auth")), "()");
+        }
+    }
+
+    ergo_script::test! {
+        fn http_put(t) {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(Method::PUT)
+                    .path("/put")
+                    .body("mydata");
+                then.status(200);
+            });
+            t.assert_fail(&format!(r#"self:net:http (body=mydata) "{}" |>:complete"#, server.url("/put")));
+            t.assert_fail(&format!(r#"self:net:http (method=put) (body=mydataa) "{}" |>:complete"#, server.url("/put")));
+            t.assert_content_eq(&format!(r#"self:net:http (method=put) (body=mydata) "{}" |>:complete"#, server.url("/put")), "()");
+        }
+    }
+
+    ergo_script::test! {
+        fn http_headers(t) {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(Method::GET)
+                    .path("/hdr")
+                    .header("myheader", "42");
+                then.status(200);
+            });
+
+            t.assert_fail(&format!(r#"self:net:http (headers={{myheader = 43}}) "{}" |>:complete"#, server.url("/hdr")));
+            t.assert_content_eq(&format!(r#"self:net:http (headers={{myheader = 42}}) "{}" |>:complete"#, server.url("/hdr")), "()");
+        }
+    }
+
+    ergo_script::test! {
+        fn http_timeout(t) {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(Method::GET)
+                    .path("/onesecond");
+                then.delay(std::time::Duration::from_secs(1)).status(200);
+            });
+
+            t.assert_fail(&format!(r#"self:net:http (timeout=100) "{}" |>:complete"#, server.url("/onesecond")));
+        }
+    }
+}

@@ -46,6 +46,7 @@ macro_rules! make_string_map {
 fn entry(ctx: &Context) -> ergo_runtime::Result<Source<Value>> {
     // Add trait implementations
     exec::ergo_traits(&ctx.traits);
+    net::ergo_traits(&ctx.traits);
 
     Ok(Source::builtin(make_string_map! {
         "array" = array::module(),

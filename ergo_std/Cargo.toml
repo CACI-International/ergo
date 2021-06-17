@@ -30,6 +30,7 @@ zip = "0.5"
 
 [dev-dependencies]
 ergo_script = { path = "../ergo_script" }
+httpmock = "0.5"
 
 [target.'cfg(unix)'.dependencies]
 errno = "0.2"
