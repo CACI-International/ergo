@@ -104,3 +104,4 @@ scripts reside.
   inspect/manipulate the flags.
 * Support `std:fs:archive`.
 * Support string deconstruction with a `std:String:format` pattern function.
+* Add a `std:json` module.

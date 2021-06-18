@@ -18,6 +18,7 @@
 * Add `std:net:http`, which is mostly HTTP-feature-complete.
   * `std:net:download` still exists, but is implemented using `std:net:http` and
     now supports all keyed argments that `std:net:http` does.
+* Support `ByteStream` values in `std:fs:unarchive`.
 
 ### Improvements
 * `std:match` now takes an array of cases rather than using the remaining
@@ -40,6 +41,8 @@
 * Renamed the `task-count` keyed argument of `task` to `count`.
 * Renamed `Iter:map-all` to `Iter:map` (that should be preferred), and `Iter:map`
   to `Iter:map-lazy`.
+* Reordered `std:fs:unarchive` parameters to make more convenient to use with
+  pipe operators.
 
 ### Migration Guide
 * `std:match` cases should be passed as an array.
@@ -58,6 +61,7 @@
   `std:Iter:map-all` should be replaced with `std:Iter:map`.
   * You should also review whether you really want `map-lazy`; in general (if
     you will eventually use all values) `map` is preferred.
+* Flip arguments to `std:fs:unarchive`.
 
 ## 1.0.0-beta.9  -- 2021-03-09
 ### New Features

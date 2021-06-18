@@ -1,7 +1,7 @@
 //! Filesystem runtime functions.
 
 use ergo_runtime::{
-    context::item_name, depends, io::Blocking, traits, try_result, type_system::ErgoType, types,
+    context::item_name, depends, io, traits, try_result, type_system::ErgoType, types,
     value::match_value, Source, Value,
 };
 use glob::glob;
@@ -164,87 +164,101 @@ fn set_permissions(p: &mut std::fs::Permissions, mode: u32) {}
 #[types::ergo_fn]
 /// Extract an archive to a path.
 ///
-/// Arguments: `(Path :archive) (Path :destination)`
+/// Arguments: `(Path :destination) (PathOrByteStream :archive)`
 ///
-/// `archive` may be a path to a directory, zip file or tar archive, where the tar archive can optionally be compressed with
-/// gzip, bzip2, or lzma (xz). The archive contents are extracted into `destination` as a directory.
-async fn unarchive(archive: types::Path, destination: types::Path) -> Value {
-    let (archive_source, archive) = archive.take();
+/// `archive` may be a Path to a directory, zip file or tar archive, or a ByteStream of a zip file
+/// or tar archive, where tar archives can optionally be compressed with gzip, bzip2, or lzma (xz).
+/// The archive contents are extracted into `destination` as a directory.
+async fn unarchive(destination: types::Path, archive: _) -> Value {
     let destination = destination.unwrap();
-
-    let from_path = archive.as_ref().as_ref();
     let to_path = destination.as_ref().as_ref();
 
-    if from_path.is_dir() {
-        try_result!(recursive_link(from_path, to_path));
-    } else if from_path.is_file() {
-        let res = async {
-            let mut f = std::fs::File::open(from_path)?;
-            use std::io::Read;
-            use std::io::Seek;
+    let (archive_source, mut archive) = archive.take();
 
-            let mut magic = [0; 6];
-            if let Ok(bytes) = f.read(&mut magic) {
-                f.seek(std::io::SeekFrom::Start(0))?;
+    try_result!(CONTEXT.eval(&mut archive).await);
 
-                // zip archive
-                if bytes >= 4 && magic[0..4] == [b'P', b'K', 3, 4] {
-                    use zip::ZipArchive;
-                    let mut archive = ZipArchive::new(f)?;
-                    for i in 0..archive.len() {
-                        let mut file = archive.by_index(i)?;
-                        if file.is_dir() {
-                            std::fs::create_dir_all(to_path.join(file.name()))?;
-                        } else if file.is_file() {
-                            let p = to_path.join(file.name());
-                            std::fs::create_dir_all(
-                                p.parent().expect("no parent path in zip output"),
-                            )?;
-                            let mut to_file = std::fs::File::create(p)?;
-                            std::io::copy(&mut file, &mut to_file)?;
-                            let mut permissions = to_file.metadata()?.permissions();
-                            if let Some(mode) = file.unix_mode() {
-                                set_permissions(&mut permissions, mode);
-                            }
-                            to_file.set_permissions(permissions)?;
-                        }
+    use std::io::{Read, Seek};
+
+    fn extract_to<T: Read + Seek, P: AsRef<Path>>(
+        mut archive: T,
+        to_path: P,
+    ) -> ergo_runtime::Result<()> {
+        let to_path = to_path.as_ref();
+        let mut magic = [0; 6];
+        let bytes = archive.read(&mut magic)?;
+
+        archive.seek(std::io::SeekFrom::Start(0))?;
+
+        // zip archive
+        if bytes >= 4 && magic[0..4] == [b'P', b'K', 3, 4] {
+            use zip::ZipArchive;
+            let mut archive = ZipArchive::new(archive)?;
+            for i in 0..archive.len() {
+                let mut file = archive.by_index(i)?;
+                if file.is_dir() {
+                    std::fs::create_dir_all(to_path.join(file.name()))?;
+                } else if file.is_file() {
+                    let p = to_path.join(file.name());
+                    std::fs::create_dir_all(p.parent().expect("no parent path in zip output"))?;
+                    let mut to_file = std::fs::File::create(p)?;
+                    std::io::copy(&mut file, &mut to_file)?;
+                    let mut permissions = to_file.metadata()?.permissions();
+                    if let Some(mode) = file.unix_mode() {
+                        set_permissions(&mut permissions, mode);
                     }
-                } else {
-                    let archive : Box<dyn std::io::Read> =
-                        // gzip
-                        if bytes >= 2 && magic[0..2] == [0x1f, 0x8b] {
-                            use flate2::read::GzDecoder;
-                            Box::new(GzDecoder::new(f))
-                        }
-                        // bzip2
-                        else if bytes >= 3 && magic[0..3] == [b'B', b'Z', b'h'] {
-                            use bzip2::read::BzDecoder;
-                            Box::new(BzDecoder::new(f))
-                        }
-                        // lzma
-                        else if bytes >= 6 && magic[0..6] == [0xfd, b'7', b'z', b'X', b'Z', 0] {
-                            use xz::read::XzDecoder;
-                            Box::new(XzDecoder::new(f))
-                        } else {
-                            Box::new(f)
-                        };
-
-                    use tar::Archive;
-                    // TODO check whether file is a tar archive (need to buffer and seek into output
-                    // stream)
-                    let mut tar = Archive::new(archive);
-                    tar.unpack(to_path)?;
+                    to_file.set_permissions(permissions)?;
                 }
             }
-            ergo_runtime::Result::Ok(())
+        } else {
+            // TODO check whether file is a tar archive (need to buffer and seek into output
+            // stream)
+
+            use tar::Archive;
+            // gzip
+            if bytes >= 2 && magic[0..2] == [0x1f, 0x8b] {
+                use flate2::read::GzDecoder;
+                Archive::new(GzDecoder::new(archive)).unpack(to_path)?;
+            }
+            // bzip2
+            else if bytes >= 3 && magic[0..3] == [b'B', b'Z', b'h'] {
+                use bzip2::read::BzDecoder;
+                Archive::new(BzDecoder::new(archive)).unpack(to_path)?;
+            }
+            // lzma
+            else if bytes >= 6 && magic[0..6] == [0xfd, b'7', b'z', b'X', b'Z', 0] {
+                use xz::read::XzDecoder;
+                Archive::new(XzDecoder::new(archive)).unpack(to_path)?;
+            } else {
+                Archive::new(archive).unpack(to_path)?;
+            };
         }
-        .await;
-        try_result!(res.map_err(|e| ARGS_SOURCE.with(e).into_error()));
-    } else {
-        return archive_source
-            .with("path is not a file nor directory")
-            .into_error()
-            .into();
+
+        Ok(())
+    }
+
+    match_value! { archive,
+        types::Path(p) => {
+            let path = p.as_ref();
+            if path.is_dir() {
+                try_result!(recursive_link(path, to_path));
+            } else if path.is_file() {
+                try_result!(extract_to(try_result!(std::fs::File::open(path)), to_path).map_err(|e| ARGS_SOURCE.with(e.error())));
+            }
+            else {
+                return archive_source
+                    .with("path is not a file nor directory")
+                    .into_error()
+                    .into();
+            }
+        }
+        bs@types::ByteStream {..} => {
+            // Read the entire byte stream into memory (no AsyncRead support in decoders)
+            let mut data = Vec::new();
+            use io::AsyncReadExt;
+            try_result!(bs.read().read_to_end(&CONTEXT.task, &mut data).await);
+            try_result!(extract_to(std::io::Cursor::new(data), to_path));
+        }
+        v => return traits::type_error(CONTEXT, archive_source.with(v), "Path or ByteStream").into()
     }
 
     types::Unit.into()
@@ -399,7 +413,7 @@ async fn read(file: types::Path) -> Value {
         std::fs::File::open(&path)
     )));
     Value::constant_deps(
-        types::ByteStream::new(Blocking::new(try_result!(std::fs::File::open(path)))),
+        types::ByteStream::new(io::Blocking::new(try_result!(std::fs::File::open(path)))),
         depends![hash],
     )
 }
@@ -415,7 +429,7 @@ async fn write(file: types::Path, bytes: _) -> Value {
     let bytes =
         try_result!(traits::into_sourced::<types::ByteStream>(CONTEXT, bytes).await).unwrap();
 
-    let mut f = Blocking::new(try_result!(std::fs::File::create(file.as_ref().as_ref())));
+    let mut f = io::Blocking::new(try_result!(std::fs::File::create(file.as_ref().as_ref())));
     try_result!(ergo_runtime::io::copy(&CONTEXT.task, &mut bytes.as_ref().read(), &mut f).await);
     types::Unit.into()
 }
@@ -430,7 +444,7 @@ async fn append(file: types::Path, bytes: _) -> Value {
     let bytes =
         try_result!(traits::into_sourced::<types::ByteStream>(CONTEXT, bytes).await).unwrap();
 
-    let mut f = Blocking::new(try_result!(std::fs::OpenOptions::new()
+    let mut f = io::Blocking::new(try_result!(std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(file.as_ref().as_ref())));
