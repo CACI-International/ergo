@@ -12,6 +12,7 @@ use std::path::Path;
 pub fn module() -> Value {
     crate::make_string_map! {
         "append" = append(),
+        "archive" = archive(),
         "copy" = copy(),
         "create-dir" = create_dir(),
         "exists" = exists(),
@@ -160,6 +161,157 @@ fn set_permissions(p: &mut std::fs::Permissions, mode: u32) {
 
 #[cfg(windows)]
 fn set_permissions(p: &mut std::fs::Permissions, mode: u32) {}
+
+#[types::ergo_fn]
+/// Create an archive of the given path.
+///
+/// Arguments: `(Path :archive) (Path :source)`
+///
+/// Keyed Arguments:
+/// * `String :format` - the type of archive to create. May be `dir`, `zip`, `tar`, `tar.gz`,
+/// `tar.bz2` or `tar.xz`. If unspecified, the extension of `archive` is used. If there is no
+/// extension, `dir` is assumed.
+///
+/// Note that using a `dir` archive is the same as `std:fs:copy :source :archive`.
+///
+/// Returns a Unit value on success.
+async fn archive(archive: types::Path, source: types::Path, (format): [types::String]) -> Value {
+    let (archive_source, archive) = archive.take();
+    let source = source.unwrap();
+
+    let ext: Source<String> = match format {
+        Some(format) => format.map(|v| v.to_owned().0.into()),
+        None => {
+            let path = archive.as_ref().as_ref();
+            match path.file_name() {
+                None => {
+                    return archive_source
+                        .with("invalid archive path")
+                        .into_error()
+                        .into()
+                }
+                Some(f) => match f.to_str() {
+                    None => {
+                        return archive_source
+                            .with("invalid unicode in filename")
+                            .into_error()
+                            .into()
+                    }
+                    Some(s) => {
+                        // Skip first index in case the filename starts with a `.`, to match the
+                        // behavior of std::path::Path::extension()
+                        // We assume the string is not empty (otherwise file_name would have
+                        // returned None).
+                        let s = &s[1..];
+                        archive_source.with(if let Some(ind) = s.find('.') {
+                            // split_at().1 will be the extension with the leading '.', so skip it
+                            s.split_at(ind).1[1..].into()
+                        } else {
+                            "dir".into()
+                        })
+                    }
+                },
+            }
+        }
+    };
+
+    let (ext_source, ext) = ext.take();
+
+    fn tar_to<W: std::io::Write>(w: W, dir: &Path) -> std::io::Result<W> {
+        let mut builder = tar::Builder::new(w);
+        builder.mode(tar::HeaderMode::Deterministic);
+        builder.follow_symlinks(false);
+        builder.append_dir_all(&std::path::PathBuf::default(), dir)?;
+        builder.into_inner()
+    }
+
+    match ext.as_str() {
+        "dir" => try_result!(recursive_link(
+            source.as_ref().as_ref(),
+            archive.as_ref().as_ref()
+        )),
+        "zip" => {
+            let path = source.as_ref().as_ref();
+            let f = try_result!(std::fs::File::create(archive.as_ref().as_ref())
+                .map_err(|e| ARGS_SOURCE.with(e).into_error()));
+
+            fn add_dir_entries<W: std::io::Write + std::io::Seek>(
+                dir: &Path,
+                prefix: &Path,
+                zip: &mut zip::ZipWriter<W>,
+            ) -> ergo_runtime::Result<()> {
+                for entry in dir.read_dir()? {
+                    let entry = entry?;
+                    let name = entry.file_name();
+                    let prefix_name = prefix.join(&name);
+                    if entry.file_type()?.is_dir() {
+                        zip.add_directory(
+                            prefix_name.as_os_str().to_string_lossy(),
+                            Default::default(),
+                        )?;
+                        add_dir_entries(&dir.join(name), &prefix_name, zip)?;
+                    } else {
+                        zip.start_file(
+                            prefix_name.as_os_str().to_string_lossy(),
+                            Default::default(),
+                        )?;
+                        let mut f = std::fs::File::open(dir.join(name))?;
+                        std::io::copy(&mut f, zip)?;
+                    }
+                }
+                Ok(())
+            }
+
+            let mut writer = zip::ZipWriter::new(f);
+            try_result!(add_dir_entries(
+                &path,
+                &std::path::PathBuf::default(),
+                &mut writer
+            ));
+            try_result!(writer.finish());
+        }
+        "tar" => {
+            try_result!(std::fs::File::create(archive.as_ref().as_ref())
+                .and_then(|p| tar_to(p, &source.as_ref().as_ref()))
+                .map_err(|e| ARGS_SOURCE.with(e).into_error()));
+        }
+        "tar.gz" => {
+            use flate2::write::GzEncoder;
+            try_result!(std::fs::File::create(archive.as_ref().as_ref())
+                .and_then(|p| tar_to(
+                    GzEncoder::new(p, Default::default()),
+                    &source.as_ref().as_ref()
+                ))
+                .map_err(|e| ARGS_SOURCE.with(e).into_error()));
+        }
+        "tar.bz2" => {
+            use bzip2::write::BzEncoder;
+            try_result!(std::fs::File::create(archive.as_ref().as_ref())
+                .and_then(|p| tar_to(
+                    BzEncoder::new(p, Default::default()),
+                    &source.as_ref().as_ref()
+                ))
+                .map_err(|e| ARGS_SOURCE.with(e).into_error()));
+        }
+        "tar.xz" => {
+            use xz::write::XzEncoder;
+            try_result!(std::fs::File::create(archive.as_ref().as_ref())
+                .and_then(|p| tar_to(
+                    XzEncoder::new(p, Default::default()),
+                    &source.as_ref().as_ref()
+                ))
+                .map_err(|e| ARGS_SOURCE.with(e).into_error()));
+        }
+        o => {
+            return ext_source
+                .with(format!("unsupported format: {}", o))
+                .into_error()
+                .into()
+        }
+    }
+
+    types::Unit.into()
+}
 
 #[types::ergo_fn]
 /// Extract an archive to a path.

@@ -29,4 +29,4 @@ unarchive-remote = fn :url -> plugin:value:cache {
     :unpacked-dir
 }
 
-{unarchive-remote}
+{download, unarchive-remote}

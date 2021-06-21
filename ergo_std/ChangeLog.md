@@ -19,6 +19,7 @@
   * `std:net:download` still exists, but is implemented using `std:net:http` and
     now supports all keyed argments that `std:net:http` does.
 * Support `ByteStream` values in `std:fs:unarchive`.
+* Add `std:fs:archive` for creating archives (opposite of `std:fs:unarchive`).
 
 ### Improvements
 * `std:match` now takes an array of cases rather than using the remaining

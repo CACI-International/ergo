@@ -337,7 +337,7 @@ if = fn :cond :if_true ^:if_false -> plugin:match [plugin:bool:from :cond, :if_f
     ## Interact with the local filesystem.
     ##
     ## {{
-    ## (mdoc:functions :self append copy create-dir exists glob read remove sha1 track unarchive
+    ## (mdoc:functions :self append archive copy create-dir exists glob read remove sha1 track unarchive
     ##  write)
     ## }}
     fs = plugin:fs
@@ -363,10 +363,9 @@ if = fn :cond :if_true ^:if_false -> plugin:match [plugin:bool:from :cond, :if_f
 
     ## Networking functions.
     ##
-    ## {{mdoc:functions :self download unarchive-remote}}
+    ## {{mdoc:functions :self download http unarchive-remote}}
     net = {
-        import {download} = plugin:net
-        import {unarchive-remote} = :mnet
+        import {download, unarchive-remote} = :mnet
     }
 
     ## Type creation.
