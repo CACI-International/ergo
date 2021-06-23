@@ -5,7 +5,9 @@
 * Add `std:env:arch` to get the host architecture.
 * `std:log` uses the `Display` ergo trait to write values, which is far more
   useful than requiring a `String` argument.
-* `std:dynamic` has been removed as all expressions are dynamically-typed.
+* `std:dynamic` has been removed as all expressions are dynamically-typed,
+  however a new (unrelated) `std:dynamic` module has been added, supporting
+  interaction with dynamic bindings.
 * `std:typed` has been renamed to `std:eval`, since getting a typed version of a
   value is the same as evaluating the value.
 * `std:seq` is removed as sequencing values is a syntax-level feature.

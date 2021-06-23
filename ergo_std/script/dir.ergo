@@ -210,7 +210,7 @@ if = fn :cond :if_true ^:if_false -> plugin:match [plugin:bool:from :cond, :if_f
 ## {{mdoc:modules :self Any Array Bool Error Function Iter Map MapEntry Number Path String Unit Unset}}
 ##
 ## # Modules
-## {{mdoc:modules :self doc env fs io json log meta net type}}
+## {{mdoc:modules :self doc dynamic env fs io json log meta net type}}
 ##
 ## # Functions
 ## {{(mdoc:functions :self by-content cache debug default ergo-remote
@@ -339,6 +339,21 @@ if = fn :cond :if_true ^:if_false -> plugin:match [plugin:bool:from :cond, :if_f
     ##
     ## {{mdoc:functions :self summary modules functions}}
     doc = :mdoc
+
+    ## Interact with dynamic bindings.
+    ##
+    ## A dynamic binding is a binding that has dynamic scope, meaning that it is retrieved at
+    ## evaluation time, and is still bound through function calls and other evaluation. This can be
+    ## used, for example, to set global context that will be used. Note that dynamic bindings _are
+    ## not_ automatically tracked in identity derivation, so care _must_ be taken to ensure that if
+    ## the value of the dynamic binding is relevant to an identity, it is queried sooner (for
+    ## instance using `!`).
+    ##
+    ## Generally dynamic bindings are a bit tricky to reason about since there are no syntactic
+    ## hints about when they will be present, so take this into consideration when using them.
+    ##
+    ## {{mdoc:functions :self get eval}}
+    dynamic = plugin:value:dynamic
 
     ## Get values related to the program's runtime environment.
     ##

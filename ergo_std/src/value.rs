@@ -12,6 +12,10 @@ pub fn module() -> Value {
         "by-content" = by_content(),
         "cache" = cache(),
         "debug" = debug(),
+        "dynamic" = crate::make_string_map! {
+            "get" = dynamic_binding_get(),
+            "eval" = dynamic_binding_set()
+        },
         "eval" = eval(),
         "meta" = crate::make_string_map! {
             "get" = meta_get(),
@@ -220,6 +224,34 @@ async fn source_path(value: _) -> Value {
     }
 }
 
+#[types::ergo_fn]
+/// Get a dynamic binding.
+///
+/// Arguments: `:key`
+///
+/// Returns the dynamic binding corresponding to `key`, or `Unset` if none exists.
+async fn dynamic_binding_get(key: _) -> Value {
+    match CONTEXT.dynamic_scope.get(key.value()) {
+        None => types::Unset.into(),
+        Some(r) => (*r).clone().unwrap(), // return with source instead of unwrapping?
+    }
+}
+
+#[types::ergo_fn]
+/// Evaluate a value with the given dynamic bindings.
+///
+/// Arguments: `(Map :bindings) :eval`
+///
+/// Returns the result of evaluating `eval` with all `bindings` set in the dynamic scope.
+async fn dynamic_binding_set(bindings: types::Map, mut eval: _) -> Value {
+    let mut ctx = CONTEXT.clone();
+    for (k, v) in bindings.unwrap().to_owned().0 {
+        ctx.dynamic_scope.set(&k, v);
+    }
+    drop(ctx.eval(&mut eval).await);
+    eval.unwrap()
+}
+
 #[cfg(test)]
 mod test {
     ergo_script::test! {
@@ -238,6 +270,16 @@ mod test {
     ergo_script::test! {
         fn source_path(t) {
             t.assert_eq("x = 1; self:value:source-path :x", "self:type:Unset:");
+        }
+    }
+
+    ergo_script::test! {
+        fn dynamic_binding(t) {
+            t.assert_eq("self:value:dynamic:get something", "self:type:Unset:");
+            t.assert_eq("v = self:value:dynamic:get something; self:value:dynamic:eval { something = value } :v", "value");
+            t.assert_eq("f = fn :x -> <| self:value:dynamic:get my_func |> :x
+                say_hello = fn :name -> self:string:format 'hi, {}' :name
+                self:value:dynamic:eval { my_func = :say_hello } <| f dude", "'hi, dude'");
         }
     }
 }
