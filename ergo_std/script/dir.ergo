@@ -210,7 +210,7 @@ if = fn :cond :if_true ^:if_false -> plugin:match [plugin:bool:from :cond, :if_f
 ## {{mdoc:modules :self Any Array Bool Error Function Iter Map MapEntry Number Path String Unit Unset}}
 ##
 ## # Modules
-## {{mdoc:modules :self doc env fs io log meta net type}}
+## {{mdoc:modules :self doc env fs io json log meta net type}}
 ##
 ## # Functions
 ## {{(mdoc:functions :self by-content cache debug default ergo-remote
@@ -357,6 +357,20 @@ if = fn :cond :if_true ^:if_false -> plugin:match [plugin:bool:from :cond, :if_f
     ##
     ## {{mdoc:functions :self stdin stdout stderr}}
     io = plugin:io
+
+    ## JSON functions.
+    ##
+    ## JSON types map to native ergo types in the following way:
+    ## * null <-> `Unit`
+    ## * string <-> `String`
+    ## * number <-> `Number`
+    ## * boolean <-> `Bool`
+    ## * object <-> `Map`
+    ## * array <-> `Array`
+    ##
+    ## # Functions
+    ## {{mdoc:functions :self parse stringify}}
+    json = plugin:json
 
     ## The runtime logging interface.
     ##

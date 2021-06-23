@@ -8,6 +8,7 @@ mod exec;
 mod fs;
 mod io;
 mod iter;
+mod json;
 mod log;
 mod map;
 #[path = "match.rs"]
@@ -57,6 +58,7 @@ fn entry(ctx: &Context) -> ergo_runtime::Result<Source<Value>> {
         "fs" = fs::module(),
         "io" = io::module(),
         "iter" = iter::module(),
+        "json" = json::module(),
         "log" = log::function(ctx),
         "map" = map::module(),
         "match" = match_::function(),

@@ -20,6 +20,8 @@
     now supports all keyed argments that `std:net:http` does.
 * Support `ByteStream` values in `std:fs:unarchive`.
 * Add `std:fs:archive` for creating archives (opposite of `std:fs:unarchive`).
+* Add `std:json` module with `parse` and `stringify` functions to convert json
+  strings to ergo values and visa versa.
 
 ### Improvements
 * `std:match` now takes an array of cases rather than using the remaining
