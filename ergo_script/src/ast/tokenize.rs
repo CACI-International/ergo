@@ -324,6 +324,12 @@ pub enum Error {
     UnfinishedRawString,
     /// An escape sequence in a quoted string was not recognized.
     UnrecognizedEscapeSequence,
+    /// A unicode character escape sequence is missing a closing character.
+    UnfinishedUnicodeCharacter,
+    /// A unicode character escape sequence was too long.
+    LongUnicodeCharacter,
+    /// A unicode character escape sequence contained an invalid digit.
+    InvalidUnicodeCharacter,
 }
 
 impl fmt::Display for Error {
@@ -332,6 +338,9 @@ impl fmt::Display for Error {
             Error::UnfinishedQuotedString => write!(f, "unfinished quoted string"),
             Error::UnfinishedRawString => write!(f, "unfinished raw string"),
             Error::UnrecognizedEscapeSequence => write!(f, "unrecognized escape sequence"),
+            Error::UnfinishedUnicodeCharacter => write!(f, "unfinished unicode character code"),
+            Error::LongUnicodeCharacter => write!(f, "unicode character code too long"),
+            Error::InvalidUnicodeCharacter => write!(f, "invalid unicode character code"),
         }
     }
 }
@@ -581,6 +590,56 @@ impl<I: Iterator<Item = char>> Tokens<I> {
                                     s.push('\n')
                                 } else if c == 't' {
                                     s.push('\t')
+                                // Unicode character codes
+                                } else if c == 'u' && self.iter.peek_match(&['{']) {
+                                    self.next_source();
+                                    let mut unicode_hex = String::new();
+                                    loop {
+                                        match self.next_source() {
+                                            None | Some('"') => {
+                                                let mut val = self.source.clone().with(Error::UnfinishedUnicodeCharacter);
+                                                val.location.start = val.location.start + val.location.length - unicode_hex.len();
+                                                val.location.length = unicode_hex.len();
+                                                return Some(Err(val));
+                                            }
+                                            Some('}') => {
+                                                if unicode_hex.is_empty() {
+                                                    let mut val = self.source.clone().with(Error::InvalidUnicodeCharacter);
+                                                    val.location.start = val.location.start + val.location.length - 2;
+                                                    val.location.length = 2;
+                                                    return Some(Err(val));
+                                                }
+
+                                                match <char as std::convert::TryFrom<u32>>::try_from(u32::from_str_radix(unicode_hex.as_str(), 16)
+                                                        .expect("all digits should be valid hex digits"))
+                                                {
+                                                    Err(_) => {
+                                                        let mut val = self.source.clone().with(Error::InvalidUnicodeCharacter);
+                                                        val.location.start = val.location.start + val.location.length - unicode_hex.len() - 1;
+                                                        val.location.length = unicode_hex.len();
+                                                        return Some(Err(val));
+                                                    }
+                                                    Ok(c) => s.push(c)
+                                                }
+                                                break;
+                                            }
+                                            Some(c) => {
+                                                if !c.is_ascii_hexdigit() {
+                                                    let mut val = self.source.clone().with(Error::InvalidUnicodeCharacter);
+                                                    val.location.start = val.location.start + val.location.length - 1;
+                                                    val.location.length = 1;
+                                                    return Some(Err(val));
+                                                }
+                                                if unicode_hex.len() == 6 {
+                                                    let mut val = self.source.clone().with(Error::LongUnicodeCharacter);
+                                                    val.location.start = val.location.start + val.location.length - unicode_hex.len() - 1;
+                                                    val.location.length = unicode_hex.len() + 1;
+                                                    return Some(Err(val));
+                                                }
+                                                unicode_hex.push(c);
+                                            }
+                                        }
+                                    }
                                 } else {
                                     let mut val = self.source.clone().with(Error::UnrecognizedEscapeSequence);
                                     val.location.start = val.location.start + val.location.length - 2;
@@ -788,6 +847,38 @@ mod test {
                 Token::arrow(),
             ],
         )
+    }
+
+    #[test]
+    fn unicode_escape() -> Result<(), Source<Error>> {
+        assert_tokens(r#""my \u{65}scape""#, &[Token::string("my escape")])
+    }
+
+    #[test]
+    fn invalid_unicode_escape() {
+        let err = assert_tokens(r#""\u{FFFFFF}""#, &[]).unwrap_err().unwrap();
+        assert!(err == Error::InvalidUnicodeCharacter);
+
+        let err = assert_tokens(r#""\u{hi}""#, &[]).unwrap_err().unwrap();
+        assert!(err == Error::InvalidUnicodeCharacter);
+
+        let err = assert_tokens(r#""\u{}""#, &[]).unwrap_err().unwrap();
+        assert!(err == Error::InvalidUnicodeCharacter);
+    }
+
+    #[test]
+    fn unclosed_unicode_escape() {
+        let err = assert_tokens(r#""\u{1234""#, &[]).unwrap_err().unwrap();
+        println!("{}", err);
+        assert!(err == Error::UnfinishedUnicodeCharacter);
+    }
+
+    #[test]
+    fn long_unicode_escape() {
+        let err = assert_tokens(r#""\u{1234512345}""#, &[])
+            .unwrap_err()
+            .unwrap();
+        assert!(err == Error::LongUnicodeCharacter);
     }
 
     #[test]

@@ -57,6 +57,8 @@ improvements, so no such distinction is made.
   fixed, high priority).
 * A new `Number` type has been added to the runtime, supporting arbitrarily
   large rational numbers.
+* Add support for arbitrary escaped unicode characters in quoted strings.
+  * This looks like `"\u{123456}"`, where you can have from 1 to 6 hex digits.
 
 ### Evaluation Semantics
 The new evaluation semantics and data model are a drastic simplification over
