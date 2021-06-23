@@ -11,7 +11,6 @@ use reqwest::{
     Method, StatusCode,
 };
 use std::convert::TryFrom;
-use std::str::FromStr;
 
 pub fn module() -> Value {
     crate::make_string_map! {
@@ -30,7 +29,7 @@ pub fn module() -> Value {
 /// * `String :basic-auth`: Use HTTP Basic Authentication. The string contains the username, and
 /// optionally a colon followed by the password.
 /// * `String :bearer-auth`: Use HTTP Bearer Authentication with the given token.
-/// * `String :timeout`: A timeout number to use, in milliseconds.
+/// * `Into<Number> :timeout`: A timeout to use, in seconds.
 /// * `(Map:Of :String :String) :headers`: Key-value pairs are header names and values to set for the request.
 /// * `Into<ByteStream> :body`: The body to send with the request, if any.
 ///
@@ -49,7 +48,7 @@ async fn http(
     (method): [types::String],
     (basic_auth): [types::String],
     (bearer_auth): [types::String],
-    (timeout): [types::String],
+    (timeout): [_],
     (headers): [types::Map],
     (body): [_],
 ) -> Value {
@@ -97,13 +96,18 @@ async fn http(
     }
 
     if let Some(to) = timeout {
-        let (to_source, to) = to.take();
-        let to = to.as_ref().as_str();
-        let millis = match u64::from_str(to) {
-            Err(_) => return to_source.with("invalid numeric string").into_error().into(),
-            Ok(s) => s,
+        let (to_source, to) =
+            try_result!(traits::into_sourced::<types::Number>(CONTEXT, to).await).take();
+        let secs = match to.as_ref().to_f64() {
+            None => {
+                return to_source
+                    .with("invalid numeric timeout")
+                    .into_error()
+                    .into()
+            }
+            Some(f) => f,
         };
-        request = request.timeout(std::time::Duration::from_millis(millis));
+        request = request.timeout(std::time::Duration::from_secs_f64(secs));
     }
 
     {
@@ -368,7 +372,7 @@ mod test {
                 then.delay(std::time::Duration::from_secs(1)).status(200);
             });
 
-            t.assert_fail(&format!(r#"self:net:http (timeout=100) "{}" |>:complete"#, server.url("/onesecond")));
+            t.assert_fail(&format!(r#"self:net:http (timeout=1/10) "{}" |>:complete"#, server.url("/onesecond")));
         }
     }
 }

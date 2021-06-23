@@ -291,16 +291,18 @@ async fn skip_while(func: _, iter: _) -> Value {
 #[types::ergo_fn]
 /// Skip the first `n` consecutive values.
 ///
-/// Arguments: `(String :n) (Into<Iter> :iter)`
+/// Arguments: `(Into<Number> :n) (Into<Iter> :iter)`
 ///
 /// Returns a new iterator containing only the values from `iter` after the first `n`.
-async fn skip(n: types::String, iter: _) -> Value {
+async fn skip(n: _, iter: _) -> Value {
+    let n = try_result!(traits::into_sourced::<types::Number>(CONTEXT, n).await);
     let iter = try_result!(traits::into_sourced::<types::Iter>(CONTEXT, iter).await).unwrap();
     let deps = depends![nsid!(std::iter::skip), n, iter];
 
-    let n = try_result!(<usize as std::str::FromStr>::from_str(
-        n.value().as_ref().as_str()
-    ));
+    let n = try_result!(n
+        .map(|n| n.as_ref().to_usize().ok_or("expected unsigned integer"))
+        .transpose_err()
+        .map_err(|e| e.into_error()));
 
     types::Iter::new_stream(iter.to_owned().skip(n), deps).into()
 }
@@ -358,17 +360,19 @@ async fn take_while(func: _, iter: _) -> Value {
 #[types::ergo_fn]
 /// Take the first `n` consecutive values.
 ///
-/// Arguments: `(String :n) (Into<Iter> :iter)`
+/// Arguments: `(Into<Number> :n) (Into<Iter> :iter)`
 ///
 /// Returns a new iterator containing only the first `n` values from `iter`.
-async fn take(n: types::String, iter: _) -> Value {
+async fn take(n: _, iter: _) -> Value {
+    let n = try_result!(traits::into_sourced::<types::Number>(CONTEXT, n).await);
     let iter = try_result!(traits::into_sourced::<types::Iter>(CONTEXT, iter).await).unwrap();
 
     let deps = depends![nsid!(std::iter::take), n, iter];
 
-    let n = try_result!(<usize as std::str::FromStr>::from_str(
-        n.value().as_ref().as_str()
-    ));
+    let n = try_result!(n
+        .map(|n| n.as_ref().to_usize().ok_or("expected unsigned integer"))
+        .transpose_err()
+        .map_err(|e| e.into_error()));
 
     types::Iter::new_stream(iter.to_owned().take(n), deps).into()
 }

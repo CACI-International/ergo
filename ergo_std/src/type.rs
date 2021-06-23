@@ -30,6 +30,7 @@ pub fn module() -> Value {
         "Array" = match_array(),
         "Function" = match_function(),
         "Iter" = match_iter(),
+        "Number" = match_number(),
         "Error" = match_error()
     }
 }
@@ -415,6 +416,38 @@ fn match_function() -> Value {
     )
 }
 
+fn match_number() -> Value {
+    let construct: Value = types::Unbound::new_no_doc(
+            |ctx, arg| {
+                async move {
+                    let (arg_source, arg) = arg.take();
+                    match_value!{ arg,
+                        types::Args { mut args } => {
+                            let s = try_result!(args.next().ok_or("no argument"));
+                            try_result!(args.unused_arguments());
+
+                            let s = try_result!(ctx.eval_as::<types::String>(s).await);
+                            s.map(|s| s.as_ref().0.as_str().parse::<types::Number>()).transpose_err().into()
+                        },
+                        v => traits::bind_error(ctx, arg_source.with(v)).into()
+                    }
+                }
+                .boxed()
+            },
+            depends![nsid!(std::type::Number::construct)],
+    ).into();
+
+    make_match_fn(
+        types::Number::ergo_type(),
+        Ok(construct),
+        "Matches a Number value.
+
+If called with no arguments, returns a number constructor which takes a numeric string argument.
+The string may be an integer, decimal, or ratio of integers (e.g. `1/2`) with any number of digits.
+The function can only be used in calls: you cannot destructure Numbers in pattern calls.",
+    )
+}
+
 fn match_error() -> Value {
     let construct: Value =
         types::Unbound::new_no_doc(
@@ -525,6 +558,20 @@ mod test {
             t.assert_fail("fn (self:type:Function :x) -> () |> ()");
             t.assert_success("fn self:type:Function -> () |> :a -> :a");
             t.assert_fail("fn self:type:Function -> () |> ()");
+        }
+    }
+
+    ergo_script::test! {
+        fn number(t) {
+            t.assert_success("self:type:Number: 1");
+            t.assert_success("self:type:Number: -3.14");
+            t.assert_success("self:type:Number: 1/2");
+            t.assert_success("self:type:Number: -3/4");
+            t.assert_success("self:type:Number: 0.5");
+            t.assert_success("self:type:Number: -0.3");
+            t.assert_eq("self:type:Number: 0.5", "self:type:Number: 1/2");
+            t.assert_fail("self:type:Number: ()");
+            t.assert_success("fn (self:type:Number :x) -> () |><| self:type:Number: 0");
         }
     }
 

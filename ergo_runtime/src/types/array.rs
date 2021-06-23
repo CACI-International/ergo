@@ -7,7 +7,6 @@ use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
 use crate::{depends, Dependencies, Source, TypedValue, Value};
 use bincode;
-use std::str::FromStr;
 
 /// Script array type.
 #[derive(Clone, Debug, ErgoType, PartialEq, StableAbi)]
@@ -103,10 +102,10 @@ ergo_traits_fn! {
             crate::value::match_value! { arg,
                 super::Index(ind) => {
                     // Return value at index
-                    let (ind_source, ind) = crate::try_result!(CONTEXT.eval_as::<super::String>(ind).await).take();
-                    source.with(match isize::from_str(ind.as_ref()) {
-                        Err(_) => return ind_source.with("non-integer index").into_error().into(),
-                        Ok(mut ind) => {
+                    let (ind_source, ind) = crate::try_result!(traits::into_sourced::<super::Number>(CONTEXT, ind).await).take();
+                    source.with(match ind.as_ref().to_isize() {
+                        None => return ind_source.with("non-integer index").into_error().into(),
+                        Some(mut ind) => {
                             // Negative indices are relative to the end.
                             if ind < 0 {
                                 ind += self.0.len() as isize;

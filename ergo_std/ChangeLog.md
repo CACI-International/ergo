@@ -37,6 +37,7 @@
   argument.
 * Add a `priority` keyed argument to `task`, which allows setting a priority
   between 1 and 1000 for a task.
+* Updated numeric arguments of functions to take the new `Number` type.
 
 ### Breaking Changes
 * Renamed the `task-count` keyed argument of `task` to `count`.

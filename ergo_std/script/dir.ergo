@@ -207,7 +207,7 @@ if = fn :cond :if_true ^:if_false -> plugin:match [plugin:bool:from :cond, :if_f
 ## instance with `^ergo std`.
 ##
 ## # Types
-## {{mdoc:modules :self Any Array Bool Error Function Iter Map MapEntry Path String Unit Unset}}
+## {{mdoc:modules :self Any Array Bool Error Function Iter Map MapEntry Number Path String Unit Unset}}
 ##
 ## # Modules
 ## {{mdoc:modules :self doc env fs io log meta net type}}
@@ -292,6 +292,17 @@ if = fn :cond :if_true ^:if_false -> plugin:match [plugin:bool:from :cond, :if_f
     ##
     ## {{type-function ":key :value"}}
     MapEntry = plugin:type:MapEntry
+
+    ## The Number type and related functions.
+    ##
+    ## Numbers are arbitrarily large rationals. They may be expressed as integers, decimals, or
+    ## rationals such as `1/2`.
+    ##
+    ## {{type-function ":number"}}
+    ##
+    ## # Functions
+    ## {{mdoc:functions :self from}}
+    Number = match-indices plugin:type:Number plugin:number
 
     ## The Path type and related functions.
     ##

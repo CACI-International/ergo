@@ -55,6 +55,8 @@ improvements, so no such distinction is made.
   must be taken to use them correctly based on the intended semantics.
 * All script evaluation happens concurrently as tasks on the thread pool (with a
   fixed, high priority).
+* A new `Number` type has been added to the runtime, supporting arbitrarily
+  large rational numbers.
 
 ### Evaluation Semantics
 The new evaluation semantics and data model are a drastic simplification over

@@ -8,8 +8,7 @@ use ergo_runtime::abi_stable::{
 use ergo_runtime::context::{
     DynamicScopeKey, Log, LogTask, RecordingWork, TaskManager, TaskPermit, Work,
 };
-use ergo_runtime::{nsid, try_result, types, Value};
-use std::str::FromStr;
+use ergo_runtime::{nsid, traits, try_result, types, Value};
 
 pub const SCRIPT_TASK_PRIORITY_OFFSET: u32 = 1000;
 
@@ -19,14 +18,14 @@ pub const SCRIPT_TASK_PRIORITY_OFFSET: u32 = 1000;
 /// Arguments: `(String :description) :value`
 ///
 /// Keyed Arguments:
-/// * `String :count`: A numeric string indicating the number of task slots the task should use.
+/// * `Into<Number> :count`: An integer indicating the number of task slots the task should use.
 /// Defaults to 0.
 /// * `:track-work-by`: A value the identity of which is used as the identifier for work tracking.
 /// If unset, the task value identity is used. For instance, you might use this to indicate the
 /// values which affect a task's runtime, so that progress estimation may be able to predict how
 /// long the task will take based on prior runs.
-/// * `String :priority`: A numeric string from 1 to 1000 indicating the priority of the task. Lower
-/// numbers have higher priority (will run earlier). Default 500.
+/// * `Into<Number> :priority`: An integer from 1 to 1000 indicating the priority of the task. Lower
+/// numbers have higher priority (i.e. will run earlier). Default 500.
 ///
 /// Returns the result of evaluating `value` by running it in a concurrent task (which may run on a
 /// separate thread) that is described by `description`.
@@ -38,25 +37,31 @@ pub const SCRIPT_TASK_PRIORITY_OFFSET: u32 = 1000;
 pub async fn function(
     description: types::String,
     value: _,
-    (count): [types::String],
+    (count): [_],
     (track_work_by): [_],
-    (priority): [types::String],
+    (priority): [_],
 ) -> Value {
     let count = match count {
-        Some(v) => try_result!(v
-            .map(|s| u32::from_str(s.as_ref()).map_err(|_| "expected unsigned integer"))
-            .transpose_err()
-            .map_err(|e| e.into_error())),
+        Some(v) => {
+            let n = try_result!(traits::into_sourced::<types::Number>(CONTEXT, v).await);
+            try_result!(n
+                .map(|n| n.as_ref().to_u32().ok_or("expected unsigned integer"))
+                .transpose_err()
+                .map_err(|e| e.into_error()))
+        }
         None => 0,
     };
 
     let mut priority = match priority {
         Some(v) => {
             let src = v.source();
-            let priority = try_result!(v
-                .map(|s| u32::from_str(s.as_ref()).map_err(|_| "expected unsigned integer"))
-                .transpose_err()
-                .map_err(|e| e.into_error()));
+            let priority = {
+                let n = try_result!(traits::into_sourced::<types::Number>(CONTEXT, v).await);
+                try_result!(n
+                    .map(|n| n.as_ref().to_u32().ok_or("expected unsigned integer"))
+                    .transpose_err()
+                    .map_err(|e| e.into_error()))
+            };
             if priority < 1 || priority > 1000 {
                 return src
                     .with("priority must fall in [1,1000]")

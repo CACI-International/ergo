@@ -13,6 +13,7 @@ mod index;
 mod iter;
 mod map;
 mod map_entry;
+mod number;
 mod path;
 mod string;
 mod unbound;
@@ -31,6 +32,7 @@ pub use index::Index;
 pub use iter::Iter;
 pub use map::Map;
 pub use map_entry::MapEntry;
+pub use number::Number;
 pub use path::Path;
 pub use string::String;
 pub use unbound::Unbound;
@@ -53,4 +55,5 @@ ergo_traits_fn! {
     args::ergo_traits(traits);
     index::ergo_traits(traits);
     bind_rest::ergo_traits(traits);
+    number::ergo_traits(traits);
 }

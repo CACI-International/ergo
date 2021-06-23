@@ -13,6 +13,7 @@ mod map;
 #[path = "match.rs"]
 mod match_;
 mod net;
+mod number;
 mod path;
 mod string;
 pub mod task;
@@ -60,6 +61,7 @@ fn entry(ctx: &Context) -> ergo_runtime::Result<Source<Value>> {
         "map" = map::module(),
         "match" = match_::function(),
         "net" = net::module(),
+        "number" = number::module(),
         "path" = path::module(),
         "string" = string::module(),
         "task" = task::function(),
