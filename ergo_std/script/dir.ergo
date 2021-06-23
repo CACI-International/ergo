@@ -317,7 +317,7 @@ if = fn :cond :if_true ^:if_false -> plugin:match [plugin:bool:from :cond, :if_f
     ## {{type-function:}}
     ##
     ## # Functions
-    ## {{mdoc:functions :self format from join split trim}}
+    ## {{mdoc:functions :self chars format from join split trim}}
     String = match-indices plugin:type:String plugin:string
 
     ## The Unit type.

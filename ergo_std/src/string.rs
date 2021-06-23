@@ -4,12 +4,34 @@ use ergo_runtime::{traits, try_result, types, Value};
 
 pub fn module() -> Value {
     crate::make_string_map! {
+        "chars" = chars(),
         "format" = format(),
         "from" = from(),
         "join" = join(),
         "split" = split(),
         "trim" = trim()
     }
+}
+
+#[types::ergo_fn]
+/// Create an iterator over the characters of a string.
+///
+/// Arguments: `(String :s)`
+///
+/// Returns an `Iter` where each item will be a `String` containing a single character.
+async fn chars(s: types::String) -> Value {
+    let v = s
+        .unwrap()
+        .to_owned()
+        .chars()
+        .map(|c| {
+            ARGS_SOURCE
+                .clone()
+                .with(types::String::from(String::from(c)).into())
+        })
+        .collect::<Vec<_>>();
+
+    types::Iter::new(v.into_iter(), CALL_DEPENDS).into()
 }
 
 #[types::ergo_fn]
@@ -180,6 +202,12 @@ async fn trim(s: types::String) -> Value {
 #[cfg(test)]
 mod test {
     use ergo_runtime::types::String;
+
+    ergo_script::test! {
+        fn chars(t) {
+            t.assert_content_eq("self:array:from <| self:string:chars hello", "[h,e,l,l,o]");
+        }
+    }
 
     ergo_script::test! {
         fn format(t) {
