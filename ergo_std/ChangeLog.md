@@ -22,7 +22,9 @@
 * Add `std:fs:archive` for creating archives (opposite of `std:fs:unarchive`).
 * Add `std:json` module with `parse` and `stringify` functions to convert json
   strings to ergo values and visa versa.
-* Add `std:string:chars` to get the characters in a string.
+* Add `std:String:chars` to get the characters in a string.
+* Support using `std:String:format` as a pattern command to do simple
+  destructuring of strings.
 
 ### Improvements
 * `std:match` now takes an array of cases rather than using the remaining

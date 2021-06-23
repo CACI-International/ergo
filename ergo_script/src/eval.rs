@@ -476,7 +476,7 @@ impl Evaluator {
                     let immediate_bind = b.expr_type() == ast::ExpressionType::Set;
 
                     let new_sets = Sets::new();
-                    let b = self
+                    let mut b = self
                         .evaluate_deep()
                         .evaluate_now_with_env(
                             ctx,
@@ -486,12 +486,9 @@ impl Evaluator {
                             &new_sets,
                         )
                         .await;
-                    /*
-                    let b = b
-                        .map_async(|b| traits::value_by_content(ctx, b, true))
-                        .await;
-                    */
-                    // TODO check for error
+
+                    // Immediately eval and check for bind error
+                    ctx.eval(&mut b).await?;
                     let new_sets = new_sets.into_inner();
 
                     // Create proxy entries that will perform the bind.
