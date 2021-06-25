@@ -24,14 +24,16 @@ syn match ergoNoArgCommandOperator /:\_s/
 syn match ergoDataDelimiter /[\[\]{}]/
 syn region ergoQuotedString start=/\(\\\)\@<!"/ skip=/\\[\\"]/ end=/"/
 syn region ergoRawQuotedString start=/\z('\+\)/ end=/\z1/
-syn match ergoComment contains=ergoDocComment /#.*$/
-syn match ergoDocComment /##.*$/
+syn match ergoComment contains=ergoDocComment,ergoTodo /#.*$/
+syn match ergoDocComment contains=ergoTodo /##.*$/
 syn match ergoFunctions contained /\<\(ergo\|pat\|fn\|index\|std\|workspace\|doc\|bind\)\>/
+syn keyword ergoTodo contained TODO FIXME XXX
 
 let b:current_syntax = "ergo"
 
 hi def link ergoComment Comment
 hi def link ergoDocComment SpecialComment
+hi def link ergoTodo Todo
 hi def link ergoQuotedString String
 hi def link ergoRawQuotedString String
 hi def link ergoDataDelimiter Normal
