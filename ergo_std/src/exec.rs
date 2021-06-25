@@ -318,6 +318,7 @@ pub async fn function(
         depends![^CALL_DEPENDS.clone(), nsid!(exec::stderr)],
     );
 
+    let rcv_status = rcv_status.shared();
     let exit_status = Value::dyn_new(
         |_| async move {
             try_result!(run_command.await);

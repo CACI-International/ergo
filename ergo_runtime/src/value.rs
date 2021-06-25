@@ -85,7 +85,7 @@ impl Value {
     /// Create a dynamically-typed (unevaluated) value with the given dependencies.
     pub fn dyn_new<'b, F, Fut, D>(f: F, deps: D) -> Self
     where
-        F: FnOnce(&'b crate::Context) -> Fut + Send + Sync + 'static,
+        F: FnOnce(&'b crate::Context) -> Fut + Clone + Send + Sync + 'static,
         Fut: std::future::Future<Output = Value> + Send + 'b,
         D: Into<Dependencies>,
     {
@@ -97,16 +97,11 @@ impl Value {
     /// Create a dynamically-typed (unevaluated) value with the given identity.
     pub fn dyn_with_id<'b, F, Fut>(f: F, id: u128) -> Self
     where
-        F: FnOnce(&'b crate::Context) -> Fut + Send + Sync + 'static,
+        F: FnOnce(&'b crate::Context) -> Fut + Clone + Send + Sync + 'static,
         Fut: std::future::Future<Output = Value> + Send + 'b,
     {
-        let next = DynamicNext_TO::from_value(
-            std::sync::Arc::new(futures::lock::Mutex::new(DynamicNextState::Pending(
-                f,
-                std::marker::PhantomData,
-            ))),
-            TU_Opaque,
-        );
+        let next =
+            DynamicNext_TO::from_value(DynamicNextState(f, std::marker::PhantomData), TU_Opaque);
         // The value _is_ actually 'static, but with `Fut` in the type, it thinks it is 'b
         let next =
             unsafe { std::mem::transmute::<DynamicNext_TO<_>, DynamicNext_TO<'static, _>>(next) };
@@ -350,38 +345,27 @@ trait DynamicNext: Clone + Send + Sync {
     fn next<'a>(self, ctx: &'a crate::Context) -> future::BoxFuture<'a, Value>;
 }
 
-impl<'b, F, Fut> DynamicNext for std::sync::Arc<futures::lock::Mutex<DynamicNextState<F, Fut>>>
+impl<'b, F, Fut> DynamicNext for DynamicNextState<F, Fut>
 where
-    F: FnOnce(&'b crate::Context) -> Fut + Send + Sync + 'b,
+    F: FnOnce(&'b crate::Context) -> Fut + Clone + Send + Sync + 'b,
     Fut: std::future::Future<Output = Value> + Send + 'b,
 {
     fn next<'a>(self, ctx: &'a crate::Context) -> future::BoxFuture<'a, Value> {
+        // Let 'b = 'a
         let ctx = unsafe { std::mem::transmute::<&'a _, &'b _>(ctx) };
-        let fut = future::BoxFuture::new(async move {
-            let mut guard = self.lock().await;
-            let val = match std::mem::take(&mut *guard) {
-                DynamicNextState::Pending(f, _) => f(ctx).await,
-                DynamicNextState::Done(val) => val,
-                DynamicNextState::Empty => panic!("invalid next state"),
-            };
-            *guard = DynamicNextState::Done(val.clone());
-            val
-        });
+        let fut = future::BoxFuture::new((self.0)(ctx));
+        // Change 'b back to 'a
         unsafe {
             std::mem::transmute::<future::BoxFuture<'b, Value>, future::BoxFuture<'a, Value>>(fut)
         }
     }
 }
 
-enum DynamicNextState<F, Fut> {
-    Empty,
-    Pending(F, std::marker::PhantomData<fn() -> Fut>),
-    Done(Value),
-}
+struct DynamicNextState<F, Fut>(F, std::marker::PhantomData<fn() -> Fut>);
 
-impl<F, Fut> Default for DynamicNextState<F, Fut> {
-    fn default() -> Self {
-        DynamicNextState::Empty
+impl<F: Clone, Fut> Clone for DynamicNextState<F, Fut> {
+    fn clone(&self) -> Self {
+        DynamicNextState(self.0.clone(), std::marker::PhantomData)
     }
 }
 

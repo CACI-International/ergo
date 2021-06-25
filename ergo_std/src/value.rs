@@ -282,4 +282,11 @@ mod test {
                 self:value:dynamic:eval { my_func = :say_hello } <| f dude", "'hi, dude'");
         }
     }
+
+    ergo_script::test! {
+        fn dynamic_binding_multiple_scopes(t) {
+            t.assert_content_eq("the-value = self:value:dynamic:get the-value
+                [self:value:dynamic:eval {the-value = 10} :the-value, self:value:dynamic:eval {the-value = hi} :the-value]", "[10,hi]");
+        }
+    }
 }

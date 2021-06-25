@@ -685,6 +685,8 @@ impl Evaluator {
                 let (k_source, k) = self.evaluate_with_env(ctx, set.value.clone(), captures, local_env, sets).take();
                 let (send_result, receive_result) = futures::channel::oneshot::channel::<Value>();
 
+                let receive_result = receive_result.shared();
+
                 let v = k_source.clone().with(Value::dyn_new(|_| async move {
                     match receive_result.await {
                         Ok(v) => v,

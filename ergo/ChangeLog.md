@@ -59,6 +59,10 @@ improvements, so no such distinction is made.
   large rational numbers.
 * Add support for arbitrary escaped unicode characters in quoted strings.
   * This looks like `"\u{123456}"`, where you can have from 1 to 6 hex digits.
+* No longer cache value results when values are reused.
+  * This reduces surprise when using dynamic bindings (and actually makes those
+    much more correct), even though it may in a few cases reduce efficiency.
+    If runtime caching is desired, `std:cache` may be used.
 
 ### Evaluation Semantics
 The new evaluation semantics and data model are a drastic simplification over
