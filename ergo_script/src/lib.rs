@@ -126,19 +126,12 @@ impl Drop for Runtime {
 }
 
 /// A loaded script.
+#[derive(Clone, Debug)]
 pub struct Script {
     ast: ast::Expr,
     captures: eval::Captures,
     top_level_env: BTreeMap<String, Source<Value>>,
 }
-
-/*
-/// Get the final value.
-///
-/// This will apply any unbound values on empty Args.
-pub async fn final_value(ctx: &Context, mut val: Source<Value>) -> Value {
-}
-*/
 
 impl Script {
     /// Load a script from a Source.

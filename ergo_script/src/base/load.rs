@@ -14,17 +14,26 @@ use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct LoadData {
-    pub loading: Arc<RMutex<Vec<PathBuf>>>,
-    pub load_cache: Arc<RMutex<BTreeMap<PathBuf, Source<Value>>>>,
+    pub load_cache: Arc<RMutex<BTreeMap<PathBuf, ergo_runtime::Result<Loaded>>>>,
     pub load_path: Arc<Vec<PathBuf>>,
     pub top_level_env: Arc<RMutex<BTreeMap<String, Source<Value>>>>,
     pub ast_context: Arc<RMutex<crate::ast::Context>>,
 }
 
+#[derive(Clone)]
+pub enum Loaded {
+    Script(crate::Script),
+    Plugin(
+        dl::Symbol<
+            'static,
+            extern "C" fn(ergo_runtime::plugin::Context, &Context) -> RResult<Source<Value>>,
+        >,
+    ),
+}
+
 impl LoadData {
     fn new(load_path: Vec<PathBuf>) -> Self {
         LoadData {
-            loading: Arc::new(RMutex::new(Default::default())),
             load_cache: Arc::new(RMutex::new(BTreeMap::default())),
             load_path: Arc::new(load_path),
             top_level_env: Arc::new(RMutex::new(Default::default())),
@@ -34,7 +43,6 @@ impl LoadData {
 
     /// Reset the inner state of the load data.
     pub fn reset(&self) {
-        *self.loading.lock() = Default::default();
         *self.load_cache.lock() = Default::default();
         *self.top_level_env.lock() = Default::default();
         *self.ast_context.lock() = Default::default();
@@ -65,84 +73,48 @@ impl LoadData {
     ///
     /// The path should already be verified as an existing file.
     pub async fn load_script(&self, ctx: &Context, path: &Path) -> Source<Value> {
-        // Check whether path is already being loaded.
-        for l_path in self.loading.lock().iter() {
-            if l_path == path {
-                return Source::builtin(
-                    Source::builtin(format!("already loading {}", path.display()))
-                        .into_error()
-                        .into(),
-                );
-            }
-        }
-
         debug_assert!(path.is_file());
         let path = path.canonicalize().unwrap(); // unwrap because is_file() should guarantee that canonicalize will succeed.
 
-        // FIXME if multiple threads are calling load, they may load the same script more than
-        // once. This could be changed into a cache of futures that yield the resulting value,
-        // though we need to clone contexts and the like. This was already attempted once but some
-        // recursive type errors also came up with async blocks.
-        let cache = self.load_cache.clone();
+        let source = Source::new(FileSource(path.clone()));
 
-        // Since we are in an async function, we need to access the cache in a somewhat odd
-        // pattern.
-        let cached = {
-            let cache = cache.lock();
-            let p = path.to_owned();
-            let ret = cache.get(&p).cloned();
-            if ret.is_none() {
-                // Exclude path from loading in nested calls.
-                self.loading.lock().push(p);
-            }
-            ret
-        };
-
-        match cached {
-            None => {
-                let result = if !is_plugin(&path) {
-                    let loaded = {
-                        let mut guard = self.ast_context.lock();
-                        crate::Script::load(Source::new(FileSource(path.clone())), &mut *guard)
-                    };
-                    match loaded {
-                        Err(e) => Err(e),
-                        Ok(mut script) => {
-                            script.top_level_env(self.top_level_env.lock().clone());
-                            script.evaluate(ctx).await
-                        }
-                    }
+        let loaded = self
+            .load_cache
+            .lock()
+            .entry(path.clone())
+            .or_insert_with(|| {
+                if !is_plugin(&path) {
+                    let mut guard = self.ast_context.lock();
+                    crate::Script::load(source.clone(), &mut *guard).map(|mut s| {
+                        s.top_level_env(self.top_level_env.lock().clone());
+                        Loaded::Script(s)
+                    })
                 } else {
                     dl::Library::new(&path)
                         .map_err(|e| e.into())
                         .and_then(|lib| {
-                            let f: dl::Symbol<
-                                extern "C" fn(
-                                    ergo_runtime::plugin::Context,
-                                    &Context,
-                                )
-                                    -> RResult<Source<Value>>,
-                            > = unsafe { lib.get(PLUGIN_ENTRY.as_bytes()) }?;
-                            let result = f(ergo_runtime::plugin::Context::get(), ctx);
                             // Leak loaded libraries rather than storing them and dropping them in
                             // the context, as this can cause issues if the thread pool hasn't shut
                             // down.
-                            // ctx.lifetime(lib);
+                            let l: &'static dl::Library = unsafe { std::mem::transmute(&lib) };
                             std::mem::forget(lib);
-                            result.into()
-                        })
-                };
 
-                let cache = self.load_cache.clone();
-                let mut cache = cache.lock();
-                let val: Source<Value> =
-                    Source::new(FileSource(path.clone())).with(result.map(Source::unwrap).into());
-                cache.insert(path.into(), val.clone());
-                self.loading.lock().pop();
-                val
-            }
-            Some(v) => v,
-        }
+                            unsafe { l.get(PLUGIN_ENTRY.as_bytes()) }
+                                .map(Loaded::Plugin)
+                                .map_err(|e| e.into())
+                        })
+                }
+            })
+            .clone();
+
+        source.with(match loaded {
+            Err(e) => e.into(),
+            Ok(Loaded::Script(s)) => s.evaluate(ctx).await.map(Source::unwrap).into(),
+            Ok(Loaded::Plugin(f)) => f(ergo_runtime::plugin::Context::get(), ctx)
+                .into_result()
+                .map(Source::unwrap)
+                .into(),
+        })
     }
 }
 
