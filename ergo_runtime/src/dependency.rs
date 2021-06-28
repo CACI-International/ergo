@@ -45,6 +45,8 @@ macro_rules! HashAsDependency {
 HashAsDependency!(crate::abi_stable::uuid::Uuid);
 HashAsDependency!(String);
 HashAsDependency!(&'_ str);
+HashAsDependency!(std::path::PathBuf);
+HashAsDependency!(&'_ std::path::Path);
 HashAsDependency!(u32);
 HashAsDependency!(i32);
 HashAsDependency!(u64);

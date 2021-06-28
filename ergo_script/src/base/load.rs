@@ -14,21 +14,12 @@ use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct LoadData {
-    pub load_cache: Arc<RMutex<BTreeMap<PathBuf, ergo_runtime::Result<Loaded>>>>,
+    // The load cache `Value` is always a dynamic value which (when evaluated once) will do the
+    // actual loading of the script/plugin to take advantage of evaluation caching.
+    pub load_cache: Arc<RMutex<BTreeMap<PathBuf, Value>>>,
     pub load_path: Arc<Vec<PathBuf>>,
     pub top_level_env: Arc<RMutex<BTreeMap<String, Source<Value>>>>,
     pub ast_context: Arc<RMutex<crate::ast::Context>>,
-}
-
-#[derive(Clone)]
-pub enum Loaded {
-    Script(crate::Script),
-    Plugin(
-        dl::Symbol<
-            'static,
-            extern "C" fn(ergo_runtime::plugin::Context, &Context) -> RResult<Source<Value>>,
-        >,
-    ),
 }
 
 impl LoadData {
@@ -78,43 +69,61 @@ impl LoadData {
 
         let source = Source::new(FileSource(path.clone()));
 
-        let loaded = self
+        let mut loaded = self
             .load_cache
             .lock()
             .entry(path.clone())
             .or_insert_with(|| {
-                if !is_plugin(&path) {
-                    let mut guard = self.ast_context.lock();
-                    crate::Script::load(source.clone(), &mut *guard).map(|mut s| {
-                        s.top_level_env(self.top_level_env.lock().clone());
-                        Loaded::Script(s)
-                    })
-                } else {
-                    dl::Library::new(&path)
-                        .map_err(|e| e.into())
-                        .and_then(|lib| {
-                            // Leak loaded libraries rather than storing them and dropping them in
-                            // the context, as this can cause issues if the thread pool hasn't shut
-                            // down.
-                            let l: &'static dl::Library = unsafe { std::mem::transmute(&lib) };
-                            std::mem::forget(lib);
-
-                            unsafe { l.get(PLUGIN_ENTRY.as_bytes()) }
-                                .map(Loaded::Plugin)
+                let me = self.clone();
+                let source = source.clone();
+                let deps = depends![nsid!(load), path];
+                Value::dyn_new(
+                    move |ctx| async move {
+                        if !is_plugin(&path) {
+                            let script_result = {
+                                let mut guard = me.ast_context.lock();
+                                crate::Script::load(source, &mut *guard)
+                            };
+                            match script_result {
+                                Err(e) => Err(e),
+                                Ok(mut s) => {
+                                    s.top_level_env(me.top_level_env.lock().clone());
+                                    s.evaluate(ctx).await.map(Source::unwrap)
+                                }
+                            }
+                        } else {
+                            dl::Library::new(&path)
                                 .map_err(|e| e.into())
-                        })
-                }
+                                .and_then(|lib| {
+                                    // Leak loaded libraries rather than storing them and dropping them in
+                                    // the context, as this can cause issues if the thread pool hasn't shut
+                                    // down.
+                                    let l: &'static dl::Library =
+                                        unsafe { std::mem::transmute(&lib) };
+                                    std::mem::forget(lib);
+
+                                    let f: dl::Symbol<
+                                        extern "C" fn(
+                                            ergo_runtime::plugin::Context,
+                                            &Context,
+                                        )
+                                            -> RResult<Source<Value>>,
+                                    > = unsafe { l.get(PLUGIN_ENTRY.as_bytes()) }?;
+                                    f(ergo_runtime::plugin::Context::get(), ctx)
+                                        .map(Source::unwrap)
+                                        .into()
+                                })
+                        }
+                        .into()
+                    },
+                    deps,
+                )
             })
             .clone();
 
-        source.with(match loaded {
-            Err(e) => e.into(),
-            Ok(Loaded::Script(s)) => s.evaluate(ctx).await.map(Source::unwrap).into(),
-            Ok(Loaded::Plugin(f)) => f(ergo_runtime::plugin::Context::get(), ctx)
-                .into_result()
-                .map(Source::unwrap)
-                .into(),
-        })
+        loaded.eval_once(ctx).await;
+
+        source.with(loaded)
     }
 }
 
