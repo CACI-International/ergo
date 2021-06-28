@@ -33,7 +33,7 @@ impl DocPath {
     }
 
     pub fn owned(ctx: &Context) -> Option<Self> {
-        Self::get(ctx).map(|r| r.owned())
+        Self::get(ctx).map(|r| r.as_ref().clone())
     }
 
     pub fn new(root: Source<PathBuf>) -> Self {
