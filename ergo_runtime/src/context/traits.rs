@@ -280,7 +280,7 @@ impl Traits {
             .entry(trt)
             .or_default()
             .push(InternalTraitGeneratorByTrait(
-                std::mem::transmute(&apply_trait_generator_by_trait),
+                std::mem::transmute(apply_trait_generator_by_trait as extern "C" fn(_, _, _) -> _),
                 gen as *const (),
             ));
     }

@@ -27,6 +27,8 @@
 * Add `std:String:chars` to get the characters in a string.
 * Support using `std:String:format` as a pattern command to do simple
   destructuring of strings.
+* Add `std:getopt` and `std:getopt:fn` to support simple conversion of string
+  arguments containing long getopt-style flags to `Args`.
 
 ### Improvements
 * `std:match` now takes an array of cases rather than using the remaining

@@ -6,6 +6,7 @@ mod bool;
 mod env;
 mod exec;
 mod fs;
+mod getopt;
 mod io;
 mod iter;
 mod json;
@@ -56,6 +57,7 @@ fn entry(ctx: &Context) -> ergo_runtime::Result<Source<Value>> {
         "env" = env::module(),
         "exec" = exec::function(),
         "fs" = fs::module(),
+        "getopt" = getopt::function(),
         "io" = io::module(),
         "iter" = iter::module(),
         "json" = json::module(),

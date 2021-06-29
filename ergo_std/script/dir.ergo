@@ -200,6 +200,13 @@ if = fn :cond :if_true ^:if_false -> plugin:match [plugin:bool:from :cond, :if_f
     [plugin:bool:false, [:if_false]] -> :if_false
 ]
 
+## Create a function which takes only string arguments as interpreted by `std:getopt`.
+##
+## Pattern Arguments: `^:args`
+##
+## Passes all positional arguments to `std:getopt` and binds the result to the pattern arguments.
+getopt-fn = :patargs -> :args -> bind :patargs <| plugin:getopt args:positional
+
 ## The ergo standard library.
 ##
 ## This library provides a number of submodules that group related functions, as well as some
@@ -422,6 +429,7 @@ if = fn :cond :if_true ^:if_false -> plugin:match [plugin:bool:from :cond, :if_f
     default
     ergo-remote
     exec = plugin:exec
+    getopt = match-indices plugin:getopt {fn = getopt-fn}
     import
     if
     ## {{native-doc plugin:match}}
