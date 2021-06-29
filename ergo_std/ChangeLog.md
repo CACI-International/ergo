@@ -45,6 +45,8 @@
 * Add a `priority` keyed argument to `task`, which allows setting a priority
   between 1 and 1000 for a task.
 * Updated numeric arguments of functions to take the new `Number` type.
+* `std:net:http` will use the system native certificates rather than the mozilla
+  webpki set.
 
 ### Breaking Changes
 * Renamed the `task-count` keyed argument of `task` to `count`.
