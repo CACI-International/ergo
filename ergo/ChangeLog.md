@@ -63,6 +63,12 @@ improvements, so no such distinction is made.
   evaluated.
   * This reduces surprise when using dynamic bindings in scripts (and makes
     those always correct semantically).
+* Always pass command-line arguments as Strings to faithfully preserve shell/OS
+  semantics.
+  * The first argument is treated a little specially, interpreting any `:` as
+    index operations into the loaded value.
+  * If `--expression` is used, arguments are passed as-is (and may have
+    operators, other script types, etc).
 
 ### Evaluation Semantics
 The new evaluation semantics and data model are a drastic simplification over

@@ -106,11 +106,15 @@ pub struct Opts {
 
     /// Arguments for loading the value(s) to run.
     ///
-    /// All additional arguments are run as if "ergo <args>..." were executed in a script, unless
+    /// All additional arguments are run as if `ergo <args>...` were executed in a script with
+    /// literal String arguments (to translate from shell/OS invocations more faithfully), unless
     /// `-e` is specified.
     ///
-    /// If `-e` is _not_ used, the first `:` is translated into `|>:` for convenience. For example,
-    /// `ergo std:fs:read` becomes `ergo std |>:fs:read` (the same as `(ergo std):fs:read`). Note
-    /// that this does _not_ occur if the first `:` is already preceded by `|>`.
+    /// If `-e` is _not_ used, the first argument is treated specially: any `:` characters are
+    /// preserved as index operations on the loaded value.
+    ///
+    /// If no arguments are provided, or if the first argument cannot be resolved to a module in
+    /// the load path, instead of loading a script with `ergo <args>...`, `workspace:command
+    /// <args>...` is evaluated (following the same special treatment of the first argument).
     pub args: Vec<String>,
 }

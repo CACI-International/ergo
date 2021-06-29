@@ -98,7 +98,3 @@ scripts reside.
   grease runtime.
   * This will allow loaded plugins to be properly dropped rather than leaked.
 * Improve std::fs file not found errors (print the file!).
-* Add a convenience function to turn a map into command-line flags (based on a
-  specification of which flags have required args). This is convenient for
-  things that want to pass flags to a program but also might need to easily
-  inspect/manipulate the flags.

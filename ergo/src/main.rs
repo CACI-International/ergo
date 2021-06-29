@@ -75,6 +75,20 @@ impl AppErr for bool {
     }
 }
 
+fn string_quote<S: AsRef<str>>(s: S) -> String {
+    s.as_ref()
+        .split('\'')
+        .map(|s| {
+            if s.is_empty() {
+                Default::default()
+            } else {
+                format!("'{}'", s)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\"'\"")
+}
+
 fn run(opts: Opts) -> Result<String, String> {
     let mut output = output(opts.format, !opts.stop)
         .app_err_result("could not create output from requested format")?;
@@ -140,12 +154,14 @@ fn run(opts: Opts) -> Result<String, String> {
     };
 
     let storage_directory = storage_dir_root.join(opts.storage);
+
+    // Clean storage directory if requested.
     if opts.clean && storage_directory.exists() {
         std::fs::remove_dir_all(&storage_directory)
             .app_err_result("failed to clean storage directory")?;
     }
 
-    // Get initial load path from exe location and user directories.
+    // Get the load path from exe location and user directories.
     let load_path = {
         let mut load_paths = Vec::new();
 
@@ -234,59 +250,71 @@ fn run(opts: Opts) -> Result<String, String> {
     }
 
     // Build script string to evaluate
-    let mut eval_args = String::new();
-    let no_args = opts.args.is_empty();
-    for arg in opts.args {
-        if !eval_args.is_empty() {
-            eval_args.push(' ');
-        }
-        eval_args.push_str(&arg);
-    }
-
     let mut to_eval = if opts.expression {
-        if no_args {
+        if opts.args.is_empty() {
             "()".into()
         } else {
+            let mut eval_args = String::new();
+            for arg in opts.args {
+                if !eval_args.is_empty() {
+                    eval_args.push(' ');
+                }
+                eval_args.push_str(&arg);
+            }
             eval_args
         }
     } else {
-        // When there are no arguments, always call workspace:command function.
-        // This returns _just_ the function, so that documentation will work as expected, but it
-        // will then be called without arguments (with script::final_value).
-        if no_args {
-            "workspace:command".into()
-        } else {
-            // When there are arguments:
-            // * Replace the first `:` with `|>:` for convenience.
-            // * Inspect the first effective argument to determine whether to invoke a normal load
-            // or the workspace:command function.
-            let first_arg_end = if let Some(p) = eval_args.find(':') {
-                if eval_args.get(p - 2..p).map(|s| s != "|>").unwrap_or(true) {
-                    eval_args.replace_range(p..p + 1, "|>:");
+        let mut args = opts.args.into_iter();
+        match args.next() {
+            None => {
+                // When there are no arguments, always call workspace:command function.
+                // This returns _just_ the function, so that documentation will work as expected, but it
+                // will then be called without arguments (with runtime.final_value).
+                "workspace:command".into()
+            }
+            Some(a) => {
+                let mut s = String::new();
+                // Split the first argument on `:` to support indexing.
+                let mut indices = a.split(":");
+                let to_load = indices.next().unwrap();
+                // Inspect the first effective argument to determine whether to invoke a normal load
+                // or the workspace:command function.
+                s += if runtime
+                    .resolve_script_path(None, to_load.as_ref())
+                    .is_none()
+                {
+                    "workspace:command"
+                } else {
+                    PROGRAM_NAME
+                };
+                s += " ";
+                s += &string_quote(to_load);
+                s += " |>";
+
+                // Apply indices
+                for index in indices {
+                    s += ":";
+                    s += &string_quote(index);
                 }
-                p
-            } else if let Some(p) = eval_args.find(&[' ', '|', '<', '{', '[', '('][..]) {
-                p
-            } else {
-                eval_args.len()
-            };
-            let first_arg = &eval_args[0..first_arg_end];
-            let function = if runtime
-                .resolve_script_path(None, first_arg.as_ref())
-                .is_none()
-            {
-                "workspace:command"
-            } else {
-                PROGRAM_NAME
-            };
-            format!("{} {}", function, eval_args)
+
+                // Pass all remaining arguments as strings.
+                for a in args {
+                    s.push(' ');
+                    s += &string_quote(a);
+                }
+                s
+            }
         }
     };
 
     if opts.doc {
         to_eval = format!("doc ({})", to_eval);
     } else if let Some(path) = opts.doc_path {
-        to_eval = format!("doc:write {} ({})", path.display(), to_eval);
+        to_eval = format!(
+            "doc:write {} ({})",
+            string_quote(path.display().to_string()),
+            to_eval
+        );
     }
 
     let source = Source::new(StringSource::new("<command line>", to_eval));
@@ -301,17 +329,15 @@ fn run(opts: Opts) -> Result<String, String> {
         Ok(try_value!(v))
     });
 
-    /*
     // Clear load cache, so that lifetimes are optimistically dropped. It's not very likely that
     // stuff will be loaded while executing the final value, but if so it'll just take the hit of
     // reloading the scripts.
-    control.clear_load_cache();
-    */
+    runtime.clear_load_cache();
 
     let ret = value_to_execute.and_then(|value| {
         runtime.ctx.task.block_on(async {
             use ergo_runtime::traits::{display, eval_nested, Formatter};
-            drop(eval_nested(&runtime.ctx, value.clone()).await);
+            eval_nested(&runtime.ctx, value.clone()).await?;
             let mut s = String::new();
             {
                 let mut formatter = Formatter::new(&mut s);
