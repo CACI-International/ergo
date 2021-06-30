@@ -69,11 +69,13 @@ pub async fn into<T: ErgoType + StableAbi + Eraseable>(
         let to_t = type_name_for(&ctx, &T::ergo_type());
         format!("cannot convert {} into {}", from_t, to_t)
     })?;
-    t.into_typed(v).await.as_type::<T>().map_err(|v| {
-        let actual_t = type_name(ctx, &v);
-        let into_t = type_name_for(ctx, &T::ergo_type());
-        format!("bad IntoTyped<{}> implementation, got {}", into_t, actual_t).into()
-    })
+    crate::try_value!(t.into_typed(v).await)
+        .as_type::<T>()
+        .map_err(|v| {
+            let actual_t = type_name(ctx, &v);
+            let into_t = type_name_for(ctx, &T::ergo_type());
+            format!("bad IntoTyped<{}> implementation, got {}", into_t, actual_t).into()
+        })
 }
 
 ergo_traits_fn! {
