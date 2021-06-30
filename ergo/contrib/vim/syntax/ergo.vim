@@ -5,7 +5,7 @@ if exists("b:current_syntax")
 	finish
 endif
 
-set iskeyword=$,%,&,',*,+,45-57,63-90,95-122,126,~
+set iskeyword=$,%,&,*,+,45-57,63-90,95-122,126,~
 syn match ergoMerge /\^/
 syn match ergoForce /!/
 syn match ergoFunc /->/
