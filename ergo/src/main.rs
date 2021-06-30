@@ -289,10 +289,14 @@ fn run(opts: Opts) -> Result<String, String> {
                 };
                 s += " ";
                 s += &string_quote(to_load);
-                s += " |>";
 
                 // Apply indices
+                let mut first = false;
                 for index in indices {
+                    if first {
+                        s += " |>";
+                        first = false;
+                    }
                     s += ":";
                     s += &string_quote(index);
                 }
