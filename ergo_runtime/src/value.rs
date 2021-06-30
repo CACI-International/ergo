@@ -197,7 +197,12 @@ impl Value {
     /// Evaluate the value once (if dynamic).
     pub async fn eval_once(&mut self, ctx: &crate::Context) {
         match std::mem::replace(&mut self.data, ValueData::None) {
-            ValueData::Dynamic { next } => *self = next.next(ctx).await,
+            ValueData::Dynamic { next } => {
+                let Value { id, metadata, data } = next.next(ctx).await;
+                self.id = id;
+                self.metadata.extend(metadata);
+                self.data = data;
+            }
             o => self.data = o,
         }
     }
