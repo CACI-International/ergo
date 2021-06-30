@@ -355,7 +355,7 @@ fn disown_pgroup(cmd: &mut Command) {}
 ergo_runtime::type_system::ergo_traits_fn! {
     // CommandString traits
     traits::IntoTyped::<CommandString>::add_impl::<types::String>(traits);
-    traits::IntoTyped::<CommandString>::add_impl::<types::String>(traits);
+    traits::IntoTyped::<CommandString>::add_impl::<types::Path>(traits);
     ergo_runtime::ergo_type_name!(traits, CommandString);
 
     // ExitStatus traits
