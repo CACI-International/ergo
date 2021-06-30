@@ -51,7 +51,8 @@ async fn join(...) -> Value {
     let mut path = std::path::PathBuf::new();
 
     while let Some(sv) = REST.next() {
-        let (src, v) = sv.take();
+        let (src, mut v) = sv.take();
+        try_result!(CONTEXT.eval(&mut v).await);
         match_value! {v,
             types::String(s) => path.push(s.as_str()),
             types::Path(p) => path.push(p.as_ref()),

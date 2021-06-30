@@ -10,7 +10,8 @@ use ergo_runtime::{traits, types, Value};
 /// Returns the value resulting from the first value in `bindings` that doesn't produce a pattern
 /// error when bound with `value`.
 pub async fn function(mut value: _, bindings: types::Array) -> Value {
-    let bindings = bindings.unwrap().to_owned().0;
+    let (bindings_source, bindings) = bindings.take();
+    let bindings = bindings.to_owned().0;
 
     // Do not propagate errors while trying the bindings
     let ctx = CONTEXT.with_error_handler(|_| ());
@@ -31,11 +32,13 @@ pub async fn function(mut value: _, bindings: types::Array) -> Value {
         }
     }
 
-    let err = match value.unwrap().as_type::<types::Error>() {
+    let (value_source, value) = value.take();
+    let err = match value.as_type::<types::Error>() {
         Ok(e) => e.to_owned(),
-        Err(_) => ARGS_SOURCE
+        Err(_) => value_source
             .with("no bindings matched the value")
-            .into_error(),
+            .into_error()
+            .with_context(bindings_source.with("bindings which failed to match")),
     };
 
     CONTEXT.error_scope.error(&err);

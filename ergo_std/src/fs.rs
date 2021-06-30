@@ -443,7 +443,8 @@ async fn sha1(file: types::Path, sum: types::String) -> Value {
 /// Returns a `Path` that is identified by the contents of the file to which the argument refers.
 /// `file` must exist and refer to a file.
 async fn track(file: _) -> Value {
-    let (file_source, file) = file.take();
+    let (file_source, mut file) = file.take();
+    try_result!(CONTEXT.eval(&mut file).await);
     let file = match_value! {file,
         types::String(s) => s.as_str().into(),
         types::Path(p) => p.into_pathbuf(),

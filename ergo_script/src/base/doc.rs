@@ -79,7 +79,8 @@ pub fn doc() -> Value {
         ///
         /// Returns the `Path` to the written documentation.
         async fn write(path: _, value: _) -> Value {
-            let (path_source, path) = path.take();
+            let (path_source, mut path) = path.take();
+            try_result!(CONTEXT.eval(&mut path).await);
             let mut doc_path = match_value!{path,
                 types::String(s) => s.as_str().into(),
                 types::Path(p) => p.into_pathbuf(),
@@ -112,7 +113,8 @@ pub fn doc() -> Value {
         /// Returns the `Path` to the written documentation. If no documentation path is set, returns `path`
         /// (without writing anything).
         async fn child(path: _, value: _) -> Value {
-            let (path_source, path) = path.take();
+            let (path_source, mut path) = path.take();
+            try_result!(CONTEXT.eval(&mut path).await);
             let path = match_value!{path,
                 types::String(s) => s.as_str().into(),
                 types::Path(p) => p.into_pathbuf(),
