@@ -4,7 +4,7 @@
 //! tracks source locations for values so that when an error occurs, useful error information can
 //! be provided.
 
-use crate::ast::{self, CaptureKey, CaptureSet, DocCommentPart, Expr, Expression};
+use crate::ast::{self, CaptureKey, CaptureSet, DocCommentPart, Expr};
 use ergo_runtime::abi_stable::external_types::RMutex;
 use ergo_runtime::source::Source;
 use ergo_runtime::Result;
@@ -33,7 +33,7 @@ impl Default for Evaluator {
 #[derive(Debug)]
 pub enum Capture {
     Expr {
-        expression: Expression,
+        expression: Expr,
         captures_left: AtomicUsize,
         needed_by: CaptureSet,
     },
@@ -110,10 +110,10 @@ pub struct Captures {
     ready: CaptureSet,
 }
 
-impl std::iter::FromIterator<(CaptureKey, (Expression, CaptureSet))> for Captures {
+impl std::iter::FromIterator<(CaptureKey, (Expr, CaptureSet))> for Captures {
     fn from_iter<T>(iter: T) -> Self
     where
-        T: IntoIterator<Item = (CaptureKey, (Expression, CaptureSet))>,
+        T: IntoIterator<Item = (CaptureKey, (Expr, CaptureSet))>,
     {
         let mut ready = CaptureSet::default();
 
@@ -211,7 +211,7 @@ impl Captures {
         let mut resolves = vec![];
         for (k, c) in self.inner.iter_mut() {
             if let Capture::Expr { expression, .. } = c {
-                if let Some(get) = expression.as_ref::<ast::Get>() {
+                if let Some(get) = expression.value().as_ref::<ast::Get>() {
                     if let Some(s) = (*get.value).as_ref::<ast::String>() {
                         match with.get(s.0.as_str()) {
                             Some(r) => resolves.push((*k, r.clone())),
@@ -241,8 +241,9 @@ impl Captures {
                     let me: &Self = self;
                     join_all(ready.iter().filter_map(|key| {
                         if let Some(Capture::Expr { expression, .. }) = me.inner.get(&key) {
-                            let e = Source::builtin(expression.clone());
-                            Some(async move { (key, eval.evaluate_now(ctx, e, me).await) })
+                            Some(async move {
+                                (key, eval.evaluate_now(ctx, expression.clone(), me).await)
+                            })
                         } else {
                             None
                         }

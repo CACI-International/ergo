@@ -30,7 +30,7 @@ pub type CaptureSet = keyset::KeySet;
 pub type CaptureKey = keyset::Key;
 
 pub enum SubExpr<'a> {
-    SubExpr(&'a Expression),
+    SubExpr(&'a Expr),
     Discriminant(u8),
 }
 
@@ -43,7 +43,7 @@ pub trait Subexpressions {
 
     fn subexpressions_mut<F>(&mut self, _f: F)
     where
-        F: FnMut(&mut Expression),
+        F: FnMut(&mut Expr),
     {
     }
 }
@@ -118,7 +118,7 @@ macro_rules! expression_types {
     ( @imp subexpr_mut $($member:tt),* ) => {
         fn subexpressions_mut<F>(&mut self, mut f: F)
         where
-            F: FnMut(&mut Expression),
+            F: FnMut(&mut Expr),
         {
             $(expression_types!(@subexpr mut self, f, $member);)*
         }
@@ -235,7 +235,7 @@ impl Subexpressions for BlockItem {
 
     fn subexpressions_mut<F>(&mut self, mut f: F)
     where
-        F: FnMut(&mut Expression),
+        F: FnMut(&mut Expr),
     {
         match self {
             BlockItem::Expr(e) | BlockItem::Merge(e) => {
@@ -274,7 +274,7 @@ impl Subexpressions for ArrayItem {
 
     fn subexpressions_mut<F>(&mut self, mut f: F)
     where
-        F: FnMut(&mut Expression),
+        F: FnMut(&mut Expr),
     {
         match self {
             ArrayItem::Expr(e) | ArrayItem::Merge(e) => {
@@ -719,7 +719,7 @@ impl Subexpressions for Expression {
 
     fn subexpressions_mut<F>(&mut self, f: F)
     where
-        F: FnMut(&mut Expression),
+        F: FnMut(&mut Expr),
     {
         match_all!(mut self => |v| v.subexpressions_mut(f))
     }
@@ -840,7 +840,7 @@ impl DocCommentPart {
 pub fn load(
     src: Source<()>,
     ctx: &mut Context,
-) -> Result<(Expr, HashMap<CaptureKey, (Expression, CaptureSet)>), Error> {
+) -> Result<(Expr, HashMap<CaptureKey, (Expr, CaptureSet)>), Error> {
     let toks = tokenize::Tokens::from(src.open()?);
     let tree_toks = tokenize_tree::TreeTokens::from(toks);
     let tree_parser = parse_tree::Parser::from(tree_toks);
@@ -855,7 +855,7 @@ pub fn load(
         })?;
 
     let mut compiler = ExpressionCompiler::with_context(ctx);
-    compiler.compile_captures(&mut *expr, &mut Default::default());
+    compiler.compile_captures(&mut expr, &mut Default::default());
     Ok((expr, compiler.into_captures()))
 }
 
@@ -864,7 +864,7 @@ pub type Context = keyset::Context;
 
 struct ExpressionCompiler<'a> {
     capture_context: &'a mut Context,
-    captures: HashMap<Expression, (CaptureKey, CaptureSet)>,
+    captures: HashMap<Expr, (CaptureKey, CaptureSet)>,
     needed_by: HashMap<CaptureKey, CaptureSet>,
     capture_mapping: ScopeMap<u128, CaptureKey>,
 }
@@ -951,7 +951,7 @@ impl<'a> ExpressionCompiler<'a> {
         }
     }
 
-    fn capture(&mut self, e: &mut Expression, e_caps: &mut Captures) {
+    fn capture(&mut self, e: &mut Expression, source: Source<()>, e_caps: &mut Captures) {
         // Temporarily replace the expression with a unit type until we determine
         // the capture key.
         let mut old_e = std::mem::replace(e, Expression::unit());
@@ -961,9 +961,8 @@ impl<'a> ExpressionCompiler<'a> {
             capture_context,
             ..
         } = self;
-        // TODO expr_caps from all caps
         let key = captures
-            .entry(old_e)
+            .entry(source.with(old_e))
             .or_insert_with(|| (capture_context.key(), e_caps.free.clone()))
             .0;
         for cap in e_caps.all.iter() {
@@ -974,14 +973,16 @@ impl<'a> ExpressionCompiler<'a> {
         e_caps.insert_free(key);
     }
 
-    pub fn into_captures(self) -> HashMap<CaptureKey, (Expression, CaptureSet)> {
+    pub fn into_captures(self) -> HashMap<CaptureKey, (Expr, CaptureSet)> {
         self.captures
             .into_iter()
             .map(|(e, (k, c))| (k, (e, c)))
             .collect()
     }
 
-    pub fn compile_captures(&mut self, e: &mut Expression, mut caps: &mut Captures) {
+    pub fn compile_captures(&mut self, e: &mut Expr, mut caps: &mut Captures) {
+        let src = e.source();
+        let e = &mut **e;
         match_expression_mut!(e,
             Unit => |_| (),
             BindAny => |_| (),
@@ -1024,8 +1025,8 @@ impl<'a> ExpressionCompiler<'a> {
                 self.capture_mapping.down();
                 let old_scope = self.capture_mapping.current_as_set_scope();
                 let mut e_caps = Captures::default();
-                self.compile_captures(&mut *v.bind, &mut e_caps);
-                self.compile_captures(&mut *v.body, &mut e_caps);
+                self.compile_captures(&mut v.bind, &mut e_caps);
+                self.compile_captures(&mut v.body, &mut e_caps);
                 self.capture_mapping.restore_set_scope(old_scope);
                 let in_scope = self.capture_mapping.up();
                 let in_scope_captures = in_scope.into_iter().map(|v| v.1).collect();
@@ -1063,7 +1064,7 @@ impl<'a> ExpressionCompiler<'a> {
                             *e = Expression::capture(key);
                             caps.insert_free(key);
                         }
-                        None => self.capture(e, caps),
+                        None => self.capture(e, src, caps),
                     }
                 } else {
                     let mut e_caps = Captures::default();
@@ -1077,7 +1078,7 @@ impl<'a> ExpressionCompiler<'a> {
                 let mut e_caps = Captures::default();
                 v.subexpressions_mut(|e| self.compile_captures(e, &mut e_caps));
                 v.captures = e_caps.direct.clone();
-                self.capture(e, &mut e_caps);
+                self.capture(e, src, &mut e_caps);
                 caps |= &e_caps;
             },
             Command => |v| {
@@ -1116,9 +1117,10 @@ impl<'a> ExpressionCompiler<'a> {
             },
             Force => |v| {
                 let mut e_caps = Captures::default();
-                self.compile_captures(&mut *v.value, &mut e_caps);
+                self.compile_captures(&mut v.value, &mut e_caps);
                 if v.value.expr_type() != ExpressionType::Capture {
-                    self.capture(&mut *v.value, &mut e_caps);
+                    let src = v.value.source();
+                    self.capture(&mut *v.value, src, &mut e_caps);
                 } else {
                     // TODO: Warn about unnecessary force
                 }
@@ -1557,9 +1559,15 @@ mod test {
 
     fn load(s: &str) -> Result<(Expr, HashMap<CaptureKey, (Expression, CaptureSet)>), Error> {
         let mut ctx = super::Context::default();
-        super::load(
+        let (e, m) = super::load(
             Source::new(StringSource::new("<string>", s.to_owned())),
             &mut ctx,
-        )
+        )?;
+        Ok((
+            e,
+            m.into_iter()
+                .map(|(k, (e, s))| (k, (e.unwrap(), s)))
+                .collect(),
+        ))
     }
 }
