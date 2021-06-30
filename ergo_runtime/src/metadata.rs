@@ -36,10 +36,13 @@ impl Doc {
                 _ => ()
             }
         }
-        Ok(format!(
-            "value with type '{}'",
-            crate::traits::type_name(ctx, &value)
-        ))
+        match value.as_type::<crate::types::Error>() {
+            Ok(e) => Err(e.to_owned()),
+            Err(v) => Ok(format!(
+                "value with type '{}'",
+                crate::traits::type_name(ctx, &v)
+            )),
+        }
     }
 
     /// Set a documentation string for the given value.

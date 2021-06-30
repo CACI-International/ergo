@@ -373,7 +373,6 @@ fn run(opts: Opts) -> Result<String, String> {
 
     // Write error output to stderr.
     // TODO get error(s) from error scope rather than return value?
-    //      or make `eval_nested` aggregate errors
     match ret {
         Ok(v) => Ok(v),
         Err(e) => {
