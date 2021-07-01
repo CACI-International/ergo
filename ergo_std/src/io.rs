@@ -69,8 +69,7 @@ async fn stdin() -> Value {
 ///
 /// Takes exclusive access of the process standard output (pausing logging) and writes the ByteStream to it.
 async fn stdout(bytes: _) -> Value {
-    let bytes =
-        try_result!(traits::into_sourced::<types::ByteStream>(CONTEXT, bytes).await).unwrap();
+    let bytes = try_result!(traits::into::<types::ByteStream>(CONTEXT, bytes).await);
     {
         let _guard = STDOUT_MUTEX.lock().await;
         let _paused = CONTEXT.log.pause();
@@ -94,8 +93,7 @@ async fn stdout(bytes: _) -> Value {
 /// Writes the ByteStream to the process standard error. This does not have any exclusive access
 /// guarantees like `stdin` and `stdout`.
 async fn stderr(bytes: _) -> Value {
-    let bytes =
-        try_result!(traits::into_sourced::<types::ByteStream>(CONTEXT, bytes).await).unwrap();
+    let bytes = try_result!(traits::into::<types::ByteStream>(CONTEXT, bytes).await);
     try_result!(
         io::copy_interactive(
             &CONTEXT.task,

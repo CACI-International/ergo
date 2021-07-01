@@ -1,6 +1,8 @@
 //! Logging functions.
 
-use ergo_runtime::{context::Log, depends, nsid, traits, try_result, types, Context, Value};
+use ergo_runtime::{
+    context::Log, depends, metadata::Source, nsid, traits, try_result, types, Context, Value,
+};
 use futures::FutureExt;
 
 pub fn function(ctx: &Context) -> Value {
@@ -12,8 +14,10 @@ fn logger(log: Log) -> Value {
         move |ctx, arg| {
             let log = log.clone();
             async move {
-                let ind = try_result!(ctx.eval_as::<types::Index>(arg).await).unwrap().to_owned().0;
-                let (src, ind) = try_result!(ctx.eval_as::<types::String>(ind).await).take();
+                let ind = try_result!(ctx.eval_as::<types::Index>(arg).await)
+                    .to_owned()
+                    .0;
+                let ind = try_result!(ctx.eval_as::<types::String>(ind).await);
 
                 let log = log.clone();
 
@@ -25,7 +29,7 @@ fn logger(log: Log) -> Value {
                         /// Arguments: `(String :name)`
                         #[cloning(log)]
                         async fn sublog(name: types::String) -> Value {
-                            logger(log.sublog(name.value().as_ref().as_str()))
+                            logger(log.sublog(name.as_ref().as_str()))
                         }
                     }
                 } else if s == "debug" {
@@ -38,7 +42,7 @@ fn logger(log: Log) -> Value {
                             let mut s = String::new();
                             {
                                 let mut formatter = traits::Formatter::new(&mut s);
-                                try_result!(traits::display(CONTEXT, value.unwrap(), &mut formatter).await);
+                                try_result!(traits::display(CONTEXT, value, &mut formatter).await);
                             }
                             log.debug(s);
                             types::Unit.into()
@@ -54,7 +58,7 @@ fn logger(log: Log) -> Value {
                             let mut s = String::new();
                             {
                                 let mut formatter = traits::Formatter::new(&mut s);
-                                try_result!(traits::display(CONTEXT, value.unwrap(), &mut formatter).await);
+                                try_result!(traits::display(CONTEXT, value, &mut formatter).await);
                             }
                             log.info(s);
                             types::Unit.into()
@@ -70,7 +74,7 @@ fn logger(log: Log) -> Value {
                             let mut s = String::new();
                             {
                                 let mut formatter = traits::Formatter::new(&mut s);
-                                try_result!(traits::display(CONTEXT, value.unwrap(), &mut formatter).await);
+                                try_result!(traits::display(CONTEXT, value, &mut formatter).await);
                             }
                             log.warn(s);
                             types::Unit.into()
@@ -86,17 +90,17 @@ fn logger(log: Log) -> Value {
                             let mut s = String::new();
                             {
                                 let mut formatter = traits::Formatter::new(&mut s);
-                                try_result!(traits::display(CONTEXT, value.unwrap(), &mut formatter).await);
+                                try_result!(traits::display(CONTEXT, value, &mut formatter).await);
                             }
                             log.error(s);
                             types::Unit.into()
                         }
                     }
+                } else {
+                    Source::get(&ind).with("unknown index").into_error().into()
                 }
-                else {
-                    src.with("unknown index").into_error().into()
-                }
-            }.boxed()
+            }
+            .boxed()
         },
         depends![nsid!(std::log)],
     )

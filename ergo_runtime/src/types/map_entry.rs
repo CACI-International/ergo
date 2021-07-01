@@ -2,22 +2,23 @@
 
 use crate as ergo_runtime;
 use crate::abi_stable::{type_erase::Erased, StableAbi};
+use crate::metadata::Source;
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
-use crate::{depends, Dependencies, Source, TypedValue, Value};
+use crate::{depends, Dependencies, TypedValue, Value};
 use bincode;
 
 /// Type for an individual Map entry.
 #[derive(Clone, Debug, ErgoType, PartialEq, StableAbi)]
 #[repr(C)]
 pub struct MapEntry {
-    pub key: Source<Value>,
-    pub value: Source<Value>,
+    pub key: Value,
+    pub value: Value,
 }
 
 impl From<&'_ MapEntry> for Dependencies {
     fn from(m: &'_ MapEntry) -> Self {
-        depends![MapEntry::ergo_type(), *m.key, *m.value]
+        depends![MapEntry::ergo_type(), m.key, m.value]
     }
 }
 
@@ -41,9 +42,9 @@ ergo_traits_fn! {
     impl traits::Display for MapEntry {
         async fn fmt(&self, f: &mut traits::Formatter) -> crate::error::RResult<()> {
             async move {
-                traits::display(CONTEXT, self.key.as_ref().unwrap().clone(), f).await?;
+                traits::display(CONTEXT, self.key.clone(), f).await?;
                 write!(f, " = ")?;
-                traits::display(CONTEXT, self.value.as_ref().unwrap().clone(), f).await?;
+                traits::display(CONTEXT, self.value.clone(), f).await?;
                 Ok(())
             }.await.into()
 
@@ -56,8 +57,8 @@ ergo_traits_fn! {
         async fn put(&self, stored_ctx: &traits::StoredContext, item: crate::context::ItemContent) -> crate::RResult<()> {
             async move {
                 let ids = (self.key.id(), self.value.id());
-                stored_ctx.write_to_store(CONTEXT, self.key.as_ref().unwrap().clone()).await?;
-                stored_ctx.write_to_store(CONTEXT, self.value.as_ref().unwrap().clone()).await?;
+                stored_ctx.write_to_store(CONTEXT, self.key.clone()).await?;
+                stored_ctx.write_to_store(CONTEXT, self.value.clone()).await?;
                 Ok(bincode::serialize_into(item, &ids)?)
             }.await.into()
         }
@@ -67,23 +68,22 @@ ergo_traits_fn! {
                 let ids: (u128, u128) = bincode::deserialize_from(item)?;
                 let key = stored_ctx.read_from_store(CONTEXT, ids.0).await?;
                 let value = stored_ctx.read_from_store(CONTEXT, ids.1).await?;
-                Ok(Erased::new(MapEntry { key: Source::stored(key), value: Source::stored(value) }))
+                Ok(Erased::new(MapEntry { key: Source::imbue(crate::Source::stored(key)), value: Source::imbue(crate::Source::stored(value)) }))
             }.await.into()
         }
     }
 
     impl traits::Bind for MapEntry {
-        async fn bind(&self, arg: Source<Value>) -> Value {
-            // TODO pattern errors?
-            let ind = crate::try_result!(CONTEXT.eval_as::<super::Index>(arg).await).unwrap().to_owned().0;
-            let (src, ind) = crate::try_result!(CONTEXT.eval_as::<super::String>(ind).await).take();
+        async fn bind(&self, arg: Value) -> Value {
+            let ind = crate::try_result!(CONTEXT.eval_as::<super::Index>(arg).await).to_owned().0;
+            let ind = crate::try_result!(CONTEXT.eval_as::<super::String>(ind).await);
             let s = ind.as_ref().as_str();
             if s == "key" {
-                self.key.as_ref().unwrap().clone()
+                self.key.clone()
             } else if s == "value" {
-                self.value.as_ref().unwrap().clone()
+                self.value.clone()
             } else {
-                src.with("unknown index").into_error().into()
+                Source::get(&ind).with("unknown index").into_error().into()
             }
         }
     }

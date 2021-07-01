@@ -23,9 +23,7 @@ fn false_val() -> Value {
 ///
 /// Arguments: `:value`
 async fn from(value: _) -> Value {
-    ergo_runtime::try_result!(traits::into_sourced::<types::Bool>(CONTEXT, value).await)
-        .unwrap()
-        .into()
+    ergo_runtime::try_result!(traits::into::<types::Bool>(CONTEXT, value).await).into()
 }
 
 #[cfg(test)]

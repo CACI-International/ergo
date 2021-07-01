@@ -20,7 +20,7 @@ pub trait DynamicScopeKey {
 }
 
 impl DynamicScopeKey for Value {
-    type Value = Source<Value>;
+    type Value = Value;
 
     fn id(&self) -> u128 {
         self.id()

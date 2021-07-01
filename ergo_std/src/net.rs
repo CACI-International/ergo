@@ -2,8 +2,8 @@
 
 use ergo_runtime::abi_stable::{bst::BstMap, type_erase::Erased, StableAbi};
 use ergo_runtime::{
-    context::ItemContent, depends, io, nsid, traits, try_result, type_system::ErgoType, types,
-    Dependencies, Error, Value,
+    context::ItemContent, depends, io, metadata::Source, nsid, traits, try_result,
+    type_system::ErgoType, types, Dependencies, Error, Value,
 };
 use reqwest::{
     blocking::Client,
@@ -54,7 +54,7 @@ async fn http(
 ) -> Value {
     let method = match method {
         None => Method::GET,
-        Some(m) => match m.value().as_ref().as_str() {
+        Some(m) => match m.as_ref().as_str() {
             "get" => Method::GET,
             "post" => Method::POST,
             "put" => Method::PUT,
@@ -65,8 +65,7 @@ async fn http(
             "patch" => Method::PATCH,
             "trace" => Method::TRACE,
             s => {
-                return m
-                    .source()
+                return Source::get(&m)
                     .with(format!("invalid method: {}", s))
                     .into_error()
                     .into()
@@ -77,10 +76,10 @@ async fn http(
     let log = CONTEXT.log.sublog("net:http");
 
     let client = Client::new();
-    let mut request = client.request(method, url.value().as_ref().as_str());
+    let mut request = client.request(method, url.as_ref().as_str());
 
     if let Some(auth) = basic_auth {
-        let auth = auth.value().as_ref().as_str();
+        let auth = auth.as_ref().as_str();
         match auth.find(':') {
             Some(ind) => {
                 let (username, password) = auth.split_at(ind);
@@ -91,16 +90,15 @@ async fn http(
     }
 
     if let Some(auth) = bearer_auth {
-        let auth = auth.value().as_ref().as_str();
+        let auth = auth.as_ref().as_str();
         request = request.bearer_auth(auth);
     }
 
     if let Some(to) = timeout {
-        let (to_source, to) =
-            try_result!(traits::into_sourced::<types::Number>(CONTEXT, to).await).take();
+        let to = try_result!(traits::into::<types::Number>(CONTEXT, to).await);
         let secs = match to.as_ref().to_f64() {
             None => {
-                return to_source
+                return Source::get(&to)
                     .with("invalid numeric timeout")
                     .into_error()
                     .into()
@@ -113,16 +111,15 @@ async fn http(
     {
         let mut http_headers = HeaderMap::new();
         if let Some(headers) = headers {
-            let headers = headers.unwrap();
-            drop(traits::eval_nested(CONTEXT, headers.clone().into()).await);
+            drop(traits::eval_nested(CONTEXT, headers.clone().into()).await); // Eval in parallel
             for (k, v) in headers.to_owned().0.into_iter() {
                 let k = try_result!(CONTEXT.eval_as::<types::String>(k).await);
                 let v = try_result!(CONTEXT.eval_as::<types::String>(v).await);
 
-                let k = try_result!(k
+                let k = try_result!(Source::extract(k)
                     .map(|k| HeaderName::try_from(k.as_ref().as_str()))
                     .transpose_err());
-                let v = try_result!(v
+                let v = try_result!(Source::extract(v)
                     .map(|v| HeaderValue::try_from(v.as_ref().as_str()))
                     .transpose_err());
                 http_headers.insert(k, v);
@@ -132,9 +129,7 @@ async fn http(
     }
 
     if let Some(body) = body {
-        let body = try_result!(traits::into_sourced::<types::ByteStream>(CONTEXT, body).await)
-            .unwrap()
-            .to_owned();
+        let body = try_result!(traits::into::<types::ByteStream>(CONTEXT, body).await).to_owned();
         let mut body_vec = vec![];
         // TODO support streaming body
         try_result!(
@@ -172,8 +167,8 @@ async fn http(
             depends![^CALL_DEPENDS.clone(), nsid!(net::http::headers), key],
         );
         headers.insert(
-            ARGS_SOURCE.clone().with(key),
-            ARGS_SOURCE.clone().with(value),
+            Source::imbue(ARGS_SOURCE.clone().with(key)),
+            Source::imbue(ARGS_SOURCE.clone().with(value)),
         );
     }
     let headers = types::Map(headers);
@@ -188,6 +183,7 @@ async fn http(
     } else {
         let src = ARGS_SOURCE.clone();
         let body = body.clone();
+        // TODO should this just immediately be an Error type?
         Value::dyn_new(
             move |ctx| async move {
                 src.with(format!(

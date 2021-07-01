@@ -3,7 +3,7 @@
 use crate as ergo_runtime;
 use crate::abi_stable::StableAbi;
 use crate::type_system::{ergo_traits_fn, ErgoType};
-use crate::{depends, Dependencies, Source, TypedValue, Value};
+use crate::{depends, Dependencies, TypedValue, Value};
 
 /// A type used as a key in maps to indicate to what to bind any remaining values.
 ///
@@ -17,7 +17,7 @@ pub struct BindRestKey;
 /// This type is used when merging unbound values into arrays.
 #[derive(Clone, ErgoType, StableAbi)]
 #[repr(C)]
-pub struct BindRest(pub Source<Value>);
+pub struct BindRest(pub Value);
 
 impl From<&'_ BindRestKey> for Dependencies {
     fn from(_: &'_ BindRestKey) -> Self {
@@ -33,7 +33,7 @@ impl From<BindRestKey> for TypedValue<BindRestKey> {
 
 impl From<&'_ BindRest> for Dependencies {
     fn from(b: &'_ BindRest) -> Self {
-        depends![BindRest::ergo_type(), *b.0]
+        depends![BindRest::ergo_type(), b.0]
     }
 }
 

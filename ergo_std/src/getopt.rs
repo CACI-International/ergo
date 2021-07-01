@@ -1,6 +1,6 @@
 //! The getopt function.
 
-use ergo_runtime::{try_result, types, Value};
+use ergo_runtime::{metadata::Source, try_result, types, Value};
 use std::collections::BTreeMap;
 
 #[types::ergo_fn]
@@ -19,25 +19,25 @@ use std::collections::BTreeMap;
 ///
 /// Returns an Args type with the positional and keyed arguments.
 pub async fn function(args: types::Array) -> Value {
-    let args = args.unwrap().to_owned().0;
+    let args = args.to_owned().0;
 
     let mut positional = Vec::new();
     let mut keyed = BTreeMap::new();
 
     for a in args {
         let s = try_result!(CONTEXT.eval_as::<types::String>(a).await);
-        match s.value().as_ref().as_str().strip_prefix("--") {
-            None => positional.push(s.map(|v| v.into())),
+        match s.as_ref().as_str().strip_prefix("--") {
+            None => positional.push(s.into()),
             Some(rest) => {
-                let src = s.source();
+                let src = Source::get(&s);
                 match rest.split_once("=") {
                     None => keyed.insert(
-                        src.clone().with(types::String::from(rest).into()),
-                        src.with(types::Unit.into()),
+                        Source::imbue(src.clone().with(types::String::from(rest).into())),
+                        Source::imbue(src.with(types::Unit.into())),
                     ),
                     Some((a, b)) => keyed.insert(
-                        src.clone().with(types::String::from(a).into()),
-                        src.with(types::String::from(b).into()),
+                        Source::imbue(src.clone().with(types::String::from(a).into())),
+                        Source::imbue(src.with(types::String::from(b).into())),
                     ),
                 };
             }

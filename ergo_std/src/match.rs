@@ -1,6 +1,6 @@
 //! The match function.
 
-use ergo_runtime::{traits, types, Value};
+use ergo_runtime::{metadata::Source, traits, types, Value};
 
 #[types::ergo_fn]
 /// Attempt to match a value over multiple bindings.
@@ -10,7 +10,7 @@ use ergo_runtime::{traits, types, Value};
 /// Returns the value resulting from the first value in `bindings` that doesn't produce a pattern
 /// error when bound with `value`.
 pub async fn function(mut value: _, bindings: types::Array) -> Value {
-    let (bindings_source, bindings) = bindings.take();
+    let bindings_source = Source::get(&bindings);
     let bindings = bindings.to_owned().0;
 
     // Do not propagate errors while trying the bindings
@@ -18,12 +18,13 @@ pub async fn function(mut value: _, bindings: types::Array) -> Value {
     let log = ctx.log.sublog("match");
     drop(ctx.eval(&mut value).await);
     for b in bindings {
-        let src = b.source();
-        let result = traits::bind(&ctx, b, value.clone()).await.unwrap();
+        let b_src = Source::get(&b);
+        let result = traits::bind(&ctx, b, value.clone()).await;
         match result.as_type::<types::Error>() {
             Ok(err) => {
                 log.debug(
-                    src.with("didn't match because of error when binding")
+                    b_src
+                        .with("didn't match because of error when binding")
                         .into_error()
                         .with_context(err.to_owned()),
                 );
@@ -32,10 +33,9 @@ pub async fn function(mut value: _, bindings: types::Array) -> Value {
         }
     }
 
-    let (value_source, value) = value.take();
     let err = match value.as_type::<types::Error>() {
         Ok(e) => e.to_owned(),
-        Err(_) => value_source
+        Err(v) => Source::get(&v)
             .with("no bindings matched the value")
             .into_error()
             .with_context(bindings_source.with("bindings which failed to match")),

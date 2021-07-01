@@ -8,48 +8,51 @@ use crate::abi_stable::{
     std_types::{ROption, RVec},
     type_erase::Erased,
 };
+use crate::metadata::Source;
+use crate::source::Source as Src;
 use crate::type_system::{ergo_trait, ergo_traits_fn, ErgoTrait, Trait, Type};
 use crate::{
     source::IntoSource,
     types,
     value::{match_value, IntoValue},
-    Context, Source, Value,
+    Context, Value,
 };
 
 /// The Bind ergo trait.
 #[ergo_trait]
 pub trait Bind {
-    async fn bind(&self, arg: Source<Value>) -> Value;
+    async fn bind(&self, arg: Value) -> Value;
 }
 
 /// Create a bind error result for the given value.
-pub fn bind_error(ctx: &Context, v: Source<Value>) -> crate::Error {
-    let (src, v) = v.take();
+pub fn bind_error(ctx: &Context, v: Value) -> crate::Error {
     let name = type_name(ctx, &v);
-    src.with(format!("cannot bind to value with type '{}'", name))
+    Source::get(&v)
+        .with(format!("cannot bind to value with type '{}'", name))
         .into_error()
 }
 
 /// Bind a value to an argument.
-pub async fn bind(ctx: &Context, mut v: Source<Value>, arg: Source<Value>) -> Source<Value> {
-    let call_site = (v.source(), arg.source()).into_source();
+pub async fn bind(ctx: &Context, mut v: Value, arg: Value) -> Value {
+    let bind_site = (Source::get(&v), Source::get(&arg)).into_source().with(());
 
     if let Err(e) = ctx.eval(&mut v).await {
-        return v.source().with(e.into());
+        return e.into();
     }
-    call_site.with(match ctx.get_trait::<Bind>(&v) {
+
+    match ctx.get_trait::<Bind>(&v) {
         None => bind_error(ctx, v).into(),
-        Some(t) => t.bind(v.unwrap(), arg).await,
-    })
+        Some(t) => {
+            let mut ret = t.bind(v, arg).await;
+            Source::set_if_missing(&mut ret, bind_site);
+            ret
+        }
+    }
 }
 
 /// Bind a value to an argument, evaluating the result and checking for an error.
-pub async fn bind_no_error(
-    ctx: &Context,
-    v: Source<Value>,
-    arg: Source<Value>,
-) -> crate::Result<()> {
-    let mut result = bind(ctx, v, arg).await.unwrap();
+pub async fn bind_no_error(ctx: &Context, v: Value, arg: Value) -> crate::Result<()> {
+    let mut result = bind(ctx, v, arg).await;
     ctx.eval(&mut result).await?;
     Ok(())
 }
@@ -58,17 +61,17 @@ pub async fn bind_no_error(
 /// The first argument is whether this is the first BindRest, and the second is the values to bind.
 pub(crate) async fn bind_array<F>(
     ctx: &Context,
-    to: RVec<Source<Value>>,
-    from: Source<RVec<Source<Value>>>,
+    to: RVec<Value>,
+    from: Src<RVec<Value>>,
     mut create_bind_rest: F,
 ) -> crate::Result<()>
 where
-    F: FnMut(bool, Vec<Source<Value>>) -> Value + Send + Sync,
+    F: FnMut(bool, Vec<Value>) -> Value + Send + Sync,
 {
     use futures::future::BoxFuture;
     use futures::FutureExt;
 
-    type Iter = crate::abi_stable::std_types::vec::IntoIter<Source<Value>>;
+    type Iter = crate::abi_stable::std_types::vec::IntoIter<Value>;
 
     fn back<'a, F>(
         ctx: &'a Context,
@@ -77,11 +80,11 @@ where
         create_bind_rest: &'a mut F,
     ) -> BoxFuture<'a, crate::Result<()>>
     where
-        F: FnMut(bool, Vec<Source<Value>>) -> Value + Send + Sync,
+        F: FnMut(bool, Vec<Value>) -> Value + Send + Sync,
     {
         async move {
             while let Some(t) = to.next_back() {
-                let (t_source, t) = t.take();
+                let t_source = Source::get(&t);
                 match_value!{t,
                     types::BindRest(rest) => {
                         match to.next_back() {
@@ -98,12 +101,14 @@ where
                                                 break;
                                             }
                                         }
-                                        None => Err(to_v.source().with("no value matches this binding").into_error())?
+                                        None => Err(Source::get(&to_v).with("no value matches this binding").into_error())?
                                     }
                                 }
                                 // Values were pushed in reverse order
                                 vals.reverse();
-                                let val_array = vals.into_source().map(|f| create_bind_rest(false, f));
+                                let src: Src<()> = vals.iter().map(Source::get).collect();
+                                let mut val_array = create_bind_rest(false, vals);
+                                Source::set_if_missing(&mut val_array, src);
                                 bind_no_error(ctx, rest, val_array).await?;
                             }
                         }
@@ -111,7 +116,7 @@ where
                     to_v => {
                         match from.next_back() {
                             None => Err(t_source.with("no value matches this binding").into_error())?,
-                            Some(from_v) => bind_no_error(ctx, t_source.with(to_v), from_v).await?,
+                            Some(from_v) => bind_no_error(ctx, to_v, from_v).await?,
                         }
                     }
                 }
@@ -128,43 +133,46 @@ where
         create_bind_rest: &'a mut F,
     ) -> BoxFuture<'a, crate::Result<()>>
     where
-        F: FnMut(bool, Vec<Source<Value>>) -> Value + Send + Sync,
+        F: FnMut(bool, Vec<Value>) -> Value + Send + Sync,
     {
         async move {
-                let mut first_rest = true;
-                while let Some(t) = to.next() {
-                    let (t_source, t) = t.take();
-                    match_value!{t,
-                        types::BindRest(rest) => {
-                            back(ctx, to, from, create_bind_rest).await?;
-                            bind_no_error(ctx, rest, from.collect::<Vec<_>>()
+            let mut first_rest = true;
+            while let Some(t) = to.next() {
+                let t_source = Source::get(&t);
+                match_value!{t,
+                    types::BindRest(rest) => {
+                        back(ctx, to, from, create_bind_rest).await?;
+                        bind_no_error(ctx, rest, {
+                            Source::imbue(from
+                                .map(|v| Source::extract(v))
+                                .collect::<Vec<_>>()
                                 .into_source()
-                                .map(|f| create_bind_rest(first_rest, f))
-                            ).await?;
-                            first_rest = false;
-                        }
-                        to_v => {
-                            match from.next() {
-                                None => Err(t_source.with("no value matches this binding").into_error())?,
-                                Some(from_v) => {
-                                    bind_no_error(ctx, t_source.with(to_v), from_v).await?;
-                                }
+                                .map(|f| create_bind_rest(first_rest, f.into_iter().map(Src::unwrap).collect())))
+                        }).await?;
+                        first_rest = false;
+                    }
+                    to_v => {
+                        match from.next() {
+                            None => Err(t_source.with("no value matches this binding").into_error())?,
+                            Some(from_v) => {
+                                bind_no_error(ctx, to_v, from_v).await?;
                             }
                         }
                     }
                 }
+            }
 
-                let remaining: RVec<_> = from.collect();
-                if !remaining.is_empty() {
-                    let mut errs = Vec::new();
-                    for v in remaining {
-                        errs.push(v.with("no binding matches this value").into_error());
-                    }
-                    Err(crate::Error::aggregate(errs))
-                } else {
-                    Ok(())
+            let remaining: RVec<_> = from.collect();
+            if !remaining.is_empty() {
+                let mut errs = Vec::new();
+                for v in remaining {
+                    errs.push(Source::get(&v).with("no binding matches this value").into_error());
                 }
-            }.boxed()
+                Err(crate::Error::aggregate(errs))
+            } else {
+                Ok(())
+            }
+        }.boxed()
     }
 
     let from = from.unwrap();
@@ -178,10 +186,10 @@ where
 /// `BindRestKey` is not a key in `to`.
 pub(crate) async fn bind_map(
     ctx: &Context,
-    mut to: BstMap<Source<Value>, Source<Value>>,
-    from: Source<BstMap<Source<Value>, Source<Value>>>,
+    mut to: BstMap<Value, Value>,
+    from: Src<BstMap<Value, Value>>,
     return_rest: bool,
-) -> crate::Result<BstMap<Source<Value>, Source<Value>>> {
+) -> crate::Result<BstMap<Value, Value>> {
     let rest = to.remove(&types::BindRestKey.into_value());
     let (from_source, mut from) = from.take();
     for (k, to_v) in to.into_iter() {
@@ -192,8 +200,7 @@ pub(crate) async fn bind_map(
                 from_v
             } else {
                 // If `from` is missing a `to` key, use `Unset`.
-                let v: Value = types::Unset.into();
-                from_source.clone().with(v)
+                Source::imbue(from_source.clone().with(types::Unset.into()))
             },
         )
         .await?;
@@ -208,14 +215,19 @@ pub(crate) async fn bind_map(
             } else {
                 let mut errs = Vec::new();
                 for (k, _) in from.into_iter() {
-                    errs.push(k.with("key missing in binding").into_error());
+                    errs.push(Source::get(&k).with("key missing in binding").into_error());
                 }
                 Err(crate::Error::aggregate(errs))
             }
         }
         Some(v) => {
             let remaining = from;
-            bind_no_error(ctx, v, from_source.with(types::Map(remaining).into())).await?;
+            bind_no_error(
+                ctx,
+                v,
+                Source::imbue(from_source.with(types::Map(remaining).into())),
+            )
+            .await?;
             Ok(Default::default())
         }
     }
@@ -231,11 +243,11 @@ ergo_traits_fn! {
             v: &'a Value,
             tp: &'a Type,
             _data: &'a Erased,
-            arg: Source<Value>) ->
+            arg: Value) ->
             crate::abi_stable::future::BoxFuture<'a, Value> {
             crate::abi_stable::future::BoxFuture::new(async move {
                 if v.id() != arg.id() {
-                    let (arg_source, arg) = arg.take();
+                    let arg_source = Source::get(&arg);
                     match_value! { arg,
                         types::Args {..} => {
                             let name = type_name_for(ctx, tp);

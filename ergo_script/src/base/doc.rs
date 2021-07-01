@@ -3,7 +3,7 @@
 use ergo_runtime::{
     context::{DynamicScopeKey, DynamicScopeRef},
     depends,
-    metadata::Doc,
+    metadata::{self, Doc},
     nsid, traits, try_result, types,
     value::match_value,
     Context, Source, Value,
@@ -78,13 +78,13 @@ pub fn doc() -> Value {
         /// Arguments: `(StringOrPath :path) :doc-value`
         ///
         /// Returns the `Path` to the written documentation.
-        async fn write(path: _, value: _) -> Value {
-            let (path_source, mut path) = path.take();
+        async fn write(mut path: _, value: _) -> Value {
             try_result!(CONTEXT.eval(&mut path).await);
+            let path_source = metadata::Source::get(&path);
             let mut doc_path = match_value!{path,
                 types::String(s) => s.as_str().into(),
                 types::Path(p) => p.into_pathbuf(),
-                v => return traits::type_error(CONTEXT, path_source.with(v), "String or Path").into()
+                v => return traits::type_error(CONTEXT, v, "String or Path").into()
             };
 
             if let Some(parent) = doc_path.parent() {
@@ -112,13 +112,13 @@ pub fn doc() -> Value {
         ///
         /// Returns the `Path` to the written documentation. If no documentation path is set, returns `path`
         /// (without writing anything).
-        async fn child(path: _, value: _) -> Value {
-            let (path_source, mut path) = path.take();
+        async fn child(mut path: _, value: _) -> Value {
             try_result!(CONTEXT.eval(&mut path).await);
+            let path_source = metadata::Source::get(&path);
             let path = match_value!{path,
                 types::String(s) => s.as_str().into(),
                 types::Path(p) => p.into_pathbuf(),
-                v => return traits::type_error(CONTEXT, path_source.with(v), "String or Path").into()
+                v => return traits::type_error(CONTEXT, v, "String or Path").into()
             };
 
             match DocPath::owned(CONTEXT) {
@@ -163,8 +163,7 @@ pub fn doc() -> Value {
             let write = write.clone();
             let child = child.clone();
             async move {
-                let (source, v) = v.take();
-                match_value!{v,
+                match_value! {v,
                     types::Args { mut args } => {
                         let to_doc = try_result!(args.next().ok_or("no value to document"));
                         try_result!(args.unused_arguments());
@@ -172,7 +171,7 @@ pub fn doc() -> Value {
                         types::String::from(try_result!(Doc::get(ctx, &to_doc).await)).into()
                     },
                     types::Index(ind) => {
-                        let (src, ind) = try_result!(ctx.eval_as::<types::String>(ind).await).take();
+                        let ind = try_result!(ctx.eval_as::<types::String>(ind).await);
                         let s = ind.as_ref().as_str();
                         if s == "path" {
                             path
@@ -181,16 +180,16 @@ pub fn doc() -> Value {
                         } else if s == "write" {
                             write
                         } else {
-                            src.with("unknown index").into_error().into()
+                            metadata::Source::get(&ind).with("unknown index").into_error().into()
                         }
                     },
-                    v => traits::type_error(ctx, source.with(v), "function call or index").into()
+                    v => traits::type_error(ctx, v, "function call or index").into()
                 }
             }
             .boxed()
         },
         depends![nsid!(ergo::doc)],
-            "Get the documentation for a value.
+        "Get the documentation for a value.
 
 Arguments: `:value`
 
@@ -199,7 +198,7 @@ Returns the documentation string.
 ## Functions
 * `child` - Write documentation to a relative path.
 * `path` - Get the documentation output path, if set.
-* `write` - Write documentation to the given output path."
+* `write` - Write documentation to the given output path.",
     )
     .into()
 }

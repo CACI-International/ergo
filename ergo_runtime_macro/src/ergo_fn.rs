@@ -234,7 +234,8 @@ impl Parser for ErgoFnLike {
                 ergo_runtime::types::Unbound::new(move |CONTEXT, __ergo_fn_arg| {
                     #(#clones)*
                     ergo_runtime::future::FutureExt::boxed(async move {
-                        let (ARGS_SOURCE, __ergo_fn_args) = ergo_runtime::try_result!(CONTEXT.eval_as::<#which>(__ergo_fn_arg).await).take();
+                        let __ergo_fn_args = ergo_runtime::try_result!(CONTEXT.eval_as::<#which>(__ergo_fn_arg).await);
+                        let ARGS_SOURCE = ergo_runtime::metadata::Source::get(&__ergo_fn_args);
                         let CALL_DEPENDS = ergo_runtime::depends![fn_id, __ergo_fn_args.id()];
                         let mut __ergo_fn_args = __ergo_fn_args.to_owned().args;
                         #(#args)*

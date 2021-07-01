@@ -8,7 +8,7 @@ use ergo_runtime::abi_stable::{
 use ergo_runtime::context::{
     DynamicScopeKey, Log, LogTask, RecordingWork, TaskManager, TaskPermit, Work,
 };
-use ergo_runtime::{nsid, traits, try_result, types, Value};
+use ergo_runtime::{metadata::Source, nsid, traits, try_result, types, Value};
 
 pub const SCRIPT_TASK_PRIORITY_OFFSET: u32 = 1000;
 
@@ -43,8 +43,8 @@ pub async fn function(
 ) -> Value {
     let count = match count {
         Some(v) => {
-            let n = try_result!(traits::into_sourced::<types::Number>(CONTEXT, v).await);
-            try_result!(n
+            let n = try_result!(traits::into::<types::Number>(CONTEXT, v).await);
+            try_result!(Source::extract(n)
                 .map(|n| n.as_ref().to_u32().ok_or("expected unsigned integer"))
                 .transpose_err()
                 .map_err(|e| e.into_error()))
@@ -54,10 +54,10 @@ pub async fn function(
 
     let mut priority = match priority {
         Some(v) => {
-            let src = v.source();
+            let src = Source::get(&v);
             let priority = {
-                let n = try_result!(traits::into_sourced::<types::Number>(CONTEXT, v).await);
-                try_result!(n
+                let n = try_result!(traits::into::<types::Number>(CONTEXT, v).await);
+                try_result!(Source::extract(n)
                     .map(|n| n.as_ref().to_u32().ok_or("expected unsigned integer"))
                     .transpose_err()
                     .map_err(|e| e.into_error()))
@@ -80,7 +80,7 @@ pub async fn function(
         None => value.id(),
     };
 
-    let description = description.unwrap().to_owned().0;
+    let description = description.to_owned().0;
 
     // XXX if more than one task relies on a single task, the task state of only one of them will
     // be correct (the others will not correctly be suspended because only one will actually
@@ -98,7 +98,7 @@ pub async fn function(
         )
         .await;
         let ctx = CONTEXT.with_dynamic_binding(&ARGS_SOURCE.with(ParentTaskKey), parent_task);
-        let mut value = value.unwrap();
+        let mut value = value;
         CONTEXT
             .task
             .spawn(priority, async move {

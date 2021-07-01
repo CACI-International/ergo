@@ -5,16 +5,13 @@ use ergo_runtime::{traits, type_system::ErgoType, Context, RResult, Result, Sour
 use std::collections::BTreeMap;
 
 pub struct Test {
-    env: BTreeMap<String, Source<Value>>,
+    env: BTreeMap<String, Value>,
     runtime: crate::Runtime,
 }
 
 impl Test {
     pub fn new(
-        plugin_entry: extern "C" fn(
-            ergo_runtime::plugin::Context,
-            &Context,
-        ) -> RResult<Source<Value>>,
+        plugin_entry: extern "C" fn(ergo_runtime::plugin::Context, &Context) -> RResult<Value>,
     ) -> Self {
         let rt = crate::Runtime::new(
             Context::builder().threads(Some(1)).keep_going(false),
@@ -30,14 +27,14 @@ impl Test {
         Test { env, runtime: rt }
     }
 
-    pub fn eval(&self, script: &str) -> Result<Source<Value>> {
+    pub fn eval(&self, script: &str) -> Result<Value> {
         let source = Source::new(StringSource::new("<test>", script.to_owned()));
         let mut script = self.runtime.load(source)?;
         script.extend_top_level_env(self.env.clone());
         dbg!(self.block_on(script.evaluate(&self.runtime.ctx)))
     }
 
-    pub fn eval_success(&self, script: &str) -> Source<Value> {
+    pub fn eval_success(&self, script: &str) -> Value {
         self.eval(script).expect("expected successful eval")
     }
 
@@ -49,8 +46,7 @@ impl Test {
         let val = self.eval_success(script);
         let val = self
             .block_on(self.runtime.ctx.eval_as::<T>(val))
-            .expect("type mismatch")
-            .unwrap();
+            .expect("type mismatch");
         assert_eq!(val.as_ref(), v);
     }
 
@@ -63,13 +59,13 @@ impl Test {
     }
 
     pub fn assert_success(&self, script: &str) {
-        let mut v = self.eval_success(script).unwrap();
+        let mut v = self.eval_success(script);
         self.block_on(self.runtime.ctx.eval(&mut v))
             .expect("value failed");
     }
 
     pub fn assert_fail(&self, script: &str) {
-        let mut v = self.eval_success(script).unwrap();
+        let mut v = self.eval_success(script);
         self.block_on(self.runtime.ctx.eval(&mut v))
             .expect_err("value succeeded");
     }
@@ -111,8 +107,8 @@ impl Test {
     }
 
     pub fn assert_content_eq(&self, a: &str, b: &str) {
-        let a = self.eval(a).expect("eval error").unwrap();
-        let b = self.eval(b).expect("eval error").unwrap();
+        let a = self.eval(a).expect("eval error");
+        let b = self.eval(b).expect("eval error");
         let a = self.block_on(traits::value_by_content(&self.runtime.ctx, a, true));
         let b = self.block_on(traits::value_by_content(&self.runtime.ctx, b, true));
         self.dbg(&a);

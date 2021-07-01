@@ -240,9 +240,7 @@ fn run(opts: Opts) -> Result<String, String> {
 
     // Set interrupt signal handler to abort tasks.
     //
-    // Keep _task in scope until the end of the function. After the function exits,
-    // the ctrlc handler will not hold onto the context task manager, which is important for
-    // cleanup.
+    // Keep signal_handler_task in scope until the handler is no longer needed.
     let (signal_handler_task, task_ref) = sync::Scoped::new_pair(runtime.ctx.task.clone());
     {
         ctrlc::set_handler(move || task_ref.with(|t| t.abort()))
@@ -328,8 +326,7 @@ fn run(opts: Opts) -> Result<String, String> {
         let v = runtime
             .ctx
             .task
-            .block_on(runtime.final_value(script_output))
-            .unwrap();
+            .block_on(runtime.final_value(script_output));
         Ok(try_value!(v))
     });
 

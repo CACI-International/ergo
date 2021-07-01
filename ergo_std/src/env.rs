@@ -1,6 +1,11 @@
 //! Environment variable functions.
 
-use ergo_runtime::{metadata::Doc, traits, try_result, types, value::match_value, Value};
+use ergo_runtime::{
+    metadata::{Doc, Source},
+    traits, try_result, types,
+    value::match_value,
+    Value,
+};
 
 pub fn module() -> Value {
     crate::make_string_map! {
@@ -24,13 +29,14 @@ pub fn module() -> Value {
 /// environment variable as a string, where the string is identified by the environment variable's
 /// content.
 async fn get(name: types::String) -> Value {
-    match std::env::var_os(name.value().as_ref().0.as_str()) {
+    match std::env::var_os(name.as_ref().0.as_str()) {
         None => types::Unset.into(),
-        Some(v) => types::String::from(try_result!(v.into_string().map_err(|_| name
-            .source()
-            .with("environment variable value is not valid unicode")
-            .into_error())))
-        .into(),
+        Some(v) => {
+            types::String::from(try_result!(v.into_string().map_err(|_| Source::get(&name)
+                .with("environment variable value is not valid unicode")
+                .into_error())))
+            .into()
+        }
     }
 }
 
@@ -102,12 +108,11 @@ fn home() -> Value {
 ///
 /// Arguments: `(StringOrPath :name)`
 ///
-/// If a Path is passed, it will simply be returned as-is. If a String is passed, a Path value is
-/// returned that, when evaluated, will search for the string in PATH. If not found, an error
-/// occurs. Otherwise the path of the resolved file is returned.
+/// If a Path is passed, it will simply be returned as-is. If a String is passed, it will search
+/// for the string in PATH. If not found, an error is returned. Otherwise the Path of the resolved
+/// file is returned.
 async fn path_search(mut string_or_path: _) -> Value {
     try_result!(CONTEXT.eval(&mut string_or_path).await);
-    let (src, string_or_path) = string_or_path.take();
     match_value! { string_or_path,
         p@types::Path(_) => p.into(),
         types::String(name) => {
@@ -124,7 +129,7 @@ async fn path_search(mut string_or_path: _) -> Value {
 
                 ARGS_SOURCE.with(format!("could not find {} in PATH", name.as_str())).into_error().into()
         }
-        other => traits::type_error(CONTEXT, src.with(other), "String or Path").into()
+        other => traits::type_error(CONTEXT, other, "String or Path").into()
     }
 }
 

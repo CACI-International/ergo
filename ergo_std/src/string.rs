@@ -2,9 +2,11 @@
 
 use ergo_runtime::{
     dependency::{AsDependency, Dependency},
-    depends, nsid, traits, try_result, types,
+    depends,
+    metadata::Source,
+    nsid, traits, try_result, types,
     value::match_value,
-    Source, Value,
+    Value,
 };
 use futures::future::FutureExt;
 
@@ -27,13 +29,14 @@ pub fn module() -> Value {
 /// Returns an `Iter` where each item will be a `String` containing a single character.
 async fn chars(s: types::String) -> Value {
     let v = s
-        .unwrap()
         .to_owned()
         .chars()
         .map(|c| {
-            ARGS_SOURCE
-                .clone()
-                .with(types::String::from(String::from(c)).into())
+            Source::imbue(
+                ARGS_SOURCE
+                    .clone()
+                    .with(types::String::from(String::from(c)).into()),
+            )
         })
         .collect::<Vec<_>>();
 
@@ -141,7 +144,6 @@ fn format() -> Value {
 
     types::Unbound::new(|ctx, arg| {
         async move {
-            let (arg_source, arg) = arg.take();
             match_value!{ arg,
                 types::Args { mut args } => {
                     let format_string = try_result!(args.next().ok_or("missing format string"));
@@ -155,7 +157,7 @@ fn format() -> Value {
                     let mut result = String::new();
                     let mut formatter = traits::Formatter::new(&mut result);
 
-                    let (source, parts) = try_result!(format_string.map(|s| format_parts(s.as_ref().as_str()))
+                    let (source, parts) = try_result!(Source::extract(format_string).map(|s| format_parts(s.as_ref().as_str()))
                                                                     .transpose().map_err(|e| e.into_error())).take();
                     for part in parts {
                         match part {
@@ -168,7 +170,7 @@ fn format() -> Value {
                                 };
                                 match val {
                                     None => return source.with(format!("format string argument '{}' not found", disp)).into_error().into(),
-                                    Some(v) => try_result!(traits::display(ctx, v.value().clone(), &mut formatter).await)
+                                    Some(v) => try_result!(traits::display(ctx, v.clone(), &mut formatter).await)
                                 }
                             }
                         }
@@ -187,19 +189,19 @@ fn format() -> Value {
 
                     try_result!(args.unused_arguments());
 
-                    let (source, parts) = try_result!(format_string.map(|s| format_parts(s.as_ref().as_str()))
+                    let (source, parts) = try_result!(Source::extract(format_string).map(|s| format_parts(s.as_ref().as_str()))
                                                                     .transpose().map_err(|e| e.into_error())).take();
                     #[derive(Debug, Clone)]
                     enum FormatBind {
                         String(String),
-                        Value(Source<Value>),
+                        Value(Value),
                     }
 
                     impl AsDependency for FormatBind {
                         fn as_dependency(&self) -> Dependency {
                             match self {
                                 FormatBind::String(s) => Dependency::hashed(&s),
-                                FormatBind::Value(v) => Dependency::Value(v.value().clone())
+                                FormatBind::Value(v) => Dependency::Value(v.clone())
                             }
                         }
                     }
@@ -235,9 +237,10 @@ fn format() -> Value {
                     types::Unbound::new_no_doc(move |ctx, arg| {
                         let binds = binds.clone();
                         async move {
-                            let (s_source, s) = try_result!(ctx.eval_as::<types::String>(arg).await).take();
+                            let s = try_result!(ctx.eval_as::<types::String>(arg).await);
+                            let s_source = Source::get(&s);
 
-                            let mut bind_strings: std::collections::BTreeMap<Source<Value>, Vec<String>> = Default::default();
+                            let mut bind_strings: std::collections::BTreeMap<Value, Vec<String>> = Default::default();
 
                             let mut s = s.as_ref().as_str();
                             let mut binds = binds.into_iter();
@@ -271,9 +274,9 @@ fn format() -> Value {
 
                             for (k,v) in bind_strings {
                                 if v.len() == 1 {
-                                    try_result!(traits::bind_no_error(ctx, k, s_source.clone().with(crate::make_string(&v.into_iter().next().unwrap()))).await);
+                                    try_result!(traits::bind_no_error(ctx, k, Source::imbue(s_source.clone().with(crate::make_string(&v.into_iter().next().unwrap())))).await);
                                 } else {
-                                    let v = s_source.clone().with(types::Array(v.into_iter().map(|s| s_source.clone().with(crate::make_string(&s))).collect()).into());
+                                    let v = Source::imbue(s_source.clone().with(types::Array(v.into_iter().map(|s| Source::imbue(s_source.clone().with(crate::make_string(&s)))).collect()).into()));
                                     try_result!(traits::bind_no_error(ctx, k, v).await);
                                 }
                             }
@@ -282,7 +285,7 @@ fn format() -> Value {
                         }.boxed()
                     }, deps).into()
                 }
-                v => traits::bind_error(ctx, arg_source.with(v)).into()
+                v => traits::bind_error(ctx, v).into()
             }
         }.boxed()
     }, depends![nsid!(std::string::format)],
@@ -325,9 +328,7 @@ Substring matches are determined by non-greedily matching string portions of the
 ///
 /// Arguments: `:value`
 async fn from(value: _) -> Value {
-    ergo_runtime::try_result!(traits::into_sourced::<types::String>(CONTEXT, value).await)
-        .unwrap()
-        .into()
+    ergo_runtime::try_result!(traits::into::<types::String>(CONTEXT, value).await).into()
 }
 
 #[types::ergo_fn]
@@ -338,11 +339,10 @@ async fn from(value: _) -> Value {
 /// Returns an `Array` of `String` representing the segments of `str` separated by `pattern`.
 async fn split(pattern: types::String, s: types::String) -> Value {
     let v = s
-        .value()
         .as_ref()
         .as_str()
-        .split(pattern.value().as_ref().as_str())
-        .map(|s| ARGS_SOURCE.clone().with(types::String::from(s).into()))
+        .split(pattern.as_ref().as_str())
+        .map(|s| Source::imbue(ARGS_SOURCE.clone().with(types::String::from(s).into())))
         .collect();
     types::Array(v).into()
 }
@@ -354,7 +354,7 @@ async fn split(pattern: types::String, s: types::String) -> Value {
 ///
 /// Returns a `String` representing the strings in `iter` separated by `separator`.
 async fn join(separator: types::String, iter: _) -> Value {
-    let iter = try_result!(traits::into_sourced::<types::Iter>(CONTEXT, iter).await).unwrap();
+    let iter = try_result!(traits::into::<types::Iter>(CONTEXT, iter).await);
 
     let vals: Vec<_> = iter.to_owned().collect().await;
     let strs = try_result!(
@@ -366,11 +366,8 @@ async fn join(separator: types::String, iter: _) -> Value {
             )
             .await
     );
-    let strs = strs
-        .iter()
-        .map(|v| v.value().as_ref().as_str())
-        .collect::<Vec<_>>();
-    types::String::from(strs.join(separator.value().as_ref().as_str())).into()
+    let strs = strs.iter().map(|v| v.as_ref().as_str()).collect::<Vec<_>>();
+    types::String::from(strs.join(separator.as_ref().as_str())).into()
 }
 
 #[types::ergo_fn]
@@ -380,7 +377,7 @@ async fn join(separator: types::String, iter: _) -> Value {
 ///
 /// Returns the trimmed string.
 async fn trim(s: types::String) -> Value {
-    types::String::from(s.value().as_ref().as_str().trim()).into()
+    types::String::from(s.as_ref().as_str().trim()).into()
 }
 
 #[cfg(test)]

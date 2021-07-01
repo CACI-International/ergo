@@ -1,4 +1,4 @@
-//! Ergo script loading and execution..map_err(|e| e.to_string())
+//! Ergo script loading and execution.
 
 pub use ergo_runtime::source::{FileSource, Source, StringSource};
 use ergo_runtime::{Context, Error, Value};
@@ -48,7 +48,12 @@ impl Runtime {
             ("bind", base::bind()),
         ]
         .into_iter()
-        .map(|(k, v)| (k.into(), Source::builtin(v)))
+        .map(|(k, v)| {
+            (
+                k.into(),
+                ergo_runtime::metadata::Source::imbue(Source::builtin(v)),
+            )
+        })
         .collect();
         let load_data = load_functions.load_data;
         load_data.set_top_level_env(env);
@@ -70,7 +75,7 @@ impl Runtime {
     }
 
     /// Load and evaluate a script.
-    pub async fn evaluate(&self, src: Source<()>) -> Result<Source<Value>, Error> {
+    pub async fn evaluate(&self, src: Source<()>) -> Result<Value, Error> {
         let script = self.load(src)?;
         script.evaluate(&self.ctx).await
     }
@@ -89,19 +94,21 @@ impl Runtime {
     /// Get the final value.
     ///
     /// This will apply any Unbound values on empty Args.
-    pub async fn final_value(&self, mut val: Source<Value>) -> Source<Value> {
+    pub async fn final_value(&self, mut val: Value) -> Value {
+        let src = ergo_runtime::metadata::Source::get(&val);
         loop {
             drop(self.ctx.eval(&mut val).await);
             if val.is_type::<ergo_runtime::types::Unbound>() {
-                let src = val.source();
                 val = ergo_runtime::traits::bind(
                     &self.ctx,
                     val,
-                    src.with(
-                        ergo_runtime::types::Args {
-                            args: Default::default(),
-                        }
-                        .into(),
+                    ergo_runtime::metadata::Source::imbue(
+                        src.clone().with(
+                            ergo_runtime::types::Args {
+                                args: Default::default(),
+                            }
+                            .into(),
+                        ),
                     ),
                 )
                 .await;
@@ -130,7 +137,7 @@ impl Drop for Runtime {
 pub struct Script {
     ast: ast::Expr,
     captures: eval::Captures,
-    top_level_env: BTreeMap<String, Source<Value>>,
+    top_level_env: BTreeMap<String, Value>,
 }
 
 impl Script {
@@ -144,17 +151,17 @@ impl Script {
     }
 
     /// Set the top-level environment.
-    pub fn top_level_env(&mut self, env: BTreeMap<String, Source<Value>>) {
+    pub fn top_level_env(&mut self, env: BTreeMap<String, Value>) {
         self.top_level_env = env;
     }
 
     /// Extend the top-level environment.
-    pub fn extend_top_level_env(&mut self, env: BTreeMap<String, Source<Value>>) {
+    pub fn extend_top_level_env(&mut self, env: BTreeMap<String, Value>) {
         self.top_level_env.extend(env);
     }
 
     /// Evaluate the script with the given runtime and additional load paths.
-    pub async fn evaluate(self, ctx: &Context) -> Result<Source<Value>, Error> {
+    pub async fn evaluate(self, ctx: &Context) -> Result<Value, Error> {
         let top_level_env = self.top_level_env;
 
         let evaluator = Evaluator::default();
@@ -662,7 +669,6 @@ mod test {
         expected: ScriptResult,
     ) -> BoxFuture<'a, Result<(), String>> {
         dbg!(&v);
-        let v = Source::builtin(v);
         async move {
             match expected {
                 SRUnit => match ctx.eval_as::<types::Unit>(v).await {
@@ -676,7 +682,6 @@ mod test {
                 SRString(s) => match ctx.eval_as::<types::String>(v).await {
                     Err(e) => Err(e.to_string()),
                     Ok(v) => {
-                        let v = v.unwrap();
                         let got = v.as_ref().as_str();
                         if got == s {
                             Ok(())
@@ -691,12 +696,12 @@ mod test {
                 SRArray(expected_arr) => match ctx.eval_as::<types::Array>(v).await {
                     Err(e) => Err(e.to_string()),
                     Ok(arr) => {
-                        let arr = arr.unwrap().to_owned().0;
+                        let arr = arr.to_owned().0;
                         if arr.len() != expected_arr.len() {
                             Err("array length mismatch".into())
                         } else {
                             for (v, expected_v) in arr.iter().zip(expected_arr) {
-                                val_match(ctx, v.clone().unwrap(), expected_v.clone()).await?;
+                                val_match(ctx, v.clone(), expected_v.clone()).await?;
                             }
                             Ok(())
                         }
@@ -705,7 +710,7 @@ mod test {
                 SRMap(entries) => match ctx.eval_as::<types::Map>(v).await {
                     Err(e) => Err(e.to_string()),
                     Ok(map) => {
-                        let mut map = map.unwrap().to_owned().0;
+                        let mut map = map.to_owned().0;
                         dbg!(&map);
                         if map.len() != entries.len() {
                             Err("map length mismatch".into())
@@ -713,7 +718,7 @@ mod test {
                             for (k, e) in entries.iter() {
                                 let k: Value = types::String::from(*k).into();
                                 let v = map.remove(&k).ok_or("missing expected key")?;
-                                val_match(ctx, v.unwrap(), e.clone()).await?;
+                                val_match(ctx, v, e.clone()).await?;
                             }
                             Ok(())
                         }
@@ -733,7 +738,6 @@ mod test {
         runtime
             .evaluate(Source::new(StringSource::new("<test>", s.to_owned())))
             .await
-            .map(|sv| sv.unwrap())
             .map_err(|e| format!("{:?}", e))
     }
 }

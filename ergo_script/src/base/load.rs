@@ -3,8 +3,8 @@
 use crate::constants::{DIR_NAME, EXTENSION, PLUGIN_ENTRY, WORKSPACE_NAME};
 use ergo_runtime::abi_stable::external_types::RMutex;
 use ergo_runtime::{
-    depends, error::RResult, nsid, source::FileSource, traits, try_result, type_system::ErgoType,
-    types, value::match_value, Context, Source, Value,
+    depends, error::RResult, metadata, nsid, source::FileSource, traits, try_result,
+    type_system::ErgoType, types, value::match_value, Context, Source, Value,
 };
 use futures::future::FutureExt;
 use libloading as dl;
@@ -18,7 +18,7 @@ pub struct LoadData {
     // actual loading of the script/plugin to take advantage of evaluation caching.
     pub load_cache: Arc<RMutex<BTreeMap<PathBuf, Value>>>,
     pub load_path: Arc<Vec<PathBuf>>,
-    pub top_level_env: Arc<RMutex<BTreeMap<String, Source<Value>>>>,
+    pub top_level_env: Arc<RMutex<BTreeMap<String, Value>>>,
     pub ast_context: Arc<RMutex<crate::ast::Context>>,
 }
 
@@ -40,7 +40,7 @@ impl LoadData {
     }
 
     /// Set the top-level environment used when loading scripts.
-    pub fn set_top_level_env(&self, env: BTreeMap<String, Source<Value>>) {
+    pub fn set_top_level_env(&self, env: BTreeMap<String, Value>) {
         *self.top_level_env.lock() = env;
     }
 
@@ -63,7 +63,7 @@ impl LoadData {
     /// Load a script at the given path.
     ///
     /// The path should already be verified as an existing file.
-    pub async fn load_script(&self, ctx: &Context, path: &Path) -> Source<Value> {
+    pub async fn load_script(&self, ctx: &Context, path: &Path) -> Value {
         debug_assert!(path.is_file());
         let path = path.canonicalize().unwrap(); // unwrap because is_file() should guarantee that canonicalize will succeed.
 
@@ -88,7 +88,7 @@ impl LoadData {
                                 Err(e) => Err(e),
                                 Ok(mut s) => {
                                     s.top_level_env(me.top_level_env.lock().clone());
-                                    s.evaluate(ctx).await.map(Source::unwrap)
+                                    s.evaluate(ctx).await
                                 }
                             }
                         } else {
@@ -107,11 +107,9 @@ impl LoadData {
                                             ergo_runtime::plugin::Context,
                                             &Context,
                                         )
-                                            -> RResult<Source<Value>>,
+                                            -> RResult<Value>,
                                     > = unsafe { l.get(PLUGIN_ENTRY.as_bytes()) }?;
-                                    f(ergo_runtime::plugin::Context::get(), ctx)
-                                        .map(Source::unwrap)
-                                        .into()
+                                    f(ergo_runtime::plugin::Context::get(), ctx).into()
                                 })
                         }
                         .into()
@@ -123,7 +121,7 @@ impl LoadData {
 
         loaded.eval_once(ctx).await;
 
-        source.with(loaded)
+        metadata::Source::imbue(source.with(loaded))
     }
 }
 
@@ -167,11 +165,11 @@ impl LoadFunctions {
             #[cloning(ld)]
             async fn load(mut path: _, ...) -> Value {
                 ergo_runtime::try_result!(CONTEXT.eval(&mut path).await);
-                let (target_source, path) = path.take();
+                let target_source = metadata::Source::get(&path);
                 let target = match_value!{path,
                     types::String(s) => s.as_str().into(),
                     types::Path(p) => p.into_pathbuf(),
-                    v => return traits::type_error(CONTEXT, target_source.with(v), "String or Path").into()
+                    v => return traits::type_error(CONTEXT, v, "String or Path").into()
                 };
 
                 let working_dir = ARGS_SOURCE.path();
@@ -188,19 +186,13 @@ impl LoadFunctions {
                 // Load if some module was found.
                 let loaded = ld.load_script(CONTEXT, &target).await;
 
-                /*
-                let loaded_context = source
-                .clone()
-                .with(format!("loaded from '{}'", target.display()));
-                */
-
                 // If there are remaining arguments apply them immediately.
                 if !REST.is_empty() {
-                    traits::bind(CONTEXT, loaded, ARGS_SOURCE.with(types::Args { args: REST }.into())).await.unwrap()
+                    traits::bind(CONTEXT, loaded,
+                        metadata::Source::imbue(ARGS_SOURCE.with(types::Args { args: REST }.into()))).await
                 } else {
-                    loaded.unwrap()
+                    loaded
                 }
-                //.map(|v| loaded_context.imbue_error_context(v.unwrap()))
             }
         };
 
@@ -209,29 +201,29 @@ impl LoadFunctions {
             move |ctx, v| {
                 let ld = ld.clone();
                 async move {
-                    let working_dir = v.path();
+                    let src = metadata::Source::get(&v);
+                    let working_dir = src.path();
                     let working_dir = working_dir.as_ref().and_then(|p| p.parent());
 
                     let path = match ld.resolve_script_path(working_dir, "std".as_ref()) {
                         Some(path) => path,
                         None => {
-                            return v.source().with("could not find std library").into_error().into();
+                            return src.with("could not find std library").into_error().into();
                         }
                     };
 
                     let lib = ld.load_script(ctx, &path).await;
 
-                    let (src, v) = v.take();
                     match_value!{v,
                         types::Args { args } => {
                             if args.is_empty() {
                                 // If called with no args, return the loaded library.
-                                lib.unwrap()
+                                lib
                             } else {
-                                traits::bind(ctx, lib, src.with(types::Args { args }.into())).await.unwrap()
+                                traits::bind(ctx, lib, metadata::Source::imbue(src.with(types::Args { args }.into()))).await
                             }
                         }
-                        v => traits::bind(ctx, lib, src.with(v)).await.unwrap()
+                        v => traits::bind(ctx, lib, v).await
                     }
                 }
                 .boxed()
@@ -246,7 +238,7 @@ impl LoadFunctions {
             move |ctx, v| {
                 let ld = ld.clone();
                 async move {
-                    let (src, v) = v.take();
+                    let src = metadata::Source::get(&v);
 
                     // If the current file is a workspace, allow it to load from parent workspaces.
                     let (path_basis, check_for_workspace) = match src.path() {
@@ -290,12 +282,12 @@ impl LoadFunctions {
                         types::Args { args } => {
                             if args.is_empty() {
                                 // If called with no args, return the loaded library.
-                                lib.unwrap()
+                                lib
                             } else {
-                                traits::bind(ctx, lib, src.with(types::Args { args }.into())).await.unwrap()
+                                traits::bind(ctx, lib, metadata::Source::imbue(src.with(types::Args { args }.into()))).await
                             }
                         }
-                        v => traits::bind(ctx, lib, src.with(v)).await.unwrap()
+                        v => traits::bind(ctx, lib, v).await
                     }
                 }
                 .boxed()

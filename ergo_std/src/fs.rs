@@ -1,8 +1,8 @@
 //! Filesystem runtime functions.
 
 use ergo_runtime::{
-    context::item_name, depends, io, traits, try_result, type_system::ErgoType, types,
-    value::match_value, Source, Value,
+    context::item_name, depends, io, metadata::Source, traits, try_result, type_system::ErgoType,
+    types, value::match_value, Value,
 };
 use glob::glob;
 use serde::{Deserialize, Serialize};
@@ -54,8 +54,8 @@ pub fn module() -> Value {
 /// The pattern is checked relative to the calling script directory, however specifying any path as
 /// part of the pattern (paths can contain glob patterns) will result in a search using that path.
 async fn glob_(pattern: _) -> Value {
-    let (pattern_source, pattern) =
-        try_result!(traits::into_sourced::<types::String>(CONTEXT, pattern).await).take();
+    let pattern = try_result!(traits::into::<types::String>(CONTEXT, pattern).await);
+    let pattern_source = Source::get(&pattern);
 
     let mut path = ARGS_SOURCE
         .path()
@@ -66,9 +66,9 @@ async fn glob_(pattern: _) -> Value {
         Err(e) => pattern_source.with(e).into_error().into(),
         Ok(paths) => {
             let paths: Result<Vec<std::path::PathBuf>, glob::GlobError> = paths.collect();
-            let paths: Vec<Source<Value>> = try_result!(paths.map_err(|e| pattern_source.with(e)))
+            let paths: Vec<Value> = try_result!(paths.map_err(|e| pattern_source.with(e)))
                 .into_iter()
-                .map(|v| ARGS_SOURCE.clone().with(types::Path::from(v).into()))
+                .map(|v| Source::imbue(ARGS_SOURCE.clone().with(types::Path::from(v).into())))
                 .collect();
             types::Array(paths.into()).into()
         }
@@ -116,9 +116,6 @@ fn recursive_link<F: AsRef<Path>, T: AsRef<Path>>(from: F, to: T) -> Result<(), 
 async fn copy(from: types::Path, to: types::Path) -> Value {
     let log = CONTEXT.log.sublog("fs::copy");
 
-    let from = from.unwrap();
-    let to = to.unwrap();
-
     log.debug(format!(
         "copying {} to {}",
         from.as_ref().0.as_ref().display(),
@@ -139,7 +136,7 @@ async fn copy(from: types::Path, to: types::Path) -> Value {
 ///
 /// Returns a `Bool` indicating whether the path exists as a file or directory.
 async fn exists(path: types::Path) -> Value {
-    types::Bool(path.value().as_ref().0.as_ref().exists()).into()
+    types::Bool(path.as_ref().0.as_ref().exists()).into()
 }
 
 #[types::ergo_fn]
@@ -149,7 +146,7 @@ async fn exists(path: types::Path) -> Value {
 ///
 /// Returns a `Unit` value that creates the directory and ancestors if they do not exist.
 async fn create_dir(path: types::Path) -> Value {
-    try_result!(std::fs::create_dir_all(path.value().as_ref().0.as_ref()));
+    try_result!(std::fs::create_dir_all(path.as_ref().0.as_ref()));
     types::Unit.into()
 }
 
@@ -176,11 +173,10 @@ fn set_permissions(p: &mut std::fs::Permissions, mode: u32) {}
 ///
 /// Returns a Unit value on success.
 async fn archive(archive: types::Path, source: types::Path, (format): [types::String]) -> Value {
-    let (archive_source, archive) = archive.take();
-    let source = source.unwrap();
+    let archive_source = Source::get(&archive);
 
-    let ext: Source<String> = match format {
-        Some(format) => format.map(|v| v.to_owned().0.into()),
+    let ext: ergo_runtime::Source<String> = match format {
+        Some(format) => Source::extract(format).map(|v| v.to_owned().0.into()),
         None => {
             let path = archive.as_ref().as_ref();
             match path.file_name() {
@@ -203,11 +199,9 @@ async fn archive(archive: types::Path, source: types::Path, (format): [types::St
                         // We assume the string is not empty (otherwise file_name would have
                         // returned None).
                         let s = &s[1..];
-                        archive_source.with(if let Some(ind) = s.find('.') {
-                            // split_at().1 will be the extension with the leading '.', so skip it
-                            s.split_at(ind).1[1..].into()
-                        } else {
-                            "dir".into()
+                        archive_source.with(match s.split_once('.') {
+                            Some((_, ext)) => ext.into(),
+                            None => "dir".into(),
                         })
                     }
                 },
@@ -321,13 +315,11 @@ async fn archive(archive: types::Path, source: types::Path, (format): [types::St
 /// `archive` may be a Path to a directory, zip file or tar archive, or a ByteStream of a zip file
 /// or tar archive, where tar archives can optionally be compressed with gzip, bzip2, or lzma (xz).
 /// The archive contents are extracted into `destination` as a directory.
-async fn unarchive(destination: types::Path, archive: _) -> Value {
-    let destination = destination.unwrap();
+async fn unarchive(destination: types::Path, mut archive: _) -> Value {
     let to_path = destination.as_ref().as_ref();
 
-    let (archive_source, mut archive) = archive.take();
-
     try_result!(CONTEXT.eval(&mut archive).await);
+    let archive_source = Source::get(&archive);
 
     use std::io::{Read, Seek};
 
@@ -410,7 +402,7 @@ async fn unarchive(destination: types::Path, archive: _) -> Value {
             try_result!(bs.read().read_to_end(&CONTEXT.task, &mut data).await);
             try_result!(extract_to(std::io::Cursor::new(data), to_path));
         }
-        v => return traits::type_error(CONTEXT, archive_source.with(v), "Path or ByteStream").into()
+        v => return traits::type_error(CONTEXT, v, "Path or ByteStream").into()
     }
 
     types::Unit.into()
@@ -423,16 +415,11 @@ async fn unarchive(destination: types::Path, archive: _) -> Value {
 ///
 /// Returns a boolean indicating whether `sum` is the sha1 sum of the contents of `file`.
 async fn sha1(file: types::Path, sum: types::String) -> Value {
-    let mut f = try_result!(std::fs::File::open(file.value().as_ref().as_ref()));
+    let mut f = try_result!(std::fs::File::open(file.as_ref().as_ref()));
     let mut digest = Sha1::default();
     try_result!(std::io::copy(&mut f, &mut digest));
     use sha::utils::DigestExt;
-    types::Bool(
-        digest
-            .to_hex()
-            .eq_ignore_ascii_case(sum.value().as_ref().as_str()),
-    )
-    .into()
+    types::Bool(digest.to_hex().eq_ignore_ascii_case(sum.as_ref().as_str())).into()
 }
 
 #[types::ergo_fn]
@@ -442,13 +429,12 @@ async fn sha1(file: types::Path, sum: types::String) -> Value {
 ///
 /// Returns a `Path` that is identified by the contents of the file to which the argument refers.
 /// `file` must exist and refer to a file.
-async fn track(file: _) -> Value {
-    let (file_source, mut file) = file.take();
+async fn track(mut file: _) -> Value {
     try_result!(CONTEXT.eval(&mut file).await);
     let file = match_value! {file,
         types::String(s) => s.as_str().into(),
         types::Path(p) => p.into_pathbuf(),
-        v => return traits::type_error(CONTEXT, file_source.with(v), "String or Path").into()
+        v => return traits::type_error(CONTEXT, v, "String or Path").into()
     };
 
     let store = CONTEXT.store.item(item_name!("track"));
@@ -545,7 +531,7 @@ impl std::ops::Drop for LoadedTrackInfo {
 ///
 /// If the path does not exist, nothing happens.
 async fn remove(path: types::Path) -> Value {
-    let path = path.value().as_ref().as_ref();
+    let path = path.as_ref().as_ref();
     if path.is_file() {
         try_result!(std::fs::remove_file(path));
     } else if path.is_dir() {
@@ -561,7 +547,7 @@ async fn remove(path: types::Path) -> Value {
 ///
 /// Returns a `ByteStream` of the file's contents.
 async fn read(file: types::Path) -> Value {
-    let path = file.value().as_ref().as_ref();
+    let path = file.as_ref().as_ref();
     let hash = try_result!(ergo_runtime::hash::hash_read(try_result!(
         std::fs::File::open(&path)
     )));
@@ -578,9 +564,7 @@ async fn read(file: types::Path) -> Value {
 ///
 /// Creates or overwrites the file with the bytes from the ByteStream.
 async fn write(file: types::Path, bytes: _) -> Value {
-    let file = file.unwrap();
-    let bytes =
-        try_result!(traits::into_sourced::<types::ByteStream>(CONTEXT, bytes).await).unwrap();
+    let bytes = try_result!(traits::into::<types::ByteStream>(CONTEXT, bytes).await);
 
     let mut f = io::Blocking::new(try_result!(std::fs::File::create(file.as_ref().as_ref())));
     try_result!(ergo_runtime::io::copy(&CONTEXT.task, &mut bytes.as_ref().read(), &mut f).await);
@@ -593,9 +577,7 @@ async fn write(file: types::Path, bytes: _) -> Value {
 /// Arguments: `(Path :file) (Into<ByteStream> :bytes)`
 /// Creates or appends the file with the bytes from the ByteStream.
 async fn append(file: types::Path, bytes: _) -> Value {
-    let file = file.unwrap();
-    let bytes =
-        try_result!(traits::into_sourced::<types::ByteStream>(CONTEXT, bytes).await).unwrap();
+    let bytes = try_result!(traits::into::<types::ByteStream>(CONTEXT, bytes).await);
 
     let mut f = io::Blocking::new(try_result!(std::fs::OpenOptions::new()
         .create(true)

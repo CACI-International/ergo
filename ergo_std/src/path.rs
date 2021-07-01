@@ -2,9 +2,10 @@
 
 use ergo_runtime::{
     context::{item_name, ItemName},
+    metadata::Source,
     traits, try_result, types,
     value::match_value,
-    Source, Value,
+    Value,
 };
 
 pub fn module() -> Value {
@@ -50,13 +51,12 @@ async fn new() -> Value {
 async fn join(...) -> Value {
     let mut path = std::path::PathBuf::new();
 
-    while let Some(sv) = REST.next() {
-        let (src, mut v) = sv.take();
+    while let Some(mut v) = REST.next() {
         try_result!(CONTEXT.eval(&mut v).await);
         match_value! {v,
             types::String(s) => path.push(s.as_str()),
             types::Path(p) => path.push(p.as_ref()),
-            v => return traits::type_error(CONTEXT, src.with(v), "String or Path").into()
+            v => return traits::type_error(CONTEXT, v, "String or Path").into()
         }
     }
 
@@ -71,14 +71,14 @@ async fn join(...) -> Value {
 /// Returns an `Array` of `String`, where each element in the array is a (in-order, from least to most
 /// specific) component of the argument.
 async fn split(path: types::Path) -> Value {
-    let mut vals: Vec<Source<Value>> = Vec::new();
-    for c in path.unwrap().to_owned().into_pathbuf().iter() {
+    let mut vals: Vec<Value> = Vec::new();
+    for c in path.to_owned().into_pathbuf().iter() {
         match c.to_str() {
-            Some(s) => vals.push(
+            Some(s) => vals.push(Source::imbue(
                 ARGS_SOURCE
                     .clone()
                     .with(types::String::from(s.to_owned()).into()),
-            ),
+            )),
             None => {
                 return ARGS_SOURCE
                     .with("could not convert to path components (due to invalid component unicode)")
@@ -97,9 +97,11 @@ async fn split(path: types::Path) -> Value {
 ///
 /// Fails if the given path does not have a parent (is a root).
 async fn parent(path: types::Path) -> Value {
-    let (src, path) = path.take();
     match path.as_ref().as_ref().parent() {
-        None => src.with("path does not have a parent").into_error().into(),
+        None => Source::get(&path)
+            .with("path does not have a parent")
+            .into_error()
+            .into(),
         Some(path) => types::Path::from(path).into(),
     }
 }
@@ -113,9 +115,8 @@ async fn parent(path: types::Path) -> Value {
 ///
 /// Fails if the given path ends in `..`.
 async fn name(path: types::Path) -> Value {
-    let (src, path) = path.take();
     match path.as_ref().as_ref().file_name() {
-        None => src
+        None => Source::get(&path)
             .with("path does not have a final component")
             .into_error()
             .into(),
@@ -131,11 +132,10 @@ async fn name(path: types::Path) -> Value {
 /// Returns a Path that is composed of the largest component suffix of `child` that are not
 /// components of `base`.
 async fn relative(base: types::Path, child: types::Path) -> Value {
-    let child = child.unwrap();
     try_result!(child
         .as_ref()
         .as_ref()
-        .strip_prefix(base.unwrap().as_ref().as_ref())
+        .strip_prefix(base.as_ref().as_ref())
         .map(|p| types::Path::from(p).into()))
 }
 

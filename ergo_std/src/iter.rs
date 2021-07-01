@@ -1,6 +1,8 @@
 //! Iterator functions.
 
-use ergo_runtime::{depends, nsid, traits, try_result, types, value::match_value, Value};
+use ergo_runtime::{
+    depends, metadata::Source, nsid, traits, try_result, types, value::match_value, Value,
+};
 use futures::{
     future::{ready, FutureExt},
     stream::StreamExt,
@@ -29,9 +31,7 @@ pub fn module() -> Value {
 ///
 /// Arguments: `:value`
 async fn from(value: _) -> Value {
-    try_result!(traits::into_sourced::<types::Iter>(CONTEXT, value).await)
-        .unwrap()
-        .into()
+    try_result!(traits::into::<types::Iter>(CONTEXT, value).await).into()
 }
 
 #[types::ergo_fn]
@@ -44,23 +44,24 @@ async fn from(value: _) -> Value {
 /// next call. Returns the last `accumulator`, which may be the original if there are no values in
 /// the iterator.
 async fn fold(func: _, acc: _, iter: _) -> Value {
-    let iter = try_result!(traits::into_sourced::<types::Iter>(CONTEXT, iter).await).unwrap();
+    let iter = try_result!(traits::into::<types::Iter>(CONTEXT, iter).await);
 
     iter.to_owned()
         .fold(acc, |acc, v| {
             traits::bind(
                 CONTEXT,
                 func.clone(),
-                ARGS_SOURCE.clone().with(
-                    types::Args {
-                        args: types::args::Arguments::positional(vec![acc, v]).unchecked(),
-                    }
-                    .into(),
+                Source::imbue(
+                    ARGS_SOURCE.clone().with(
+                        types::Args {
+                            args: types::args::Arguments::positional(vec![acc, v]).unchecked(),
+                        }
+                        .into(),
+                    ),
                 ),
             )
         })
         .await
-        .unwrap()
 }
 
 #[types::ergo_fn]
@@ -71,7 +72,7 @@ async fn fold(func: _, acc: _, iter: _) -> Value {
 /// Returns a new iterator containing only the unique values of `iter` (where the first unique value is
 /// retained).
 async fn unique(iter: _) -> Value {
-    let iter = try_result!(traits::into_sourced::<types::Iter>(CONTEXT, iter).await).unwrap();
+    let iter = try_result!(traits::into::<types::Iter>(CONTEXT, iter).await);
 
     let deps = depends![nsid!(std::iter::unique), iter];
 
@@ -89,7 +90,7 @@ async fn unique(iter: _) -> Value {
 /// Returns a new iterator containing only the values from `iter` for which `func` returned a value
 /// which was `true` when converted to Bool.
 async fn filter(func: _, iter: _) -> Value {
-    let iter = try_result!(traits::into_sourced::<types::Iter>(CONTEXT, iter).await).unwrap();
+    let iter = try_result!(traits::into::<types::Iter>(CONTEXT, iter).await);
 
     let deps = depends![nsid!(std::iter::filter), iter];
 
@@ -103,26 +104,27 @@ async fn filter(func: _, iter: _) -> Value {
             let res = traits::bind(
                 &ctx,
                 func,
-                args_source.with(
-                    types::Args {
-                        args: types::args::Arguments::positional(vec![v.clone()]).unchecked(),
-                    }
-                    .into(),
+                Source::imbue(
+                    args_source.with(
+                        types::Args {
+                            args: types::args::Arguments::positional(vec![v.clone()]).unchecked(),
+                        }
+                        .into(),
+                    ),
                 ),
             )
             .await;
-            let src = res.source();
 
             // TODO handle errors differently?
-            match traits::into_sourced::<types::Bool>(&ctx, res).await {
+            match traits::into::<types::Bool>(&ctx, res).await {
                 Ok(b) => {
-                    if b.value().as_ref().0 {
+                    if b.as_ref().0 {
                         Some(v)
                     } else {
                         None
                     }
                 }
-                Err(e) => Some(src.with(e.into())),
+                Err(e) => Some(e.into()),
             }
         }
     });
@@ -133,7 +135,7 @@ async fn filter(func: _, iter: _) -> Value {
 fn zip() -> Value {
     types::Unbound::new(|ctx, arg| {
         async move {
-            let (arg_source, arg) = arg.take();
+            let arg_source = Source::get(&arg);
             match_value! { arg,
                 types::Args { mut args } => {
                     let iters: Vec<_> = (&mut args).collect();
@@ -141,7 +143,7 @@ fn zip() -> Value {
                     try_result!(args.unused_arguments());
 
                     let iters_typed = try_result!(ctx.task.join_all(
-                            iters.into_iter().map(|i| traits::into_sourced::<types::Iter>(ctx, i))
+                            iters.into_iter().map(|i| traits::into::<types::Iter>(ctx, i))
                         ).await);
 
                     let deps = depends![nsid!(std::iter::zip), ^@iters_typed];
@@ -155,12 +157,12 @@ fn zip() -> Value {
                                     abi_stable::std_types::RVec::with_capacity(cap)
                                 }).boxed(),
                                 |vec_stream, iter| {
-                                    vec_stream.zip(iter.unwrap().to_owned())
+                                    vec_stream.zip(iter.to_owned())
                                         .map(|(mut vec,v)| { vec.push(v); vec })
                                         .boxed()
                                 },
                         );
-                        let val_stream = vec_stream.map(move |vec| arg_source.clone().with(types::Array(vec).into()));
+                        let val_stream = vec_stream.map(move |vec| Source::imbue(arg_source.clone().with(types::Array(vec).into())));
                         types::Iter::from_stream(val_stream)
                     };
 
@@ -176,7 +178,8 @@ fn zip() -> Value {
                     types::Unbound::new_no_doc(move |ctx, arg| {
                         let iter_outs = iter_outs.clone();
                         async move {
-                            let (arg_source, arg) = try_result!(ctx.eval_as::<types::Iter>(arg).await).take();
+                            let arg = try_result!(ctx.eval_as::<types::Iter>(arg).await);
+                            let arg_source = Source::get(&arg);
                             let iter_id = arg.id();
                             let iter = arg.to_owned();
 
@@ -188,7 +191,7 @@ fn zip() -> Value {
                             for (i, out) in iter_outs.into_iter().enumerate() {
                                 let arrays = shared_arrays.clone();
                                 let filtered = arrays.filter_map(move |arr| {
-                                        ready(match arr.value().as_ref().0.get(i) {
+                                        ready(match arr.as_ref().0.get(i) {
                                             None => None,
                                             Some(v) => if v.is_type::<types::Unset>() {
                                                 // XXX this won't work for delayed Unset values
@@ -199,9 +202,8 @@ fn zip() -> Value {
                                         })
                                     });
                                 let deps = depends![nsid!(std::iter::zip::pattern_result), iter_id, i];
-                                let to_bind = arg_source.clone().with(types::Iter::new_stream(filtered, deps).into());
-                                let mut result = traits::bind(ctx, out, to_bind).await.unwrap();
-                                if let Err(e) = ctx.eval(&mut result).await {
+                                let to_bind = Source::imbue(arg_source.clone().with(types::Iter::new_stream(filtered, deps).into()));
+                                if let Err(e) = traits::bind_no_error(ctx, out, to_bind).await {
                                     errs.push(e);
                                 }
                             }
@@ -213,7 +215,7 @@ fn zip() -> Value {
                         }.boxed()
                     }, deps).into()
                 },
-                v => traits::bind_error(ctx, arg_source.with(v)).into()
+                v => traits::bind_error(ctx, v).into()
             }
         }.boxed()
     }, depends![nsid!(std::iter::zip)],
@@ -238,7 +240,7 @@ iterator.").into()
 /// Returns a new iterator containing only the values from `iter` following (and including) the first
 /// value for which `func` returned a value which was `false` when converted to Bool.
 async fn skip_while(func: _, iter: _) -> Value {
-    let iter = try_result!(traits::into_sourced::<types::Iter>(CONTEXT, iter).await).unwrap();
+    let iter = try_result!(traits::into::<types::Iter>(CONTEXT, iter).await);
 
     let deps = depends![nsid!(std::iter::skip_while), func, iter];
 
@@ -257,28 +259,29 @@ async fn skip_while(func: _, iter: _) -> Value {
                 let res = traits::bind(
                     &ctx,
                     func,
-                    args_source.with(
-                        types::Args {
-                            args: types::args::Arguments::positional(vec![v.clone()]).unchecked(),
-                        }
-                        .into(),
+                    Source::imbue(
+                        args_source.with(
+                            types::Args {
+                                args: types::args::Arguments::positional(vec![v.clone()])
+                                    .unchecked(),
+                            }
+                            .into(),
+                        ),
                     ),
                 )
                 .await;
 
-                let src = res.source();
-
                 // TODO handle errors differently?
-                match traits::into_sourced::<types::Bool>(&ctx, res).await {
+                match traits::into::<types::Bool>(&ctx, res).await {
                     Ok(b) => {
-                        if b.value().as_ref().0 {
+                        if b.as_ref().0 {
                             None
                         } else {
                             skip.store(false, std::sync::atomic::Ordering::Relaxed);
                             Some(v)
                         }
                     }
-                    Err(e) => Some(src.with(e.into())),
+                    Err(e) => Some(e.into()),
                 }
             }
             .boxed()
@@ -295,11 +298,11 @@ async fn skip_while(func: _, iter: _) -> Value {
 ///
 /// Returns a new iterator containing only the values from `iter` after the first `n`.
 async fn skip(n: _, iter: _) -> Value {
-    let n = try_result!(traits::into_sourced::<types::Number>(CONTEXT, n).await);
-    let iter = try_result!(traits::into_sourced::<types::Iter>(CONTEXT, iter).await).unwrap();
+    let n = try_result!(traits::into::<types::Number>(CONTEXT, n).await);
+    let iter = try_result!(traits::into::<types::Iter>(CONTEXT, iter).await);
     let deps = depends![nsid!(std::iter::skip), n, iter];
 
-    let n = try_result!(n
+    let n = try_result!(Source::extract(n)
         .map(|n| n.as_ref().to_usize().ok_or("expected unsigned integer"))
         .transpose_err()
         .map_err(|e| e.into_error()));
@@ -315,7 +318,7 @@ async fn skip(n: _, iter: _) -> Value {
 /// Returns a new iterator containing only the values from `iter` preceding the first
 /// value for which `func` returned a value which was `false` when converted to Bool.
 async fn take_while(func: _, iter: _) -> Value {
-    let iter = try_result!(traits::into_sourced::<types::Iter>(CONTEXT, iter).await).unwrap();
+    let iter = try_result!(traits::into::<types::Iter>(CONTEXT, iter).await);
 
     let deps = depends![nsid!(std::iter::take_while), func, iter];
 
@@ -329,27 +332,27 @@ async fn take_while(func: _, iter: _) -> Value {
             let res = traits::bind(
                 &ctx,
                 func,
-                args_source.with(
-                    types::Args {
-                        args: types::args::Arguments::positional(vec![v.clone()]).unchecked(),
-                    }
-                    .into(),
+                Source::imbue(
+                    args_source.with(
+                        types::Args {
+                            args: types::args::Arguments::positional(vec![v.clone()]).unchecked(),
+                        }
+                        .into(),
+                    ),
                 ),
             )
             .await;
 
-            let src = res.source();
-
             // TODO handle errors differently?
-            match traits::into_sourced::<types::Bool>(&ctx, res).await {
+            match traits::into::<types::Bool>(&ctx, res).await {
                 Ok(b) => {
-                    if b.value().as_ref().0 {
+                    if b.as_ref().0 {
                         Some(v)
                     } else {
                         None
                     }
                 }
-                Err(e) => Some(src.with(e.into())),
+                Err(e) => Some(e.into()),
             }
         }
     });
@@ -364,12 +367,12 @@ async fn take_while(func: _, iter: _) -> Value {
 ///
 /// Returns a new iterator containing only the first `n` values from `iter`.
 async fn take(n: _, iter: _) -> Value {
-    let n = try_result!(traits::into_sourced::<types::Number>(CONTEXT, n).await);
-    let iter = try_result!(traits::into_sourced::<types::Iter>(CONTEXT, iter).await).unwrap();
+    let n = try_result!(traits::into::<types::Number>(CONTEXT, n).await);
+    let iter = try_result!(traits::into::<types::Iter>(CONTEXT, iter).await);
 
     let deps = depends![nsid!(std::iter::take), n, iter];
 
-    let n = try_result!(n
+    let n = try_result!(Source::extract(n)
         .map(|n| n.as_ref().to_usize().ok_or("expected unsigned integer"))
         .transpose_err()
         .map_err(|e| e.into_error()));
@@ -385,7 +388,7 @@ async fn take(n: _, iter: _) -> Value {
 /// Returns a new iterator with each subsequent nested value in the values of `iter`. The values of
 /// `iter` must be `Into<Iter>` themselves.
 async fn flatten(iter: _) -> Value {
-    let iter = try_result!(traits::into_sourced::<types::Iter>(CONTEXT, iter).await).unwrap();
+    let iter = try_result!(traits::into::<types::Iter>(CONTEXT, iter).await);
 
     let deps = depends![nsid!(std::iter::flatten), iter];
 
@@ -396,10 +399,9 @@ async fn flatten(iter: _) -> Value {
         .then(move |i| {
             let ctx = ctx.clone();
             async move {
-                let src = i.source();
-                match traits::into_sourced::<types::Iter>(&ctx, i).await {
-                    Ok(i) => i.unwrap().to_owned(),
-                    Err(e) => types::Iter::from_iter(std::iter::once(src.with(e.into()))),
+                match traits::into::<types::Iter>(&ctx, i).await {
+                    Ok(i) => i.to_owned(),
+                    Err(e) => types::Iter::from_iter(std::iter::once(e.into())),
                 }
             }
         })
@@ -418,7 +420,7 @@ async fn flatten(iter: _) -> Value {
 ///
 /// Returns a new iterator where each element is the result of applying `func` on each value in `iter`.
 async fn map(func: _, iter: _) -> Value {
-    let iter = try_result!(traits::into_sourced::<types::Iter>(CONTEXT, iter).await).unwrap();
+    let iter = try_result!(traits::into::<types::Iter>(CONTEXT, iter).await);
 
     let deps = depends![nsid!(std::iter::map), iter];
 
@@ -429,11 +431,13 @@ async fn map(func: _, iter: _) -> Value {
             traits::bind(
                 CONTEXT,
                 func.clone(),
-                ARGS_SOURCE.clone().with(
-                    types::Args {
-                        args: types::args::Arguments::positional(vec![d]).unchecked(),
-                    }
-                    .into(),
+                Source::imbue(
+                    ARGS_SOURCE.clone().with(
+                        types::Args {
+                            args: types::args::Arguments::positional(vec![d]).unchecked(),
+                        }
+                        .into(),
+                    ),
                 ),
             )
             .map(Ok)
@@ -454,7 +458,7 @@ async fn map(func: _, iter: _) -> Value {
 ///
 /// Returns a new iterator where each element is the result of applying `func` on each value in `iter`.
 async fn map_lazy(func: _, iter: _) -> Value {
-    let iter = try_result!(traits::into_sourced::<types::Iter>(CONTEXT, iter).await).unwrap();
+    let iter = try_result!(traits::into::<types::Iter>(CONTEXT, iter).await);
 
     let deps = depends![nsid!(std::iter::map_lazy), iter];
 
@@ -467,11 +471,13 @@ async fn map_lazy(func: _, iter: _) -> Value {
             traits::bind(
                 &ctx,
                 func,
-                args_source.with(
-                    types::Args {
-                        args: types::args::Arguments::positional(vec![v]).unchecked(),
-                    }
-                    .into(),
+                Source::imbue(
+                    args_source.with(
+                        types::Args {
+                            args: types::args::Arguments::positional(vec![v]).unchecked(),
+                        }
+                        .into(),
+                    ),
                 ),
             )
             .await

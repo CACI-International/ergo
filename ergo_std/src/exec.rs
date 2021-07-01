@@ -7,7 +7,7 @@ use ergo_runtime::{
     io::{self, wrap, Blocking, TokioWrapped},
     nsid, traits, try_result,
     type_system::ErgoType,
-    types, Dependencies, Error, Source, Value,
+    types, Dependencies, Error, Value,
 };
 use futures::channel::oneshot::channel;
 use futures::future::FutureExt;
@@ -115,35 +115,29 @@ pub async fn function(
     ...
 ) -> Value {
     let mut args = Vec::default();
-    args.push(traits::into_sourced::<CommandString>(CONTEXT, cmd));
+    args.push(traits::into::<CommandString>(CONTEXT, cmd));
     while let Some(arg) = REST.next() {
-        args.push(traits::into_sourced::<CommandString>(CONTEXT, arg));
+        args.push(traits::into::<CommandString>(CONTEXT, arg));
     }
 
-    let args: Vec<_> = try_result!(CONTEXT.task.join_all(args).await)
-        .into_iter()
-        .map(Source::unwrap)
-        .collect();
+    let args: Vec<_> = try_result!(CONTEXT.task.join_all(args).await);
 
     let pwd = match pwd {
-        Some(v) => {
-            Some(try_result!(traits::into_sourced::<types::Path>(CONTEXT, v).await).unwrap())
-        }
+        Some(v) => Some(try_result!(traits::into::<types::Path>(CONTEXT, v).await)),
         // TODO set dir if not specified?
         None => None,
     };
 
     let stdin = match stdin {
-        Some(v) => {
-            Some(try_result!(traits::into_sourced::<types::ByteStream>(CONTEXT, v).await).unwrap())
-        }
+        Some(v) => Some(try_result!(
+            traits::into::<types::ByteStream>(CONTEXT, v).await
+        )),
         None => None,
     };
 
     let retain_terminal = match retain_terminal {
         Some(v) => {
-            try_result!(traits::into_sourced::<types::Bool>(CONTEXT, v).await)
-                .unwrap()
+            try_result!(traits::into::<types::Bool>(CONTEXT, v).await)
                 .as_ref()
                 .0
         }
@@ -161,15 +155,13 @@ pub async fn function(
     command.args(args.map(|v| v.as_ref().0.as_ref()));
     command.env_clear();
     if let Some(v) = env {
-        let v = v.unwrap();
         let types::Map(env) = v.to_owned();
         for (k, v) in env {
             let k = try_result!(CONTEXT.eval_as::<types::String>(k).await)
-                .unwrap()
                 .to_owned()
                 .into_string();
-            let v = try_result!(traits::into_sourced::<CommandString>(CONTEXT, v).await);
-            command.env(k, v.value().as_ref().0.as_ref());
+            let v = try_result!(traits::into::<CommandString>(CONTEXT, v).await);
+            command.env(k, v.as_ref().0.as_ref());
         }
     }
     if let Some(v) = pwd {

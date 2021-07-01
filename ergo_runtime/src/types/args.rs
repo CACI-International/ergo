@@ -2,9 +2,10 @@
 
 use crate as ergo_runtime;
 use crate::abi_stable::{bst::BstMap, std_types::RVec, StableAbi};
+use crate::metadata::Source;
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
-use crate::{depends, Context, Dependencies, Error, Source, TypedValue, Value};
+use crate::{depends, Context, Dependencies, Error, Source as Src, TypedValue, Value};
 use std::collections::BTreeMap;
 
 /// Arguments in a function call.
@@ -50,12 +51,12 @@ impl From<PatternArgs> for TypedValue<PatternArgs> {
 #[repr(C)]
 pub struct UncheckedArguments {
     /// Positional arguments in this vec are in reverse order; use Iterator to access them.
-    pub positional: RVec<Source<Value>>,
-    pub keyed: BstMap<Source<Value>, Source<Value>>,
+    pub positional: RVec<Value>,
+    pub keyed: BstMap<Value, Value>,
 }
 
 impl UncheckedArguments {
-    fn new(positional: Vec<Source<Value>>, keyed: BTreeMap<Source<Value>, Source<Value>>) -> Self {
+    fn new(positional: Vec<Value>, keyed: BTreeMap<Value, Value>) -> Self {
         UncheckedArguments {
             positional: positional.into_iter().rev().collect(),
             keyed: keyed.into_iter().collect(),
@@ -70,15 +71,15 @@ impl UncheckedArguments {
         self.positional.len()
     }
 
-    pub fn kw(&mut self, key: &str) -> Option<Source<Value>> {
+    pub fn kw(&mut self, key: &str) -> Option<Value> {
         self.kw_value(&super::String::from(key).into())
     }
 
-    pub fn kw_value(&mut self, key: &Value) -> Option<Source<Value>> {
+    pub fn kw_value(&mut self, key: &Value) -> Option<Value> {
         self.keyed.remove(key)
     }
 
-    pub fn peek(&mut self) -> Option<&Source<Value>> {
+    pub fn peek(&mut self) -> Option<&Value> {
         self.positional.last()
     }
 
@@ -95,7 +96,7 @@ impl UncheckedArguments {
             Ok(())
         } else {
             Err(Error::aggregate(kw.into_iter().map(|(k, v)| {
-                crate::source::IntoSource::into_source((k.source(), v.source()))
+                crate::source::IntoSource::into_source((Source::get(&k), Source::get(&v)))
                     .with(UnexpectedNonPositionalArgument)
                     .into()
             })))
@@ -110,7 +111,7 @@ impl UncheckedArguments {
         } else {
             let mut vec: Vec<Error> = Vec::new();
             while let Some(v) = self.next() {
-                vec.push(v.with(UnexpectedPositionalArguments).into());
+                vec.push(Source::get(&v).with(UnexpectedPositionalArguments).into());
             }
             Err(Error::aggregate(vec))
         }
@@ -140,7 +141,7 @@ impl Default for UncheckedArguments {
 }
 
 impl Iterator for UncheckedArguments {
-    type Item = Source<Value>;
+    type Item = Value;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.positional.pop()
@@ -156,16 +157,16 @@ impl From<&UncheckedArguments> for Dependencies {
         Self::ordered(
             args.positional
                 .iter()
-                .map(|v| crate::dependency::Dependency::from(&**v))
+                .map(|v| crate::dependency::Dependency::from(v))
                 .chain(
                     args.keyed
                         .iter()
-                        .map(|(k, _)| crate::dependency::Dependency::from(&**k)),
+                        .map(|(k, _)| crate::dependency::Dependency::from(k)),
                 )
                 .chain(
                     args.keyed
                         .iter()
-                        .map(|(_, v)| crate::dependency::Dependency::from(&**v)),
+                        .map(|(_, v)| crate::dependency::Dependency::from(v)),
                 ),
         )
     }
@@ -205,16 +206,13 @@ pub struct Arguments {
 }
 
 impl Arguments {
-    pub fn new(
-        positional: Vec<Source<Value>>,
-        keyed: BTreeMap<Source<Value>, Source<Value>>,
-    ) -> Self {
+    pub fn new(positional: Vec<Value>, keyed: BTreeMap<Value, Value>) -> Self {
         Arguments {
             inner: UncheckedArguments::new(positional, keyed),
         }
     }
 
-    pub fn positional(positional: Vec<Source<Value>>) -> Self {
+    pub fn positional(positional: Vec<Value>) -> Self {
         Self::new(positional, Default::default())
     }
 
@@ -224,7 +222,7 @@ impl Arguments {
 }
 
 impl Iterator for Arguments {
-    type Item = Source<Value>;
+    type Item = Value;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.inner.next()
@@ -271,9 +269,9 @@ impl From<&Arguments> for Dependencies {
 async fn bind_args<F>(
     ctx: &Context,
     to: &UncheckedArguments,
-    from: Source<UncheckedArguments>,
+    from: Src<UncheckedArguments>,
     create_bind_rest: F,
-) -> crate::Result<super::Unit>
+) -> crate::Result<Value>
 where
     F: Fn(UncheckedArguments) -> Value + Send + Sync,
 {
@@ -306,11 +304,11 @@ where
         },
     )
     .await?;
-    Ok(super::Unit)
+    Ok(super::Unit.into())
 }
 
-async fn args_index(ctx: &Context, ind: Source<Value>, args: &UncheckedArguments) -> Value {
-    let (src, ind) = crate::try_result!(ctx.eval_as::<super::String>(ind).await).take();
+async fn args_index(ctx: &Context, ind: Value, args: &UncheckedArguments) -> Value {
+    let ind = crate::try_result!(ctx.eval_as::<super::String>(ind).await);
     let s = ind.as_ref().as_str();
     if s == "positional" {
         let mut pos = args.positional.clone();
@@ -319,7 +317,7 @@ async fn args_index(ctx: &Context, ind: Source<Value>, args: &UncheckedArguments
     } else if s == "keyed" {
         super::Map(args.keyed.clone()).into()
     } else {
-        src.with("unknown index").into_error().into()
+        Source::get(&ind).with("unknown index").into_error().into()
     }
 }
 
@@ -328,8 +326,8 @@ ergo_traits_fn! {
     crate::ergo_type_name!(traits, PatternArgs);
 
     impl traits::Bind for Args {
-        async fn bind(&self, arg: Source<Value>) -> Value {
-            let (src, mut arg) = arg.take();
+        async fn bind(&self, mut arg: Value) -> Value {
+            let src = Source::get(&arg);
             crate::try_result!(CONTEXT.eval(&mut arg).await);
 
             crate::value::match_value!{ arg,
@@ -339,14 +337,14 @@ ergo_traits_fn! {
                 super::Index(ind) => {
                     args_index(CONTEXT, ind, &self.args).await
                 }
-                v => traits::bind_error(CONTEXT, src.with(v)).into()
+                v => traits::bind_error(CONTEXT, v).into()
             }
         }
     }
 
     impl traits::Bind for PatternArgs {
-        async fn bind(&self, arg: Source<Value>) -> Value {
-            let (src, mut arg) = arg.take();
+        async fn bind(&self, mut arg: Value) -> Value {
+            let src = Source::get(&arg);
             crate::try_result!(CONTEXT.eval(&mut arg).await);
 
             crate::value::match_value!{ arg,
@@ -356,7 +354,7 @@ ergo_traits_fn! {
                 super::Index(ind) => {
                     args_index(CONTEXT, ind, &self.args).await
                 }
-                v => traits::bind_error(CONTEXT, src.with(v)).into()
+                v => traits::bind_error(CONTEXT, v).into()
             }
         }
     }

@@ -343,6 +343,12 @@ impl<T> From<TypedValue<T>> for Value {
     }
 }
 
+impl<T> std::borrow::Borrow<Value> for TypedValue<T> {
+    fn borrow(&self) -> &Value {
+        &self.inner
+    }
+}
+
 /// Metadata key types.
 ///
 /// Keys generate the metadata id and have an associated output type.

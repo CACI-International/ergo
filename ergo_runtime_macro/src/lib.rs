@@ -73,7 +73,7 @@ pub fn ergo_pat_value(ts: TokenStream) -> TokenStream {
 
 /// Mark a function as the plugin entrypoint.
 ///
-/// The function must take a single `&Context` argument and return a `Result<Source<Value>>`.
+/// The function must take a single `&Context` argument and return a `Result<Value>`.
 #[proc_macro_attribute]
 pub fn plugin_entry(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let f = parse_macro_input!(item as ItemFn);
@@ -84,7 +84,7 @@ pub fn plugin_entry(_attr: TokenStream, item: TokenStream) -> TokenStream {
         #[ergo_runtime::abi_stable::sabi_extern_fn]
         #[no_mangle]
         pub fn _ergo_plugin(__plugin_ctx: ergo_runtime::plugin::Context, ctx: &ergo_runtime::Context)
-            -> ergo_runtime::error::RResult<ergo_runtime::Source<ergo_runtime::Value>>
+            -> ergo_runtime::error::RResult<ergo_runtime::Value>
         {
             unsafe { __plugin_ctx.initialize_tls(); }
             #fn_name(ctx).into()

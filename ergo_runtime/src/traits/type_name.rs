@@ -2,8 +2,9 @@
 
 use crate as ergo_runtime;
 use crate::abi_stable::std_types::RString;
+use crate::metadata::Source;
 use crate::type_system::{ergo_trait, ErgoType, Type};
-use crate::{Source, Value};
+use crate::Value;
 
 /// An ergo trait describing the name of a type.
 #[ergo_trait]
@@ -29,20 +30,20 @@ pub fn type_name(ctx: &crate::Context, value: &Value) -> String {
 }
 
 /// Create a type error with the value's type mentioned.
-pub fn type_error(ctx: &crate::Context, v: Source<crate::Value>, expected: &str) -> crate::Error {
-    let (src, v) = v.take();
+pub fn type_error(ctx: &crate::Context, v: Value, expected: &str) -> crate::Error {
     let name = type_name(ctx, &v);
-    src.with(format!("type error: expected {}, got {}", expected, name))
+    Source::get(&v)
+        .with(format!("type error: expected {}, got {}", expected, name))
         .into_error()
 }
 
 /// Create a type error with the value's type mentioned.
-pub fn type_error_for<T: ErgoType>(ctx: &crate::Context, v: Source<crate::Value>) -> crate::Error {
+pub fn type_error_for<T: ErgoType>(ctx: &crate::Context, v: Value) -> crate::Error {
     type_error_for_t(ctx, v, &T::ergo_type())
 }
 
 /// Create a type error with the value's type mentioned.
-pub fn type_error_for_t(ctx: &crate::Context, v: Source<crate::Value>, tp: &Type) -> crate::Error {
+pub fn type_error_for_t(ctx: &crate::Context, v: Value, tp: &Type) -> crate::Error {
     type_error(ctx, v, type_name_for(ctx, tp).as_str())
 }
 

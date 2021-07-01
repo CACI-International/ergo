@@ -2,7 +2,12 @@
 
 use ergo_runtime::abi_stable::external_types::RMutex;
 use ergo_runtime::{
-    context::item_name, depends, metadata::Runtime, traits, type_system::ErgoType, types, Value,
+    context::item_name,
+    depends,
+    metadata::{Runtime, Source},
+    traits,
+    type_system::ErgoType,
+    types, Value,
 };
 use std::collections::HashMap as CacheMap;
 use std::sync::Arc;
@@ -34,7 +39,7 @@ pub fn module() -> Value {
 /// Returns a new value which has the same type and result as the given value, but has an identity
 /// derived from the result (typically by forcing the value and any inner values).
 async fn by_content(value: _) -> Value {
-    traits::value_by_content(CONTEXT, value.unwrap(), true).await
+    traits::value_by_content(CONTEXT, value, true).await
 }
 
 #[derive(ErgoType)]
@@ -65,7 +70,6 @@ impl Default for Cached {
 /// evaluate the inner value and persist it. Multiple values with the same id will be normalized to the
 /// same single runtime value.
 async fn cache(value: _, (no_persist): [_]) -> Value {
-    let value = value.unwrap();
     let id = value.id();
 
     let no_persist = no_persist.is_some();
@@ -124,13 +128,13 @@ async fn cache(value: _, (no_persist): [_]) -> Value {
 /// a fixed identity derived from nothing else.
 async fn variable(mut value: _, (depends): [_]) -> Value {
     let deps = if let Some(v) = depends {
-        depends![*v]
+        depends![v]
     } else {
         Default::default()
     };
 
     value.set_dependencies(deps);
-    value.unwrap()
+    value
 }
 
 #[types::ergo_fn]
@@ -146,7 +150,7 @@ async fn debug(value: _) -> Value {
         let mut s = String::from(", value: ");
         {
             let mut formatter = traits::Formatter::new(&mut s);
-            if let Err(e) = traits::display(CONTEXT, value.value().clone(), &mut formatter).await {
+            if let Err(e) = traits::display(CONTEXT, value.clone(), &mut formatter).await {
                 drop(formatter);
                 s.push_str("<error: ");
                 s.push_str(&e.to_string());
@@ -159,13 +163,12 @@ async fn debug(value: _) -> Value {
     };
 
     CONTEXT.log.debug(
-        value
-            .as_ref()
-            .map(|v| format!("type: {}{}, id: {}", name, rest, v.id()))
+        Source::get(&value)
+            .with(format!("type: {}{}, id: {}", name, rest, value.id()))
             .to_string(),
     );
 
-    value.unwrap()
+    value
 }
 
 #[types::ergo_fn]
@@ -174,7 +177,7 @@ async fn debug(value: _) -> Value {
 /// Arguments: `:value`
 async fn eval(mut value: _) -> Value {
     drop(CONTEXT.eval(&mut value).await);
-    value.unwrap()
+    value
 }
 
 #[types::ergo_fn]
@@ -204,10 +207,10 @@ async fn meta_set(mut value: _, metadata_key: _, metadata_value: [_]) -> Value {
     };
 
     match metadata_value {
-        Some(meta) => value.set_metadata(&key, meta.unwrap()),
+        Some(meta) => value.set_metadata(&key, meta),
         None => value.clear_metadata(&key),
     }
-    value.unwrap()
+    value
 }
 
 #[types::ergo_fn]
@@ -218,7 +221,7 @@ async fn meta_set(mut value: _, metadata_key: _, metadata_value: [_]) -> Value {
 /// Returns the Path of the script file from which the value originates, or Unset if no path is
 /// available.
 async fn source_path(value: _) -> Value {
-    match value.path() {
+    match Source::get_option(&value).and_then(|s| s.path()) {
         None => types::Unset.into(),
         Some(p) => types::Path::from(p).into(),
     }
@@ -231,9 +234,9 @@ async fn source_path(value: _) -> Value {
 ///
 /// Returns the dynamic binding corresponding to `key`, or `Unset` if none exists.
 async fn dynamic_binding_get(key: _) -> Value {
-    match CONTEXT.dynamic_scope.get(key.value()) {
+    match CONTEXT.dynamic_scope.get(&key) {
         None => types::Unset.into(),
-        Some(r) => (*r).clone().unwrap(), // return with source instead of unwrapping?
+        Some(r) => (*r).clone(),
     }
 }
 
@@ -245,11 +248,11 @@ async fn dynamic_binding_get(key: _) -> Value {
 /// Returns the result of evaluating `eval` with all `bindings` set in the dynamic scope.
 async fn dynamic_binding_set(bindings: types::Map, mut eval: _) -> Value {
     let mut ctx = CONTEXT.clone();
-    for (k, v) in bindings.unwrap().to_owned().0 {
-        ctx.dynamic_scope.set(&k, v);
+    for (k, v) in bindings.to_owned().0 {
+        ctx.dynamic_scope.set(&Source::extract(k), v);
     }
     drop(ctx.eval(&mut eval).await);
-    eval.unwrap()
+    eval
 }
 
 #[cfg(test)]

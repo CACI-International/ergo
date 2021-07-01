@@ -107,6 +107,9 @@ pub struct Builtin(Option<&'static std::panic::Location<'static>>);
 /// A stored source.
 pub struct Stored;
 
+/// A missing source.
+pub struct Missing;
+
 /// A reference to a SourceFactory.
 #[derive(Clone, Default, StableAbi)]
 #[repr(C)]
@@ -288,6 +291,16 @@ impl SourceFactory for Stored {
     }
 }
 
+impl SourceFactory for Missing {
+    fn name(&self) -> String {
+        "missing".into()
+    }
+
+    fn read<'a>(&'a self) -> Result<Box<dyn Read + 'a>, String> {
+        Err("missing source".into())
+    }
+}
+
 impl Source<()> {
     /// Create a source with the given factory.
     pub fn new(source: impl SourceFactory + Send + Sync + 'static) -> Self {
@@ -337,6 +350,11 @@ impl<T> Source<T> {
     /// Create a value that has a stored source.
     pub fn stored(v: T) -> Self {
         Source::new(Stored).with(v)
+    }
+
+    /// Create a value that has a missing source.
+    pub fn missing(v: T) -> Self {
+        Source::new(Missing).with(v)
     }
 
     /// Get the path of the source, if any.

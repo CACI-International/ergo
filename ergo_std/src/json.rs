@@ -1,6 +1,8 @@
 //! JSON functions.
 
-use ergo_runtime::{traits, try_result, types, value::match_value, Context, Source, Value};
+use ergo_runtime::{
+    metadata::Source, traits, try_result, types, value::match_value, Context, Value,
+};
 use futures::future::{BoxFuture, FutureExt};
 use json::{parse as json_parse, stringify as json_stringify, JsonValue};
 
@@ -16,18 +18,19 @@ pub fn module() -> Value {
 ///
 /// Arguments: `String :json`
 async fn parse(json: types::String) -> Value {
-    let (json_source, json) = json.take();
     let json_val = match json_parse(json.as_ref().0.as_str()) {
-        Err(e) => return json_source.with(e).into_error().into(),
+        Err(e) => return Source::get(&json).with(e).into_error().into(),
         Ok(val) => val,
     };
 
-    fn json_to_val(src: &Source<()>, json: JsonValue) -> Value {
+    fn json_to_val(src: &ergo_runtime::Source<()>, json: JsonValue) -> Value {
         match json {
             JsonValue::Null => types::Unit.into(),
             JsonValue::Short(s) => types::String::from(s.as_str()).into(),
             JsonValue::String(s) => types::String::from(s).into(),
             JsonValue::Number(n) => match types::Number::from_f64(n.into()) {
+                // FIXME this case should technically be a panic, as a json number is guaranteed to
+                // not be +/-inf or NaN, which are the cases under which from_f64 would fail.
                 None => src
                     .clone()
                     .with(format!("invalid number {}", n))
@@ -40,8 +43,8 @@ async fn parse(json: types::String) -> Value {
                 o.iter()
                     .map(|(k, v)| {
                         (
-                            src.clone().with(types::String::from(k).into()),
-                            src.clone().with(json_to_val(src, v.clone())),
+                            Source::imbue(src.clone().with(types::String::from(k).into())),
+                            Source::imbue(src.clone().with(json_to_val(src, v.clone()))),
                         )
                     })
                     .collect(),
@@ -49,7 +52,7 @@ async fn parse(json: types::String) -> Value {
             .into(),
             JsonValue::Array(a) => types::Array(
                 a.into_iter()
-                    .map(|v| src.clone().with(json_to_val(src, v)))
+                    .map(|v| Source::imbue(src.clone().with(json_to_val(src, v))))
                     .collect(),
             )
             .into(),
@@ -66,11 +69,11 @@ async fn parse(json: types::String) -> Value {
 async fn stringify(value: _) -> Value {
     fn val_to_json<'a>(
         ctx: &'a Context,
-        val: Source<Value>,
+        mut val: Value,
     ) -> BoxFuture<'a, ergo_runtime::Result<JsonValue>> {
         async move {
-            let (val_source, mut val) = val.take();
             ctx.eval(&mut val).await?;
+            let val_source = Source::get(&val);
             match_value! { val,
                 types::Unit => Ok(JsonValue::Null),
                 types::String(s) => Ok(JsonValue::String(s.into())),
@@ -87,7 +90,7 @@ async fn stringify(value: _) -> Value {
                         entries.push(match (k,v) {
                             (Err(ke), Err(ve)) => Err(ergo_runtime::Error::aggregate(vec![ke,ve])),
                             (Err(e), _) | (_, Err(e)) => Err(e),
-                            (Ok(k), Ok(v)) => Ok((k.unwrap().to_owned().0,v))
+                            (Ok(k), Ok(v)) => Ok((k.to_owned().0,v))
                         });
                     }
                     Ok(JsonValue::Object(entries.into_iter().collect::<Result<Vec<_>, _>>()?.into_iter().collect()))
@@ -99,7 +102,7 @@ async fn stringify(value: _) -> Value {
                     }
                     Ok(JsonValue::Array(entries.into_iter().collect::<Result<Vec<_>, _>>()?))
                 }
-                o => Err(traits::type_error(ctx, val_source.with(o), "json-compatible type"))
+                o => Err(traits::type_error(ctx, o, "json-compatible type"))
             }
         }
         .boxed()

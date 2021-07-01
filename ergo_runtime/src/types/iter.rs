@@ -5,10 +5,10 @@ use crate::abi_stable::{
     bst::BstMap, future::stream::BoxStream, std_types::RVec,
     stream::shared_async_stream::SharedAsyncStream, type_erase::Erased, StableAbi,
 };
+use crate::metadata::Source;
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
-use crate::value::IntoValue;
-use crate::{depends, Dependencies, Source, TypedValue, Value};
+use crate::{depends, Dependencies, TypedValue, Value};
 use bincode;
 use futures::stream::Stream;
 use std::pin::Pin;
@@ -25,10 +25,10 @@ use std::task;
 /// script perspective it still seems like an iterator (since in scripts everything is async).
 #[derive(Clone, Debug, ErgoType, StableAbi)]
 #[repr(C)]
-pub struct Iter(SharedAsyncStream<BoxStream<'static, Source<Value>>>);
+pub struct Iter(SharedAsyncStream<BoxStream<'static, Value>>);
 
 impl Stream for Iter {
-    type Item = Source<Value>;
+    type Item = Value;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut task::Context) -> task::Poll<Option<Self::Item>> {
         unsafe { self.map_unchecked_mut(|v| &mut v.0) }
@@ -45,7 +45,7 @@ impl Iter {
     /// Create a new Iter value with the given dependencies.
     pub fn new<I>(iter: I, deps: Dependencies) -> TypedValue<Self>
     where
-        I: Iterator<Item = Source<Value>> + Send + Sync + 'static,
+        I: Iterator<Item = Value> + Send + Sync + 'static,
     {
         TypedValue::constant_deps(Self::from_iter(iter), depends![Self::ergo_type(), ^deps])
     }
@@ -53,7 +53,7 @@ impl Iter {
     /// Create a new Iter value from a Stream with the given dependencies.
     pub fn new_stream<S>(stream: S, deps: Dependencies) -> TypedValue<Self>
     where
-        S: Stream<Item = Source<Value>> + Send + 'static,
+        S: Stream<Item = Value> + Send + 'static,
     {
         TypedValue::constant_deps(
             Self::from_stream(stream),
@@ -64,7 +64,7 @@ impl Iter {
     /// Create an Iter from an iterator.
     pub fn from_iter<I>(iter: I) -> Self
     where
-        I: Iterator<Item = Source<Value>> + Send + Sync + 'static,
+        I: Iterator<Item = Value> + Send + Sync + 'static,
     {
         Self::from_stream(futures::stream::iter(iter))
     }
@@ -72,7 +72,7 @@ impl Iter {
     /// Create an Iter from a stream.
     pub fn from_stream<S>(stream: S) -> Self
     where
-        S: Stream<Item = Source<Value>> + Send + 'static,
+        S: Stream<Item = Value> + Send + 'static,
     {
         Iter(SharedAsyncStream::new(BoxStream::new(stream)))
     }
@@ -80,7 +80,7 @@ impl Iter {
     /// Collect the iterator values.
     pub async fn collect<C>(self) -> C
     where
-        C: Default + Extend<Source<Value>>,
+        C: Default + Extend<Value>,
     {
         futures::stream::StreamExt::collect(self).await
     }
@@ -94,11 +94,11 @@ ergo_traits_fn! {
                 let mut iter = items.into_iter();
                 write!(f, "[")?;
                 if let Some(v) = iter.next() {
-                    traits::display(CONTEXT, v.unwrap(), f).await?;
+                    traits::display(CONTEXT, v, f).await?;
                 }
                 for v in iter {
                     write!(f, ", ")?;
-                    traits::display(CONTEXT, v.unwrap(), f).await?;
+                    traits::display(CONTEXT, v, f).await?;
                 }
                 write!(f, "]")?;
                 Ok(())
@@ -108,7 +108,7 @@ ergo_traits_fn! {
 
     impl traits::Nested for Iter {
         async fn nested(&self) -> RVec<Value> {
-            self.clone().collect::<Vec<_>>().await.into_iter().map(Source::unwrap).collect()
+            self.clone().collect().await
         }
     }
 
@@ -117,12 +117,11 @@ ergo_traits_fn! {
             let mut vals: Vec<_> = self.to_owned().collect().await;
             if deep {
                 CONTEXT.task.join_all(vals.iter_mut().map(|v| async move {
-                    let old_v = std::mem::replace(&mut **v, super::Unset.into());
-                    **v = traits::value_by_content(CONTEXT, old_v, deep).await;
+                    let old_v = std::mem::replace(v, super::Unset.into());
+                    *v = traits::value_by_content(CONTEXT, old_v, deep).await;
                     Ok(())
                 })).await.unwrap();
             }
-            dbg!(&vals);
             let deps = depends![^@vals];
             Iter::new(vals.into_iter(), deps).into()
         }
@@ -130,7 +129,7 @@ ergo_traits_fn! {
 
     impl traits::IntoTyped<super::Array> for Iter {
         async fn into_typed(self) -> Value {
-            super::Array(self.to_owned().collect().await).into_value()
+            super::Array(self.to_owned().collect().await).into()
         }
     }
 
@@ -139,10 +138,9 @@ ergo_traits_fn! {
             let mut vals: Vec<_> = self.to_owned().collect().await;
             let mut ret = BstMap::default();
             let mut errs = vec![];
-            let mut_vals = vals.iter_mut().map(|src_v| &mut **src_v).collect::<Vec<_>>();
+            let mut_vals = vals.iter_mut().collect::<Vec<_>>();
             drop(CONTEXT.eval_all(mut_vals).await);
             for v in vals {
-                let (source, v) = v.take();
                 crate::value::match_value! { v,
                     super::MapEntry { key, value } => {
                         // Remove Unset values.
@@ -156,12 +154,12 @@ ergo_traits_fn! {
                         errs.push(e);
                     }
                     other => {
-                        errs.push(traits::type_error_for::<super::MapEntry>(CONTEXT, source.with(other)));
+                        errs.push(traits::type_error_for::<super::MapEntry>(CONTEXT, other));
                     }
                 }
             }
             if errs.is_empty() {
-                super::Map(ret).into_value()
+                super::Map(ret).into()
             } else {
                 crate::Error::aggregate(errs).into()
             }
@@ -175,7 +173,7 @@ ergo_traits_fn! {
                 let vals: Vec<_> = self.clone().collect().await;
                 for v in vals {
                     ids.push(v.id());
-                    stored_ctx.write_to_store(CONTEXT, v.unwrap()).await?;
+                    stored_ctx.write_to_store(CONTEXT, v).await?;
                 }
                 bincode::serialize_into(item, &ids).map_err(|e| e.into())
             }.await.into()
@@ -186,7 +184,7 @@ ergo_traits_fn! {
                 let ids: Vec<u128> = bincode::deserialize_from(item)?;
                 let mut vals = Vec::new();
                 for id in ids {
-                    vals.push(Source::stored(stored_ctx.read_from_store(CONTEXT, id).await?));
+                    vals.push(Source::imbue(crate::Source::stored(stored_ctx.read_from_store(CONTEXT, id).await?)));
                 }
                 Ok(Erased::new(Iter::from_iter(vals.into_iter())))
             }.await.into()

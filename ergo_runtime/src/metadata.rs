@@ -56,6 +56,58 @@ impl Doc {
     }
 }
 
+/// Source metadata key.
+pub struct Source;
+
+impl MetadataKey for Source {
+    type Value = crate::Source<()>;
+
+    fn id(&self) -> u128 {
+        crate::nsid!(meta::source).as_u128()
+    }
+}
+
+impl Source {
+    /// Get the source of the given value, if any.
+    pub fn get_option(value: &Value) -> Option<crate::Source<()>> {
+        value.get_metadata(&Source).map(|v| v.owned())
+    }
+
+    /// Get some source for the given value.
+    ///
+    /// Returns a missing source if no source is available.
+    pub fn get(value: &Value) -> crate::Source<()> {
+        Self::get_option(value).unwrap_or_else(|| crate::Source::missing(()))
+    }
+
+    /// Extract the source of the given value and wrap the value with it.
+    pub fn extract<T>(value: T) -> crate::Source<T>
+    where
+        T: std::borrow::Borrow<Value>,
+    {
+        Self::get(value.borrow()).with(value)
+    }
+
+    /// Set the source for the given value.
+    pub fn set(v: &mut Value, src: crate::Source<()>) {
+        v.set_metadata(&Source, src);
+    }
+
+    /// Set the source for the given value if no other source is set.
+    pub fn set_if_missing(v: &mut Value, src: crate::Source<()>) {
+        if v.get_metadata(&Source).is_none() {
+            Self::set(v, src)
+        }
+    }
+
+    /// Imbue a source into a value.
+    pub fn imbue(v: crate::Source<Value>) -> Value {
+        let (src, mut v) = v.take();
+        Self::set(&mut v, src);
+        v
+    }
+}
+
 /// Metadata key for any runtime value.
 pub struct Runtime {
     /// The id to use as the metadata key.

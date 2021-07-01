@@ -13,9 +13,7 @@ pub fn module() -> Value {
 ///
 /// Arguments: `:value`
 async fn from(value: _) -> Value {
-    ergo_runtime::try_result!(traits::into_sourced::<types::Array>(CONTEXT, value).await)
-        .unwrap()
-        .into()
+    ergo_runtime::try_result!(traits::into::<types::Array>(CONTEXT, value).await).into()
 }
 
 #[cfg(test)]

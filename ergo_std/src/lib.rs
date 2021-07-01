@@ -1,5 +1,5 @@
 ///! Ergo standard module plugin.
-use ergo_runtime::{plugin_entry, types, Context, Source, Value};
+use ergo_runtime::{plugin_entry, types, Context, Value};
 
 mod array;
 mod bool;
@@ -34,24 +34,25 @@ macro_rules! make_string_map {
     ( source $src:expr, $( $s:literal = $v:expr ),* ) => {
         {
             let src = $src;
-            use ergo_runtime::{Source,Value};
-            let mut m: ergo_runtime::abi_stable::bst::BstMap<Source<Value>,Source<Value>> = Default::default();
-            $( m.insert(src.clone().with(crate::make_string($s)), src.clone().with($v)); )*
-            types::Map(m).into()
+            use ergo_runtime::{Value};
+            use ergo_runtime::metadata::Source;
+            let mut m: ergo_runtime::abi_stable::bst::BstMap<Value,Value> = Default::default();
+            $( m.insert(Source::imbue(src.clone().with(crate::make_string($s))), Source::imbue(src.clone().with($v))); )*
+            Source::imbue(src.with(types::Map(m).into()))
         }
     };
     ( $( $s:literal = $v:expr ),* ) => {
-        $crate::make_string_map! { source Source::builtin(()), $( $s = $v ),* }
+        $crate::make_string_map! { source ergo_runtime::Source::builtin(()), $( $s = $v ),* }
     };
 }
 
 #[plugin_entry]
-fn entry(ctx: &Context) -> ergo_runtime::Result<Source<Value>> {
+fn entry(ctx: &Context) -> ergo_runtime::Result<Value> {
     // Add trait implementations
     exec::ergo_traits(&ctx.traits);
     net::ergo_traits(&ctx.traits);
 
-    Ok(Source::builtin(make_string_map! {
+    Ok(make_string_map! {
         "array" = array::module(),
         "bool" = bool::module(),
         "env" = env::module(),
@@ -71,5 +72,5 @@ fn entry(ctx: &Context) -> ergo_runtime::Result<Source<Value>> {
         "task" = task::function(),
         "type" = type_::module(),
         "value" = value::module()
-    }))
+    })
 }

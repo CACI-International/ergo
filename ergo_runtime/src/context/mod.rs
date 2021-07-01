@@ -195,15 +195,11 @@ impl Context {
 
     /// Evaluate a value expecting a specific type, returning an error if it does not evaluate to a
     /// value of that type or if it evaluates to an Error type.
-    pub async fn eval_as<T: ErgoType>(
-        &self,
-        value: Source<Value>,
-    ) -> crate::Result<Source<TypedValue<T>>> {
-        let (source, mut value) = value.take();
+    pub async fn eval_as<T: ErgoType>(&self, mut value: Value) -> crate::Result<TypedValue<T>> {
         self.eval(&mut value).await?;
         match value.as_type::<T>() {
-            Ok(v) => Ok(source.with(v)),
-            Err(e) => Err(crate::traits::type_error_for::<T>(self, source.with(e))),
+            Ok(v) => Ok(v),
+            Err(e) => Err(crate::traits::type_error_for::<T>(self, e)),
         }
     }
 
