@@ -24,7 +24,7 @@ unarchive-remote = fn :url -> plugin:value:cache {
     out = plugin:path:new:
     unpacked-dir = plugin:path:new:
     plugin:net:download :url :out
-    plugin:fs:unarchive :archive :unpacked-dir
+    plugin:fs:unarchive :unpacked-dir :out
     plugin:fs:remove :out
     :unpacked-dir
 }
