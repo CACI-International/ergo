@@ -31,6 +31,12 @@ impl From<types::Path> for CommandString {
     }
 }
 
+impl From<&'_ CommandString> for Dependencies {
+    fn from(c: &'_ CommandString) -> Self {
+        depends![CommandString::ergo_type(), c]
+    }
+}
+
 ergo_runtime::HashAsDependency!(CommandString);
 
 /// The exit status of a command.

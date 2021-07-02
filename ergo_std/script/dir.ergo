@@ -194,10 +194,14 @@ iter-split = fn :n :iter -> [plugin:iter:take :n :iter, plugin:iter:skip :n :ite
 ##
 ## If `condition` evaluates to true, `if_true` is returned. Otherwise `if_false` is returned. If
 ## `if_false` is omitted, an Unset value will be returned.
-if = fn :cond :if_true ^:if_false -> plugin:match [plugin:bool:from :cond, :if_false] [
-    [plugin:bool:true, _] -> :if_true
-    [plugin:bool:false, []] -> plugin:type:Unset:
-    [plugin:bool:false, [:if_false]] -> :if_false
+if = fn :cond :if_true ^:if_false -> plugin:match (plugin:bool:from :cond) [
+    plugin:bool:true -> :if_true
+    plugin:bool:false -> plugin:match if_false:positional [
+        [] -> plugin:type:Unset:
+        [:if_false] -> :if_false
+        [_,^:rest] -> plugin:type:Error: (source=:rest) "too many arguments supplied to if"
+    ]
+    #[plugin:bool:false, [:if_false]] -> :if_false
 ]
 
 ## Create a function which takes only string arguments as interpreted by `std:getopt`.

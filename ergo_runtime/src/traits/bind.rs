@@ -34,19 +34,13 @@ pub fn bind_error(ctx: &Context, v: Value) -> crate::Error {
 
 /// Bind a value to an argument.
 pub async fn bind(ctx: &Context, mut v: Value, arg: Value) -> Value {
-    let bind_site = (Source::get(&v), Source::get(&arg)).into_source().with(());
-
     if let Err(e) = ctx.eval(&mut v).await {
         return e.into();
     }
 
     match ctx.get_trait::<Bind>(&v) {
         None => bind_error(ctx, v).into(),
-        Some(t) => {
-            let mut ret = t.bind(v, arg).await;
-            Source::set_if_missing(&mut ret, bind_site);
-            ret
-        }
+        Some(t) => t.bind(v, arg).await,
     }
 }
 
@@ -215,7 +209,11 @@ pub(crate) async fn bind_map(
             } else {
                 let mut errs = Vec::new();
                 for (k, _) in from.into_iter() {
-                    errs.push(Source::get(&k).with("key missing in binding").into_error());
+                    errs.push(
+                        Source::get(&k)
+                            .with("extraneous key in binding")
+                            .into_error(),
+                    );
                 }
                 Err(crate::Error::aggregate(errs))
             }

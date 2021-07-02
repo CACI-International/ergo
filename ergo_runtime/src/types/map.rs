@@ -74,7 +74,7 @@ ergo_traits_fn! {
         }
     }
 
-    traits::IntoTyped::<super::Iter>::add_impl::<Map>(traits);
+    traits::IntoTyped::<super::Iter>::add_depending_impl::<Map>(traits);
 
     traits::Nested::add_impl::<Map>(traits);
 

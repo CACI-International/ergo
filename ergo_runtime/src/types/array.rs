@@ -62,7 +62,7 @@ ergo_traits_fn! {
         }
     }
 
-    traits::IntoTyped::<super::Iter>::add_impl::<Array>(traits);
+    traits::IntoTyped::<super::Iter>::add_depending_impl::<Array>(traits);
 
     traits::Nested::add_impl::<Array>(traits);
 

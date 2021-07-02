@@ -95,7 +95,7 @@ ergo_traits_fn! {
         }
     }
 
-    traits::IntoTyped::<ByteStream>::add_impl::<super::String>(traits);
+    traits::IntoTyped::<ByteStream>::add_depending_impl::<super::String>(traits);
 
     impl traits::ValueByContent for ByteStream {
         async fn value_by_content(self, _deep: bool) -> Value {

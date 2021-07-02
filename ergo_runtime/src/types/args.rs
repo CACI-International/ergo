@@ -304,7 +304,20 @@ where
         },
     )
     .await?;
-    Ok(super::Unit.into())
+    // If keyed_rest was not consumed, an error should occur
+    if !keyed_rest.is_empty() {
+        let mut errs = Vec::new();
+        for (k, _) in keyed_rest.into_iter() {
+            errs.push(
+                Source::get(&k)
+                    .with("extraneous key in binding")
+                    .into_error(),
+            );
+        }
+        Err(crate::Error::aggregate(errs))
+    } else {
+        Ok(super::Unit.into())
+    }
 }
 
 async fn args_index(ctx: &Context, ind: Value, args: &UncheckedArguments) -> Value {

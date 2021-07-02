@@ -454,6 +454,7 @@ mod test {
                 ":kw = fn ^{something} -> :something\nkw (something = hi)",
                 SRString("hi"),
             )?;
+            script_fail("nokw = fn ^{something} -> (); nokw ^kw")?;
             Ok(())
         }
 

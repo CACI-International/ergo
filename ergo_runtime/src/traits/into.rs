@@ -10,6 +10,7 @@ use crate::abi_stable::{
     StableAbi,
 };
 use crate::context::{Context, Traits};
+use crate::dependency::GetDependencies;
 use crate::depends;
 use crate::metadata::Source;
 use crate::type_system::{
@@ -28,6 +29,25 @@ impl<T: ErgoType + StableAbi + Eraseable> IntoTyped<T> {
     pub fn add_impl<U>(traits: &Traits)
     where
         U: ErgoType + Eraseable + Clone,
+        T: From<U> + ErgoType + Eraseable + GetDependencies,
+    {
+        traits.add_impl_for_type::<U, IntoTyped<T>>(ergo_trait_impl! {
+            impl<T, U> IntoTyped<T> for U
+                where T: From<U> + ErgoType + Eraseable + GetDependencies,
+                      U: ErgoType + Eraseable + Clone,
+            {
+                async fn into_typed(self) -> Value {
+                    Value::constant(T::from(self.to_owned()))
+                }
+            }
+        });
+    }
+
+    /// Add an implementation of the IntoTyped ergo trait, where the produced value has
+    /// dependencies based on the `from` value.
+    pub fn add_depending_impl<U>(traits: &Traits)
+    where
+        U: ErgoType + Eraseable + Clone,
         T: From<U> + ErgoType + Eraseable,
     {
         traits.add_impl_for_type::<U, IntoTyped<T>>(ergo_trait_impl! {
@@ -36,10 +56,8 @@ impl<T: ErgoType + StableAbi + Eraseable> IntoTyped<T> {
                       U: ErgoType + Eraseable + Clone,
             {
                 async fn into_typed(self) -> Value {
-                    let v = self;
-                    // TODO use Value::constant instead?
-                    let deps = depends![v];
-                    Value::constant_deps(T::from(v.to_owned()), deps)
+                    let deps = depends![self];
+                    Value::constant_deps(T::from(self.to_owned()), deps)
                 }
             }
         });

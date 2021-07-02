@@ -366,7 +366,7 @@ impl ThreadPoolInterface for std::sync::Arc<TokioThreadPool> {
     fn spawn_ok(&self, priority: u32, future: BoxFuture<'static, ()>) {
         let reg = self.priority.register(priority);
         self.pool.spawn(async move {
-            // TODO re-register when the future returns pending?
+            // TODO re-register when `future` returns pending?
             reg.await;
             future.await
         });
