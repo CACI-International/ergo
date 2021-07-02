@@ -289,7 +289,7 @@ fn run(opts: Opts) -> Result<String, String> {
                 s += &string_quote(to_load);
 
                 // Apply indices
-                let mut first = false;
+                let mut first = true;
                 for index in indices {
                     if first {
                         s += " |>";
