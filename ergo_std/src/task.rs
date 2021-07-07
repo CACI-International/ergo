@@ -97,25 +97,30 @@ pub async fn function(
             &CONTEXT.task,
         )
         .await;
-        let ctx = CONTEXT.with_dynamic_binding(&ARGS_SOURCE.with(ParentTaskKey), parent_task);
         let mut value = value;
         CONTEXT
-            .task
-            .spawn(priority, async move {
-                log.info(format!("starting: {}", &description));
-                let ret = ctx.eval(&mut value).await;
-                let errored = ret.is_err();
-                if errored {
-                    work.lock().err();
-                }
-                log.info(format!(
-                    "complete{}: {}",
-                    if errored { " (failed)" } else { "" },
-                    description
-                ));
-                ret?;
-                Ok(value)
-            })
+            .spawn(
+                priority,
+                |ctx| {
+                    ctx.dynamic_scope
+                        .set(&ARGS_SOURCE.with(ParentTaskKey), parent_task)
+                },
+                move |ctx| async move {
+                    log.info(format!("starting: {}", &description));
+                    let ret = ctx.eval(&mut value).await;
+                    let errored = ret.is_err();
+                    if errored {
+                        work.lock().err();
+                    }
+                    log.info(format!(
+                        "complete{}: {}",
+                        if errored { " (failed)" } else { "" },
+                        description
+                    ));
+                    ret?;
+                    Ok(value)
+                },
+            )
             .await
     };
 

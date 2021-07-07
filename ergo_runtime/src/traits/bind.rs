@@ -40,7 +40,7 @@ pub async fn bind(ctx: &Context, mut v: Value, arg: Value) -> Value {
 
     match ctx.get_trait::<Bind>(&v) {
         None => bind_error(ctx, v).into(),
-        Some(t) => t.bind(v, arg).await,
+        Some(t) => t.bind(ctx, v, arg).await,
     }
 }
 

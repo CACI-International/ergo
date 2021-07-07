@@ -247,12 +247,19 @@ async fn dynamic_binding_get(key: _) -> Value {
 ///
 /// Returns the result of evaluating `eval` with all `bindings` set in the dynamic scope.
 async fn dynamic_binding_set(bindings: types::Map, mut eval: _) -> Value {
-    let mut ctx = CONTEXT.clone();
-    for (k, v) in bindings.to_owned().0 {
-        ctx.dynamic_scope.set(&Source::extract(k), v);
-    }
-    drop(ctx.eval(&mut eval).await);
-    eval
+    CONTEXT
+        .fork(
+            |ctx| {
+                for (k, v) in bindings.to_owned().0 {
+                    ctx.dynamic_scope.set(&Source::extract(k), v);
+                }
+            },
+            |ctx| async move {
+                drop(ctx.eval(&mut eval).await);
+                eval
+            },
+        )
+        .await
 }
 
 #[cfg(test)]

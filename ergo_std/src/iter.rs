@@ -46,22 +46,27 @@ async fn from(value: _) -> Value {
 async fn fold(func: _, acc: _, iter: _) -> Value {
     let iter = try_result!(traits::into::<types::Iter>(CONTEXT, iter).await);
 
-    iter.to_owned()
-        .fold(acc, |acc, v| {
-            traits::bind(
-                CONTEXT,
-                func.clone(),
-                Source::imbue(
-                    ARGS_SOURCE.clone().with(
-                        types::Args {
-                            args: types::args::Arguments::positional(vec![acc, v]).unchecked(),
-                        }
-                        .into(),
-                    ),
+    // FIXME early exit on error?
+
+    let mut acc = acc;
+    let vals = try_result!(iter.to_owned().collect::<Vec<_>>(CONTEXT).await);
+    for v in vals {
+        acc = traits::bind(
+            CONTEXT,
+            func.clone(),
+            Source::imbue(
+                ARGS_SOURCE.clone().with(
+                    types::Args {
+                        args: types::args::Arguments::positional(vec![acc, v]).unchecked(),
+                    }
+                    .into(),
                 ),
-            )
-        })
-        .await
+            ),
+        )
+        .await;
+    }
+
+    acc
 }
 
 #[types::ergo_fn]
@@ -76,10 +81,31 @@ async fn unique(iter: _) -> Value {
 
     let deps = depends![nsid!(std::iter::unique), iter];
 
-    let mut seen: BTreeSet<u128> = Default::default();
-    let new_iter = iter.to_owned().filter(move |v| ready(seen.insert(v.id())));
+    let iter = iter.to_owned();
 
-    types::Iter::new_stream(new_iter, deps).into()
+    #[derive(Clone)]
+    struct Unique {
+        iter: types::Iter,
+        seen: BTreeSet<u128>,
+    }
+
+    ergo_runtime::ImplGenerator!(Unique => |self, ctx| {
+        while let Some(v) = self.iter.next(ctx).await? {
+            if self.seen.insert(v.id()) {
+                return Ok(Some(v));
+            }
+        }
+        Ok(None)
+    });
+
+    types::Iter::new(
+        Unique {
+            iter,
+            seen: Default::default(),
+        },
+        deps,
+    )
+    .into()
 }
 
 #[types::ergo_fn]
@@ -94,18 +120,22 @@ async fn filter(func: _, iter: _) -> Value {
 
     let deps = depends![nsid!(std::iter::filter), iter];
 
-    // TODO improve context of stream execution
-    let ctx = CONTEXT.clone();
-    let new_iter = iter.to_owned().filter_map(move |v| {
-        let func = func.clone();
-        let ctx = ctx.clone();
-        let args_source = ARGS_SOURCE.clone();
-        async move {
+    let iter = iter.to_owned();
+
+    #[derive(Clone)]
+    struct Filter {
+        iter: types::Iter,
+        func: Value,
+        args_source: ergo_runtime::Source<()>,
+    }
+
+    ergo_runtime::ImplGenerator!(Filter => |self, ctx| {
+        while let Some(v) = self.iter.next(ctx).await? {
             let res = traits::bind(
-                &ctx,
-                func,
+                ctx,
+                self.func.clone(),
                 Source::imbue(
-                    args_source.with(
+                    self.args_source.clone().with(
                         types::Args {
                             args: types::args::Arguments::positional(vec![v.clone()]).unchecked(),
                         }
@@ -115,21 +145,23 @@ async fn filter(func: _, iter: _) -> Value {
             )
             .await;
 
-            // TODO handle errors differently?
-            match traits::into::<types::Bool>(&ctx, res).await {
-                Ok(b) => {
-                    if b.as_ref().0 {
-                        Some(v)
-                    } else {
-                        None
-                    }
-                }
-                Err(e) => Some(e.into()),
+            let b = traits::into::<types::Bool>(ctx, res).await?;
+            if b.as_ref().0 {
+                return Ok(Some(v));
             }
         }
+        Ok(None)
     });
 
-    types::Iter::new_stream(new_iter, deps).into()
+    types::Iter::new(
+        Filter {
+            iter,
+            func,
+            args_source: ARGS_SOURCE,
+        },
+        deps,
+    )
+    .into()
 }
 
 fn zip() -> Value {
@@ -151,19 +183,27 @@ fn zip() -> Value {
                     let new_iter = if iters_typed.is_empty() {
                         types::Iter::from_iter(std::iter::empty())
                     } else {
-                        let cap = iters_typed.len();
-                        let vec_stream = iters_typed.into_iter().fold(
-                                futures::stream::repeat_with(move || {
-                                    abi_stable::std_types::RVec::with_capacity(cap)
-                                }).boxed(),
-                                |vec_stream, iter| {
-                                    vec_stream.zip(iter.to_owned())
-                                        .map(|(mut vec,v)| { vec.push(v); vec })
-                                        .boxed()
-                                },
-                        );
-                        let val_stream = vec_stream.map(move |vec| Source::imbue(arg_source.clone().with(types::Array(vec).into())));
-                        types::Iter::from_stream(val_stream)
+                        #[derive(Clone)]
+                        struct Zip {
+                            iters: Vec<types::Iter>,
+                            arg_source: ergo_runtime::Source<()>,
+                        }
+
+                        ergo_runtime::ImplGenerator!(Zip => |self, ctx| {
+                            let mut arr = abi_stable::std_types::RVec::with_capacity(self.iters.len());
+                            for v in self.iters.iter_mut() {
+                                match v.next(ctx).await? {
+                                    None => return Ok(None),
+                                    Some(v) => arr.push(v),
+                                }
+                            }
+                            Ok(Some(Source::imbue(self.arg_source.clone().with(types::Array(arr).into()))))
+                        });
+
+                        types::Iter::from_generator(Zip {
+                            iters: iters_typed.into_iter().map(|v| v.to_owned()).collect(),
+                            arg_source,
+                        })
                     };
 
                     Value::constant_deps(new_iter, deps)
@@ -183,7 +223,7 @@ fn zip() -> Value {
                             let iter_id = arg.id();
                             let iter = arg.to_owned();
 
-                            let items: Vec<_> = iter.collect().await;
+                            let items: Vec<_> = try_result!(iter.collect(ctx).await);
                             let arrays = try_result!(ctx.task.join_all(items.into_iter().map(|v| ctx.eval_as::<types::Array>(v))).await);
 
                             let shared_arrays = ergo_runtime::abi_stable::stream::shared_async_stream::SharedAsyncStream::new(futures::stream::iter(arrays.into_iter()));
@@ -244,51 +284,55 @@ async fn skip_while(func: _, iter: _) -> Value {
 
     let deps = depends![nsid!(std::iter::skip_while), func, iter];
 
-    // TODO improve context of stream execution
-    let ctx = CONTEXT.clone();
-    let skip = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
-    let new_iter = iter.to_owned().filter_map(move |v| {
-        if !skip.load(std::sync::atomic::Ordering::Relaxed) {
-            ready(Some(v)).boxed()
-        } else {
-            let func = func.clone();
-            let skip = skip.clone();
-            let ctx = ctx.clone();
-            let args_source = ARGS_SOURCE.clone();
-            async move {
-                let res = traits::bind(
-                    &ctx,
-                    func,
-                    Source::imbue(
-                        args_source.with(
-                            types::Args {
-                                args: types::args::Arguments::positional(vec![v.clone()])
-                                    .unchecked(),
-                            }
-                            .into(),
-                        ),
-                    ),
-                )
-                .await;
+    #[derive(Clone)]
+    struct SkipWhile {
+        iter: types::Iter,
+        func: Value,
+        args_source: ergo_runtime::Source<()>,
+        skip: bool,
+    }
 
-                // TODO handle errors differently?
-                match traits::into::<types::Bool>(&ctx, res).await {
-                    Ok(b) => {
-                        if b.as_ref().0 {
-                            None
-                        } else {
-                            skip.store(false, std::sync::atomic::Ordering::Relaxed);
-                            Some(v)
-                        }
-                    }
-                    Err(e) => Some(e.into()),
-                }
-            }
-            .boxed()
+    ergo_runtime::ImplGenerator!(SkipWhile => |self, ctx| {
+        if !self.skip {
+            return self.iter.next(ctx).await;
         }
+
+        while let Some(v) = self.iter.next(ctx).await? {
+            let res = traits::bind(
+                ctx,
+                self.func.clone(),
+                Source::imbue(
+                    self.args_source.clone().with(
+                        types::Args {
+                            args: types::args::Arguments::positional(vec![v.clone()])
+                                .unchecked(),
+                        }
+                        .into(),
+                    ),
+                ),
+            )
+            .await;
+
+            let b = traits::into::<types::Bool>(ctx, res).await?;
+            if !b.as_ref().0 {
+                self.skip = false;
+                return Ok(Some(v))
+            }
+        }
+        Ok(None)
     });
 
-    types::Iter::new_stream(new_iter, deps).into()
+    let iter = iter.to_owned();
+    types::Iter::new(
+        SkipWhile {
+            iter,
+            func,
+            args_source: ARGS_SOURCE,
+            skip: true,
+        },
+        deps,
+    )
+    .into()
 }
 
 #[types::ergo_fn]
@@ -307,7 +351,24 @@ async fn skip(n: _, iter: _) -> Value {
         .transpose_err()
         .map_err(|e| e.into_error()));
 
-    types::Iter::new_stream(iter.to_owned().skip(n), deps).into()
+    #[derive(Clone)]
+    struct Skip {
+        iter: types::Iter,
+        n: usize,
+    }
+
+    ergo_runtime::ImplGenerator!(Skip => |self, ctx| {
+        while self.n > 0 {
+            if let None = self.iter.next(ctx).await? {
+                return Ok(None);
+            }
+            self.n -= 1;
+        }
+        self.iter.next(ctx).await
+    });
+
+    let iter = iter.to_owned();
+    types::Iter::new(Skip { iter, n }, deps).into()
 }
 
 #[types::ergo_fn]
@@ -322,20 +383,23 @@ async fn take_while(func: _, iter: _) -> Value {
 
     let deps = depends![nsid!(std::iter::take_while), func, iter];
 
-    // TODO improve context of stream execution
-    let ctx = CONTEXT.clone();
-    let new_iter = iter.to_owned().scan((), move |_, v| {
-        let func = func.clone();
-        let ctx = ctx.clone();
-        let args_source = ARGS_SOURCE.clone();
-        async move {
+    #[derive(Clone)]
+    struct TakeWhile {
+        iter: types::Iter,
+        func: Value,
+        args_source: ergo_runtime::Source<()>,
+    }
+
+    ergo_runtime::ImplGenerator!(TakeWhile => |self, ctx| {
+        if let Some(v) = self.iter.next(ctx).await? {
             let res = traits::bind(
-                &ctx,
-                func,
+                ctx,
+                self.func.clone(),
                 Source::imbue(
-                    args_source.with(
+                    self.args_source.clone().with(
                         types::Args {
-                            args: types::args::Arguments::positional(vec![v.clone()]).unchecked(),
+                            args: types::args::Arguments::positional(vec![v.clone()])
+                                .unchecked(),
                         }
                         .into(),
                     ),
@@ -343,21 +407,27 @@ async fn take_while(func: _, iter: _) -> Value {
             )
             .await;
 
-            // TODO handle errors differently?
-            match traits::into::<types::Bool>(&ctx, res).await {
-                Ok(b) => {
-                    if b.as_ref().0 {
-                        Some(v)
-                    } else {
-                        None
-                    }
-                }
-                Err(e) => Some(e.into()),
-            }
+            let b = traits::into::<types::Bool>(ctx, res).await?;
+            Ok(if b.as_ref().0 {
+                Some(v)
+            } else {
+                None
+            })
+        } else {
+            Ok(None)
         }
     });
 
-    types::Iter::new_stream(new_iter, deps).into()
+    let iter = iter.to_owned();
+    types::Iter::new(
+        TakeWhile {
+            iter,
+            func,
+            args_source: ARGS_SOURCE,
+        },
+        deps,
+    )
+    .into()
 }
 
 #[types::ergo_fn]
@@ -377,7 +447,23 @@ async fn take(n: _, iter: _) -> Value {
         .transpose_err()
         .map_err(|e| e.into_error()));
 
-    types::Iter::new_stream(iter.to_owned().take(n), deps).into()
+    #[derive(Clone)]
+    struct Take {
+        iter: types::Iter,
+        n: usize,
+    }
+
+    ergo_runtime::ImplGenerator!(Take => |self, ctx| {
+        if self.n > 0 {
+            self.n -= 1;
+            self.iter.next(ctx).await
+        } else {
+            Ok(None)
+        }
+    });
+
+    let iter = iter.to_owned();
+    types::Iter::new(Take { iter, n }, deps).into()
 }
 
 #[types::ergo_fn]
@@ -392,22 +478,40 @@ async fn flatten(iter: _) -> Value {
 
     let deps = depends![nsid!(std::iter::flatten), iter];
 
-    // TODO stream context
-    let ctx = CONTEXT.clone();
-    let new_iter = iter
-        .to_owned()
-        .then(move |i| {
-            let ctx = ctx.clone();
-            async move {
-                match traits::into::<types::Iter>(&ctx, i).await {
-                    Ok(i) => i.to_owned(),
-                    Err(e) => types::Iter::from_iter(std::iter::once(e.into())),
-                }
-            }
-        })
-        .flatten();
+    #[derive(Clone)]
+    struct Flatten {
+        iter: types::Iter,
+        current: Option<types::Iter>,
+    }
 
-    types::Iter::new_stream(new_iter, deps).into()
+    ergo_runtime::ImplGenerator!(Flatten => |self, ctx| {
+        loop {
+            match &mut self.current {
+                None => match self.iter.next(ctx).await? {
+                    Some(v) => {
+                        self.current = Some(traits::into::<types::Iter>(ctx, v).await?.to_owned());
+                    }
+                    None => break Ok(None),
+                },
+                Some(v) => match v.next(ctx).await? {
+                    Some(v) => break Ok(Some(v)),
+                    None => {
+                        self.current = None;
+                    }
+                },
+            }
+        }
+    });
+
+    let iter = iter.to_owned();
+    types::Iter::new(
+        Flatten {
+            iter,
+            current: None,
+        },
+        deps,
+    )
+    .into()
 }
 
 #[types::ergo_fn]
@@ -424,7 +528,7 @@ async fn map(func: _, iter: _) -> Value {
 
     let deps = depends![nsid!(std::iter::map), iter];
 
-    let vals: Vec<_> = iter.to_owned().collect().await;
+    let vals: Vec<_> = try_result!(iter.to_owned().collect(CONTEXT).await);
     let new_iter = CONTEXT
         .task
         .join_all(vals.into_iter().map(|d| {
@@ -446,7 +550,7 @@ async fn map(func: _, iter: _) -> Value {
         .unwrap()
         .into_iter();
 
-    types::Iter::new(new_iter, deps).into()
+    types::Iter::new_iter(new_iter, deps).into()
 }
 
 #[types::ergo_fn]
@@ -462,29 +566,44 @@ async fn map_lazy(func: _, iter: _) -> Value {
 
     let deps = depends![nsid!(std::iter::map_lazy), iter];
 
-    let ctx = CONTEXT.clone();
-    let new_iter = iter.to_owned().then(move |v| {
-        let func = func.clone();
-        let ctx = ctx.clone();
-        let args_source = ARGS_SOURCE.clone();
-        async move {
-            traits::bind(
-                &ctx,
-                func,
-                Source::imbue(
-                    args_source.with(
-                        types::Args {
-                            args: types::args::Arguments::positional(vec![v]).unchecked(),
-                        }
-                        .into(),
+    #[derive(Clone)]
+    struct Map {
+        iter: types::Iter,
+        func: Value,
+        args_source: ergo_runtime::Source<()>,
+    }
+
+    ergo_runtime::ImplGenerator!(Map => |self, ctx| {
+        match self.iter.next(ctx).await? {
+            None => Ok(None),
+            Some(v) => {
+                Ok(Some(traits::bind(
+                    ctx,
+                    self.func.clone(),
+                    Source::imbue(
+                        self.args_source.clone().with(
+                            types::Args {
+                                args: types::args::Arguments::positional(vec![v]).unchecked(),
+                            }
+                            .into(),
+                        ),
                     ),
-                ),
-            )
-            .await
+                )
+                .await))
+            }
         }
     });
 
-    types::Iter::new_stream(new_iter, deps).into()
+    let iter = iter.to_owned();
+    types::Iter::new(
+        Map {
+            iter,
+            func,
+            args_source: ARGS_SOURCE,
+        },
+        deps,
+    )
+    .into()
 }
 
 #[cfg(test)]

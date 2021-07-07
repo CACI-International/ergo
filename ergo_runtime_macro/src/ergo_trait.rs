@@ -223,7 +223,6 @@ fn ergo_trait_definition(trt: ItemTrait) -> TokenStream {
         fields: syn::Fields::Named(parse_quote! {
             {
                 inner: ergo_runtime::type_system::Ref<#impl_struct_name #type_generics>,
-                ctx: ergo_runtime::Context
             }
         }),
         semi_token: None,
@@ -257,9 +256,9 @@ fn ergo_trait_definition(trt: ItemTrait) -> TokenStream {
             Default::default()
         };
         quote_spanned! { ident.span()=>
-            pub #async_tok fn #ident(&self, #v #(#args),*) -> #ret {
+            pub #async_tok fn #ident(&self, ctx: &ergo_runtime::Context, #v #(#args),*) -> #ret {
                 let inner = &self.inner;
-                (inner.#ident.as_fn())(&inner.ergo_trait_data, &self.ctx, #call_v #(#arg_names),*)#await_tok
+                (inner.#ident.as_fn())(&inner.ergo_trait_data, ctx, #call_v #(#arg_names),*)#await_tok
             }
         }
     });
@@ -320,8 +319,8 @@ fn impl_ergo_trait(name: syn::Ident, mut generics: syn::Generics) -> proc_macro2
                 )
             }
 
-            fn create(inner: ergo_runtime::type_system::Ref<Self::Impl>, ctx: &ergo_runtime::Context) -> Self {
-                #name { inner, ctx: ctx.clone() }
+            fn create(inner: ergo_runtime::type_system::Ref<Self::Impl>) -> Self {
+                #name { inner }
             }
         }
     };

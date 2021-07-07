@@ -10,7 +10,7 @@ mod bool;
 pub mod byte_stream;
 mod error;
 mod index;
-mod iter;
+pub mod iter;
 mod map;
 mod map_entry;
 mod number;

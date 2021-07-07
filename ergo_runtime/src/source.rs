@@ -108,7 +108,7 @@ pub struct Builtin(Option<&'static std::panic::Location<'static>>);
 pub struct Stored;
 
 /// A missing source.
-pub struct Missing;
+pub struct Missing(Option<&'static std::panic::Location<'static>>);
 
 /// A reference to a SourceFactory.
 #[derive(Clone, Default, StableAbi)]
@@ -293,7 +293,10 @@ impl SourceFactory for Stored {
 
 impl SourceFactory for Missing {
     fn name(&self) -> String {
-        "missing".into()
+        match self.0 {
+            None => "missing".into(),
+            Some(l) => format!("missing ({})", l),
+        }
     }
 
     fn read<'a>(&'a self) -> Result<Box<dyn Read + 'a>, String> {
@@ -353,8 +356,14 @@ impl<T> Source<T> {
     }
 
     /// Create a value that has a missing source.
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn missing(v: T) -> Self {
-        Source::new(Missing).with(v)
+        Source::new(Missing(if cfg!(debug_assertions) {
+            Some(std::panic::Location::caller())
+        } else {
+            None
+        }))
+        .with(v)
     }
 
     /// Get the path of the source, if any.

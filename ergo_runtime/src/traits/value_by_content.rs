@@ -58,6 +58,6 @@ pub async fn value_by_content(ctx: &crate::Context, mut v: Value, deep: bool) ->
             );
             v
         }
-        Some(t) => t.value_by_content(v, deep).await,
+        Some(t) => t.value_by_content(ctx, v, deep).await,
     }
 }

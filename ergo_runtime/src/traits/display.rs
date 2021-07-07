@@ -53,7 +53,7 @@ pub async fn display(ctx: &Context, mut v: Value, f: &mut Formatter<'_>) -> crat
             write!(f, "<cannot display values of type {}>", type_name(ctx, &v))?;
             Ok(())
         }
-        Some(t) => t.fmt(v, f).await.into_result(),
+        Some(t) => t.fmt(ctx, v, f).await.into_result(),
     }
 }
 

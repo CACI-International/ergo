@@ -43,8 +43,8 @@ pub trait ErgoTrait {
     /// Get the trait descriptor.
     fn ergo_trait() -> Trait;
 
-    /// Create the trait from the implementation and context.
-    fn create(trt: Ref<Self::Impl>, ctx: &crate::Context) -> Self;
+    /// Create the trait from the implementation.
+    fn create(trt: Ref<Self::Impl>) -> Self;
 }
 
 /// ABI-stable key to store (type, trait) tuple.

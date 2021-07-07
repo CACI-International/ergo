@@ -1,9 +1,9 @@
 //! The runtime context.
 
-use crate::abi_stable::StableAbi;
+use crate::abi_stable::{std_types::RArc, StableAbi};
 use crate::{
     type_system::{ErgoTrait, ErgoType, Type},
-    Source, TypedValue, Value,
+    TypedValue, Value,
 };
 use std::fmt;
 
@@ -36,14 +36,10 @@ pub use task::{
 };
 pub use traits::{TraitGenerator, TraitGeneratorByTrait, TraitGeneratorByType, Traits};
 
-/// Runtime context.
-#[derive(Clone, Debug, StableAbi)]
+/// Runtime context which is immutable.
+#[derive(Debug, StableAbi)]
 #[repr(C)]
-pub struct Context {
-    /// The dynamic scoping interface.
-    pub dynamic_scope: DynamicScope,
-    /// The error propagation interface.
-    pub error_scope: ErrorScope,
+pub struct GlobalContext {
     /// The logging interface.
     pub log: Log,
     /// The shared state interface.
@@ -56,6 +52,17 @@ pub struct Context {
     pub traits: Traits,
 }
 
+/// Runtime context.
+#[derive(Debug, StableAbi)]
+#[repr(C)]
+pub struct Context {
+    global: RArc<GlobalContext>,
+    /// The dynamic scoping interface.
+    pub dynamic_scope: DynamicScope,
+    /// The error propagation interface.
+    pub error_scope: ErrorScope,
+}
+
 /// A builder for a Context.
 #[derive(Default)]
 pub struct ContextBuilder {
@@ -64,6 +71,22 @@ pub struct ContextBuilder {
     threads: Option<usize>,
     aggregate_errors: Option<bool>,
     error_scope: Option<ErrorScope>,
+}
+
+trait Fork {
+    /// Create a fork of a value.
+    fn fork(&self) -> Self;
+
+    /// Join with a forked value.
+    fn join(&self, forked: Self);
+}
+
+impl<T: Clone> Fork for T {
+    fn fork(&self) -> Self {
+        self.clone()
+    }
+
+    fn join(&self, _forked: Self) {}
 }
 
 /// An error produced by the ContextBuilder.
@@ -127,18 +150,28 @@ impl ContextBuilder {
     /// Create a Context.
     pub fn build(self) -> Result<Context, BuilderError> {
         Ok(Context {
+            global: RArc::new(GlobalContext {
+                log: Log::new(
+                    self.logger
+                        .unwrap_or_else(|| logger_ref(EmptyLogTarget).into()),
+                ),
+                shared_state: SharedState::new(),
+                store: Store::new(self.store_dir.unwrap_or(std::env::temp_dir())),
+                task: TaskManager::new(self.threads, self.aggregate_errors.unwrap_or(false))
+                    .map_err(BuilderError::TaskManagerError)?,
+                traits: Default::default(),
+            }),
             dynamic_scope: Default::default(),
             error_scope: self.error_scope.unwrap_or_default(),
-            log: Log::new(
-                self.logger
-                    .unwrap_or_else(|| logger_ref(EmptyLogTarget).into()),
-            ),
-            shared_state: SharedState::new(),
-            store: Store::new(self.store_dir.unwrap_or(std::env::temp_dir())),
-            task: TaskManager::new(self.threads, self.aggregate_errors.unwrap_or(false))
-                .map_err(BuilderError::TaskManagerError)?,
-            traits: Default::default(),
         })
+    }
+}
+
+impl std::ops::Deref for Context {
+    type Target = GlobalContext;
+
+    fn deref(&self) -> &Self::Target {
+        &self.global
     }
 }
 
@@ -152,14 +185,12 @@ impl Context {
     ///
     /// Always returns None if the value is not yet evaluated.
     pub fn get_trait<Trt: ErgoTrait>(&self, v: &Value) -> Option<Trt> {
-        self.traits.get::<Trt>(v).map(|imp| Trt::create(imp, self))
+        self.traits.get::<Trt>(v).map(Trt::create)
     }
 
     /// Get an ergo trait for the given type.
     pub fn get_trait_for_type<Trt: ErgoTrait>(&self, tp: &Type) -> Option<Trt> {
-        self.traits
-            .get_type::<Trt>(tp)
-            .map(|imp| Trt::create(imp, self))
+        self.traits.get_type::<Trt>(tp).map(Trt::create)
     }
 
     /// Evaluate a value.
@@ -203,6 +234,7 @@ impl Context {
         }
     }
 
+    /*
     /// Create a new context with the given dynamic binding set.
     pub fn with_dynamic_binding<K: DynamicScopeKey>(
         &self,
@@ -222,5 +254,68 @@ impl Context {
         let mut ctx = self.clone();
         ctx.error_scope = ErrorScope::new(on_error);
         ctx
+    }
+    */
+
+    /// Fork the context, allowing changes of context values.
+    pub async fn fork<'a, Alter, F, Fut, Ret>(&self, alter: Alter, f: F) -> Ret
+    where
+        Alter: FnOnce(&mut Self),
+        F: FnOnce(&'a Self) -> Fut,
+        Fut: std::future::Future<Output = Ret> + Send + 'a,
+    {
+        let mut new_ctx = Context {
+            global: self.global.fork(),
+            dynamic_scope: self.dynamic_scope.fork(),
+            error_scope: self.error_scope.fork(),
+        };
+
+        alter(&mut new_ctx);
+
+        let ret = f(unsafe { std::mem::transmute(&new_ctx) }).await;
+        self.global.join(new_ctx.global);
+        self.dynamic_scope.join(new_ctx.dynamic_scope);
+        self.error_scope.join(new_ctx.error_scope);
+        ret
+    }
+
+    /// Spawn a new task.
+    ///
+    /// This necessarily forks the context.
+    pub async fn spawn<'a, Alter, F, Fut, Ret>(
+        &self,
+        priority: u32,
+        alter: Alter,
+        f: F,
+    ) -> crate::Result<Ret>
+    where
+        Alter: FnOnce(&mut Self),
+        F: FnOnce(&'a Self) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = crate::Result<Ret>> + Send + 'a,
+        Ret: Send + 'static,
+    {
+        let mut new_ctx = Context {
+            global: self.global.fork(),
+            dynamic_scope: self.dynamic_scope.fork(),
+            error_scope: self.error_scope.fork(),
+        };
+        alter(&mut new_ctx);
+        match self
+            .task
+            .spawn_basic(priority, async move {
+                let ret = f(unsafe { std::mem::transmute(&new_ctx) }).await;
+                (new_ctx, ret)
+            })
+            .await
+        {
+            Ok((new_ctx, ret)) => {
+                self.global.join(new_ctx.global);
+                self.dynamic_scope.join(new_ctx.dynamic_scope);
+                self.error_scope.join(new_ctx.error_scope);
+                ret
+            }
+            // If the task is aborted, there's nothing relevant for the context to be joined.
+            Err(_) => Err(crate::Error::aborted()),
+        }
     }
 }

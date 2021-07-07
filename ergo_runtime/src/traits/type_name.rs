@@ -15,7 +15,7 @@ pub trait TypeName {
 /// Get a type name for the given type.
 pub fn type_name_for(ctx: &crate::Context, tp: &Type) -> String {
     if let Some(t) = ctx.get_trait_for_type::<TypeName>(tp) {
-        t.type_name().into()
+        t.type_name(ctx).into()
     } else {
         format!("<{}>", tp.id)
     }

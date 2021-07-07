@@ -40,7 +40,7 @@ async fn chars(s: types::String) -> Value {
         })
         .collect::<Vec<_>>();
 
-    types::Iter::new(v.into_iter(), CALL_DEPENDS).into()
+    types::Iter::new_iter(v.into_iter(), CALL_DEPENDS).into()
 }
 
 fn format() -> Value {
@@ -356,7 +356,7 @@ async fn split(pattern: types::String, s: types::String) -> Value {
 async fn join(separator: types::String, iter: _) -> Value {
     let iter = try_result!(traits::into::<types::Iter>(CONTEXT, iter).await);
 
-    let vals: Vec<_> = iter.to_owned().collect().await;
+    let vals: Vec<_> = try_result!(iter.to_owned().collect(CONTEXT).await);
     let strs = try_result!(
         CONTEXT
             .task

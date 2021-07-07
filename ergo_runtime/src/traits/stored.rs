@@ -48,7 +48,7 @@ pub async fn read_from_store(ctx: &Context, store_item: &Item, id: u128) -> Resu
     let tp: Type = ErasedTrivial::deserialize(&mut content)?.into();
     if let Some(s) = ctx.get_trait_for_type::<Stored>(&tp) {
         let stored_ctx = StoredContext::new(store_item.clone());
-        let data = s.get(&stored_ctx, content).await.into_result()?;
+        let data = s.get(ctx, &stored_ctx, content).await.into_result()?;
         // TODO revisit metadata
         Ok(unsafe { Value::with_id(RArc::new(tp), RArc::new(data), id) })
     } else {
@@ -76,5 +76,5 @@ pub async fn write_to_store(ctx: &Context, store_item: &Item, mut v: Value) -> R
     tp.serialize(&mut content)?;
 
     let stored_ctx = StoredContext::new(store_item.clone());
-    t.put(v, &stored_ctx, content).await.into_result()
+    t.put(ctx, v, &stored_ctx, content).await.into_result()
 }

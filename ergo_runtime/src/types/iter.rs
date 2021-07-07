@@ -2,48 +2,84 @@
 
 use crate as ergo_runtime;
 use crate::abi_stable::{
-    bst::BstMap, future::stream::BoxStream, std_types::RVec,
-    stream::shared_async_stream::SharedAsyncStream, type_erase::Erased, StableAbi,
+    bst::BstMap, std_types::RVec, stream::shared_async_stream::SharedAsyncStream,
+    type_erase::Erased, StableAbi,
 };
 use crate::metadata::Source;
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
+use crate::value::match_value;
 use crate::{depends, Dependencies, TypedValue, Value};
 use bincode;
-use futures::stream::Stream;
-use std::pin::Pin;
-use std::task;
+use futures::stream::{Stream, StreamExt};
 
 /// An iterator type.
 ///
-/// Note that iterator types are meant to be fully consumed wherever they are used. Changing one
-/// partially and creating a new Value may not correctly capture dependencies; for a partial
-/// consumption case, use `Stream`.
-///
-/// You may notice that Iter itself implements Stream rather than Iterator: this is to make Iter
-/// useful (otherwise you can't really do meaningful manipulations of the contents), while from a
-/// script perspective it still seems like an iterator (since in scripts everything is async).
+/// Internally the type contains a single value which may evaluate to either Next, Unset, or Error.
 #[derive(Clone, Debug, ErgoType, StableAbi)]
 #[repr(C)]
-pub struct Iter(SharedAsyncStream<BoxStream<'static, Value>>);
+pub struct Iter {
+    next: Value,
+}
 
-impl Stream for Iter {
-    type Item = Value;
+/// The next value from an Iter.
+#[derive(Clone, Debug, ErgoType, StableAbi)]
+#[repr(C)]
+struct Next {
+    pub value: Value,
+    pub iter: Iter,
+}
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut task::Context) -> task::Poll<Option<Self::Item>> {
-        unsafe { self.map_unchecked_mut(|v| &mut v.0) }
-            .poll_next(cx)
-            .map(|opt| opt.map(|res| res.into()))
+/// The trait used for arbitrary iterator generators.
+pub trait Generator: Send + Sync + Clone + 'static {
+    fn next<'a>(
+        &'a mut self,
+        ctx: &'a crate::Context,
+    ) -> futures::future::BoxFuture<'a, crate::Result<Option<Value>>>;
+}
+
+/// Implement the Generator trait for a type.
+///
+/// This will take care of defining the trait and boxing the future.
+#[macro_export]
+macro_rules! ImplGenerator {
+    ( $t:ty => | $self:ident, $ctx:ident | $body:expr ) => {
+        impl $crate::types::iter::Generator for $t {
+            fn next<'a>(
+                &'a mut $self,
+                $ctx: &'a $crate::Context,
+            ) -> $crate::future::BoxFuture<'a, $crate::Result<Option<$crate::Value>>> {
+                $crate::future::FutureExt::boxed(async move { $body })
+            }
+        }
+    };
+}
+
+#[derive(Clone)]
+struct Streamed(SharedAsyncStream<futures::stream::BoxStream<'static, Value>>);
+
+ImplGenerator!(Streamed => |self,_ctx| Ok(self.0.next().await));
+
+impl From<&'_ Next> for Dependencies {
+    fn from(n: &'_ Next) -> Self {
+        depends![Next::ergo_type(), n.value, n.iter.next]
     }
+}
 
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.0.size_hint()
+impl From<Next> for TypedValue<Next> {
+    fn from(n: Next) -> Self {
+        Self::constant(n)
     }
 }
 
 impl Iter {
     /// Create a new Iter value with the given dependencies.
-    pub fn new<I>(iter: I, deps: Dependencies) -> TypedValue<Self>
+    pub fn new<G: Generator>(g: G, deps: Dependencies) -> TypedValue<Self> {
+        TypedValue::constant_deps(Self::from_generator(g), depends![Self::ergo_type(), ^deps])
+    }
+
+    /// Create a new Iter value from an Iterator with the given dependencies.
+    pub fn new_iter<I>(iter: I, deps: Dependencies) -> TypedValue<Self>
     where
         I: Iterator<Item = Value> + Send + Sync + 'static,
     {
@@ -74,15 +110,60 @@ impl Iter {
     where
         S: Stream<Item = Value> + Send + 'static,
     {
-        Iter(SharedAsyncStream::new(BoxStream::new(stream)))
+        let stream = SharedAsyncStream::new(stream.boxed());
+        Self::from_generator(Streamed(SharedAsyncStream::new(stream.boxed())))
+    }
+
+    /// Create an Iter from a generator.
+    pub fn from_generator<G: Generator>(mut generator: G) -> Self {
+        Iter {
+            next: Value::dyn_new(
+                |ctx| async move {
+                    match generator.next(ctx).await {
+                        Err(e) => e.into(),
+                        Ok(None) => super::Unset.into(),
+                        Ok(Some(value)) => Next {
+                            value,
+                            iter: Iter::from_generator(generator),
+                        }
+                        .into(),
+                    }
+                },
+                depends![Next::ergo_type()],
+            ),
+        }
+    }
+
+    /// Get the next value from the Iter.
+    ///
+    /// An Err is returned if `next` evaluates to an Error or a type other than Next or Unset, or
+    /// if a Next::iter evaluates to an Error or a type other than Iter.
+    pub async fn next(&mut self, ctx: &crate::Context) -> crate::Result<Option<Value>> {
+        let mut next = std::mem::replace(&mut self.next, super::Unset.into());
+        ctx.eval(&mut next).await?;
+        match_value! {next,
+            super::Unset => Ok(None),
+            Next { value, iter } => {
+                self.next = iter.next;
+                Ok(Some(value))
+            }
+            o => Err(traits::type_error(ctx, o, "Next or Unset"))
+        }
     }
 
     /// Collect the iterator values.
-    pub async fn collect<C>(self) -> C
+    ///
+    /// Repeatedly calls `next`; any Err that is returned by `next` will be propagated.
+    pub async fn collect<C>(mut self, ctx: &crate::Context) -> crate::Result<C>
     where
         C: Default + Extend<Value>,
     {
-        futures::stream::StreamExt::collect(self).await
+        let mut ret = C::default();
+
+        while let Some(value) = self.next(ctx).await? {
+            ret.extend(std::iter::once(value));
+        }
+        Ok(ret)
     }
 }
 
@@ -90,7 +171,7 @@ ergo_traits_fn! {
     impl traits::Display for Iter {
         async fn fmt(&self, f: &mut traits::Formatter) -> crate::error::RResult<()> {
             async move {
-                let items: Vec<_> = self.clone().collect().await;
+                let items: Vec<_> = self.clone().collect(CONTEXT).await?;
                 let mut iter = items.into_iter();
                 write!(f, "[")?;
                 if let Some(v) = iter.next() {
@@ -108,13 +189,13 @@ ergo_traits_fn! {
 
     impl traits::Nested for Iter {
         async fn nested(&self) -> RVec<Value> {
-            self.clone().collect().await
+            self.clone().collect(CONTEXT).await.unwrap_or_default()
         }
     }
 
     impl traits::ValueByContent for Iter {
         async fn value_by_content(self, deep: bool) -> Value {
-            let mut vals: Vec<_> = self.to_owned().collect().await;
+            let mut vals: Vec<_> = crate::try_result!(self.to_owned().collect(CONTEXT).await);
             if deep {
                 CONTEXT.task.join_all(vals.iter_mut().map(|v| async move {
                     let old_v = std::mem::replace(v, super::Unset.into());
@@ -123,19 +204,19 @@ ergo_traits_fn! {
                 })).await.unwrap();
             }
             let deps = depends![^@vals];
-            Iter::new(vals.into_iter(), deps).into()
+            Iter::new_iter(vals.into_iter(), deps).into()
         }
     }
 
     impl traits::IntoTyped<super::Array> for Iter {
         async fn into_typed(self) -> Value {
-            super::Array(self.to_owned().collect().await).into()
+            super::Array(crate::try_result!(self.to_owned().collect(CONTEXT).await)).into()
         }
     }
 
     impl traits::IntoTyped<super::Map> for Iter {
         async fn into_typed(self) -> Value {
-            let mut vals: Vec<_> = self.to_owned().collect().await;
+            let mut vals: Vec<_> = crate::try_result!(self.to_owned().collect(CONTEXT).await);
             let mut ret = BstMap::default();
             let mut errs = vec![];
             let mut_vals = vals.iter_mut().collect::<Vec<_>>();
@@ -170,7 +251,7 @@ ergo_traits_fn! {
         async fn put(&self, stored_ctx: &traits::StoredContext, item: crate::context::ItemContent) -> crate::RResult<()> {
             async move {
                 let mut ids: Vec<u128> = Vec::new();
-                let vals: Vec<_> = self.clone().collect().await;
+                let vals: Vec<_> = self.clone().collect(CONTEXT).await?;
                 for v in vals {
                     ids.push(v.id());
                     stored_ctx.write_to_store(CONTEXT, v).await?;

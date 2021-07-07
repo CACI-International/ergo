@@ -50,8 +50,8 @@ impl DocPath {
         self.root.as_ref().join(self.path.as_ref().unwrap())
     }
 
-    pub fn context(self, ctx: &Context, key_source: Source<()>) -> Context {
-        ctx.with_dynamic_binding(&key_source.with(DocPathKey), self)
+    pub fn context(self, ctx: &mut Context, key_source: Source<()>) {
+        ctx.dynamic_scope.set(&key_source.with(DocPathKey), self);
     }
 }
 
@@ -90,10 +90,10 @@ pub fn doc() -> Value {
             if let Some(parent) = doc_path.parent() {
                 try_result!(std::fs::create_dir_all(parent));
             }
-            let doc = {
-                let doc_ctx = DocPath::new(path_source.with(doc_path.clone())).context(CONTEXT, ARGS_SOURCE);
-                try_result!(Doc::get(&doc_ctx, &value).await)
-            };
+            let doc = try_result!(CONTEXT.fork(
+                    |ctx| DocPath::new(path_source.with(doc_path.clone())).context(ctx, ARGS_SOURCE),
+                    move |ctx| async move { Doc::get(ctx, &value).await }
+                ).await);
 
             if doc_path.is_dir() {
                 doc_path.push("index.md");
@@ -139,10 +139,10 @@ pub fn doc() -> Value {
                     if let Some(parent) = new_path.parent() {
                         try_result!(std::fs::create_dir_all(parent));
                     }
-                    let doc = {
-                        let doc_ctx = doc_path.context(CONTEXT, ARGS_SOURCE);
-                        try_result!(Doc::get(&doc_ctx, &value).await)
-                    };
+                    let doc = try_result!(CONTEXT.fork(
+                            move |ctx| doc_path.context(ctx, ARGS_SOURCE),
+                            move |ctx| async move { Doc::get(ctx, &value).await }
+                        ).await);
 
                     if new_path.is_dir() {
                         rel_path.push("index.md");

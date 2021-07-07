@@ -381,12 +381,22 @@ where
                     func,
                     ..
                 } => {
+                    // TODO determine if Pending is returned from a lock() call
                     if *known_context_dependent {
                         (func.clone())(ctx).await
                     } else {
-                        let snap = ctx.dynamic_scope.snapshot();
-                        let val = (func.clone())(ctx).await;
-                        if ctx.dynamic_scope.scope_accessed_since(&snap) {
+                        let func = func.clone();
+                        let (val, accessed) = ctx
+                            .fork(
+                                |_| {},
+                                move |ctx| async move {
+                                    let ret = func(unsafe { std::mem::transmute(ctx) }).await;
+                                    let accessed = ctx.dynamic_scope.accessed();
+                                    (ret, accessed)
+                                },
+                            )
+                            .await;
+                        if accessed {
                             *known_context_dependent = true;
                         } else {
                             *guard = DynamicNextState::Done(val.clone());

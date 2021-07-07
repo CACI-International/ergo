@@ -45,7 +45,7 @@ fn add_value<'a>(
             ctx.eval(&mut v).await?;
             Ok(match ctx.get_trait::<Nested>(&v) {
                 None => Default::default(),
-                Some(n) => n.nested(v).await,
+                Some(n) => n.nested(ctx, v).await,
             })
         }
         .boxed(),

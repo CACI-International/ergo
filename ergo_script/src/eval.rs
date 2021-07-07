@@ -476,11 +476,11 @@ impl Evaluator {
                             sets,
                         )
                         .await;
-                    let immediate_bind = b.expr_type() == ast::ExpressionType::Set;
+                    //let immediate_bind = b.expr_type() == ast::ExpressionType::Set;
 
                     let new_sets = Sets::new();
-                    let mut b = self
-                        .evaluate_deep()
+                    let b = self
+                        //.evaluate_deep()
                         .evaluate_now_with_env(
                             ctx,
                             b,
@@ -491,9 +491,10 @@ impl Evaluator {
                         .await;
 
                     // Immediately eval and check for bind error
-                    ctx.eval(&mut b).await?;
+                    traits::bind_no_error(ctx, b, e).await?;
                     let new_sets = new_sets.into_inner();
 
+                    /*
                     // Create proxy entries that will perform the bind.
                     let bind_deps = depends![b, e];
                     let ctx_c = ctx.clone();
@@ -502,14 +503,17 @@ impl Evaluator {
                         ctx_c.eval(&mut v).await
                     }
                     .shared();
+                    */
 
                     if mode.doc() && sets.is_present() {
                         sets.extend(new_sets.clone());
                     }
 
                     for (cap, k, mut v) in new_sets {
-                        let deps = depends![^bind_deps.clone(), k];
-                        let to_bind = to_bind.clone();
+                        //let deps = depends![^bind_deps.clone(), k];
+                        //let to_bind = to_bind.clone();
+                        ctx.eval_once(&mut v).await;
+                        /*
                         let v = if immediate_bind {
                             // This is only the case for a set expression, which can never have an error when
                             // binding, so we don't need to check the result of to_bind.
@@ -526,6 +530,7 @@ impl Evaluator {
                                 deps,
                             )))
                         };
+                        */
 
                         env.insert(k, v.clone());
                         if let Some(cap) = cap {
@@ -589,10 +594,8 @@ impl Evaluator {
                 let self_val = val.clone();
                 // TODO distinguish doc comment captures from value captures?
                 let doc_deps = depends![^DocCommentPart::dependencies(&parts), ^&captures, self_val];
-                let mut doc = Value::dyn_new(move |ctx| {
-                        let ctx_c = ctx.clone();
-                        ctx.task.spawn(EVAL_TASK_PRIORITY, async move {
-                            let ctx = &ctx_c;
+                let mut doc = Value::dyn_new(move |ctx| async move {
+                        ctx.spawn(EVAL_TASK_PRIORITY, |_| {}, move |ctx| async move {
                             captures.resolve(self_key, self_val);
                             captures.evaluate_ready(self, ctx).await;
                             let mut doc = std::string::String::new();
@@ -632,7 +635,7 @@ impl Evaluator {
                             }
                             drop(formatter);
                             Ok(Value::from(types::String::from(doc)))
-                        }).map(|result| result.into())
+                        }).await.into()
                     }, doc_deps);
                 Source::set(&mut doc, source.clone());
                 metadata::Doc::set(&mut val, doc);
@@ -717,14 +720,10 @@ impl Evaluator {
                 let deps = depends![e, ^&val_captures];
                 let e = source.clone().with(e);
                 let sets = sets.clone();
-                Value::dyn_new(move |ctx| {
-                    let ctx_c = ctx.clone();
-                    ctx.task.spawn(
-                        EVAL_TASK_PRIORITY,
-                        async move {
-                            Ok(self.evaluate_now_with_env(&ctx_c, e, &val_captures, None, &sets).await)
-                        }
-                    ).map(|result| result.into())
+                Value::dyn_new(move |ctx| async move {
+                    ctx.spawn(EVAL_TASK_PRIORITY, |_| {}, move |ctx| async move {
+                        Ok(self.evaluate_now_with_env(ctx, e, &val_captures, None, &sets).await)
+                    }).await.into()
                 }, deps)
             }
         );
