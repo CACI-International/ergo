@@ -67,12 +67,9 @@ async fn parse(json: types::String) -> Value {
 ///
 /// Arguments: `:value`
 async fn stringify(value: _) -> Value {
-    fn val_to_json<'a>(
-        ctx: &'a Context,
-        mut val: Value,
-    ) -> BoxFuture<'a, ergo_runtime::Result<JsonValue>> {
+    fn val_to_json(mut val: Value) -> BoxFuture<'static, ergo_runtime::Result<JsonValue>> {
         async move {
-            ctx.eval(&mut val).await?;
+            Context::eval(&mut val).await?;
             let val_source = Source::get(&val);
             match_value! { val,
                 types::Unit => Ok(JsonValue::Null),
@@ -85,8 +82,8 @@ async fn stringify(value: _) -> Value {
                 types::Map(m) => {
                     let mut entries = Vec::new();
                     for (k,v) in m {
-                        let k = ctx.eval_as::<types::String>(k).await;
-                        let v = val_to_json(ctx, v).await;
+                        let k = Context::eval_as::<types::String>(k).await;
+                        let v = val_to_json(v).await;
                         entries.push(match (k,v) {
                             (Err(ke), Err(ve)) => Err(ergo_runtime::Error::aggregate(vec![ke,ve])),
                             (Err(e), _) | (_, Err(e)) => Err(e),
@@ -98,31 +95,29 @@ async fn stringify(value: _) -> Value {
                 types::Array(a) => {
                     let mut entries = Vec::new();
                     for v in a {
-                        entries.push(val_to_json(ctx, v).await);
+                        entries.push(val_to_json(v).await);
                     }
                     Ok(JsonValue::Array(entries.into_iter().collect::<Result<Vec<_>, _>>()?))
                 }
-                o => Err(traits::type_error(ctx, o, "json-compatible type"))
+                o => Err(traits::type_error(o, "json-compatible type"))
             }
         }
         .boxed()
     }
 
-    let val = try_result!(val_to_json(CONTEXT, value).await);
+    let val = try_result!(val_to_json(value).await);
     types::String::from(json_stringify(val)).into()
 }
 
 #[cfg(test)]
 mod test {
-    ergo_script::test! {
+    ergo_script::tests! {
         fn parse(t) {
             t.assert_content_eq(r#"self:json:parse '{"a": null, "b": 1, "c": true, "d": ["str"]}'"#, "{
                     a = (), b = self:type:Number: 1, c = self:bool:true, d = [str]
                 }");
         }
-    }
 
-    ergo_script::test! {
         fn stringify(t) {
             t.assert_content_eq("self:json:stringify {
                     a = (), b = self:type:Number: 1, c = self:bool:true, d = [str]

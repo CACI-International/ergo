@@ -75,9 +75,14 @@ impl Runtime {
     }
 
     /// Load and evaluate a script.
-    pub async fn evaluate(&self, src: Source<()>) -> Result<Value, Error> {
+    pub fn evaluate(&self, src: Source<()>) -> Result<Value, Error> {
         let script = self.load(src)?;
-        script.evaluate(&self.ctx).await
+        self.block_on(script.evaluate())
+    }
+
+    /// Block on the given future, setting the runtime task-local Context.
+    pub fn block_on<Fut: std::future::Future + Send>(&self, fut: Fut) -> Fut::Output {
+        self.ctx.block_on(fut)
     }
 
     /// Resolve a path to the full script path, based on the load path.
@@ -91,16 +96,13 @@ impl Runtime {
         self.load_data.resolve_script_path(working_dir, path)
     }
 
-    /// Get the final value.
-    ///
-    /// This will apply any Unbound values on empty Args.
-    pub async fn final_value(&self, mut val: Value) -> Value {
+    /// Apply any Unbound values on empty Args (recursively).
+    pub async fn apply_unbound(mut val: Value) -> Value {
         let src = ergo_runtime::metadata::Source::get(&val);
         loop {
-            drop(self.ctx.eval(&mut val).await);
+            drop(Context::eval(&mut val).await);
             if val.is_type::<ergo_runtime::types::Unbound>() {
                 val = ergo_runtime::traits::bind(
-                    &self.ctx,
                     val,
                     ergo_runtime::metadata::Source::imbue(
                         src.clone().with(
@@ -161,14 +163,14 @@ impl Script {
     }
 
     /// Evaluate the script with the given runtime and additional load paths.
-    pub async fn evaluate(self, ctx: &Context) -> Result<Value, Error> {
+    pub async fn evaluate(self) -> Result<Value, Error> {
         let top_level_env = self.top_level_env;
 
         let evaluator = Evaluator::default();
         let mut captures = self.captures;
         captures.resolve_string_gets(top_level_env)?;
-        captures.evaluate_ready(evaluator, ctx).await;
-        Ok(evaluator.evaluate(ctx, self.ast, &captures))
+        captures.evaluate_ready(evaluator).await;
+        Ok(evaluator.evaluate(self.ast, &captures))
     }
 }
 
@@ -176,7 +178,6 @@ impl Script {
 mod test {
     use super::*;
     use ergo_runtime::{types, Value};
-    use futures::executor::block_on;
     use futures::future::{BoxFuture, FutureExt};
 
     #[derive(Clone, Debug)]
@@ -628,25 +629,22 @@ mod test {
 
     fn script_eval_to(s: &str, expected: ScriptResult) -> Result<(), String> {
         let runtime = make_runtime()?;
-        let res = block_on(async move {
-            val_match(&runtime.ctx, script_eval(&runtime, s).await?, expected).await
-        });
+        let script = script_eval(&runtime, s);
+        let res = runtime.block_on(async { val_match(script?, expected).await });
         res
     }
 
     fn script_parse_fail(s: &str) -> Result<(), String> {
         let runtime = make_runtime()?;
-        let failed = block_on(script_eval(&runtime, s));
+        let failed = script_eval(&runtime, s);
         assert!(failed.is_err());
         Ok(())
     }
 
     fn script_fail(s: &str) -> Result<(), String> {
         let runtime = make_runtime()?;
-        let mut should_fail = block_on(script_eval(&runtime, s))?;
-        assert!(block_on(async move {
-            runtime.ctx.eval(&mut should_fail).await.is_err()
-        }));
+        let mut should_fail = script_eval(&runtime, s)?;
+        assert!(runtime.block_on(async move { Context::eval(&mut should_fail).await.is_err() }));
         Ok(())
     }
 
@@ -664,23 +662,19 @@ mod test {
         }
     }
 
-    fn val_match<'a>(
-        ctx: &'a Context,
-        v: Value,
-        expected: ScriptResult,
-    ) -> BoxFuture<'a, Result<(), String>> {
+    fn val_match<'a>(v: Value, expected: ScriptResult) -> BoxFuture<'a, Result<(), String>> {
         dbg!(&v);
         async move {
             match expected {
-                SRUnit => match ctx.eval_as::<types::Unit>(v).await {
+                SRUnit => match Context::eval_as::<types::Unit>(v).await {
                     Err(e) => Err(e.to_string()),
                     Ok(_) => Ok(()),
                 },
-                SRUnset => match ctx.eval_as::<types::Unset>(v).await {
+                SRUnset => match Context::eval_as::<types::Unset>(v).await {
                     Err(e) => Err(e.to_string()),
                     Ok(_) => Ok(()),
                 },
-                SRString(s) => match ctx.eval_as::<types::String>(v).await {
+                SRString(s) => match Context::eval_as::<types::String>(v).await {
                     Err(e) => Err(e.to_string()),
                     Ok(v) => {
                         let got = v.as_ref().as_str();
@@ -694,7 +688,7 @@ mod test {
                         }
                     }
                 },
-                SRArray(expected_arr) => match ctx.eval_as::<types::Array>(v).await {
+                SRArray(expected_arr) => match Context::eval_as::<types::Array>(v).await {
                     Err(e) => Err(e.to_string()),
                     Ok(arr) => {
                         let arr = arr.to_owned().0;
@@ -702,13 +696,13 @@ mod test {
                             Err("array length mismatch".into())
                         } else {
                             for (v, expected_v) in arr.iter().zip(expected_arr) {
-                                val_match(ctx, v.clone(), expected_v.clone()).await?;
+                                val_match(v.clone(), expected_v.clone()).await?;
                             }
                             Ok(())
                         }
                     }
                 },
-                SRMap(entries) => match ctx.eval_as::<types::Map>(v).await {
+                SRMap(entries) => match Context::eval_as::<types::Map>(v).await {
                     Err(e) => Err(e.to_string()),
                     Ok(map) => {
                         let mut map = map.to_owned().0;
@@ -719,7 +713,7 @@ mod test {
                             for (k, e) in entries.iter() {
                                 let k: Value = types::String::from(*k).into();
                                 let v = map.remove(&k).ok_or("missing expected key")?;
-                                val_match(ctx, v, e.clone()).await?;
+                                val_match(v, e.clone()).await?;
                             }
                             Ok(())
                         }
@@ -735,10 +729,9 @@ mod test {
         Runtime::new(Default::default(), vec![]).map_err(|e| e.to_string())
     }
 
-    async fn script_eval(runtime: &Runtime, s: &str) -> Result<Value, String> {
+    fn script_eval(runtime: &Runtime, s: &str) -> Result<Value, String> {
         runtime
             .evaluate(Source::new(StringSource::new("<test>", s.to_owned())))
-            .await
             .map_err(|e| format!("{:?}", e))
     }
 }

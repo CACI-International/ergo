@@ -25,36 +25,35 @@ pub trait Bind {
 }
 
 /// Create a bind error result for the given value.
-pub fn bind_error(ctx: &Context, v: Value) -> crate::Error {
-    let name = type_name(ctx, &v);
+pub fn bind_error(v: Value) -> crate::Error {
+    let name = type_name(&v);
     Source::get(&v)
         .with(format!("cannot bind to value with type '{}'", name))
         .into_error()
 }
 
 /// Bind a value to an argument.
-pub async fn bind(ctx: &Context, mut v: Value, arg: Value) -> Value {
-    if let Err(e) = ctx.eval(&mut v).await {
+pub async fn bind(mut v: Value, arg: Value) -> Value {
+    if let Err(e) = Context::eval(&mut v).await {
         return e.into();
     }
 
-    match ctx.get_trait::<Bind>(&v) {
-        None => bind_error(ctx, v).into(),
-        Some(t) => t.bind(ctx, v, arg).await,
+    match Context::get_trait::<Bind>(&v) {
+        None => bind_error(v).into(),
+        Some(t) => t.bind(v, arg).await,
     }
 }
 
 /// Bind a value to an argument, evaluating the result and checking for an error.
-pub async fn bind_no_error(ctx: &Context, v: Value, arg: Value) -> crate::Result<()> {
-    let mut result = bind(ctx, v, arg).await;
-    ctx.eval(&mut result).await?;
+pub async fn bind_no_error(v: Value, arg: Value) -> crate::Result<()> {
+    let mut result = bind(v, arg).await;
+    Context::eval(&mut result).await?;
     Ok(())
 }
 
 /// create_bind_rest is used to create the value that is bound when a BindRest type is encountered.
 /// The first argument is whether this is the first BindRest, and the second is the values to bind.
 pub(crate) async fn bind_array<F>(
-    ctx: &Context,
     to: RVec<Value>,
     from: Src<RVec<Value>>,
     mut create_bind_rest: F,
@@ -68,7 +67,6 @@ where
     type Iter = crate::abi_stable::std_types::vec::IntoIter<Value>;
 
     fn back<'a, F>(
-        ctx: &'a Context,
         to: &'a mut Iter,
         from: &'a mut Iter,
         create_bind_rest: &'a mut F,
@@ -89,7 +87,7 @@ where
                                 loop {
                                     match from.next_back() {
                                         Some(from_v) => {
-                                            if bind(ctx, to_v.clone(), from_v.clone()).await.is_type::<types::Error>() {
+                                            if bind(to_v.clone(), from_v.clone()).await.is_type::<types::Error>() {
                                                 vals.push(from_v);
                                             } else {
                                                 break;
@@ -103,14 +101,14 @@ where
                                 let src: Src<()> = vals.iter().map(Source::get).collect();
                                 let mut val_array = create_bind_rest(false, vals);
                                 Source::set_if_missing(&mut val_array, src);
-                                bind_no_error(ctx, rest, val_array).await?;
+                                bind_no_error(rest, val_array).await?;
                             }
                         }
                     }
                     to_v => {
                         match from.next_back() {
                             None => Err(t_source.with("no value matches this binding").into_error())?,
-                            Some(from_v) => bind_no_error(ctx, to_v, from_v).await?,
+                            Some(from_v) => bind_no_error(to_v, from_v).await?,
                         }
                     }
                 }
@@ -121,7 +119,6 @@ where
     }
 
     fn forward<'a, F>(
-        ctx: &'a Context,
         to: &'a mut Iter,
         from: &'a mut Iter,
         create_bind_rest: &'a mut F,
@@ -135,8 +132,8 @@ where
                 let t_source = Source::get(&t);
                 match_value!{t,
                     types::BindRest(rest) => {
-                        back(ctx, to, from, create_bind_rest).await?;
-                        bind_no_error(ctx, rest, {
+                        back(to, from, create_bind_rest).await?;
+                        bind_no_error(rest, {
                             Source::imbue(from
                                 .map(|v| Source::extract(v))
                                 .collect::<Vec<_>>()
@@ -149,7 +146,7 @@ where
                         match from.next() {
                             None => Err(t_source.with("no value matches this binding").into_error())?,
                             Some(from_v) => {
-                                bind_no_error(ctx, to_v, from_v).await?;
+                                bind_no_error(to_v, from_v).await?;
                             }
                         }
                     }
@@ -173,13 +170,12 @@ where
     let mut to = to.into_iter();
     let mut from = from.into_iter();
 
-    forward(ctx, &mut to, &mut from, &mut create_bind_rest).await
+    forward(&mut to, &mut from, &mut create_bind_rest).await
 }
 
 /// Returns the remaining items in `from` that were not bound if `return_rest` is true and
 /// `BindRestKey` is not a key in `to`.
 pub(crate) async fn bind_map(
-    ctx: &Context,
     mut to: BstMap<Value, Value>,
     from: Src<BstMap<Value, Value>>,
     return_rest: bool,
@@ -188,7 +184,6 @@ pub(crate) async fn bind_map(
     let (from_source, mut from) = from.take();
     for (k, to_v) in to.into_iter() {
         bind_no_error(
-            ctx,
             to_v,
             if let Some(from_v) = from.remove(&k) {
                 from_v
@@ -221,7 +216,6 @@ pub(crate) async fn bind_map(
         Some(v) => {
             let remaining = from;
             bind_no_error(
-                ctx,
                 v,
                 Source::imbue(from_source.with(types::Map(remaining).into())),
             )
@@ -237,7 +231,6 @@ ergo_traits_fn! {
     {
         extern "C" fn id_eq_f<'a>(
             _trait_data: &'a Erased,
-            ctx: &'a Context,
             v: &'a Value,
             tp: &'a Type,
             _data: &'a Erased,
@@ -248,15 +241,15 @@ ergo_traits_fn! {
                     let arg_source = Source::get(&arg);
                     match_value! { arg,
                         types::Args {..} => {
-                            let name = type_name_for(ctx, tp);
+                            let name = type_name_for(tp);
                             arg_source.with(format!("cannot call value with type {}", name)).into_error().into()
                         }
                         types::PatternArgs {..} => {
-                            let name = type_name_for(ctx, tp);
+                            let name = type_name_for(tp);
                             arg_source.with(format!("cannot call value in pattern with type {}", name)).into_error().into()
                         }
                         types::Index(_) => {
-                            let name = type_name_for(ctx, tp);
+                            let name = type_name_for(tp);
                             arg_source.with(format!("cannot index value with type {}", name)).into_error().into()
                         }
                         _ => {

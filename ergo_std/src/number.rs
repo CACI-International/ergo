@@ -13,12 +13,12 @@ pub fn module() -> Value {
 ///
 /// Arguments: `:value`
 async fn from(value: _) -> Value {
-    ergo_runtime::try_result!(traits::into::<types::Number>(CONTEXT, value).await).into()
+    ergo_runtime::try_result!(traits::into::<types::Number>(value).await).into()
 }
 
 #[cfg(test)]
 mod test {
-    ergo_script::test! {
+    ergo_script::tests! {
         fn from(t) {
             t.assert_content_eq("self:type:Number: 1/4", "self:number:from 0.25");
             t.assert_ne("self:type:Number: 1/3", "self:number:from 0.333333333333333333333333");

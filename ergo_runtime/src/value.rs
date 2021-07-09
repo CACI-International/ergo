@@ -12,6 +12,7 @@ use crate::abi_stable::{
 use crate::dependency::{Dependencies, GetDependencies};
 use crate::hash::HashFn;
 use crate::type_system::{ErgoType, Type};
+use crate::Context;
 
 /// A shared runtime value.
 ///
@@ -86,10 +87,10 @@ impl Value {
     ///
     /// `FnOnce + Clone` is used rather than `Fn` because this is more convenient for callers when
     /// moving values into the returned Future.
-    pub fn dyn_new<'b, F, Fut, D>(f: F, deps: D) -> Self
+    pub fn dyn_new<F, Fut, D>(f: F, deps: D) -> Self
     where
-        F: FnOnce(&'b crate::Context) -> Fut + Clone + Send + Sync + 'static,
-        Fut: std::future::Future<Output = Value> + Send + 'b,
+        F: FnOnce() -> Fut + Clone + Send + Sync + 'static,
+        Fut: std::future::Future<Output = Value> + Send,
         D: Into<Dependencies>,
     {
         let deps = deps.into();
@@ -98,22 +99,18 @@ impl Value {
     }
 
     /// Create a dynamically-typed (unevaluated) value with the given identity.
-    pub fn dyn_with_id<'b, F, Fut>(func: F, id: u128) -> Self
+    pub fn dyn_with_id<F, Fut>(func: F, id: u128) -> Self
     where
-        F: FnOnce(&'b crate::Context) -> Fut + Clone + Send + Sync + 'static,
-        Fut: std::future::Future<Output = Value> + Send + 'b,
+        F: FnOnce() -> Fut + Clone + Send + Sync + 'static,
+        Fut: std::future::Future<Output = Value> + Send,
     {
         let next = DynamicNext_TO::from_value(
             std::sync::Arc::new(futures::lock::Mutex::new(DynamicNextState::NeedContext {
                 known_context_dependent: false,
                 func,
-                phantom: std::marker::PhantomData,
             })),
             TU_Opaque,
         );
-        // The value _is_ actually 'static, but with `Fut` in the type, it thinks it is 'b
-        let next =
-            unsafe { std::mem::transmute::<DynamicNext_TO<_>, DynamicNext_TO<'static, _>>(next) };
         Value {
             id: id.into(),
             metadata: Default::default(),
@@ -195,10 +192,10 @@ impl Value {
     }
 
     /// Evaluate the value once (if dynamic).
-    pub async fn eval_once(&mut self, ctx: &crate::Context) {
+    pub async fn eval_once(&mut self) {
         match std::mem::replace(&mut self.data, ValueData::None) {
             ValueData::Dynamic { next } => {
-                let Value { id, metadata, data } = next.next(ctx).await;
+                let Value { id, metadata, data } = next.next().await;
                 self.id = id;
                 self.metadata.extend(metadata);
                 self.data = data;
@@ -208,9 +205,9 @@ impl Value {
     }
 
     /// Evaluate this value until it is typed.
-    pub async fn eval(&mut self, ctx: &crate::Context) {
+    pub async fn eval(&mut self) {
         while !self.is_evaluated() {
-            self.eval_once(ctx).await;
+            self.eval_once().await;
         }
     }
 
@@ -362,40 +359,33 @@ pub trait MetadataKey {
 #[sabi_trait]
 trait DynamicNext: Clone + Send + Sync {
     #[sabi(last_prefix_field)]
-    fn next<'a>(self, ctx: &'a crate::Context) -> future::BoxFuture<'a, Value>;
+    fn next(self) -> future::BoxFuture<'static, Value>;
 }
 
-impl<'b, F, Fut> DynamicNext for std::sync::Arc<futures::lock::Mutex<DynamicNextState<F, Fut>>>
+impl<F, Fut> DynamicNext for std::sync::Arc<futures::lock::Mutex<DynamicNextState<F>>>
 where
-    F: FnOnce(&'b crate::Context) -> Fut + Clone + Send + Sync + 'b,
-    Fut: std::future::Future<Output = Value> + Send + 'b,
+    F: FnOnce() -> Fut + Clone + Send + Sync + 'static,
+    Fut: std::future::Future<Output = Value> + Send,
 {
-    fn next<'a>(self, ctx: &'a crate::Context) -> future::BoxFuture<'a, Value> {
-        // Let 'b = 'a
-        let ctx = unsafe { std::mem::transmute::<&'a _, &'b _>(ctx) };
-        let fut = future::BoxFuture::new(async move {
+    fn next(self) -> future::BoxFuture<'static, Value> {
+        future::BoxFuture::new(async move {
             let mut guard = self.lock().await;
             match &mut *guard {
                 DynamicNextState::NeedContext {
                     known_context_dependent,
                     func,
-                    ..
                 } => {
                     // TODO determine if Pending is returned from a lock() call
                     if *known_context_dependent {
-                        (func.clone())(ctx).await
+                        (func.clone())().await
                     } else {
                         let func = func.clone();
-                        let (val, accessed) = ctx
-                            .fork(
-                                |_| {},
-                                move |ctx| async move {
-                                    let ret = func(unsafe { std::mem::transmute(ctx) }).await;
-                                    let accessed = ctx.dynamic_scope.accessed();
-                                    (ret, accessed)
-                                },
-                            )
-                            .await;
+                        let (val, accessed) = Context::fork(|_| {}, async move {
+                            let ret = func().await;
+                            let accessed = Context::with(|ctx| ctx.dynamic_scope.accessed());
+                            (ret, accessed)
+                        })
+                        .await;
                         if accessed {
                             *known_context_dependent = true;
                         } else {
@@ -406,19 +396,14 @@ where
                 }
                 DynamicNextState::Done(val) => val.clone(),
             }
-        });
-        // Change 'b back to 'a
-        unsafe {
-            std::mem::transmute::<future::BoxFuture<'b, Value>, future::BoxFuture<'a, Value>>(fut)
-        }
+        })
     }
 }
 
-enum DynamicNextState<F, Fut> {
+enum DynamicNextState<F> {
     NeedContext {
         known_context_dependent: bool,
         func: F,
-        phantom: std::marker::PhantomData<fn() -> Fut>,
     },
     Done(Value),
 }

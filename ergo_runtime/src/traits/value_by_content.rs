@@ -35,9 +35,9 @@ impl ValueByContent {
                 async fn value_by_content(self, deep: bool) -> Value {
                     let mut v = self.to_owned();
                     if deep {
-                        CONTEXT.task.join_all(v.nested_values_mut().into_iter().map(|v| async move {
+                        crate::Context::global().task.join_all(v.nested_values_mut().into_iter().map(|v| async move {
                             let old_v = std::mem::replace(v, crate::types::Unset.into());
-                            *v = super::value_by_content(CONTEXT, old_v, deep).await;
+                            *v = super::value_by_content(old_v, deep).await;
                             Ok(())
                         })).await.unwrap();
                     }
@@ -48,16 +48,16 @@ impl ValueByContent {
     }
 }
 
-pub async fn value_by_content(ctx: &crate::Context, mut v: Value, deep: bool) -> Value {
-    drop(ctx.eval(&mut v).await);
-    match ctx.get_trait::<ValueByContent>(&v) {
+pub async fn value_by_content(mut v: Value, deep: bool) -> Value {
+    drop(crate::Context::eval(&mut v).await);
+    match crate::Context::get_trait::<ValueByContent>(&v) {
         None => {
             debug!(
                 "no ValueByContent trait for {}, returning the value as-is",
-                type_name(ctx, &v)
+                type_name(&v)
             );
             v
         }
-        Some(t) => t.value_by_content(ctx, v, deep).await,
+        Some(t) => t.value_by_content(v, deep).await,
     }
 }

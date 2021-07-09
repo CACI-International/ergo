@@ -184,7 +184,7 @@ impl Parser for ErgoFnLike {
             let v_as_type = match ty {
                 None => quote! { v },
                 Some(ref ty) => quote! {
-                    ergo_runtime::try_result!(CONTEXT.eval_as::<#ty>(v).await)
+                    ergo_runtime::try_result!(ergo_runtime::Context::eval_as::<#ty>(v).await)
                 }
             };
             let typed_val = if optional {
@@ -231,10 +231,10 @@ impl Parser for ErgoFnLike {
         f.block = Box::new(parse_quote! {
             {
                 let fn_id = ergo_runtime::nsid!(function, std::concat!(std::module_path!(),"::",std::stringify!(#id)).as_bytes());
-                ergo_runtime::types::Unbound::new(move |CONTEXT, __ergo_fn_arg| {
+                ergo_runtime::types::Unbound::new(move |__ergo_fn_arg| {
                     #(#clones)*
                     ergo_runtime::future::FutureExt::boxed(async move {
-                        let __ergo_fn_args = ergo_runtime::try_result!(CONTEXT.eval_as::<#which>(__ergo_fn_arg).await);
+                        let __ergo_fn_args = ergo_runtime::try_result!(ergo_runtime::Context::eval_as::<#which>(__ergo_fn_arg).await);
                         let ARGS_SOURCE = ergo_runtime::metadata::Source::get(&__ergo_fn_args);
                         let CALL_DEPENDS = ergo_runtime::depends![fn_id, __ergo_fn_args.id()];
                         let mut __ergo_fn_args = __ergo_fn_args.to_owned().args;

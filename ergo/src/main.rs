@@ -267,7 +267,7 @@ fn run(opts: Opts) -> Result<String, String> {
             None => {
                 // When there are no arguments, always call workspace:command function.
                 // This returns _just_ the function, so that documentation will work as expected, but it
-                // will then be called without arguments (with runtime.final_value).
+                // will then be called without arguments (with Runtime::apply_unbound).
                 "workspace:command".into()
             }
             Some(a) => {
@@ -320,13 +320,10 @@ fn run(opts: Opts) -> Result<String, String> {
     }
 
     let source = Source::new(StringSource::new("<command line>", to_eval));
-    let loaded = runtime.ctx.task.block_on(runtime.evaluate(source));
+    let loaded = runtime.evaluate(source);
 
     let value_to_execute = loaded.and_then(|script_output| {
-        let v = runtime
-            .ctx
-            .task
-            .block_on(runtime.final_value(script_output));
+        let v = runtime.block_on(Runtime::apply_unbound(script_output));
         Ok(try_value!(v))
     });
 
@@ -336,13 +333,13 @@ fn run(opts: Opts) -> Result<String, String> {
     runtime.clear_load_cache();
 
     let ret = value_to_execute.and_then(|value| {
-        runtime.ctx.task.block_on(async {
+        runtime.block_on(async {
             use ergo_runtime::traits::{display, eval_nested, Formatter};
-            eval_nested(&runtime.ctx, value.clone()).await?;
+            eval_nested(value.clone()).await?;
             let mut s = String::new();
             {
                 let mut formatter = Formatter::new(&mut s);
-                display(&runtime.ctx, value, &mut formatter).await?;
+                display(value, &mut formatter).await?;
             }
             Ok(s)
         })

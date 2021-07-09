@@ -23,12 +23,12 @@ fn false_val() -> Value {
 ///
 /// Arguments: `:value`
 async fn from(value: _) -> Value {
-    ergo_runtime::try_result!(traits::into::<types::Bool>(CONTEXT, value).await).into()
+    ergo_runtime::try_result!(traits::into::<types::Bool>(value).await).into()
 }
 
 #[cfg(test)]
 mod test {
-    ergo_script::test! {
+    ergo_script::tests! {
         fn from(t) {
             t.assert_content_eq("self:bool:false", "self:bool:from self:type:Unset:");
             t.assert_content_eq("self:bool:true", "self:bool:from hello");

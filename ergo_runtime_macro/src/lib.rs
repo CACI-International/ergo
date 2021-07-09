@@ -80,18 +80,21 @@ pub fn plugin_entry(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let fn_name = f.sig.ident.clone();
 
-    {quote! {
-        #[ergo_runtime::abi_stable::sabi_extern_fn]
-        #[no_mangle]
-        pub fn _ergo_plugin(__plugin_ctx: ergo_runtime::plugin::Context, ctx: &ergo_runtime::Context)
-            -> ergo_runtime::error::RResult<ergo_runtime::Value>
-        {
-            unsafe { __plugin_ctx.initialize_tls(); }
-            #fn_name(ctx).into()
-        }
+    {
+        quote! {
+            #[ergo_runtime::abi_stable::sabi_extern_fn]
+            #[no_mangle]
+            pub fn _ergo_plugin(__plugin_ctx: ergo_runtime::plugin::Context)
+                -> ergo_runtime::error::RResult<ergo_runtime::Value>
+            {
+                unsafe { __plugin_ctx.initialize_tls(); }
+                #fn_name().into()
+            }
 
-        #f
-    }}.into()
+            #f
+        }
+    }
+    .into()
 }
 
 /// Create an item name.

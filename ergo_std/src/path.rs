@@ -5,7 +5,7 @@ use ergo_runtime::{
     metadata::Source,
     traits, try_result, types,
     value::match_value,
-    Value,
+    Context, Value,
 };
 
 pub fn module() -> Value {
@@ -32,7 +32,7 @@ async fn new() -> Value {
     use rand::random;
     use std::convert::TryInto;
 
-    let store = CONTEXT
+    let store = Context::global()
         .store
         .item(item_name!("path"))
         .item(item_name!("new"));
@@ -52,11 +52,11 @@ async fn join(...) -> Value {
     let mut path = std::path::PathBuf::new();
 
     while let Some(mut v) = REST.next() {
-        try_result!(CONTEXT.eval(&mut v).await);
+        try_result!(Context::eval(&mut v).await);
         match_value! {v,
             types::String(s) => path.push(s.as_str()),
             types::Path(p) => path.push(p.as_ref()),
-            v => return traits::type_error(CONTEXT, v, "String or Path").into()
+            v => return traits::type_error(v, "String or Path").into()
         }
     }
 
@@ -141,26 +141,20 @@ async fn relative(base: types::Path, child: types::Path) -> Value {
 
 #[cfg(test)]
 mod test {
-    ergo_script::test! {
+    ergo_script::tests! {
         fn join(t) {
             let p = std::path::PathBuf::from("a");
             t.assert_value_eq("self:path:join a b c", &super::types::Path::from(p.join("b").join("c")));
         }
-    }
 
-    ergo_script::test! {
         fn parent(t) {
             t.assert_content_eq("self:path:parent (self:path:join a b c)", "self:path:join a b");
         }
-    }
 
-    ergo_script::test! {
         fn relative(t) {
             t.assert_content_eq("self:path:relative (self:path:join a b) (self:path:join a b c d)", "self:path:join c d");
         }
-    }
 
-    ergo_script::test! {
         fn split(t) {
             t.assert_content_eq("self:path:split (self:path:join a b c)", "[a,b,c]");
         }

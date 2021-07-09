@@ -1,14 +1,6 @@
 //! The ByteStream type.
 
 use crate as ergo_runtime;
-use crate::{
-    context::{ItemContent, TaskManager},
-    io::{self, AsyncReadExt, BoxAsyncRead},
-    traits,
-    type_system::{ergo_traits_fn, ErgoType},
-    Error, Value,
-};
-
 use crate::abi_stable::{
     sabi_trait,
     sabi_trait::prelude::*,
@@ -17,6 +9,14 @@ use crate::abi_stable::{
     type_erase::Erased,
     StableAbi,
 };
+use crate::{
+    context::ItemContent,
+    io::{self, AsyncReadExt, BoxAsyncRead},
+    traits,
+    type_system::{ergo_traits_fn, ErgoType},
+    Error, Value,
+};
+use futures::io::AsyncReadExt as FuturesAsyncReadExt;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -38,13 +38,13 @@ impl From<super::String> for ByteStream {
 
 impl From<Vec<u8>> for ByteStream {
     fn from(v: Vec<u8>) -> Self {
-        Self::new(io::wrap(std::io::Cursor::new(v)))
+        Self::new(io::AllowStdIo::new(std::io::Cursor::new(v)))
     }
 }
 
 impl From<RVec<u8>> for ByteStream {
     fn from(v: RVec<u8>) -> Self {
-        Self::new(io::wrap(std::io::Cursor::new(v)))
+        Self::new(io::AllowStdIo::new(std::io::Cursor::new(v)))
     }
 }
 
@@ -85,8 +85,8 @@ ergo_traits_fn! {
     impl traits::IntoTyped<super::String> for ByteStream {
         async fn into_typed(self) -> Value {
             let mut bytes = Vec::new();
-            if let Err(e) = self.as_ref().read().read_to_end(&CONTEXT.task, &mut bytes).await {
-                return e.into();
+            if let Err(e) = self.as_ref().read().read_to_end(&mut bytes).await {
+                return Error::from(e).into();
             }
             super::String::from(match String::from_utf8(bytes) {
                 Ok(s) => s,
@@ -107,8 +107,8 @@ ergo_traits_fn! {
             use std::hash::Hasher;
             let mut h = HashFn::default();
             loop {
-                let size = match reader.read(&CONTEXT.task, &mut buf).await {
-                    Err(e) => return e.into(),
+                let size = match reader.read(&mut buf).await {
+                    Err(e) => return Error::from(e).into(),
                     Ok(v) => v
                 };
                 if size == 0 {
@@ -128,12 +128,7 @@ ergo_traits_fn! {
 
     impl traits::Stored for ByteStream {
         async fn put(&self, _stored_ctx: &traits::StoredContext, item: ItemContent) -> crate::RResult<()> {
-            io::copy(
-                &CONTEXT.task,
-                &mut self.read(),
-                &mut io::Blocking::new(item),
-            )
-            .await.map(|_| ()).into()
+            io::copy(&mut self.read(), &mut io::Blocking::new(item)).await.map(|_| ()).map_err(|e| e.into()).into()
         }
 
         async fn get(_stored_ctx: &traits::StoredContext, item: ItemContent) -> crate::RResult<Erased> {
@@ -151,7 +146,7 @@ ergo_traits_fn! {
                     unsafe { std::mem::MaybeUninit::uninit().assume_init() };
                 let mut overflow_size = 0;
                 loop {
-                    let end = reader.read(&CONTEXT.task, &mut buf).await?;
+                    let end = reader.read(&mut buf).await?;
                     if end == 0 {
                         break
                     } else {
@@ -224,34 +219,28 @@ const BYTE_STREAM_BLOCK_LIMIT: usize = 2048;
 type ByteStreamBlock = RVec<u8>;
 
 struct CopyState {
-    task: TaskManager,
-    reader: io::Once<io::Take<&'static mut BoxAsyncRead<'static>>>,
-    writer: io::TokioWrapped<&'static mut Vec<u8>>,
+    reader: io::Once<futures::io::Take<&'static mut BoxAsyncRead<'static>>>,
+    writer: io::AllowStdIo<&'static mut Vec<u8>>,
     copy: Option<
         io::Copier<
             'static,
-            io::Once<io::Take<&'static mut BoxAsyncRead<'static>>>,
-            io::TokioWrapped<&'static mut Vec<u8>>,
+            io::Once<futures::io::Take<&'static mut BoxAsyncRead<'static>>>,
+            io::AllowStdIo<&'static mut Vec<u8>>,
         >,
     >,
     _pinned: std::marker::PhantomPinned,
 }
 
 impl CopyState {
-    pub fn new(
-        task: TaskManager,
-        r: &'static mut BoxAsyncRead<'static>,
-        w: &'static mut Vec<u8>,
-    ) -> Pin<Box<Self>> {
+    pub fn new(r: &'static mut BoxAsyncRead<'static>, w: &'static mut Vec<u8>) -> Pin<Box<Self>> {
         let mut ret = Box::new(CopyState {
-            task,
             reader: r.take(BYTE_STREAM_BLOCK_LIMIT as u64).once(),
-            writer: io::wrap(w),
+            writer: futures::io::AllowStdIo::new(w),
             copy: None,
             _pinned: std::marker::PhantomPinned,
         });
 
-        let cpy = io::copy(&ret.task, &mut ret.reader, &mut ret.writer);
+        let cpy = io::copy(&mut ret.reader, &mut ret.writer);
         ret.copy = Some(unsafe {
             std::mem::transmute::<io::Copier<'_, _, _>, io::Copier<'static, _, _>>(cpy)
         });
@@ -308,7 +297,6 @@ trait ByteStreamSource: Clone + Send + Sync {
     fn poll_data<'a>(
         &'a mut self,
         cx: crate::abi_stable::future::Context,
-        task: &'a TaskManager,
     ) -> crate::abi_stable::future::Poll<RResult<bool, Error>>;
 }
 
@@ -316,7 +304,6 @@ impl ByteStreamSource for ByteStreamSourceImpl {
     fn poll_data<'a>(
         &'a mut self,
         cx: crate::abi_stable::future::Context,
-        task: &'a TaskManager,
     ) -> crate::abi_stable::future::Poll<RResult<bool, Error>> {
         use std::task::Poll::*;
         let waker = cx.into_waker();
@@ -352,7 +339,6 @@ impl ByteStreamSource for ByteStreamSourceImpl {
                         if copy.is_none() {
                             block.reserve_exact(BYTE_STREAM_BLOCK_LIMIT);
                             *copy = Some(CopyState::new(
-                                task.clone(),
                                 // Safety: copy is dropped prior to async_read.
                                 unsafe { std::mem::transmute::<&'_ mut _, &'static mut _>(reader) },
                                 // Safety: copy is dropped prior to block.
@@ -373,7 +359,7 @@ impl ByteStreamSource for ByteStreamSourceImpl {
                                     Ok(v) => v,
                                     Err(e) => {
                                         return crate::abi_stable::future::Poll::Ready(
-                                            RResult::RErr(e),
+                                            RResult::RErr(e.into()),
                                         )
                                     }
                                 }
@@ -403,9 +389,8 @@ impl io::AsyncRead for ByteStreamReader {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context,
-        task: &TaskManager,
         buf: &mut [u8],
-    ) -> std::task::Poll<crate::Result<usize>> {
+    ) -> std::task::Poll<crate::io::Result<usize>> {
         let mut buf_offset = 0;
         let me = &mut *self;
         while buf_offset < buf.len() {
@@ -438,14 +423,14 @@ impl io::AsyncRead for ByteStreamReader {
                 // Try to read a block from the byte stream source.
                 let got_data = match me
                     .source
-                    .poll_data(crate::abi_stable::future::Context::new(cx), task)
+                    .poll_data(crate::abi_stable::future::Context::new(cx))
                 {
                     crate::abi_stable::future::Poll::Pending => {
                         debug_assert!(buf_offset == 0);
                         return std::task::Poll::Pending;
                     }
                     crate::abi_stable::future::Poll::Ready(v) => match v.into_result() {
-                        Err(e) => return std::task::Poll::Ready(Err(e)),
+                        Err(e) => return std::task::Poll::Ready(Err(e.into())),
                         Ok(v) => v,
                     },
                 };
@@ -488,22 +473,15 @@ mod test {
 
         let ctx = crate::Context::builder().build().unwrap();
 
-        let mut buf: [u8; 10001] = [0; 10001];
-        match ctx.task.block_on(reader1.read_exact(&ctx.task, &mut buf)) {
-            Ok(s) => assert!(s == 10000),
-            Err(_) => panic!("buffer read failure"),
-        }
+        let mut buf: [u8; 10000] = [0; 10000];
+        ctx.block_on(reader1.read_exact(&mut buf))
+            .expect("buffer read failure");
         for i in 0..10000 {
             assert!(buf[i] == i as u8);
         }
 
-        match ctx
-            .task
-            .block_on(reader2.read_exact(&ctx.task, &mut buf[..500]))
-        {
-            Ok(s) => assert!(s == 500),
-            Err(_) => panic!("buffer read failure"),
-        }
+        ctx.block_on(reader2.read_exact(&mut buf[..500]))
+            .expect("buffer read failure");
         for i in 0..500 {
             assert!(buf[i] == i as u8);
         }
@@ -513,24 +491,14 @@ mod test {
         drop(reader2);
         let mut reader4 = reader3.clone();
 
-        match ctx
-            .task
-            .block_on(reader3.read_exact(&ctx.task, &mut buf[..500]))
-        {
-            Ok(s) => assert!(s == 500),
-            Err(_) => panic!("buffer read failure"),
-        }
+        ctx.block_on(reader3.read_exact(&mut buf[..500]))
+            .expect("buffer read failure");
         for i in 0..500 {
             assert!(buf[i] == (i + 500) as u8);
         }
 
-        match ctx
-            .task
-            .block_on(reader4.read_exact(&ctx.task, &mut buf[..500]))
-        {
-            Ok(s) => assert!(s == 500),
-            Err(_) => panic!("buffer read failure"),
-        }
+        ctx.block_on(reader4.read_exact(&mut buf[..500]))
+            .expect("buffer read failure");
         for i in 0..500 {
             assert!(buf[i] == (i + 500) as u8);
         }

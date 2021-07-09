@@ -21,31 +21,25 @@ pub struct Unbound(UnboundAbi_TO<'static, RBox<()>>);
 #[sabi_trait]
 trait UnboundAbi: Clone + Send + Sync {
     #[sabi(last_prefix_field)]
-    fn bind<'a>(&'a self, ctx: &'a crate::Context, arg: Value) -> BoxFuture<'a, Value>;
+    fn bind<'a>(&'a self, arg: Value) -> BoxFuture<'a, Value>;
 }
 
-impl<F> UnboundAbi for F
+impl<F, Fut> UnboundAbi for F
 where
-    F: for<'a> Fn(&'a crate::Context, Value) -> futures::future::BoxFuture<'a, Value>
-        + Clone
-        + Send
-        + Sync
-        + 'static,
+    F: Fn(Value) -> Fut + Clone + Send + Sync + 'static,
+    Fut: std::future::Future<Output = Value> + Send,
 {
-    fn bind<'a>(&'a self, ctx: &'a crate::Context, arg: Value) -> BoxFuture<'a, Value> {
-        BoxFuture::new(async move { self(ctx, arg).await.into() })
+    fn bind<'a>(&'a self, arg: Value) -> BoxFuture<'a, Value> {
+        BoxFuture::new(async move { self(arg).await.into() })
     }
 }
 
 impl Unbound {
     /// Create a new unbound value with the given implementation and documentation.
-    pub fn new<F, S: Into<String>>(bind: F, deps: Dependencies, doc: S) -> TypedValue<Self>
+    pub fn new<F, Fut, S: Into<String>>(bind: F, deps: Dependencies, doc: S) -> TypedValue<Self>
     where
-        F: for<'a> Fn(&'a crate::Context, Value) -> futures::future::BoxFuture<'a, Value>
-            + Clone
-            + Send
-            + Sync
-            + 'static,
+        F: Fn(Value) -> Fut + Clone + Send + Sync + 'static,
+        Fut: std::future::Future<Output = Value> + Send,
     {
         let mut v = Self::new_no_doc(bind, deps);
         Doc::set_string(&mut v, doc.into());
@@ -53,13 +47,10 @@ impl Unbound {
     }
 
     /// Create a new unbound value with the given implementation.
-    pub fn new_no_doc<F>(bind: F, deps: Dependencies) -> TypedValue<Self>
+    pub fn new_no_doc<F, Fut>(bind: F, deps: Dependencies) -> TypedValue<Self>
     where
-        F: for<'a> Fn(&'a crate::Context, Value) -> futures::future::BoxFuture<'a, Value>
-            + Clone
-            + Send
-            + Sync
-            + 'static,
+        F: Fn(Value) -> Fut + Clone + Send + Sync + 'static,
+        Fut: std::future::Future<Output = Value> + Send,
     {
         TypedValue::constant_deps(
             Unbound(UnboundAbi_TO::from_value(bind, TU_Opaque)),
@@ -68,8 +59,8 @@ impl Unbound {
     }
 
     /// Bind the value.
-    pub async fn bind(&self, ctx: &crate::Context, arg: Value) -> Value {
-        self.0.bind(ctx, arg).await.into()
+    pub async fn bind(&self, arg: Value) -> Value {
+        self.0.bind(arg).await.into()
     }
 }
 
@@ -84,7 +75,7 @@ ergo_traits_fn! {
 
     impl traits::Bind for Unbound {
         async fn bind(&self, arg: Value) -> Value {
-            self.bind(CONTEXT, arg).await
+            self.bind(arg).await
         }
     }
 }

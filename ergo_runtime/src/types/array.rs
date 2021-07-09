@@ -50,11 +50,11 @@ ergo_traits_fn! {
                 let mut iter = self.0.iter();
                 write!(f, "[")?;
                 if let Some(v) = iter.next() {
-                    traits::display(CONTEXT, v.clone(), f).await?;
+                    traits::display(v.clone(), f).await?;
                 }
                 for v in iter {
                     write!(f, ", ")?;
-                    traits::display(CONTEXT, v.clone(), f).await?;
+                    traits::display(v.clone(), f).await?;
                 }
                 write!(f, "]")?;
                 Ok(())
@@ -72,7 +72,7 @@ ergo_traits_fn! {
                 let mut ids: Vec<u128> = Vec::new();
                 for v in self.0.iter().cloned() {
                     ids.push(v.id());
-                    stored_ctx.write_to_store(CONTEXT, v).await?;
+                    stored_ctx.write_to_store(v).await?;
                 }
                 Ok(bincode::serialize_into(item, &ids)?)
             }.await.into()
@@ -83,7 +83,7 @@ ergo_traits_fn! {
                 let ids: Vec<u128> = bincode::deserialize_from(item)?;
                 let mut vals = RVec::new();
                 for id in ids {
-                    vals.push(Source::imbue(crate::Source::stored(stored_ctx.read_from_store(CONTEXT, id).await?)));
+                    vals.push(Source::imbue(crate::Source::stored(stored_ctx.read_from_store(id).await?)));
                 }
                 Ok(Erased::new(Array(vals)))
             }.await.into()
@@ -94,12 +94,12 @@ ergo_traits_fn! {
         async fn bind(&self, mut arg: Value) -> Value {
             let source = Source::get(&arg);
 
-            crate::try_result!(CONTEXT.eval(&mut arg).await);
+            crate::try_result!(crate::Context::eval(&mut arg).await);
 
             crate::value::match_value! { arg,
                 super::Index(ind) => {
                     // Return value at index
-                    let ind = crate::try_result!(traits::into::<super::Number>(CONTEXT, ind).await);
+                    let ind = crate::try_result!(traits::into::<super::Number>(ind).await);
                     source.with(match ind.as_ref().to_isize() {
                         None => return Source::get(&ind).with("non-integer index").into_error().into(),
                         Some(mut ind) => {
@@ -120,14 +120,13 @@ ergo_traits_fn! {
                 },
                 Array(arr) => {
                     crate::try_result!(traits::bind_array(
-                            CONTEXT,
                             self.0.clone(),
                             source.with(arr.clone()),
                             |_,rest| Array(rest.into()).into(),
                     ).await);
                     super::Unit.into()
                 }
-                v => traits::bind_error(CONTEXT, v).into()
+                v => traits::bind_error(v).into()
             }
         }
     }

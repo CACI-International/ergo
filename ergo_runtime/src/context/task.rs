@@ -4,39 +4,139 @@
 #![allow(improper_ctypes_definitions)]
 
 use crate::abi_stable::{
-    bst::BstMap,
     closure::ClosureOnce,
     external_types::{RMutex, RRwLock},
     future::{BoxFuture, LocalBoxFuture},
     sabi_trait,
     sabi_trait::prelude::*,
     std_types::{RArc, RBox, ROption, RResult, RVec},
-    type_erase::{Eraseable, Erased, Ref},
-    u128::U128,
+    type_erase::{Eraseable, Erased},
     DynTrait, StableAbi,
 };
 use crate::Error;
 use futures::future::{abortable, try_join_all, AbortHandle, Aborted, Future, FutureExt};
+use std::cell::Cell;
 use tokio::runtime as tokio_runtime;
 
 plugin_tls::thread_local! {
     static THREAD_ID: RRwLock<ROption<u64>> = RRwLock::new(ROption::RNone);
-    static TASK_LOCAL: RMutex<BstMap<U128, RArc<Erased>>> = RMutex::new(Default::default());
 }
 
 static NEXT_THREAD_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// Create a task local key from the given namespaced name.
-///
-/// Example usage:
-/// ```
-/// # #[macro_use] extern crate ergo_runtime;
-/// task_local_key!(ergo_runtime::task_description);
-/// ```
+/// Create a task local value.
 #[macro_export]
-macro_rules! task_local_key {
-    ( $( $l:ident )::+ ) => {
-        $crate::nsid!(task_local::$($l)::+).as_u128()
+macro_rules! task_local {
+    ($(#[$attr:meta])* $vis:vis static $name:ident : $t:ty ;) => {
+        $(#[$attr])*
+        $vis static $name: $crate::context::LocalKey<$t> = {
+            use $crate::abi_stable::{std_types::{ROption}};
+            use std::cell::Cell;
+            type Storage = Cell<ROption<$t>>;
+            plugin_tls::thread_local! {
+                static VALUE: Storage = Cell::new(ROption::RNone);
+            }
+
+            unsafe extern "C" fn __task_local_read() -> *const Storage {
+                VALUE.with(|v| v as *const Storage)
+            }
+
+            $crate::context::LocalKey { read: __task_local_read }
+        };
+    }
+}
+
+/// A key for a task local value.
+pub struct LocalKey<T: 'static> {
+    #[doc(hidden)]
+    pub read: unsafe extern "C" fn() -> *const Cell<ROption<T>>,
+}
+
+#[pin_project::pin_project]
+struct ScopeTaskLocal<T: 'static, Fut> {
+    key: &'static LocalKey<T>,
+    value: ROption<T>,
+    #[pin]
+    future: Fut,
+}
+
+impl<T: StableAbi + Eraseable, Fut: Future> Future for ScopeTaskLocal<T, Fut> {
+    type Output = Fut::Output;
+
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context,
+    ) -> std::task::Poll<Self::Output> {
+        struct Guard<'a, T: StableAbi + Eraseable> {
+            key: &'static LocalKey<T>,
+            value: &'a mut ROption<T>,
+            prev: ROption<T>,
+        }
+
+        impl<'a, T: StableAbi + Eraseable> Drop for Guard<'a, T> {
+            fn drop(&mut self) {
+                *self.value = self.key.cell().replace(self.prev.take());
+            }
+        }
+
+        let mut proj = self.project();
+        let prev = proj.key.cell().replace(proj.value.take());
+
+        let _guard = Guard {
+            prev,
+            key: proj.key,
+            value: &mut proj.value,
+        };
+
+        proj.future.poll(cx)
+    }
+}
+
+impl<T: StableAbi + Eraseable> LocalKey<T> {
+    pub async fn scope<F>(&'static self, value: T, future: F) -> F::Output
+    where
+        F: Future,
+    {
+        ScopeTaskLocal {
+            key: self,
+            value: ROption::RSome(value),
+            future,
+        }
+        .await
+    }
+
+    pub async fn final_scope<F>(&'static self, value: T, future: F) -> (T, F::Output)
+    where
+        F: Future,
+    {
+        let scope = ScopeTaskLocal {
+            key: self,
+            value: ROption::RSome(value),
+            future,
+        };
+        tokio::pin!(scope);
+        let ret = (&mut scope).await;
+        (scope.project().value.take().unwrap(), ret)
+    }
+
+    pub fn with<F, R>(&'static self, f: F) -> R
+    where
+        F: FnOnce(Option<&T>) -> R,
+    {
+        f(unsafe { self.cell().as_ptr().as_ref().unwrap() }
+            .as_ref()
+            .into_option())
+    }
+
+    pub fn get(&'static self) -> Option<T>
+    where
+        T: Clone,
+    {
+        self.with(|v| v.cloned())
+    }
+
+    fn cell(&'static self) -> &Cell<ROption<T>> {
+        unsafe { (self.read)().as_ref() }.unwrap()
     }
 }
 
@@ -180,97 +280,6 @@ mod task_priority {
 }
 
 use task_priority::TaskPriority;
-
-/// A reference to a task local value.
-pub type TaskLocalRef<T> = Ref<T, RArc<Erased>>;
-
-/// A type that has an associated task local key.
-pub trait TaskLocal: Eraseable + StableAbi {
-    /// The associated key.
-    fn task_local_key() -> u128;
-
-    /// Get the task local value, if set.
-    fn task_local() -> Option<TaskLocalRef<Self>>
-    where
-        Self: Sized,
-    {
-        get_task_local::<Self>()
-    }
-
-    /// Run the given future with this task local value set.
-    fn scoped<Fut: Future>(self, fut: Fut) -> ScopeTaskLocal<Fut>
-    where
-        Self: Sized,
-    {
-        scope_task_local(self, fut)
-    }
-}
-
-/// Get a task local value.
-pub fn get_task_local<T: TaskLocal>() -> Option<TaskLocalRef<T>> {
-    let key = T::task_local_key();
-    TASK_LOCAL
-        .with(move |m| m.lock().get(&key).cloned())
-        .map(|v| unsafe { TaskLocalRef::new(v) })
-}
-
-/// The future produced by `scope_task_local`.
-#[pin_project::pin_project]
-pub struct ScopeTaskLocal<Fut> {
-    key: U128,
-    value: Option<RArc<Erased>>,
-    #[pin]
-    future: Fut,
-}
-
-impl<Fut: Future> Future for ScopeTaskLocal<Fut> {
-    type Output = Fut::Output;
-
-    fn poll(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context,
-    ) -> std::task::Poll<Self::Output> {
-        struct Guard<'a> {
-            key: U128,
-            value: &'a mut Option<RArc<Erased>>,
-            prev: Option<RArc<Erased>>,
-        }
-
-        impl<'a> Drop for Guard<'a> {
-            fn drop(&mut self) {
-                let value = TASK_LOCAL.with(|m| {
-                    let mut g = m.lock();
-                    match self.prev.take() {
-                        None => g.remove(&self.key),
-                        Some(v) => g.insert(self.key, v),
-                    }
-                });
-                *self.value = value;
-            }
-        }
-
-        let mut proj = self.project();
-        let val = proj.value.take().unwrap();
-        let prev = TASK_LOCAL.with(|m| m.lock().insert(*proj.key, val));
-
-        let _guard = Guard {
-            prev,
-            key: *proj.key,
-            value: &mut proj.value,
-        };
-
-        proj.future.poll(cx)
-    }
-}
-
-/// Set a task local value for the scope of the given future.
-pub fn scope_task_local<T: TaskLocal, Fut: Future>(value: T, fut: Fut) -> ScopeTaskLocal<Fut> {
-    ScopeTaskLocal {
-        key: T::task_local_key().into(),
-        value: Some(RArc::new(Erased::new(value))),
-        future: fut,
-    }
-}
 
 #[derive(StableAbi)]
 #[repr(C)]

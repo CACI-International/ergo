@@ -150,7 +150,7 @@ fn ergo_trait_definition(trt: ItemTrait) -> TokenStream {
             colon_token: Some(Default::default()),
             ty: parse_quote! {
                     ergo_runtime::abi_stable::closure::FnPtr<
-                        for<'a> extern "C" fn(&'a ergo_runtime::abi_stable::type_erase::Erased, &'a ergo_runtime::Context, #(#fn_args),*)
+                        for<'a> extern "C" fn(&'a ergo_runtime::abi_stable::type_erase::Erased, #(#fn_args),*)
                             -> #fn_ret
                     >
             },
@@ -256,9 +256,9 @@ fn ergo_trait_definition(trt: ItemTrait) -> TokenStream {
             Default::default()
         };
         quote_spanned! { ident.span()=>
-            pub #async_tok fn #ident(&self, ctx: &ergo_runtime::Context, #v #(#args),*) -> #ret {
+            pub #async_tok fn #ident(&self, #v #(#args),*) -> #ret {
                 let inner = &self.inner;
-                (inner.#ident.as_fn())(&inner.ergo_trait_data, ctx, #call_v #(#arg_names),*)#await_tok
+                (inner.#ident.as_fn())(&inner.ergo_trait_data, #call_v #(#arg_names),*)#await_tok
             }
         }
     });
@@ -534,7 +534,7 @@ fn do_ergo_trait_impl(
         quote_spanned! { name.span() =>
             #[allow(improper_ctypes_definitions)]
             extern "C" fn #name #impl_generics(#[allow(non_snake_case,unused)] TRAIT_DATA: &'a ergo_runtime::abi_stable::type_erase::Erased,
-                #[allow(non_snake_case,unused)] CONTEXT: &'a ergo_runtime::Context, #(#fn_args),*)
+                #(#fn_args),*)
                 -> #fn_ret
             #where_clause
             {

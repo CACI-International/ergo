@@ -1,6 +1,6 @@
 //! The getopt function.
 
-use ergo_runtime::{metadata::Source, try_result, types, Value};
+use ergo_runtime::{metadata::Source, try_result, types, Context, Value};
 use std::collections::BTreeMap;
 
 #[types::ergo_fn]
@@ -25,7 +25,7 @@ pub async fn function(args: types::Array) -> Value {
     let mut keyed = BTreeMap::new();
 
     for a in args {
-        let s = try_result!(CONTEXT.eval_as::<types::String>(a).await);
+        let s = try_result!(Context::eval_as::<types::String>(a).await);
         match s.as_ref().as_str().strip_prefix("--") {
             None => positional.push(s.into()),
             Some(rest) => {
@@ -52,7 +52,7 @@ pub async fn function(args: types::Array) -> Value {
 
 #[cfg(test)]
 mod test {
-    ergo_script::test! {
+    ergo_script::tests! {
         fn getopt(t) {
             t.assert_content_eq("self:getopt [a,b,c,d]", "fn ^:args -> :args |> a b c d");
             t.assert_content_eq("self:getopt [--flag,pos1,'--key=a',pos2,pos3,'--key2=123=b']",

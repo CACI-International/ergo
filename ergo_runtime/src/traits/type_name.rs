@@ -13,38 +13,38 @@ pub trait TypeName {
 }
 
 /// Get a type name for the given type.
-pub fn type_name_for(ctx: &crate::Context, tp: &Type) -> String {
-    if let Some(t) = ctx.get_trait_for_type::<TypeName>(tp) {
-        t.type_name(ctx).into()
+pub fn type_name_for(tp: &Type) -> String {
+    if let Some(t) = crate::Context::get_trait_for_type::<TypeName>(tp) {
+        t.type_name().into()
     } else {
         format!("<{}>", tp.id)
     }
 }
 
 /// Get a type name for the given value.
-pub fn type_name(ctx: &crate::Context, value: &Value) -> String {
+pub fn type_name(value: &Value) -> String {
     match value.ergo_type() {
-        Some(tp) => type_name_for(ctx, tp),
+        Some(tp) => type_name_for(tp),
         None => "<dynamic>".into(),
     }
 }
 
 /// Create a type error with the value's type mentioned.
-pub fn type_error(ctx: &crate::Context, v: Value, expected: &str) -> crate::Error {
-    let name = type_name(ctx, &v);
+pub fn type_error(v: Value, expected: &str) -> crate::Error {
+    let name = type_name(&v);
     Source::get(&v)
         .with(format!("type error: expected {}, got {}", expected, name))
         .into_error()
 }
 
 /// Create a type error with the value's type mentioned.
-pub fn type_error_for<T: ErgoType>(ctx: &crate::Context, v: Value) -> crate::Error {
-    type_error_for_t(ctx, v, &T::ergo_type())
+pub fn type_error_for<T: ErgoType>(v: Value) -> crate::Error {
+    type_error_for_t(v, &T::ergo_type())
 }
 
 /// Create a type error with the value's type mentioned.
-pub fn type_error_for_t(ctx: &crate::Context, v: Value, tp: &Type) -> crate::Error {
-    type_error(ctx, v, type_name_for(ctx, tp).as_str())
+pub fn type_error_for_t(v: Value, tp: &Type) -> crate::Error {
+    type_error(v, type_name_for(tp).as_str())
 }
 
 /// Define the TypeName trait for the given rust type.

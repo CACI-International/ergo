@@ -66,23 +66,22 @@ impl<T: ErgoType + StableAbi + Eraseable> IntoTyped<T> {
 
 /// Convert the given value into another type.
 pub async fn into<T: ErgoType + StableAbi + Eraseable>(
-    ctx: &Context,
     mut v: Value,
 ) -> crate::Result<TypedValue<T>> {
     let mut src = Source::get(&v);
     let result: crate::Result<_> = async {
-        ctx.eval(&mut v).await?;
+        Context::eval(&mut v).await?;
         src = Source::get(&v); // Update source in case it changed
-        let t = ctx.get_trait::<IntoTyped<T>>(&v).ok_or_else(|| {
-            let from_t = type_name(ctx, &v);
-            let to_t = type_name_for(ctx, &T::ergo_type());
+        let t = Context::get_trait::<IntoTyped<T>>(&v).ok_or_else(|| {
+            let from_t = type_name(&v);
+            let to_t = type_name_for(&T::ergo_type());
             format!("cannot convert {} into {}", from_t, to_t)
         })?;
-        crate::try_value!(t.into_typed(ctx, v).await)
+        crate::try_value!(t.into_typed(v).await)
             .as_type::<T>()
             .map_err(|v| {
-                let actual_t = type_name(ctx, &v);
-                let into_t = type_name_for(ctx, &T::ergo_type());
+                let actual_t = type_name(&v);
+                let into_t = type_name_for(&T::ergo_type());
                 format!("bad IntoTyped<{}> implementation, got {}", into_t, actual_t).into()
             })
     }
@@ -99,7 +98,7 @@ pub async fn into<T: ErgoType + StableAbi + Eraseable>(
 ergo_traits_fn! {
     // Identity: T -> T
     {
-        extern "C" fn id_f<'a>(_data: &'a Erased, _ctx: &'a Context, v: Value) ->
+        extern "C" fn id_f<'a>(_data: &'a Erased, v: Value) ->
             BoxFuture<'a, Value> {
             BoxFuture::new(async move { v })
         }

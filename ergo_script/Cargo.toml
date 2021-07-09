@@ -9,4 +9,4 @@ ergo_runtime = { path = "../ergo_runtime" }
 futures = "^0.3"
 libloading = "^0.6"
 log = "^0.4"
-plugin_tls = { version = "~0.2.2", features = ["host"] }
+plugin_tls = { version = "0.3", features = ["host"] }

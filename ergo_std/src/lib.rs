@@ -47,10 +47,10 @@ macro_rules! make_string_map {
 }
 
 #[plugin_entry]
-fn entry(ctx: &Context) -> ergo_runtime::Result<Value> {
+fn entry() -> ergo_runtime::Result<Value> {
     // Add trait implementations
-    exec::ergo_traits(&ctx.traits);
-    net::ergo_traits(&ctx.traits);
+    exec::ergo_traits(&Context::global().traits);
+    net::ergo_traits(&Context::global().traits);
 
     Ok(make_string_map! {
         "array" = array::module(),
@@ -62,7 +62,7 @@ fn entry(ctx: &Context) -> ergo_runtime::Result<Value> {
         "io" = io::module(),
         "iter" = iter::module(),
         "json" = json::module(),
-        "log" = log::function(ctx),
+        "log" = log::function(),
         "map" = map::module(),
         "match" = match_::function(),
         "net" = net::module(),

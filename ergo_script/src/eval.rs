@@ -231,27 +231,24 @@ impl Captures {
         Ok(())
     }
 
-    pub fn evaluate_ready<'a>(
-        &'a mut self,
-        eval: Evaluator,
-        ctx: &'a Context,
-    ) -> BoxFuture<'a, ()> {
+    pub fn evaluate_ready<'a>(&'a mut self, eval: Evaluator) -> BoxFuture<'a, ()> {
         async move {
             while self.ready.len() > 0 {
                 let ready = std::mem::take(&mut self.ready);
-                let results = {
-                    let me: &Self = self;
-                    join_all(ready.iter().filter_map(|key| {
-                        if let Some(Capture::Expr { expression, .. }) = me.inner.get(&key) {
-                            Some(async move {
-                                (key, eval.evaluate_now(ctx, expression.clone(), me).await)
-                            })
-                        } else {
-                            None
-                        }
-                    }))
-                    .await
-                };
+                let results =
+                    {
+                        let me: &Self = self;
+                        join_all(ready.iter().filter_map(|key| {
+                            if let Some(Capture::Expr { expression, .. }) = me.inner.get(&key) {
+                                Some(async move {
+                                    (key, eval.evaluate_now(expression.clone(), me).await)
+                                })
+                            } else {
+                                None
+                            }
+                        }))
+                        .await
+                    };
                 for (k, r) in results {
                     self.resolve(k, r);
                 }
@@ -349,13 +346,13 @@ impl Evaluator {
     }
 
     /// Evaluate the given expression.
-    pub fn evaluate(self, ctx: &Context, e: Expr, captures: &Captures) -> Value {
-        self.evaluate_with_env(ctx, e, captures, None, &Sets::none())
+    pub fn evaluate(self, e: Expr, captures: &Captures) -> Value {
+        self.evaluate_with_env(e, captures, None, &Sets::none())
     }
 
     /// Evaluate the given expression immediately.
-    pub async fn evaluate_now(self, ctx: &Context, e: Expr, captures: &Captures) -> Value {
-        self.evaluate_now_with_env(ctx, e, captures, None, &Sets::none())
+    pub async fn evaluate_now(self, e: Expr, captures: &Captures) -> Value {
+        self.evaluate_now_with_env(e, captures, None, &Sets::none())
             .await
     }
 
@@ -365,7 +362,6 @@ impl Evaluator {
     /// within the block, and whether the block ended with a normal expression.
     async fn evaluate_block_items(
         self,
-        ctx: &Context,
         items: Vec<ast::BlockItem>,
         mut captures: Captures,
         mode: BlockItemMode,
@@ -384,7 +380,6 @@ impl Evaluator {
                     last_normal = true;
                     results.push(
                         self.eval_with_env(
-                            ctx,
                             e,
                             &captures,
                             if mode.command() { None } else { Some(&env) },
@@ -396,7 +391,6 @@ impl Evaluator {
                 ast::BlockItem::Merge(e) => {
                     let mut val = self
                         .evaluate_now_with_env(
-                            ctx,
                             e,
                             &captures,
                             if mode.command() { None } else { Some(&env) },
@@ -404,7 +398,7 @@ impl Evaluator {
                         )
                         .await;
                     let val_source = Source::get(&val);
-                    drop(ctx.eval(&mut val).await);
+                    drop(Context::eval(&mut val).await);
                     match_value! { val.clone(),
                         s@types::String(_) => {
                             last_normal = false;
@@ -460,7 +454,7 @@ impl Evaluator {
                         }
                         v => {
                             has_errors = true;
-                            let name = traits::type_name(ctx, &v);
+                            let name = traits::type_name(&v);
                             errs.push(val_source.with(format!("cannot merge value with type {}", name)).into_error());
                         }
                     }
@@ -469,7 +463,6 @@ impl Evaluator {
                     last_normal = false;
                     let e = self
                         .eval_with_env(
-                            ctx,
                             e,
                             &captures,
                             if mode.command() { None } else { Some(&env) },
@@ -482,7 +475,6 @@ impl Evaluator {
                     let b = self
                         //.evaluate_deep()
                         .evaluate_now_with_env(
-                            ctx,
                             b,
                             &captures,
                             if mode.command() { None } else { Some(&env) },
@@ -491,7 +483,7 @@ impl Evaluator {
                         .await;
 
                     // Immediately eval and check for bind error
-                    traits::bind_no_error(ctx, b, e).await?;
+                    traits::bind_no_error(b, e).await?;
                     let new_sets = new_sets.into_inner();
 
                     /*
@@ -512,7 +504,7 @@ impl Evaluator {
                     for (cap, k, mut v) in new_sets {
                         //let deps = depends![^bind_deps.clone(), k];
                         //let to_bind = to_bind.clone();
-                        ctx.eval_once(&mut v).await;
+                        Context::eval_once(&mut v).await;
                         /*
                         let v = if immediate_bind {
                             // This is only the case for a set expression, which can never have an error when
@@ -537,7 +529,7 @@ impl Evaluator {
                             captures.resolve(cap, v);
                         }
                     }
-                    captures.evaluate_ready(self, ctx).await;
+                    captures.evaluate_ready(self).await;
                 }
             }
         }
@@ -551,15 +543,14 @@ impl Evaluator {
 
     async fn eval_with_env(
         self,
-        ctx: &Context,
         e: Expr,
         captures: &Captures,
         local_env: Option<&LocalEnv>,
         sets: &Sets,
     ) -> Value {
-        let mut r = self.evaluate_with_env(ctx, e, captures, local_env, sets);
+        let mut r = self.evaluate_with_env(e, captures, local_env, sets);
         if self.deep_eval {
-            drop(ctx.eval(&mut r).await);
+            drop(Context::eval(&mut r).await);
         }
         r
     }
@@ -567,7 +558,6 @@ impl Evaluator {
     /// Evaluate the given expression with an environment.
     fn evaluate_with_env(
         self,
-        ctx: &Context,
         e: Expr,
         captures: &Captures,
         local_env: Option<&LocalEnv>,
@@ -578,7 +568,7 @@ impl Evaluator {
         let mut val = crate::match_expression!(e,
             Unit => |_| types::Unit.into(),
             BindAny => |_| types::Unbound::new_no_doc(
-                            |_, _| async { types::Unit.into() }.boxed(),
+                            |_| async { types::Unit.into() }.boxed(),
                             depends![nsid!(expr::any)],
                         )
                         .into(),
@@ -588,16 +578,16 @@ impl Evaluator {
             },
             DocComment => |doc| {
                 let mut captures = captures.subset(&doc.captures);
-                let mut val = self.evaluate_with_env(ctx, doc.value.clone(), &captures, local_env, sets);
+                let mut val = self.evaluate_with_env(doc.value.clone(), &captures, local_env, sets);
                 let parts = doc.parts.clone();
                 let self_key = doc.self_capture_key.as_ref().copied().unwrap();
                 let self_val = val.clone();
                 // TODO distinguish doc comment captures from value captures?
                 let doc_deps = depends![^DocCommentPart::dependencies(&parts), ^&captures, self_val];
-                let mut doc = Value::dyn_new(move |ctx| async move {
-                        ctx.spawn(EVAL_TASK_PRIORITY, |_| {}, move |ctx| async move {
+                let mut doc = Value::dyn_new(move || async move {
+                        Context::spawn(EVAL_TASK_PRIORITY, |_| {}, async move {
                             captures.resolve(self_key, self_val);
-                            captures.evaluate_ready(self, ctx).await;
+                            captures.evaluate_ready(self).await;
                             let mut doc = std::string::String::new();
                             let mut formatter = traits::Formatter::new(&mut doc);
                             let mut local_env = LocalEnv::new();
@@ -608,11 +598,11 @@ impl Evaluator {
                                         // Evaluate as a block, displaying the final value and
                                         // merging the scope into the doc comment scope.
                                         let sets = Sets::new();
-                                        let (mut vals, _, has_val) = self.evaluate_block_items(ctx, es, captures.clone(), BlockItemMode::DocBlock, &sets).await?;
+                                        let (mut vals, _, has_val) = self.evaluate_block_items(es, captures.clone(), BlockItemMode::DocBlock, &sets).await?;
 
                                         let last = if has_val { vals.pop() } else { None };
                                         for v in vals {
-                                            traits::eval_nested(ctx, v).await?;
+                                            traits::eval_nested(v).await?;
                                         }
 
                                         for (cap, k, v) in sets.into_inner() {
@@ -621,14 +611,14 @@ impl Evaluator {
                                             }
                                             local_env.insert(k, v);
                                         }
-                                        captures.evaluate_ready(self, ctx).await;
+                                        captures.evaluate_ready(self).await;
 
                                         // Only add to string if the last value wasn't a bind
                                         // expression (to support using a block to only add
                                         // bindings).
                                         if let Some(mut last) = last {
-                                            ctx.eval(&mut last).await?;
-                                            traits::display(ctx, last, &mut formatter).await?;
+                                            Context::eval(&mut last).await?;
+                                            traits::display(last, &mut formatter).await?;
                                         }
                                     }
                                 }
@@ -647,21 +637,21 @@ impl Evaluator {
                 let deps = depends![e, ^&captures];
                 let bind = func.bind.clone();
                 let body = func.body.clone();
-                types::Unbound::new_no_doc(move |ctx, v| {
+                types::Unbound::new_no_doc(move |v| {
                     let bind = bind.clone();
                     let body = body.clone();
                     let mut captures = captures.clone();
                     async move {
                         let sets = Sets::new();
-                        let bind = self.evaluate_now_with_env(ctx, bind, &captures, None, &sets).await;
-                        try_result!(traits::bind_no_error(ctx, bind, v).await);
+                        let bind = self.evaluate_now_with_env(bind, &captures, None, &sets).await;
+                        try_result!(traits::bind_no_error(bind, v).await);
 
                         let mut sets = sets.into_inner();
 
                         // The sets values will each evaluate to the bound value; we want to
                         // evaluate them immediately to properly get value identities.
-                        ctx.task.join_all((&mut sets).iter_mut().map(|s| async move {
-                            ctx.eval_once(&mut s.2).await;
+                        Context::global().task.join_all((&mut sets).iter_mut().map(|s| async move {
+                            Context::eval_once(&mut s.2).await;
                             Ok(())
                         })).await.unwrap();
 
@@ -671,26 +661,26 @@ impl Evaluator {
                         for (cap, v) in new_captures.into_iter().filter_map(|o| o) {
                             captures.resolve(cap, v);
                         }
-                        captures.evaluate_ready(self, ctx).await;
+                        captures.evaluate_ready(self).await;
 
-                        self.eval_with_env(ctx, body, &captures, Some(&local_env), &Sets::none()).await
+                        self.eval_with_env(body, &captures, Some(&local_env), &Sets::none()).await
                     }.boxed()
                 }, deps).into()
             },
             Get => |get| {
-                let k = self.evaluate_with_env(ctx, get.value.clone(), captures, local_env, sets);
+                let k = self.evaluate_with_env(get.value.clone(), captures, local_env, sets);
                 match local_env.and_then(|env| env.get(&k)) {
                     None => Source::get(&k).with("missing binding").into_error().into(),
                     Some(v) => v.clone()
                 }
             },
             Set => |set| {
-                let k = self.evaluate_with_env(ctx, set.value.clone(), captures, local_env, sets);
+                let k = self.evaluate_with_env(set.value.clone(), captures, local_env, sets);
                 let (send_result, receive_result) = futures::channel::oneshot::channel::<Value>();
 
                 let receive_result = receive_result.shared();
 
-                let mut v = Value::dyn_new(|_| async move {
+                let mut v = Value::dyn_new(|| async move {
                     match receive_result.await {
                         Ok(v) => v,
                         Err(_) => types::Unset.into()
@@ -700,7 +690,7 @@ impl Evaluator {
                 sets.add(set.capture_key.clone(), k.clone(), v);
 
                 let send_result = std::sync::Arc::new(std::sync::Mutex::new(Some(send_result)));
-                types::Unbound::new_no_doc(move |_, v| {
+                types::Unbound::new_no_doc(move |v| {
                     let send_result = send_result.lock().map(|mut g| g.take()).unwrap_or(None);
                     async move {
                         if let Some(sender) = send_result {
@@ -720,9 +710,9 @@ impl Evaluator {
                 let deps = depends![e, ^&val_captures];
                 let e = source.clone().with(e);
                 let sets = sets.clone();
-                Value::dyn_new(move |ctx| async move {
-                    ctx.spawn(EVAL_TASK_PRIORITY, |_| {}, move |ctx| async move {
-                        Ok(self.evaluate_now_with_env(ctx, e, &val_captures, None, &sets).await)
+                Value::dyn_new(move || async move {
+                    Context::spawn(EVAL_TASK_PRIORITY, |_| {}, async move {
+                        Ok(self.evaluate_now_with_env(e, &val_captures, None, &sets).await)
                     }).await.into()
                 }, deps)
             }
@@ -735,7 +725,6 @@ impl Evaluator {
     /// Evaluate the given expression immediately with an environment.
     fn evaluate_now_with_env<'a>(
         self,
-        ctx: &'a Context,
         e: Expr,
         captures: &'a Captures,
         local_env: Option<&'a LocalEnv>,
@@ -748,35 +737,35 @@ impl Evaluator {
             macro_rules! command_impl {
                 ( $cmd:expr, $arg_type:ident ) => {{
                     let src = $cmd.function.source();
-                    let mut function = self.eval_with_env(ctx, $cmd.function.clone(), &captures, None, sets).await;
+                    let mut function = self.eval_with_env($cmd.function.clone(), &captures, None, sets).await;
                     match self
-                        .evaluate_block_items(ctx, $cmd.args.clone(), captures.clone(), BlockItemMode::Command, sets)
+                        .evaluate_block_items($cmd.args.clone(), captures.clone(), BlockItemMode::Command, sets)
                         .await
                     {
                         Err(e) => e.into(),
                         Ok((pos, keyed, _)) => {
-                            if let Err(e) = ctx.eval(&mut function).await {
+                            if let Err(e) = Context::eval(&mut function).await {
                                 let mut val = e.into();
                                 Source::set_if_missing(&mut val, src);
                                 return val;
                             }
                             let args = types::args::Arguments::new(pos, keyed).unchecked();
-                            traits::bind(ctx, function, Source::imbue(source_c.with(types::$arg_type { args }.into()))).await
+                            traits::bind(function, Source::imbue(source_c.with(types::$arg_type { args }.into()))).await
                         }
                     }
                 }};
             }
 
             crate::match_expression!(e,
-                Unit => |_| self.eval_with_env(ctx, source.with(e), captures, local_env, sets).await,
-                BindAny => |_| self.eval_with_env(ctx, source.with(e), captures, local_env, sets).await,
-                String => |_| self.eval_with_env(ctx, source.with(e), captures, local_env, sets).await,
-                Force => |_| self.eval_with_env(ctx, source.with(e), captures, local_env, sets).await,
-                DocComment => |_| self.eval_with_env(ctx, source.with(e), captures, local_env, sets).await,
-                Capture => |_| self.eval_with_env(ctx, source.with(e), captures, local_env, sets).await,
-                Function => |_| self.eval_with_env(ctx, source.with(e), captures, local_env, sets).await,
-                Get => |_| self.eval_with_env(ctx, source.with(e), captures, local_env, sets).await,
-                Set => |_| self.eval_with_env(ctx, source.with(e), captures, local_env, sets).await,
+                Unit => |_| self.eval_with_env(source.with(e), captures, local_env, sets).await,
+                BindAny => |_| self.eval_with_env(source.with(e), captures, local_env, sets).await,
+                String => |_| self.eval_with_env(source.with(e), captures, local_env, sets).await,
+                Force => |_| self.eval_with_env(source.with(e), captures, local_env, sets).await,
+                DocComment => |_| self.eval_with_env(source.with(e), captures, local_env, sets).await,
+                Capture => |_| self.eval_with_env(source.with(e), captures, local_env, sets).await,
+                Function => |_| self.eval_with_env(source.with(e), captures, local_env, sets).await,
+                Get => |_| self.eval_with_env(source.with(e), captures, local_env, sets).await,
+                Set => |_| self.eval_with_env(source.with(e), captures, local_env, sets).await,
                 _ => {
                     let mut val = crate::match_expression!(e,
                         Array => |arr| {
@@ -786,12 +775,12 @@ impl Evaluator {
                             for i in arr.items.clone() {
                                 match i {
                                     ast::ArrayItem::Expr(e) => {
-                                        results.push(self.eval_with_env(ctx, e, captures, None, sets).await);
+                                        results.push(self.eval_with_env(e, captures, None, sets).await);
                                     }
                                     ast::ArrayItem::Merge(e) => {
-                                        let mut val = self.eval_with_env(ctx, e, captures, None, sets).await;
+                                        let mut val = self.eval_with_env(e, captures, None, sets).await;
                                         let val_source = Source::get(&val);
-                                        drop(ctx.eval(&mut val).await);
+                                        drop(Context::eval(&mut val).await);
                                         match_value! { val.clone(),
                                             types::Array(arr) => results.extend(arr),
                                             types::Unbound {..} => {
@@ -803,7 +792,7 @@ impl Evaluator {
                                             }
                                             v => {
                                                 has_errors = true;
-                                                let name = traits::type_name(ctx, &v);
+                                                let name = traits::type_name(&v);
                                                 errs.push(val_source.with(format!("cannot merge value with type {}", name)).into_error());
                                             }
                                         }
@@ -817,12 +806,12 @@ impl Evaluator {
                             }
                         },
                         Block => |block| {
-                            match self.evaluate_block_items(ctx, block.items.clone(), captures.clone(), BlockItemMode::Block, sets).await {
+                            match self.evaluate_block_items(block.items.clone(), captures.clone(), BlockItemMode::Block, sets).await {
                                 Err(e) => e.into(),
                                 Ok((mut vals, env, sequence)) => {
                                     let last = if sequence { vals.pop() } else { None };
                                     for v in vals {
-                                        if let Err(e) = traits::eval_nested(ctx, v).await {
+                                        if let Err(e) = traits::eval_nested(v).await {
                                             let mut val = e.into();
                                             Source::set_if_missing(&mut val, source_c);
                                             return val;
@@ -837,14 +826,14 @@ impl Evaluator {
                             }
                         },
                         Index => |ind| {
-                            let mut value = self.eval_with_env(ctx, ind.value.clone(), &captures, None, sets).await;
-                            let index = self.eval_with_env(ctx, ind.index.clone(), &captures, None, sets).await;
-                            if let Err(e) = ctx.eval(&mut value).await {
+                            let mut value = self.eval_with_env(ind.value.clone(), &captures, None, sets).await;
+                            let index = self.eval_with_env(ind.index.clone(), &captures, None, sets).await;
+                            if let Err(e) = Context::eval(&mut value).await {
                                 let mut val = e.into();
                                 Source::set_if_missing(&mut val, Source::get(&value));
                                 return val;
                             }
-                            traits::bind(ctx, value, Source::imbue(source_c.with(types::Index(index).into()))).await
+                            traits::bind(value, Source::imbue(source_c.with(types::Index(index).into()))).await
                         },
                         Command => |cmd| command_impl!(cmd, Args),
                         PatternCommand => |cmd| command_impl!(cmd, PatternArgs),

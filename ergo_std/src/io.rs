@@ -1,5 +1,5 @@
 /// I/O utilities.
-use ergo_runtime::{depends, io, nsid, traits, try_result, types, Value};
+use ergo_runtime::{depends, io, nsid, traits, try_result, types, Context, Value};
 use futures::lock::{Mutex, MutexGuard};
 
 pub fn module() -> Value {
@@ -28,15 +28,9 @@ impl<'a> io::AsyncRead for Stdin<'a> {
     fn poll_read(
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context,
-        task: &ergo_runtime::context::TaskManager,
         buf: &mut [u8],
-    ) -> std::task::Poll<ergo_runtime::Result<usize>> {
-        io::AsyncRead::poll_read(
-            unsafe { self.map_unchecked_mut(|v| &mut v.inner) },
-            cx,
-            task,
-            buf,
-        )
+    ) -> std::task::Poll<io::Result<usize>> {
+        io::AsyncRead::poll_read(unsafe { self.map_unchecked_mut(|v| &mut v.inner) }, cx, buf)
     }
 }
 
@@ -69,13 +63,12 @@ async fn stdin() -> Value {
 ///
 /// Takes exclusive access of the process standard output (pausing logging) and writes the ByteStream to it.
 async fn stdout(bytes: _) -> Value {
-    let bytes = try_result!(traits::into::<types::ByteStream>(CONTEXT, bytes).await);
+    let bytes = try_result!(traits::into::<types::ByteStream>(bytes).await);
     {
         let _guard = STDOUT_MUTEX.lock().await;
-        let _paused = CONTEXT.log.pause();
+        let _paused = Context::global().log.pause();
         try_result!(
             io::copy_interactive(
-                &CONTEXT.task,
                 &mut bytes.as_ref().read(),
                 &mut io::Blocking::new(std::io::stdout())
             )
@@ -93,10 +86,9 @@ async fn stdout(bytes: _) -> Value {
 /// Writes the ByteStream to the process standard error. This does not have any exclusive access
 /// guarantees like `stdin` and `stdout`.
 async fn stderr(bytes: _) -> Value {
-    let bytes = try_result!(traits::into::<types::ByteStream>(CONTEXT, bytes).await);
+    let bytes = try_result!(traits::into::<types::ByteStream>(bytes).await);
     try_result!(
         io::copy_interactive(
-            &CONTEXT.task,
             &mut bytes.as_ref().read(),
             &mut io::Blocking::new(std::io::stderr())
         )

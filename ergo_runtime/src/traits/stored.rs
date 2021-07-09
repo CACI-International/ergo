@@ -31,44 +31,43 @@ impl StoredContext {
     }
 
     /// Read the given value from the store.
-    pub async fn read_from_store(&self, ctx: &Context, id: u128) -> Result<Value> {
-        read_from_store(ctx, &self.store_item, id).await
+    pub async fn read_from_store(&self, id: u128) -> Result<Value> {
+        read_from_store(&self.store_item, id).await
     }
 
     /// Write the given value to the store.
-    pub async fn write_to_store(&self, ctx: &Context, v: Value) -> Result<()> {
-        write_to_store(ctx, &self.store_item, v).await
+    pub async fn write_to_store(&self, v: Value) -> Result<()> {
+        write_to_store(&self.store_item, v).await
     }
 }
 
 /// Read a Value from the store by id.
-pub async fn read_from_store(ctx: &Context, store_item: &Item, id: u128) -> Result<Value> {
+pub async fn read_from_store(store_item: &Item, id: u128) -> Result<Value> {
     let item = store_item.value_id(id);
     let mut content = item.read_existing()?;
     let tp: Type = ErasedTrivial::deserialize(&mut content)?.into();
-    if let Some(s) = ctx.get_trait_for_type::<Stored>(&tp) {
+    if let Some(s) = Context::get_trait_for_type::<Stored>(&tp) {
         let stored_ctx = StoredContext::new(store_item.clone());
-        let data = s.get(ctx, &stored_ctx, content).await.into_result()?;
+        let data = s.get(&stored_ctx, content).await.into_result()?;
         // TODO revisit metadata
         Ok(unsafe { Value::with_id(RArc::new(tp), RArc::new(data), id) })
     } else {
-        Err(format!("no stored trait for {}", type_name_for(ctx, &tp)).into())
+        Err(format!("no stored trait for {}", type_name_for(&tp)).into())
     }
 }
 
 /// Check whether a Value is in the store by id.
-pub fn present_in_store(_ctx: &Context, store_item: &Item, id: u128) -> bool {
+pub fn present_in_store(store_item: &Item, id: u128) -> bool {
     store_item.value_id(id).exists()
 }
 
 /// Write a value to the store.
-pub async fn write_to_store(ctx: &Context, store_item: &Item, mut v: Value) -> Result<()> {
+pub async fn write_to_store(store_item: &Item, mut v: Value) -> Result<()> {
     let item = store_item.value(&v);
     // TODO should this not eval (relying on the caller to eval)?
-    drop(ctx.eval(&mut v).await);
-    let t = ctx
-        .get_trait::<Stored>(&v)
-        .ok_or_else(|| format!("no stored trait for {}", type_name(ctx, &v)))?;
+    drop(Context::eval(&mut v).await);
+    let t = Context::get_trait::<Stored>(&v)
+        .ok_or_else(|| format!("no stored trait for {}", type_name(&v)))?;
 
     let mut content = item.write()?;
 
@@ -76,5 +75,5 @@ pub async fn write_to_store(ctx: &Context, store_item: &Item, mut v: Value) -> R
     tp.serialize(&mut content)?;
 
     let stored_ctx = StoredContext::new(store_item.clone());
-    t.put(ctx, v, &stored_ctx, content).await.into_result()
+    t.put(v, &stored_ctx, content).await.into_result()
 }

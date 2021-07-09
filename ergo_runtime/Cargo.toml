@@ -14,9 +14,9 @@ log = "^0.4"
 num_cpus = "^1"
 num = { version = "0.4", features = ["serde"] }
 pin-project = "1"
-plugin_tls = "~0.2.2"
+plugin_tls = "0.3"
 tokio = { version = "~0.3.4", features = ["parking_lot","rt-multi-thread","sync"] }
 uuid = { version = "0.8", features = ["v5"] }
 
 [dev-dependencies]
-plugin_tls = { version = "~0.2.2", features = ["host"] }
+plugin_tls = { version = "0.3", features = ["host"] }

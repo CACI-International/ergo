@@ -40,7 +40,7 @@ pub use ergo_runtime_macro::ergo_trait;
 ///     ergo_trait_impl!{
 ///         impl Something for bool {
 ///             async fn my_something(&self) -> bool {
-///                 CONTEXT.log.debug("hello");
+///                 ergo_runtime::Context::global().log.debug("hello");
 ///                 *self
 ///             }
 ///         }
@@ -74,7 +74,7 @@ pub use ergo_runtime_macro::ergo_trait_impl;
 ///
 /// ergo_traits_fn!{
 ///     {
-///         extern "C" fn always_true<'a>(_data: &'a Erased, _ctx: &'a Context, _val: &'a Value, _tp: &'a Type, _v: &'a Erased)
+///         extern "C" fn always_true<'a>(_data: &'a Erased, _val: &'a Value, _tp: &'a Type, _v: &'a Erased)
 ///             -> BoxFuture<'a, bool>
 ///         {
 ///             BoxFuture::new(async move { true })

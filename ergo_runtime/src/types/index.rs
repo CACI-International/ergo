@@ -28,8 +28,8 @@ ergo_traits_fn! {
 
     impl traits::Bind for Index {
         async fn bind(&self, arg: Value) -> Value {
-            let ind = crate::try_result!(CONTEXT.eval_as::<Index>(arg).await).to_owned().0;
-            crate::try_result!(traits::bind_no_error(CONTEXT, self.0.clone(), ind).await);
+            let ind = crate::try_result!(crate::Context::eval_as::<Index>(arg).await).to_owned().0;
+            crate::try_result!(traits::bind_no_error(self.0.clone(), ind).await);
             super::Unit.into()
         }
     }

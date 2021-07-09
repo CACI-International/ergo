@@ -1,7 +1,7 @@
 //! Iterator functions.
 
 use ergo_runtime::{
-    depends, metadata::Source, nsid, traits, try_result, types, value::match_value, Value,
+    depends, metadata::Source, nsid, traits, try_result, types, value::match_value, Context, Value,
 };
 use futures::{
     future::{ready, FutureExt},
@@ -31,7 +31,7 @@ pub fn module() -> Value {
 ///
 /// Arguments: `:value`
 async fn from(value: _) -> Value {
-    try_result!(traits::into::<types::Iter>(CONTEXT, value).await).into()
+    try_result!(traits::into::<types::Iter>(value).await).into()
 }
 
 #[types::ergo_fn]
@@ -44,15 +44,14 @@ async fn from(value: _) -> Value {
 /// next call. Returns the last `accumulator`, which may be the original if there are no values in
 /// the iterator.
 async fn fold(func: _, acc: _, iter: _) -> Value {
-    let iter = try_result!(traits::into::<types::Iter>(CONTEXT, iter).await);
+    let iter = try_result!(traits::into::<types::Iter>(iter).await);
 
     // FIXME early exit on error?
 
     let mut acc = acc;
-    let vals = try_result!(iter.to_owned().collect::<Vec<_>>(CONTEXT).await);
+    let vals = try_result!(iter.to_owned().collect::<Vec<_>>().await);
     for v in vals {
         acc = traits::bind(
-            CONTEXT,
             func.clone(),
             Source::imbue(
                 ARGS_SOURCE.clone().with(
@@ -77,7 +76,7 @@ async fn fold(func: _, acc: _, iter: _) -> Value {
 /// Returns a new iterator containing only the unique values of `iter` (where the first unique value is
 /// retained).
 async fn unique(iter: _) -> Value {
-    let iter = try_result!(traits::into::<types::Iter>(CONTEXT, iter).await);
+    let iter = try_result!(traits::into::<types::Iter>(iter).await);
 
     let deps = depends![nsid!(std::iter::unique), iter];
 
@@ -89,8 +88,8 @@ async fn unique(iter: _) -> Value {
         seen: BTreeSet<u128>,
     }
 
-    ergo_runtime::ImplGenerator!(Unique => |self, ctx| {
-        while let Some(v) = self.iter.next(ctx).await? {
+    ergo_runtime::ImplGenerator!(Unique => |self| {
+        while let Some(v) = self.iter.next().await? {
             if self.seen.insert(v.id()) {
                 return Ok(Some(v));
             }
@@ -116,7 +115,7 @@ async fn unique(iter: _) -> Value {
 /// Returns a new iterator containing only the values from `iter` for which `func` returned a value
 /// which was `true` when converted to Bool.
 async fn filter(func: _, iter: _) -> Value {
-    let iter = try_result!(traits::into::<types::Iter>(CONTEXT, iter).await);
+    let iter = try_result!(traits::into::<types::Iter>(iter).await);
 
     let deps = depends![nsid!(std::iter::filter), iter];
 
@@ -129,10 +128,9 @@ async fn filter(func: _, iter: _) -> Value {
         args_source: ergo_runtime::Source<()>,
     }
 
-    ergo_runtime::ImplGenerator!(Filter => |self, ctx| {
-        while let Some(v) = self.iter.next(ctx).await? {
+    ergo_runtime::ImplGenerator!(Filter => |self| {
+        while let Some(v) = self.iter.next().await? {
             let res = traits::bind(
-                ctx,
                 self.func.clone(),
                 Source::imbue(
                     self.args_source.clone().with(
@@ -145,7 +143,7 @@ async fn filter(func: _, iter: _) -> Value {
             )
             .await;
 
-            let b = traits::into::<types::Bool>(ctx, res).await?;
+            let b = traits::into::<types::Bool>(res).await?;
             if b.as_ref().0 {
                 return Ok(Some(v));
             }
@@ -165,7 +163,7 @@ async fn filter(func: _, iter: _) -> Value {
 }
 
 fn zip() -> Value {
-    types::Unbound::new(|ctx, arg| {
+    types::Unbound::new(|arg| {
         async move {
             let arg_source = Source::get(&arg);
             match_value! { arg,
@@ -174,8 +172,8 @@ fn zip() -> Value {
 
                     try_result!(args.unused_arguments());
 
-                    let iters_typed = try_result!(ctx.task.join_all(
-                            iters.into_iter().map(|i| traits::into::<types::Iter>(ctx, i))
+                    let iters_typed = try_result!(Context::global().task.join_all(
+                            iters.into_iter().map(|i| traits::into::<types::Iter>(i))
                         ).await);
 
                     let deps = depends![nsid!(std::iter::zip), ^@iters_typed];
@@ -189,10 +187,10 @@ fn zip() -> Value {
                             arg_source: ergo_runtime::Source<()>,
                         }
 
-                        ergo_runtime::ImplGenerator!(Zip => |self, ctx| {
+                        ergo_runtime::ImplGenerator!(Zip => |self| {
                             let mut arr = abi_stable::std_types::RVec::with_capacity(self.iters.len());
                             for v in self.iters.iter_mut() {
-                                match v.next(ctx).await? {
+                                match v.next().await? {
                                     None => return Ok(None),
                                     Some(v) => arr.push(v),
                                 }
@@ -215,16 +213,16 @@ fn zip() -> Value {
 
                     let deps = depends![nsid!(std::iter::zip::pattern), ^@iter_outs];
 
-                    types::Unbound::new_no_doc(move |ctx, arg| {
+                    types::Unbound::new_no_doc(move |arg| {
                         let iter_outs = iter_outs.clone();
                         async move {
-                            let arg = try_result!(ctx.eval_as::<types::Iter>(arg).await);
+                            let arg = try_result!(Context::eval_as::<types::Iter>(arg).await);
                             let arg_source = Source::get(&arg);
                             let iter_id = arg.id();
                             let iter = arg.to_owned();
 
-                            let items: Vec<_> = try_result!(iter.collect(ctx).await);
-                            let arrays = try_result!(ctx.task.join_all(items.into_iter().map(|v| ctx.eval_as::<types::Array>(v))).await);
+                            let items: Vec<_> = try_result!(iter.collect().await);
+                            let arrays = try_result!(Context::global().task.join_all(items.into_iter().map(|v| Context::eval_as::<types::Array>(v))).await);
 
                             let shared_arrays = ergo_runtime::abi_stable::stream::shared_async_stream::SharedAsyncStream::new(futures::stream::iter(arrays.into_iter()));
                             let mut errs = Vec::new();
@@ -243,7 +241,7 @@ fn zip() -> Value {
                                     });
                                 let deps = depends![nsid!(std::iter::zip::pattern_result), iter_id, i];
                                 let to_bind = Source::imbue(arg_source.clone().with(types::Iter::new_stream(filtered, deps).into()));
-                                if let Err(e) = traits::bind_no_error(ctx, out, to_bind).await {
+                                if let Err(e) = traits::bind_no_error(out, to_bind).await {
                                     errs.push(e);
                                 }
                             }
@@ -255,7 +253,7 @@ fn zip() -> Value {
                         }.boxed()
                     }, deps).into()
                 },
-                v => traits::bind_error(ctx, v).into()
+                v => traits::bind_error(v).into()
             }
         }.boxed()
     }, depends![nsid!(std::iter::zip)],
@@ -280,7 +278,7 @@ iterator.").into()
 /// Returns a new iterator containing only the values from `iter` following (and including) the first
 /// value for which `func` returned a value which was `false` when converted to Bool.
 async fn skip_while(func: _, iter: _) -> Value {
-    let iter = try_result!(traits::into::<types::Iter>(CONTEXT, iter).await);
+    let iter = try_result!(traits::into::<types::Iter>(iter).await);
 
     let deps = depends![nsid!(std::iter::skip_while), func, iter];
 
@@ -292,14 +290,13 @@ async fn skip_while(func: _, iter: _) -> Value {
         skip: bool,
     }
 
-    ergo_runtime::ImplGenerator!(SkipWhile => |self, ctx| {
+    ergo_runtime::ImplGenerator!(SkipWhile => |self| {
         if !self.skip {
-            return self.iter.next(ctx).await;
+            return self.iter.next().await;
         }
 
-        while let Some(v) = self.iter.next(ctx).await? {
+        while let Some(v) = self.iter.next().await? {
             let res = traits::bind(
-                ctx,
                 self.func.clone(),
                 Source::imbue(
                     self.args_source.clone().with(
@@ -313,7 +310,7 @@ async fn skip_while(func: _, iter: _) -> Value {
             )
             .await;
 
-            let b = traits::into::<types::Bool>(ctx, res).await?;
+            let b = traits::into::<types::Bool>(res).await?;
             if !b.as_ref().0 {
                 self.skip = false;
                 return Ok(Some(v))
@@ -342,8 +339,8 @@ async fn skip_while(func: _, iter: _) -> Value {
 ///
 /// Returns a new iterator containing only the values from `iter` after the first `n`.
 async fn skip(n: _, iter: _) -> Value {
-    let n = try_result!(traits::into::<types::Number>(CONTEXT, n).await);
-    let iter = try_result!(traits::into::<types::Iter>(CONTEXT, iter).await);
+    let n = try_result!(traits::into::<types::Number>(n).await);
+    let iter = try_result!(traits::into::<types::Iter>(iter).await);
     let deps = depends![nsid!(std::iter::skip), n, iter];
 
     let n = try_result!(Source::extract(n)
@@ -357,14 +354,14 @@ async fn skip(n: _, iter: _) -> Value {
         n: usize,
     }
 
-    ergo_runtime::ImplGenerator!(Skip => |self, ctx| {
+    ergo_runtime::ImplGenerator!(Skip => |self| {
         while self.n > 0 {
-            if let None = self.iter.next(ctx).await? {
+            if let None = self.iter.next().await? {
                 return Ok(None);
             }
             self.n -= 1;
         }
-        self.iter.next(ctx).await
+        self.iter.next().await
     });
 
     let iter = iter.to_owned();
@@ -379,7 +376,7 @@ async fn skip(n: _, iter: _) -> Value {
 /// Returns a new iterator containing only the values from `iter` preceding the first
 /// value for which `func` returned a value which was `false` when converted to Bool.
 async fn take_while(func: _, iter: _) -> Value {
-    let iter = try_result!(traits::into::<types::Iter>(CONTEXT, iter).await);
+    let iter = try_result!(traits::into::<types::Iter>(iter).await);
 
     let deps = depends![nsid!(std::iter::take_while), func, iter];
 
@@ -390,10 +387,9 @@ async fn take_while(func: _, iter: _) -> Value {
         args_source: ergo_runtime::Source<()>,
     }
 
-    ergo_runtime::ImplGenerator!(TakeWhile => |self, ctx| {
-        if let Some(v) = self.iter.next(ctx).await? {
+    ergo_runtime::ImplGenerator!(TakeWhile => |self| {
+        if let Some(v) = self.iter.next().await? {
             let res = traits::bind(
-                ctx,
                 self.func.clone(),
                 Source::imbue(
                     self.args_source.clone().with(
@@ -407,7 +403,7 @@ async fn take_while(func: _, iter: _) -> Value {
             )
             .await;
 
-            let b = traits::into::<types::Bool>(ctx, res).await?;
+            let b = traits::into::<types::Bool>(res).await?;
             Ok(if b.as_ref().0 {
                 Some(v)
             } else {
@@ -437,8 +433,8 @@ async fn take_while(func: _, iter: _) -> Value {
 ///
 /// Returns a new iterator containing only the first `n` values from `iter`.
 async fn take(n: _, iter: _) -> Value {
-    let n = try_result!(traits::into::<types::Number>(CONTEXT, n).await);
-    let iter = try_result!(traits::into::<types::Iter>(CONTEXT, iter).await);
+    let n = try_result!(traits::into::<types::Number>(n).await);
+    let iter = try_result!(traits::into::<types::Iter>(iter).await);
 
     let deps = depends![nsid!(std::iter::take), n, iter];
 
@@ -453,10 +449,10 @@ async fn take(n: _, iter: _) -> Value {
         n: usize,
     }
 
-    ergo_runtime::ImplGenerator!(Take => |self, ctx| {
+    ergo_runtime::ImplGenerator!(Take => |self| {
         if self.n > 0 {
             self.n -= 1;
-            self.iter.next(ctx).await
+            self.iter.next().await
         } else {
             Ok(None)
         }
@@ -474,7 +470,7 @@ async fn take(n: _, iter: _) -> Value {
 /// Returns a new iterator with each subsequent nested value in the values of `iter`. The values of
 /// `iter` must be `Into<Iter>` themselves.
 async fn flatten(iter: _) -> Value {
-    let iter = try_result!(traits::into::<types::Iter>(CONTEXT, iter).await);
+    let iter = try_result!(traits::into::<types::Iter>(iter).await);
 
     let deps = depends![nsid!(std::iter::flatten), iter];
 
@@ -484,16 +480,16 @@ async fn flatten(iter: _) -> Value {
         current: Option<types::Iter>,
     }
 
-    ergo_runtime::ImplGenerator!(Flatten => |self, ctx| {
+    ergo_runtime::ImplGenerator!(Flatten => |self| {
         loop {
             match &mut self.current {
-                None => match self.iter.next(ctx).await? {
+                None => match self.iter.next().await? {
                     Some(v) => {
-                        self.current = Some(traits::into::<types::Iter>(ctx, v).await?.to_owned());
+                        self.current = Some(traits::into::<types::Iter>(v).await?.to_owned());
                     }
                     None => break Ok(None),
                 },
-                Some(v) => match v.next(ctx).await? {
+                Some(v) => match v.next().await? {
                     Some(v) => break Ok(Some(v)),
                     None => {
                         self.current = None;
@@ -524,16 +520,15 @@ async fn flatten(iter: _) -> Value {
 ///
 /// Returns a new iterator where each element is the result of applying `func` on each value in `iter`.
 async fn map(func: _, iter: _) -> Value {
-    let iter = try_result!(traits::into::<types::Iter>(CONTEXT, iter).await);
+    let iter = try_result!(traits::into::<types::Iter>(iter).await);
 
     let deps = depends![nsid!(std::iter::map), iter];
 
-    let vals: Vec<_> = try_result!(iter.to_owned().collect(CONTEXT).await);
-    let new_iter = CONTEXT
+    let vals: Vec<_> = try_result!(iter.to_owned().collect().await);
+    let new_iter = Context::global()
         .task
         .join_all(vals.into_iter().map(|d| {
             traits::bind(
-                CONTEXT,
                 func.clone(),
                 Source::imbue(
                     ARGS_SOURCE.clone().with(
@@ -562,7 +557,7 @@ async fn map(func: _, iter: _) -> Value {
 ///
 /// Returns a new iterator where each element is the result of applying `func` on each value in `iter`.
 async fn map_lazy(func: _, iter: _) -> Value {
-    let iter = try_result!(traits::into::<types::Iter>(CONTEXT, iter).await);
+    let iter = try_result!(traits::into::<types::Iter>(iter).await);
 
     let deps = depends![nsid!(std::iter::map_lazy), iter];
 
@@ -573,12 +568,11 @@ async fn map_lazy(func: _, iter: _) -> Value {
         args_source: ergo_runtime::Source<()>,
     }
 
-    ergo_runtime::ImplGenerator!(Map => |self, ctx| {
-        match self.iter.next(ctx).await? {
+    ergo_runtime::ImplGenerator!(Map => |self| {
+        match self.iter.next().await? {
             None => Ok(None),
             Some(v) => {
                 Ok(Some(traits::bind(
-                    ctx,
                     self.func.clone(),
                     Source::imbue(
                         self.args_source.clone().with(
@@ -608,72 +602,52 @@ async fn map_lazy(func: _, iter: _) -> Value {
 
 #[cfg(test)]
 mod test {
-    ergo_script::test! {
+    ergo_script::tests! {
         fn fold(t) {
             t.assert_content_eq("self:iter:fold (fn :r :a -> [:a,^:r]) [init] [a,b,c]", "[c,b,a,init]");
         }
-    }
 
-    ergo_script::test! {
         fn filter(t) {
             t.assert_content_eq("self:iter:filter (fn :v -> self:match :v [self:type:String -> self:bool:true, _ -> self:bool:false]) [a,b,[],c,(),(),d,e]", "self:iter:from [a,b,c,d,e]");
         }
-    }
 
-    ergo_script::test! {
         fn flatten(t) {
             t.assert_content_eq("self:iter:flatten [[a,b],[],[],[c,d,e,f],[g]]", "self:iter:from [a,b,c,d,e,f,g]");
         }
-    }
 
-    ergo_script::test! {
         fn map(t) {
             t.assert_content_eq("self:iter:map (fn :a -> { mapped = :a }) [2,3]", "self:iter:from [{mapped = 2},{mapped = 3}]");
         }
-    }
 
-    ergo_script::test! {
         fn map_lazy(t) {
             t.assert_content_eq("self:iter:map-lazy (fn :a -> { mapped = :a }) [2,3]", "self:iter:from [{mapped = 2},{mapped = 3}]");
         }
-    }
 
-    ergo_script::test! {
         fn skip(t) {
             t.assert_content_eq("self:iter:skip 5 [a,b,c,d,e,f,g]", "self:iter:from [f,g]");
             t.assert_content_eq("self:iter:skip 5 [a,b]", "self:iter:from []");
         }
-    }
 
-    ergo_script::test! {
         fn skip_while(t) {
             t.assert_content_eq("self:iter:skip-while (fn :v -> self:match :v [self:type:String -> self:bool:true, _ -> self:bool:false]) [a,b,c,d,(),e,f,g]", "self:iter:from [(),e,f,g]");
             t.assert_content_eq("self:iter:skip-while (fn :v -> self:match :v [self:type:String -> self:bool:true, _ -> self:bool:false]) [a,b,c,d]", "self:iter:from []");
         }
-    }
 
-    ergo_script::test! {
         fn take(t) {
             t.assert_content_eq("self:iter:take 4 [a,b,c,d,e,f,g]", "self:iter:from [a,b,c,d]");
             t.assert_content_eq("self:iter:take 4 [a]", "self:iter:from [a]");
         }
-    }
 
-    ergo_script::test! {
         fn take_while(t) {
             t.assert_content_eq("self:iter:take-while (fn :v -> self:match :v [self:type:String -> self:bool:true, _ -> self:bool:false]) [a,b,c,d,(),e,f,g]", "self:iter:from [a,b,c,d]");
             t.assert_content_eq("self:iter:take-while (fn :v -> self:match :v [self:type:String -> self:bool:true, _ -> self:bool:false]) [(),e]", "self:iter:from []");
             t.assert_content_eq("self:iter:take-while (fn :v -> self:match :v [self:type:String -> self:bool:true, _ -> self:bool:false]) [a,b]", "self:iter:from [a,b]");
         }
-    }
 
-    ergo_script::test! {
         fn unique(t) {
             t.assert_content_eq("self:iter:unique [1,2,3,2,40,5,6,5]", "self:iter:from [1,2,3,40,5,6]");
         }
-    }
 
-    ergo_script::test! {
         fn zip(t) {
             t.assert_content_eq("self:iter:zip [a,b,c,d] [1,2,3,4]", "self:iter:from [[a,1],[b,2],[c,3],[d,4]]");
             t.assert_content_eq("self:iter:zip [a,b,c,d] [1,2]", "self:iter:from [[a,1],[b,2]]");

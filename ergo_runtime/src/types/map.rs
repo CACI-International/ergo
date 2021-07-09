@@ -57,16 +57,16 @@ ergo_traits_fn! {
                 let mut iter = self.0.iter();
                 write!(f, "{{")?;
                 if let Some((k,v)) = iter.next() {
-                    traits::display(CONTEXT, k.clone(), f).await?;
+                    traits::display(k.clone(), f).await?;
                     write!(f, " = ")?;
-                    traits::display(CONTEXT, v.clone(), f).await?;
+                    traits::display(v.clone(), f).await?;
                 }
 
                 for (k,v) in iter {
                     write!(f, ", ")?;
-                    traits::display(CONTEXT, k.clone(), f).await?;
+                    traits::display(k.clone(), f).await?;
                     write!(f, " = ")?;
-                    traits::display(CONTEXT, v.clone(), f).await?;
+                    traits::display(v.clone(), f).await?;
                 }
                 write!(f, "}}")?;
                 Ok(())
@@ -86,8 +86,8 @@ ergo_traits_fn! {
                     let k = k.clone();
                     let v = v.clone();
                     ids.insert(k.id(), v.id());
-                    stored_ctx.write_to_store(CONTEXT, k).await?;
-                    stored_ctx.write_to_store(CONTEXT, v).await?;
+                    stored_ctx.write_to_store(k).await?;
+                    stored_ctx.write_to_store(v).await?;
                 }
                 Ok(bincode::serialize_into(item, &ids)?)
             }.await.into()
@@ -99,8 +99,8 @@ ergo_traits_fn! {
                 let mut vals = BstMap::new();
                 for (k_id, v_id) in ids {
                     vals.insert(
-                        Source::imbue(crate::Source::stored(stored_ctx.read_from_store(CONTEXT, k_id).await?)),
-                        Source::imbue(crate::Source::stored(stored_ctx.read_from_store(CONTEXT, v_id).await?)),
+                        Source::imbue(crate::Source::stored(stored_ctx.read_from_store(k_id).await?)),
+                        Source::imbue(crate::Source::stored(stored_ctx.read_from_store(v_id).await?)),
                     );
                 }
                 Ok(Erased::new(Map(vals)))
@@ -112,17 +112,17 @@ ergo_traits_fn! {
         async fn bind(&self, mut arg: Value) -> Value {
             let source = Source::get(&arg);
 
-            crate::try_result!(CONTEXT.eval(&mut arg).await);
+            crate::try_result!(crate::Context::eval(&mut arg).await);
 
             crate::value::match_value! { arg,
                 super::Index(index) => {
                     self.0.get(&index).cloned().unwrap_or(super::Unset.into())
                 },
                 Map(map) => {
-                    crate::try_result!(traits::bind_map(CONTEXT, self.0.clone(), source.with(map.clone()), false).await);
+                    crate::try_result!(traits::bind_map(self.0.clone(), source.with(map.clone()), false).await);
                     super::Unit.into()
                 },
-                v => traits::bind_error(CONTEXT, v).into()
+                v => traits::bind_error(v).into()
             }
         }
     }

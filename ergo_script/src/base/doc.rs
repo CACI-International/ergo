@@ -28,12 +28,12 @@ struct DocPath {
 }
 
 impl DocPath {
-    pub fn get(ctx: &Context) -> Option<DynamicScopeRef<Self>> {
-        ctx.dynamic_scope.get(&DocPathKey)
+    pub fn get() -> Option<DynamicScopeRef<Self>> {
+        Context::with(|ctx| ctx.dynamic_scope.get(&DocPathKey))
     }
 
-    pub fn owned(ctx: &Context) -> Option<Self> {
-        Self::get(ctx).map(|r| r.as_ref().clone())
+    pub fn owned() -> Option<Self> {
+        Self::get().map(|r| r.as_ref().clone())
     }
 
     pub fn new(root: Source<PathBuf>) -> Self {
@@ -65,7 +65,7 @@ pub fn doc() -> Value {
         /// Returns the doc Path, or Unset if no Path is present (documentation is not being
         /// written to the filesystem).
         async fn path() -> Value {
-            match DocPath::get(CONTEXT) {
+            match DocPath::get() {
                 None => types::Unset.into(),
                 Some(p) => types::Path::from(p.current()).into()
             }
@@ -79,20 +79,20 @@ pub fn doc() -> Value {
         ///
         /// Returns the `Path` to the written documentation.
         async fn write(mut path: _, value: _) -> Value {
-            try_result!(CONTEXT.eval(&mut path).await);
+            try_result!(Context::eval(&mut path).await);
             let path_source = metadata::Source::get(&path);
             let mut doc_path = match_value!{path,
                 types::String(s) => s.as_str().into(),
                 types::Path(p) => p.into_pathbuf(),
-                v => return traits::type_error(CONTEXT, v, "String or Path").into()
+                v => return traits::type_error(v, "String or Path").into()
             };
 
             if let Some(parent) = doc_path.parent() {
                 try_result!(std::fs::create_dir_all(parent));
             }
-            let doc = try_result!(CONTEXT.fork(
+            let doc = try_result!(Context::fork(
                     |ctx| DocPath::new(path_source.with(doc_path.clone())).context(ctx, ARGS_SOURCE),
-                    move |ctx| async move { Doc::get(ctx, &value).await }
+                    async move { Doc::get(&value).await }
                 ).await);
 
             if doc_path.is_dir() {
@@ -113,15 +113,15 @@ pub fn doc() -> Value {
         /// Returns the `Path` to the written documentation. If no documentation path is set, returns `path`
         /// (without writing anything).
         async fn child(mut path: _, value: _) -> Value {
-            try_result!(CONTEXT.eval(&mut path).await);
+            try_result!(Context::eval(&mut path).await);
             let path_source = metadata::Source::get(&path);
             let path = match_value!{path,
                 types::String(s) => s.as_str().into(),
                 types::Path(p) => p.into_pathbuf(),
-                v => return traits::type_error(CONTEXT, v, "String or Path").into()
+                v => return traits::type_error(v, "String or Path").into()
             };
 
-            match DocPath::owned(CONTEXT) {
+            match DocPath::owned() {
                 None => types::Path::from(path).into(),
                 Some(mut doc_path) => {
                     let mut rel_path = std::path::PathBuf::new();
@@ -139,9 +139,9 @@ pub fn doc() -> Value {
                     if let Some(parent) = new_path.parent() {
                         try_result!(std::fs::create_dir_all(parent));
                     }
-                    let doc = try_result!(CONTEXT.fork(
+                    let doc = try_result!(Context::fork(
                             move |ctx| doc_path.context(ctx, ARGS_SOURCE),
-                            move |ctx| async move { Doc::get(ctx, &value).await }
+                            async move { Doc::get(&value).await }
                         ).await);
 
                     if new_path.is_dir() {
@@ -158,7 +158,7 @@ pub fn doc() -> Value {
     };
 
     types::Unbound::new(
-        move |ctx, v| {
+        move |v| {
             let path = path.clone();
             let write = write.clone();
             let child = child.clone();
@@ -168,10 +168,10 @@ pub fn doc() -> Value {
                         let to_doc = try_result!(args.next().ok_or("no value to document"));
                         try_result!(args.unused_arguments());
 
-                        types::String::from(try_result!(Doc::get(ctx, &to_doc).await)).into()
+                        types::String::from(try_result!(Doc::get(&to_doc).await)).into()
                     },
                     types::Index(ind) => {
-                        let ind = try_result!(ctx.eval_as::<types::String>(ind).await);
+                        let ind = try_result!(Context::eval_as::<types::String>(ind).await);
                         let s = ind.as_ref().as_str();
                         if s == "path" {
                             path
@@ -183,7 +183,7 @@ pub fn doc() -> Value {
                             metadata::Source::get(&ind).with("unknown index").into_error().into()
                         }
                     },
-                    v => traits::type_error(ctx, v, "function call or index").into()
+                    v => traits::type_error(v, "function call or index").into()
                 }
             }
             .boxed()

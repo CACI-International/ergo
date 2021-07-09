@@ -4,7 +4,7 @@ use ergo_runtime::{
     metadata::{Doc, Source},
     traits, try_result, types,
     value::match_value,
-    Value,
+    Context, Value,
 };
 
 pub fn module() -> Value {
@@ -112,7 +112,7 @@ fn home() -> Value {
 /// for the string in PATH. If not found, an error is returned. Otherwise the Path of the resolved
 /// file is returned.
 async fn path_search(mut string_or_path: _) -> Value {
-    try_result!(CONTEXT.eval(&mut string_or_path).await);
+    try_result!(Context::eval(&mut string_or_path).await);
     match_value! { string_or_path,
         p@types::Path(_) => p.into(),
         types::String(name) => {
@@ -129,7 +129,7 @@ async fn path_search(mut string_or_path: _) -> Value {
 
                 ARGS_SOURCE.with(format!("could not find {} in PATH", name.as_str())).into_error().into()
         }
-        other => traits::type_error(CONTEXT, other, "String or Path").into()
+        other => traits::type_error(other, "String or Path").into()
     }
 }
 

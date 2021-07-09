@@ -267,7 +267,6 @@ impl From<&Arguments> for Dependencies {
 }
 
 async fn bind_args<F>(
-    ctx: &Context,
     to: &UncheckedArguments,
     from: Src<UncheckedArguments>,
     create_bind_rest: F,
@@ -277,17 +276,11 @@ where
 {
     let (from_source, from) = from.take();
     // Bind keyed arguments first, then use any additional arguments in the `create_bind_rest` argument of `bind_array`
-    let mut keyed_rest = traits::bind_map(
-        ctx,
-        to.keyed.clone(),
-        from_source.clone().with(from.keyed),
-        true,
-    )
-    .await?;
+    let mut keyed_rest =
+        traits::bind_map(to.keyed.clone(), from_source.clone().with(from.keyed), true).await?;
     // Positional arguments are stored in reverse order, but it's easiest to match them
     // in-order (especially wrt BindRest values).
     traits::bind_array(
-        ctx,
         to.positional.iter().rev().cloned().collect(),
         from_source.with(from.positional.into_iter().rev().collect()),
         |first, rest| {
@@ -320,8 +313,8 @@ where
     }
 }
 
-async fn args_index(ctx: &Context, ind: Value, args: &UncheckedArguments) -> Value {
-    let ind = crate::try_result!(ctx.eval_as::<super::String>(ind).await);
+async fn args_index(ind: Value, args: &UncheckedArguments) -> Value {
+    let ind = crate::try_result!(Context::eval_as::<super::String>(ind).await);
     let s = ind.as_ref().as_str();
     if s == "positional" {
         let mut pos = args.positional.clone();
@@ -341,16 +334,16 @@ ergo_traits_fn! {
     impl traits::Bind for Args {
         async fn bind(&self, mut arg: Value) -> Value {
             let src = Source::get(&arg);
-            crate::try_result!(CONTEXT.eval(&mut arg).await);
+            crate::try_result!(Context::eval(&mut arg).await);
 
             crate::value::match_value!{ arg,
                 Args { args } => {
-                    bind_args(CONTEXT, &self.args, src.with(args), |args| Args { args }.into()).await.into()
+                    bind_args(&self.args, src.with(args), |args| Args { args }.into()).await.into()
                 }
                 super::Index(ind) => {
-                    args_index(CONTEXT, ind, &self.args).await
+                    args_index(ind, &self.args).await
                 }
-                v => traits::bind_error(CONTEXT, v).into()
+                v => traits::bind_error(v).into()
             }
         }
     }
@@ -358,16 +351,16 @@ ergo_traits_fn! {
     impl traits::Bind for PatternArgs {
         async fn bind(&self, mut arg: Value) -> Value {
             let src = Source::get(&arg);
-            crate::try_result!(CONTEXT.eval(&mut arg).await);
+            crate::try_result!(Context::eval(&mut arg).await);
 
             crate::value::match_value!{ arg,
                 PatternArgs { args } => {
-                    bind_args(CONTEXT, &self.args, src.with(args), |args| PatternArgs { args }.into()).await.into()
+                    bind_args(&self.args, src.with(args), |args| PatternArgs { args }.into()).await.into()
                 }
                 super::Index(ind) => {
-                    args_index(CONTEXT, ind, &self.args).await
+                    args_index(ind, &self.args).await
                 }
-                v => traits::bind_error(CONTEXT, v).into()
+                v => traits::bind_error(v).into()
             }
         }
     }

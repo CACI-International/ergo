@@ -12,7 +12,7 @@ use ergo_runtime::{
     type_system::{ergo_trait_impl, ErgoType, Type},
     types,
     value::match_value,
-    Value,
+    Context, Value,
 };
 use futures::FutureExt;
 
@@ -109,7 +109,7 @@ struct ScriptTypeData {
 /// my-type:a
 /// ```
 async fn new(id: types::String, interface: _, (bind): [_]) -> Value {
-    let interface_doc = try_result!(Doc::get(CONTEXT, &interface).await);
+    let interface_doc = try_result!(Doc::get(&interface).await);
 
     let mut tp = Type::named(id.as_ref().as_str().as_bytes());
     let id = id.to_owned().0;
@@ -118,31 +118,35 @@ async fn new(id: types::String, interface: _, (bind): [_]) -> Value {
     // considered a new type. This may be very relevant if/when support for storing custom
     // types is added.
     tp.data = ErasedTrivial::new(interface.id());
-    CONTEXT.traits.add_impl::<traits::TypeName>(tp.clone(), {
-        let mut imp = ergo_trait_impl! {
-            impl traits::TypeName for _ {
-                fn type_name() -> RString {
-                    unsafe { TRAIT_DATA.as_ref::<RString>() }.clone()
+    Context::global()
+        .traits
+        .add_impl::<traits::TypeName>(tp.clone(), {
+            let mut imp = ergo_trait_impl! {
+                impl traits::TypeName for _ {
+                    fn type_name() -> RString {
+                        unsafe { TRAIT_DATA.as_ref::<RString>() }.clone()
+                    }
+                }
+            };
+            imp.ergo_trait_data = Erased::new::<RString>(id.clone());
+            imp
+        });
+    Context::global()
+        .traits
+        .add_impl::<traits::Bind>(tp.clone(), {
+            ergo_trait_impl! {
+                impl traits::Bind for _ {
+                    async fn bind(&self, arg: Value) -> Value {
+                        let data = unsafe { self.as_ref::<ScriptTypeData>() };
+                        traits::bind(data.bind_impl.clone(), arg).await
+                    }
                 }
             }
-        };
-        imp.ergo_trait_data = Erased::new::<RString>(id.clone());
-        imp
-    });
-    CONTEXT.traits.add_impl::<traits::Bind>(tp.clone(), {
-        ergo_trait_impl! {
-            impl traits::Bind for _ {
-                async fn bind(&self, arg: Value) -> Value {
-                    let data = unsafe { self.as_ref::<ScriptTypeData>() };
-                    traits::bind(CONTEXT, data.bind_impl.clone(), arg).await
-                }
-            }
-        }
-    });
+        });
 
     let deps = depends![tp];
     let ret_tp = tp.clone();
-    let construct: Value = types::Unbound::new_no_doc(move |ctx, arg| {
+    let construct: Value = types::Unbound::new_no_doc(move |arg| {
         let interface = interface.clone();
         let tp = tp.clone();
         let bind = bind.clone();
@@ -150,10 +154,10 @@ async fn new(id: types::String, interface: _, (bind): [_]) -> Value {
             let arg_source = Source::get(&arg);
             match_value!{ arg,
                 a@types::Args { .. } => {
-                    let result = traits::bind(ctx, interface, Source::imbue(arg_source.with(a.into()))).await;
+                    let result = traits::bind(interface, Source::imbue(arg_source.with(a.into()))).await;
                     let bind_impl = match bind {
                         None => result.clone(),
-                        Some(v) => traits::bind(ctx, v, result.clone()).await
+                        Some(v) => traits::bind(v, result.clone()).await
                     };
                     let inner_value = result;
                     let data = ScriptTypeData { inner_value, bind_impl };
@@ -163,23 +167,23 @@ async fn new(id: types::String, interface: _, (bind): [_]) -> Value {
                     }
                 },
                 a@types::PatternArgs { .. } => {
-                    let to_bind = traits::bind(ctx, interface, Source::imbue(arg_source.with(a.into()))).await;
+                    let to_bind = traits::bind(interface, Source::imbue(arg_source.with(a.into()))).await;
                     let deps = depends![tp, to_bind];
-                    types::Unbound::new_no_doc(move |ctx, mut arg| {
+                    types::Unbound::new_no_doc(move |mut arg| {
                         let to_bind = to_bind.clone();
                         let tp = tp.clone();
                         async move {
-                            try_result!(ctx.eval(&mut arg).await);
+                            try_result!(Context::eval(&mut arg).await);
                             if arg.ergo_type().unwrap() != &tp {
-                                return traits::type_error_for_t(ctx, arg, &tp).into();
+                                return traits::type_error_for_t(arg, &tp).into();
                             }
                             let data = arg.data().unwrap();
                             let data = unsafe { (*data).as_ref::<ScriptTypeData>() };
-                            traits::bind(ctx, to_bind, data.inner_value.clone()).await
+                            traits::bind(to_bind, data.inner_value.clone()).await
                         }.boxed()
                     }, deps).into()
                 },
-                v => traits::bind_error(ctx, v).into()
+                v => traits::bind_error(v).into()
             }
         }.boxed()
     }, deps).into();
@@ -198,7 +202,7 @@ If called with no arguments, returns a composition function:
 
 fn match_any() -> Value {
     types::Unbound::new(
-        |_ctx, arg| {
+        |arg| {
             async move {
                 match_value! {arg,
                     types::Args { mut args } => {
@@ -210,10 +214,10 @@ fn match_any() -> Value {
                         let v = try_result!(args.next().ok_or("no value"));
                         try_result!(args.unused_arguments());
                         let deps = depends![v];
-                        types::Unbound::new_no_doc(move |ctx, arg| {
+                        types::Unbound::new_no_doc(move |arg| {
                             let v = v.clone();
                             async move {
-                                traits::bind(ctx, v, arg).await
+                                traits::bind(v, arg).await
                             }.boxed()
                         }, deps).into()
                     },
@@ -235,7 +239,7 @@ fn make_match_fn<S: Into<String>>(
 ) -> Value {
     let deps = depends![nsid!(type), tp];
     types::Unbound::new(
-        move |ctx, arg| {
+        move |arg| {
             let tp = tp.clone();
             let constructor = constructor.clone();
             async move {
@@ -246,9 +250,9 @@ fn make_match_fn<S: Into<String>>(
                         match arg {
                             None => try_result!(constructor),
                             Some(mut v) => {
-                                drop(ctx.eval(&mut v).await);
+                                drop(Context::eval(&mut v).await);
                                 if v.ergo_type().unwrap() != &tp {
-                                    return traits::type_error_for_t(ctx, v, &tp).into();
+                                    return traits::type_error_for_t(v, &tp).into();
                                 }
                                 v
                             }
@@ -261,28 +265,28 @@ fn make_match_fn<S: Into<String>>(
                             None => try_result!(constructor),
                             Some(v) => {
                                 let deps = depends![v];
-                                types::Unbound::new_no_doc(move |ctx, mut arg| {
+                                types::Unbound::new_no_doc(move |mut arg| {
                                     let v = v.clone();
                                     let tp = tp.clone();
                                     async move {
-                                        drop(ctx.eval(&mut arg).await);
+                                        drop(Context::eval(&mut arg).await);
                                         if arg.ergo_type().unwrap() != &tp {
-                                            return traits::type_error_for_t(ctx, arg, &tp).into();
+                                            return traits::type_error_for_t(arg, &tp).into();
                                         }
-                                        traits::bind(ctx, v, arg).await
+                                        traits::bind(v, arg).await
                                     }.boxed()
                                 }, deps).into()
                             }
                         }
                     },
                     mut v => {
-                        drop(ctx.eval(&mut v).await);
+                        drop(Context::eval(&mut v).await);
                         if let Some(t) = v.ergo_type() {
                             if t == &tp {
                                 return v;
                             }
                         }
-                        traits::bind_error(ctx, v).into()
+                        traits::bind_error(v).into()
                     }
                 }
             }
@@ -337,7 +341,7 @@ fn match_map() -> Value {
 fn match_map_entry() -> Value {
     let construct: Value =
         types::Unbound::new_no_doc(
-            |ctx, arg| {
+            |arg| {
                 async move {
                     match_value!{ arg,
                         types::Args { mut args } => {
@@ -351,18 +355,18 @@ fn match_map_entry() -> Value {
                             let value = try_result!(args.next().ok_or("no value pattern"));
                             try_result!(args.unused_arguments());
                             let deps = depends![key, value];
-                            types::Unbound::new_no_doc(move |ctx, arg| {
+                            types::Unbound::new_no_doc(move |arg| {
                                 let key = key.clone();
                                 let value = value.clone();
                                 async move {
-                                    let entry = try_result!(ctx.eval_as::<types::MapEntry>(arg).await).to_owned();
-                                    try_result!(traits::bind_no_error(ctx, key, entry.key).await);
-                                    try_result!(traits::bind_no_error(ctx, value, entry.value).await);
+                                    let entry = try_result!(Context::eval_as::<types::MapEntry>(arg).await).to_owned();
+                                    try_result!(traits::bind_no_error(key, entry.key).await);
+                                    try_result!(traits::bind_no_error(value, entry.value).await);
                                     types::Unit.into()
                                 }.boxed()
                             }, deps).into()
                         },
-                        v => traits::bind_error(ctx, v).into()
+                        v => traits::bind_error(v).into()
                     }
                 }
                 .boxed()
@@ -414,17 +418,17 @@ fn match_function() -> Value {
 
 fn match_number() -> Value {
     let construct: Value = types::Unbound::new_no_doc(
-            |ctx, arg| {
+            |arg| {
                 async move {
                     match_value!{ arg,
                         types::Args { mut args } => {
                             let s = try_result!(args.next().ok_or("no argument"));
                             try_result!(args.unused_arguments());
 
-                            let s = try_result!(ctx.eval_as::<types::String>(s).await);
+                            let s = try_result!(Context::eval_as::<types::String>(s).await);
                             s.as_ref().0.as_str().parse::<types::Number>().map_err(|e| Source::get(&s).with(e)).into()
                         },
-                        v => traits::bind_error(ctx, v).into()
+                        v => traits::bind_error(v).into()
                     }
                 }
                 .boxed()
@@ -445,7 +449,7 @@ The function can only be used in calls: you cannot destructure Numbers in patter
 
 fn match_error() -> Value {
     let construct: Value = types::Unbound::new_no_doc(
-        |ctx, arg| {
+        |arg| {
             async move {
                 match_value! { arg,
                     types::Args { mut args } => {
@@ -458,10 +462,10 @@ fn match_error() -> Value {
                             Some(v) => Source::get(&v)
                         };
 
-                        let message = try_result!(traits::to_string(ctx, message).await);
+                        let message = try_result!(traits::to_string(message).await);
                         source.with(message).into_error().into()
                     },
-                    v => traits::bind_error(ctx, v).into()
+                    v => traits::bind_error(v).into()
                 }
             }
             .boxed()
@@ -482,15 +486,13 @@ error. The function can only be used in calls: you cannot destructure Errors in 
 
 #[cfg(test)]
 mod test {
-    ergo_script::test! {
+    ergo_script::tests! {
         fn any(t) {
             t.assert_eq("self:type:Any hello", "hello");
             t.assert_eq("self:type:Any :x = hello; :x", "hello");
             t.assert_success("!self:type:Any = hello");
         }
-    }
 
-    ergo_script::test! {
         fn unset(t) {
             t.assert_success("self:type:Unset {}:key");
             t.assert_fail("self:type:Unset str");
@@ -498,9 +500,7 @@ mod test {
             t.assert_success("fn self:type:Unset -> () |> {}:key");
             t.assert_success("fn (self:type:Unset :x) -> () |> self:type:Unset:");
         }
-    }
 
-    ergo_script::test! {
         fn unit(t) {
             t.assert_eq("self:type:Unit ()", "()");
             t.assert_fail("self:type:Unit str");
@@ -509,22 +509,16 @@ mod test {
             t.assert_success("fn self:type:Unit -> () |> ()");
             t.assert_fail("fn self:type:Unit -> () |> str");
         }
-    }
 
-    ergo_script::test! {
         fn bool(t) {
             t.assert_success("fn (self:type:Bool :b) -> () |> self:bool:true");
         }
-    }
 
-    ergo_script::test! {
         fn error(t) {
             t.assert_eq("bind (self:type:Error :e -> ()) (self:type:Error: doh)", "()");
             t.assert_eq("a=1; bind (self:type:Error :e -> ()) (self:type:Error: (source = :a) doh)", "()");
         }
-    }
 
-    ergo_script::test! {
         fn string(t) {
             t.assert_eq("self:type:String hi", "hi");
             t.assert_fail("self:type:String ()");
@@ -533,17 +527,13 @@ mod test {
             t.assert_success("fn self:type:String -> () |> hi");
             t.assert_fail("fn self:type:String -> () |> ()");
         }
-    }
 
-    ergo_script::test! {
         fn map_entry(t) {
             t.assert_script_success("self:type:MapEntry: k v");
             t.assert_eq("(self:type:MapEntry: k v):key","k");
             t.assert_eq("(self:type:MapEntry: k v):value","v");
         }
-    }
 
-    ergo_script::test! {
         fn function(t) {
             t.assert_success("self:type:Function (:a -> :a)");
             t.assert_fail("self:type:Function ()");
@@ -552,9 +542,7 @@ mod test {
             t.assert_success("fn self:type:Function -> () |> :a -> :a");
             t.assert_fail("fn self:type:Function -> () |> ()");
         }
-    }
 
-    ergo_script::test! {
         fn number(t) {
             t.assert_success("self:type:Number: 1");
             t.assert_success("self:type:Number: -3.14");
@@ -566,11 +554,9 @@ mod test {
             t.assert_fail("self:type:Number: ()");
             t.assert_success("fn (self:type:Number :x) -> () |><| self:type:Number: 0");
         }
-    }
 
-    // omit map/array/path/etc, they use the same macro so should be fundamentally the same
+        // omit map/array/path/etc, they use the same macro so should be fundamentally the same
 
-    ergo_script::test! {
         fn new(t) {
             t.assert_content_eq("my_type = self:type:new \"scoped:my_type\" (:a -> !self:match :a [
                 fn (self:type:String :a) (self:type:Unit :b) -> [:a,:b]
@@ -589,9 +575,7 @@ mod test {
             ])
             fn !:my_type -> () |> ()");
         }
-    }
 
-    ergo_script::test! {
         fn new_bind(t) {
             t.assert_content_eq("my_type = self:type:new \"scoped:my_type\" (:a -> !self:match :a [
                 fn (self:type:String :a) (self:type:Unit :b) -> [:a,:b]

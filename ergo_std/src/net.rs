@@ -3,7 +3,7 @@
 use ergo_runtime::abi_stable::{bst::BstMap, type_erase::Erased, StableAbi};
 use ergo_runtime::{
     context::ItemContent, depends, io, metadata::Source, nsid, traits, try_result,
-    type_system::ErgoType, types, Dependencies, Error, Value,
+    type_system::ErgoType, types, Context, Dependencies, Error, Value,
 };
 use reqwest::{
     blocking::Client,
@@ -73,7 +73,7 @@ async fn http(
         },
     };
 
-    let log = CONTEXT.log.sublog("net:http");
+    let log = Context::global().log.sublog("net:http");
 
     let client = Client::new();
     let mut request = client.request(method, url.as_ref().as_str());
@@ -95,7 +95,7 @@ async fn http(
     }
 
     if let Some(to) = timeout {
-        let to = try_result!(traits::into::<types::Number>(CONTEXT, to).await);
+        let to = try_result!(traits::into::<types::Number>(to).await);
         let secs = match to.as_ref().to_f64() {
             None => {
                 return Source::get(&to)
@@ -111,10 +111,10 @@ async fn http(
     {
         let mut http_headers = HeaderMap::new();
         if let Some(headers) = headers {
-            drop(traits::eval_nested(CONTEXT, headers.clone().into()).await); // Eval in parallel
+            drop(traits::eval_nested(headers.clone().into()).await); // Eval in parallel
             for (k, v) in headers.to_owned().0.into_iter() {
-                let k = try_result!(CONTEXT.eval_as::<types::String>(k).await);
-                let v = try_result!(CONTEXT.eval_as::<types::String>(v).await);
+                let k = try_result!(Context::eval_as::<types::String>(k).await);
+                let v = try_result!(Context::eval_as::<types::String>(v).await);
 
                 let k = try_result!(Source::extract(k)
                     .map(|k| HeaderName::try_from(k.as_ref().as_str()))
@@ -129,17 +129,10 @@ async fn http(
     }
 
     if let Some(body) = body {
-        let body = try_result!(traits::into::<types::ByteStream>(CONTEXT, body).await).to_owned();
+        let body = try_result!(traits::into::<types::ByteStream>(body).await).to_owned();
         let mut body_vec = vec![];
         // TODO support streaming body
-        try_result!(
-            io::copy(
-                &CONTEXT.task,
-                &mut body.read(),
-                &mut io::Writer(&mut body_vec)
-            )
-            .await
-        );
+        try_result!(io::copy(&mut body.read(), &mut io::AllowStdIo::new(&mut body_vec)).await);
         request = request.body(body_vec);
     }
 
@@ -148,7 +141,7 @@ async fn http(
     // Wrap the request in a mutex because RequestBuilder is not Sync and cannot be captured in
     // `spawn_blocking`, but `Mutex` will be Sync.
     let req = std::sync::Mutex::new(request);
-    let response = try_result!(CONTEXT
+    let response = try_result!(Context::global()
         .task
         .spawn_blocking(move || req.into_inner().unwrap().send().map_err(Error::from))
         .await
@@ -185,11 +178,11 @@ async fn http(
         let body = body.clone();
         // TODO should this just immediately be an Error type?
         Value::dyn_new(
-            move |ctx| async move {
+            move || async move {
                 src.with(format!(
                     "{}: {}",
                     err_status,
-                    try_result!(traits::to_string(ctx, body).await)
+                    try_result!(traits::to_string(body).await)
                 ))
                 .into_error()
                 .into()
@@ -286,7 +279,7 @@ ergo_runtime::type_system::ergo_traits_fn! {
 mod test {
     use httpmock::{Method, MockServer};
 
-    ergo_script::test! {
+    ergo_script::tests! {
         fn http_get(t) {
             let server = MockServer::start();
             server.mock(|when, then| {
@@ -301,9 +294,7 @@ mod test {
             t.assert_content_eq(&format!(r#"self:net:http "{}" |>:body | self:string:from"#, server.url("/hi")), "'hello world'");
             t.assert_content_eq(&format!(r#"self:net:http "{}" |>:status-code | self:string:from"#, server.url("/hi")), "200");
         }
-    }
 
-    ergo_script::test! {
         fn http_basic_auth(t) {
             let server = MockServer::start();
             server.mock(|when, then| {
@@ -314,9 +305,7 @@ mod test {
             });
             t.assert_content_eq(&format!(r#"self:net:http (basic-auth = "aladdin:opensesame") "{}" |>:complete"#, server.url("/auth")), "()");
         }
-    }
 
-    ergo_script::test! {
         fn http_bearer_auth(t) {
             let server = MockServer::start();
             server.mock(|when, then| {
@@ -327,9 +316,7 @@ mod test {
             });
             t.assert_content_eq(&format!(r#"self:net:http (bearer-auth = 12345) "{}" |>:complete"#, server.url("/auth")), "()");
         }
-    }
 
-    ergo_script::test! {
         fn http_put(t) {
             let server = MockServer::start();
             server.mock(|when, then| {
@@ -342,9 +329,7 @@ mod test {
             t.assert_fail(&format!(r#"self:net:http (method=put) (body=mydataa) "{}" |>:complete"#, server.url("/put")));
             t.assert_content_eq(&format!(r#"self:net:http (method=put) (body=mydata) "{}" |>:complete"#, server.url("/put")), "()");
         }
-    }
 
-    ergo_script::test! {
         fn http_headers(t) {
             let server = MockServer::start();
             server.mock(|when, then| {
@@ -357,9 +342,7 @@ mod test {
             t.assert_fail(&format!(r#"self:net:http (headers={{myheader = 43}}) "{}" |>:complete"#, server.url("/hdr")));
             t.assert_content_eq(&format!(r#"self:net:http (headers={{myheader = 42}}) "{}" |>:complete"#, server.url("/hdr")), "()");
         }
-    }
 
-    ergo_script::test! {
         fn http_timeout(t) {
             let server = MockServer::start();
             server.mock(|when, then| {

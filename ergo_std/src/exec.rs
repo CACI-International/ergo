@@ -4,13 +4,13 @@ use ergo_runtime::abi_stable::{ffi::OsString, std_types::ROption, type_erase::Er
 use ergo_runtime::{
     context::ItemContent,
     depends,
-    io::{self, wrap, Blocking, TokioWrapped},
+    io::{self, Blocking},
     nsid, traits, try_result,
     type_system::ErgoType,
-    types, Dependencies, Error, Value,
+    types, Context, Dependencies, Error, Value,
 };
 use futures::channel::oneshot::channel;
-use futures::future::FutureExt;
+use futures::future::{FutureExt, TryFutureExt};
 use futures::stream::StreamExt;
 use std::process::{Command, Stdio};
 
@@ -121,38 +121,32 @@ pub async fn function(
     ...
 ) -> Value {
     let mut args = Vec::default();
-    args.push(traits::into::<CommandString>(CONTEXT, cmd));
+    args.push(traits::into::<CommandString>(cmd));
     while let Some(arg) = REST.next() {
-        args.push(traits::into::<CommandString>(CONTEXT, arg));
+        args.push(traits::into::<CommandString>(arg));
     }
 
-    let args: Vec<_> = try_result!(CONTEXT.task.join_all(args).await);
+    let args: Vec<_> = try_result!(Context::global().task.join_all(args).await);
 
     let pwd = match pwd {
-        Some(v) => Some(try_result!(traits::into::<types::Path>(CONTEXT, v).await)),
+        Some(v) => Some(try_result!(traits::into::<types::Path>(v).await)),
         // TODO set dir if not specified?
         None => None,
     };
 
     let stdin = match stdin {
-        Some(v) => Some(try_result!(
-            traits::into::<types::ByteStream>(CONTEXT, v).await
-        )),
+        Some(v) => Some(try_result!(traits::into::<types::ByteStream>(v).await)),
         None => None,
     };
 
     let retain_terminal = match retain_terminal {
-        Some(v) => {
-            try_result!(traits::into::<types::Bool>(CONTEXT, v).await)
-                .as_ref()
-                .0
-        }
+        Some(v) => try_result!(traits::into::<types::Bool>(v).await).as_ref().0,
         None => false,
     };
 
     try_result!(REST.unused_arguments());
 
-    let log = CONTEXT.log.sublog("exec");
+    let log = Context::global().log.sublog("exec");
 
     let mut args = args.iter();
     let cmd = args.next().unwrap();
@@ -163,10 +157,10 @@ pub async fn function(
     if let Some(v) = env {
         let types::Map(env) = v.to_owned();
         for (k, v) in env {
-            let k = try_result!(CONTEXT.eval_as::<types::String>(k).await)
+            let k = try_result!(Context::eval_as::<types::String>(k).await)
                 .to_owned()
                 .into_string();
-            let v = try_result!(traits::into::<CommandString>(CONTEXT, v).await);
+            let v = try_result!(traits::into::<CommandString>(v).await);
             command.env(k, v.as_ref().0.as_ref());
         }
     }
@@ -190,7 +184,6 @@ pub async fn function(
     let (send_stderr, rcv_stderr) = channel();
     let (send_status, rcv_status) = channel();
 
-    let task = CONTEXT.task.clone();
     let run_command = async move {
         log.debug(format!("spawning child process: {:?}", command));
 
@@ -200,8 +193,7 @@ pub async fn function(
         let stdin = stdin.map(|v| v.as_ref().read());
         let input = if let (Some(input), Some(mut v)) = (child.stdin.take(), stdin) {
             let mut b = Blocking::new(input);
-            let task = task.clone();
-            async move { ergo_runtime::io::copy_interactive(&task, &mut v, &mut b).await }.boxed()
+            async move { ergo_runtime::io::copy_interactive(&mut v, &mut b).await }.boxed()
         } else {
             futures::future::ok(0).boxed()
         };
@@ -209,7 +201,7 @@ pub async fn function(
         // Handle stdout
         let (mut out_pipe_send, out_pipe_recv) = pipe();
         let mut cstdout = Blocking::new(child.stdout.take().unwrap());
-        let output = ergo_runtime::io::copy_interactive(&task, &mut cstdout, &mut out_pipe_send);
+        let output = ergo_runtime::io::copy_interactive(&mut cstdout, &mut out_pipe_send);
         let out_pipe_recv = if !send_stdout.is_canceled() {
             drop(send_stdout.send(out_pipe_recv));
             None
@@ -220,7 +212,7 @@ pub async fn function(
         // Handle stderr
         let (mut err_pipe_send, err_pipe_recv) = pipe();
         let mut cstderr = Blocking::new(child.stderr.take().unwrap());
-        let error = io::copy_interactive(&task, &mut cstderr, &mut err_pipe_send);
+        let error = io::copy_interactive(&mut cstderr, &mut err_pipe_send);
         let err_pipe_recv = if !send_stderr.is_canceled() {
             drop(send_stderr.send(err_pipe_recv));
             None
@@ -229,19 +221,24 @@ pub async fn function(
         };
 
         // Handle running the child and getting the exit status
-        let exit_status = task
+        let exit_status = Context::global()
+            .task
             .spawn_blocking(move || child.wait().map_err(Error::from))
             .map(|r| r.and_then(|v| v));
 
         // Only run stdin while waiting for exit status
-        let exit_status = BoundTo::new(exit_status, input);
+        let exit_status = BoundTo::new(exit_status, input.map_err(|e| e.into()));
 
         // Finally await everything
         let exit_status = {
             // TODO let _guard = super::task::ParentTask::remain_active();
-            futures::future::try_join3(exit_status, output, error)
-                .await?
-                .0
+            futures::future::try_join3(
+                exit_status,
+                output.map_err(|e| e.into()),
+                error.map_err(|e| e.into()),
+            )
+            .await?
+            .0
         };
 
         log.debug(format!("child process exited: {:?}", command));
@@ -258,8 +255,8 @@ pub async fn function(
                     ( $output:expr, $name:expr ) => {
                         if let Some(mut recv_pipe) = $output {
                             let mut s = String::new();
-                            use io::AsyncReadExt;
-                            if recv_pipe.read_to_string(&task, &mut s).await.is_ok() {
+                            use futures::io::AsyncReadExt;
+                            if recv_pipe.read_to_string(&mut s).await.is_ok() {
                                 if !s.is_empty() {
                                     Some(format!("\n{}:\n{}", $name, s))
                                 } else {
@@ -292,7 +289,7 @@ pub async fn function(
     let complete = {
         let run_command = run_command.clone();
         Value::dyn_new(
-            |_| async move {
+            || async move {
                 try_result!(run_command.await);
                 types::Unit.into()
             },
@@ -318,7 +315,7 @@ pub async fn function(
 
     let rcv_status = rcv_status.shared();
     let exit_status = Value::dyn_new(
-        |_| async move {
+        || async move {
             try_result!(run_command.await);
             ExitStatus::from(try_result!(rcv_status.await)).into()
         },
@@ -388,26 +385,26 @@ type PipeRecv = tokio_util::io::StreamReader<
     PipeBuf,
 >;
 
-fn pipe() -> (TokioWrapped<PipeSend>, TokioWrapped<PipeRecv>) {
-    let (send, recv) = futures::channel::mpsc::unbounded::<tokio::io::Result<PipeBuf>>();
+fn pipe() -> (PipeSend, io::Tokio<PipeRecv>) {
+    let (send, recv) = futures::channel::mpsc::unbounded::<io::Result<PipeBuf>>();
     (
-        wrap(PipeSend { send }),
-        wrap(tokio_util::io::StreamReader::new(recv.fuse())),
+        PipeSend { send },
+        io::Tokio::new(tokio_util::io::StreamReader::new(recv.fuse())),
     )
 }
 
-impl tokio::io::AsyncWrite for PipeSend {
+impl io::AsyncWrite for PipeSend {
     fn poll_write(
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context,
         buf: &[u8],
-    ) -> std::task::Poll<tokio::io::Result<usize>> {
+    ) -> std::task::Poll<io::Result<usize>> {
         use futures::sink::Sink;
         use std::task::Poll::*;
         let mut me = std::pin::Pin::new(&mut self.get_mut().send);
         match me.as_mut().poll_ready(cx) {
             Pending => return Pending,
-            Ready(Err(_)) => return Ready(Err(tokio::io::ErrorKind::BrokenPipe.into())),
+            Ready(Err(_)) => return Ready(Err(std::io::ErrorKind::BrokenPipe.into())),
             Ready(Ok(())) => (),
         }
 
@@ -416,7 +413,7 @@ impl tokio::io::AsyncWrite for PipeSend {
                 .start_send(Ok(std::io::Cursor::new(buf.to_vec().into_boxed_slice())))
                 .is_err()
             {
-                Err(tokio::io::ErrorKind::BrokenPipe.into())
+                Err(std::io::ErrorKind::BrokenPipe.into())
             } else {
                 Ok(buf.len())
             },
@@ -426,21 +423,21 @@ impl tokio::io::AsyncWrite for PipeSend {
     fn poll_flush(
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context,
-    ) -> std::task::Poll<tokio::io::Result<()>> {
+    ) -> std::task::Poll<io::Result<()>> {
         use futures::sink::Sink;
         let me = std::pin::Pin::new(&mut self.get_mut().send);
         me.poll_flush(cx)
-            .map(|r| r.map_err(|_| tokio::io::ErrorKind::BrokenPipe.into()))
+            .map(|r| r.map_err(|_| std::io::ErrorKind::BrokenPipe.into()))
     }
 
-    fn poll_shutdown(
+    fn poll_close(
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context,
-    ) -> std::task::Poll<tokio::io::Result<()>> {
+    ) -> std::task::Poll<io::Result<()>> {
         use futures::sink::Sink;
         let me = std::pin::Pin::new(&mut self.get_mut().send);
         me.poll_close(cx)
-            .map(|r| r.map_err(|_| tokio::io::ErrorKind::BrokenPipe.into()))
+            .map(|r| r.map_err(|_| std::io::ErrorKind::BrokenPipe.into()))
     }
 }
 
@@ -449,22 +446,21 @@ enum ChannelRead<R> {
     Read(R),
 }
 
-impl<R: ergo_runtime::io::AsyncRead + std::marker::Unpin> ChannelRead<R> {
+impl<R: io::AsyncRead + std::marker::Unpin> ChannelRead<R> {
     pub fn new(channel: futures::channel::oneshot::Receiver<R>) -> Self {
         ChannelRead::Waiting(channel)
     }
 }
 
-impl<R> ergo_runtime::io::AsyncRead for ChannelRead<R>
+impl<R> io::AsyncRead for ChannelRead<R>
 where
-    R: ergo_runtime::io::AsyncRead + std::marker::Unpin,
+    R: io::AsyncRead + std::marker::Unpin,
 {
     fn poll_read(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context,
-        task: &ergo_runtime::context::TaskManager,
         buf: &mut [u8],
-    ) -> std::task::Poll<Result<usize, Error>> {
+    ) -> std::task::Poll<io::Result<usize>> {
         let me = &mut *self;
         use futures::future::Future;
         use std::task::Poll::*;
@@ -475,7 +471,7 @@ where
                     Ready(Err(_)) => return Ready(Ok(0)),
                     Ready(Ok(v)) => ChannelRead::Read(v),
                 },
-                ChannelRead::Read(r) => return std::pin::Pin::new(r).poll_read(cx, task, buf),
+                ChannelRead::Read(r) => return std::pin::Pin::new(r).poll_read(cx, buf),
             };
             *me = new_me;
         }
@@ -500,21 +496,20 @@ impl<R, Fut> ReadWhile<R, Fut> {
     }
 }
 
-impl<T, R, Fut> ergo_runtime::io::AsyncRead for ReadWhile<R, Fut>
+impl<T, R, Fut> io::AsyncRead for ReadWhile<R, Fut>
 where
-    R: ergo_runtime::io::AsyncRead + std::marker::Unpin,
+    R: io::AsyncRead + std::marker::Unpin,
     Fut: futures::future::Future<Output = Result<T, Error>> + std::marker::Unpin,
 {
     fn poll_read(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context,
-        task: &ergo_runtime::context::TaskManager,
         buf: &mut [u8],
-    ) -> std::task::Poll<Result<usize, Error>> {
+    ) -> std::task::Poll<io::Result<usize>> {
         use std::task::Poll::*;
         let result = if !self.read_done {
             let me = &mut *self;
-            match std::pin::Pin::new(&mut me.read).poll_read(cx, task, buf) {
+            match std::pin::Pin::new(&mut me.read).poll_read(cx, buf) {
                 Ready(Err(e)) => return Ready(Err(e)),
                 Ready(Ok(0)) => {
                     me.read_done = true;
@@ -528,7 +523,7 @@ where
         if !self.fut_done {
             let me = &mut *self;
             match std::pin::Pin::new(&mut me.fut).poll(cx) {
-                Ready(Err(e)) => return Ready(Err(e)),
+                Ready(Err(e)) => return Ready(Err(e.into())),
                 Ready(Ok(_)) => {
                     me.fut_done = true;
                 }
@@ -590,13 +585,11 @@ where
 // Only run these tests on unix, where we assume the existence of some programs.
 #[cfg(all(test, unix))]
 mod test {
-    ergo_script::test! {
+    ergo_script::tests! {
         fn exec(t) {
             t.assert_success("self:exec echo hello |>:complete")
         }
-    }
 
-    ergo_script::test! {
         fn exec_fail(t) {
             t.assert_fail("self:exec false |>:complete")
         }

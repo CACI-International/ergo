@@ -30,10 +30,7 @@ pub use dynamic_scope::{DynamicScope, DynamicScopeKey, DynamicScopeRef};
 pub use error_scope::ErrorScope;
 pub use shared_state::SharedState;
 pub use store::{Item, ItemContent, ItemName, Store};
-pub use task::{
-    get_task_local, scope_task_local, thread_id, ScopeTaskLocal, TaskLocal, TaskLocalRef,
-    TaskManager, TaskPermit,
-};
+pub use task::{thread_id, LocalKey, TaskManager, TaskPermit};
 pub use traits::{TraitGenerator, TraitGeneratorByTrait, TraitGeneratorByType, Traits};
 
 /// Runtime context which is immutable.
@@ -175,147 +172,156 @@ impl std::ops::Deref for Context {
     }
 }
 
+crate::task_local! {
+    static CURRENT_CONTEXT: Context;
+}
+
 impl Context {
     /// Create a ContextBuilder.
     pub fn builder() -> ContextBuilder {
         Default::default()
     }
 
-    /// Get an ergo trait for the given value's type.
+    /// Apply a function on the current context.
     ///
-    /// Always returns None if the value is not yet evaluated.
-    pub fn get_trait<Trt: ErgoTrait>(&self, v: &Value) -> Option<Trt> {
-        self.traits.get::<Trt>(v).map(Trt::create)
-    }
-
-    /// Get an ergo trait for the given type.
-    pub fn get_trait_for_type<Trt: ErgoTrait>(&self, tp: &Type) -> Option<Trt> {
-        self.traits.get_type::<Trt>(tp).map(Trt::create)
+    /// Panics if there is no context set.
+    pub fn with<F, R>(f: F) -> R
+    where
+        F: FnOnce(&Self) -> R,
+    {
+        CURRENT_CONTEXT.with(|v| f(v.unwrap()))
     }
 
     /// Evaluate a value.
-    pub async fn eval(&self, value: &mut Value) -> crate::Result<()> {
-        value.eval(self).await;
+    pub async fn eval(value: &mut Value) -> crate::Result<()> {
+        value.eval().await;
         if value.is_type::<crate::types::Error>() {
             let error = value
                 .clone()
                 .as_type::<crate::types::Error>()
                 .unwrap()
                 .to_owned();
-            self.error_scope.error(&error);
+            Self::with(|ctx| ctx.error_scope.error(&error));
             return Err(error);
         }
         Ok(())
     }
 
+    /// Get an ergo trait for the given value's type.
+    ///
+    /// Always returns None if the value is not yet evaluated.
+    pub fn get_trait<Trt: ErgoTrait>(v: &Value) -> Option<Trt> {
+        Self::with(|ctx| ctx.traits.get::<Trt>(v).map(Trt::create))
+    }
+
+    /// Get an ergo trait for the given type.
+    pub fn get_trait_for_type<Trt: ErgoTrait>(tp: &Type) -> Option<Trt> {
+        Self::with(|ctx| ctx.traits.get_type::<Trt>(tp).map(Trt::create))
+    }
+
+    /// Get the global context.
+    pub fn global() -> RArc<GlobalContext> {
+        Self::with(|ctx| ctx.global.clone())
+    }
+
     /// Evaluate a value once.
-    pub async fn eval_once(&self, value: &mut Value) {
-        value.eval_once(self).await
+    pub async fn eval_once(value: &mut Value) {
+        value.eval_once().await
     }
 
     /// Evaluate all values.
-    pub async fn eval_all<'a, I>(&self, values: I) -> crate::Result<()>
+    pub async fn eval_all<'a, I>(values: I) -> crate::Result<()>
     where
         I: IntoIterator<Item = &'a mut Value>,
     {
-        self.task
-            .join_all(values.into_iter().map(|v| self.eval(v)))
+        Self::global()
+            .task
+            .join_all(values.into_iter().map(|v| Self::eval(v)))
             .await
             .map(|_| ())
     }
 
     /// Evaluate a value expecting a specific type, returning an error if it does not evaluate to a
     /// value of that type or if it evaluates to an Error type.
-    pub async fn eval_as<T: ErgoType>(&self, mut value: Value) -> crate::Result<TypedValue<T>> {
-        self.eval(&mut value).await?;
+    pub async fn eval_as<T: ErgoType>(mut value: Value) -> crate::Result<TypedValue<T>> {
+        Self::eval(&mut value).await?;
         match value.as_type::<T>() {
             Ok(v) => Ok(v),
-            Err(e) => Err(crate::traits::type_error_for::<T>(self, e)),
+            Err(e) => Err(crate::traits::type_error_for::<T>(e)),
         }
     }
 
-    /*
-    /// Create a new context with the given dynamic binding set.
-    pub fn with_dynamic_binding<K: DynamicScopeKey>(
-        &self,
-        key: &Source<K>,
-        value: K::Value,
-    ) -> Self {
-        let mut ctx = self.clone();
-        ctx.dynamic_scope.set(key, value);
-        ctx
-    }
-
-    /// Create a new context with the given error handler.
-    pub fn with_error_handler<F>(&self, on_error: F) -> Self
-    where
-        F: Fn(crate::Error) + Send + Sync + 'static,
-    {
-        let mut ctx = self.clone();
-        ctx.error_scope = ErrorScope::new(on_error);
-        ctx
-    }
-    */
-
     /// Fork the context, allowing changes of context values.
-    pub async fn fork<'a, Alter, F, Fut, Ret>(&self, alter: Alter, f: F) -> Ret
+    pub async fn fork<Alter, Fut, Ret>(alter: Alter, fut: Fut) -> Ret
     where
         Alter: FnOnce(&mut Self),
-        F: FnOnce(&'a Self) -> Fut,
-        Fut: std::future::Future<Output = Ret> + Send + 'a,
+        Fut: std::future::Future<Output = Ret> + Send,
     {
-        let mut new_ctx = Context {
-            global: self.global.fork(),
-            dynamic_scope: self.dynamic_scope.fork(),
-            error_scope: self.error_scope.fork(),
-        };
-
+        let mut new_ctx = Self::with(|ctx| ctx.fork());
         alter(&mut new_ctx);
 
-        let ret = f(unsafe { std::mem::transmute(&new_ctx) }).await;
-        self.global.join(new_ctx.global);
-        self.dynamic_scope.join(new_ctx.dynamic_scope);
-        self.error_scope.join(new_ctx.error_scope);
+        let (new_ctx, ret) = CURRENT_CONTEXT.final_scope(new_ctx, fut).await;
+
+        Self::with(move |ctx| ctx.join(new_ctx));
         ret
     }
 
     /// Spawn a new task.
     ///
     /// This necessarily forks the context.
-    pub async fn spawn<'a, Alter, F, Fut, Ret>(
-        &self,
+    pub async fn spawn<'a, Alter, Fut, Ret>(
         priority: u32,
         alter: Alter,
-        f: F,
+        fut: Fut,
     ) -> crate::Result<Ret>
     where
         Alter: FnOnce(&mut Self),
-        F: FnOnce(&'a Self) -> Fut + Send + 'static,
-        Fut: std::future::Future<Output = crate::Result<Ret>> + Send + 'a,
+        Fut: std::future::Future<Output = crate::Result<Ret>> + Send + 'static,
         Ret: Send + 'static,
     {
-        let mut new_ctx = Context {
-            global: self.global.fork(),
-            dynamic_scope: self.dynamic_scope.fork(),
-            error_scope: self.error_scope.fork(),
-        };
+        let mut new_ctx = Self::with(|ctx| ctx.fork());
         alter(&mut new_ctx);
-        match self
+
+        match Self::global()
             .task
-            .spawn_basic(priority, async move {
-                let ret = f(unsafe { std::mem::transmute(&new_ctx) }).await;
-                (new_ctx, ret)
-            })
+            .spawn_basic(priority, CURRENT_CONTEXT.final_scope(new_ctx, fut))
             .await
         {
             Ok((new_ctx, ret)) => {
-                self.global.join(new_ctx.global);
-                self.dynamic_scope.join(new_ctx.dynamic_scope);
-                self.error_scope.join(new_ctx.error_scope);
+                Self::with(move |ctx| ctx.join(new_ctx));
                 ret
             }
-            // If the task is aborted, there's nothing relevant for the context to be joined.
+            // If the task is aborted, there's no reason for the context to be joined as it
+            // shouldn't have been accessed.
             Err(_) => Err(crate::Error::aborted()),
         }
+    }
+
+    /// Block on the given future, setting the task-local context.
+    pub fn block_on<F: std::future::Future + Send>(&self, fut: F) -> F::Output {
+        self.task.block_on(async move {
+            let new_ctx = self.fork();
+            let (new_ctx, ret) = CURRENT_CONTEXT.final_scope(new_ctx, fut).await;
+            self.join(new_ctx);
+            ret
+        })
+    }
+}
+
+impl Fork for Context {
+    /// Create a fork of a value.
+    fn fork(&self) -> Self {
+        Context {
+            global: self.global.fork(),
+            dynamic_scope: self.dynamic_scope.fork(),
+            error_scope: self.error_scope.fork(),
+        }
+    }
+
+    /// Join with a forked value.
+    fn join(&self, forked: Self) {
+        self.global.join(forked.global);
+        self.dynamic_scope.join(forked.dynamic_scope);
+        self.error_scope.join(forked.error_scope);
     }
 }

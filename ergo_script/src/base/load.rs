@@ -63,7 +63,7 @@ impl LoadData {
     /// Load a script at the given path.
     ///
     /// The path should already be verified as an existing file.
-    pub async fn load_script(&self, ctx: &Context, path: &Path) -> Value {
+    pub async fn load_script(&self, path: &Path) -> Value {
         debug_assert!(path.is_file());
         let path = path.canonicalize().unwrap(); // unwrap because is_file() should guarantee that canonicalize will succeed.
 
@@ -78,7 +78,7 @@ impl LoadData {
                 let source = source.clone();
                 let deps = depends![nsid!(load), path];
                 Value::dyn_new(
-                    move |ctx| async move {
+                    move || async move {
                         if !is_plugin(&path) {
                             let script_result = {
                                 let mut guard = me.ast_context.lock();
@@ -88,7 +88,7 @@ impl LoadData {
                                 Err(e) => Err(e),
                                 Ok(mut s) => {
                                     s.top_level_env(me.top_level_env.lock().clone());
-                                    s.evaluate(ctx).await
+                                    s.evaluate().await
                                 }
                             }
                         } else {
@@ -105,11 +105,10 @@ impl LoadData {
                                     let f: dl::Symbol<
                                         extern "C" fn(
                                             ergo_runtime::plugin::Context,
-                                            &Context,
                                         )
                                             -> RResult<Value>,
                                     > = unsafe { l.get(PLUGIN_ENTRY.as_bytes()) }?;
-                                    f(ergo_runtime::plugin::Context::get(), ctx).into()
+                                    f(ergo_runtime::plugin::Context::get()).into()
                                 })
                         }
                         .into()
@@ -119,7 +118,7 @@ impl LoadData {
             })
             .clone();
 
-        loaded.eval_once(ctx).await;
+        loaded.eval_once().await;
 
         metadata::Source::imbue(source.with(loaded))
     }
@@ -164,12 +163,12 @@ impl LoadFunctions {
             /// provided, the resulting value is called with them.
             #[cloning(ld)]
             async fn load(mut path: _, ...) -> Value {
-                ergo_runtime::try_result!(CONTEXT.eval(&mut path).await);
+                ergo_runtime::try_result!(Context::eval(&mut path).await);
                 let target_source = metadata::Source::get(&path);
                 let target = match_value!{path,
                     types::String(s) => s.as_str().into(),
                     types::Path(p) => p.into_pathbuf(),
-                    v => return traits::type_error(CONTEXT, v, "String or Path").into()
+                    v => return traits::type_error(v, "String or Path").into()
                 };
 
                 let working_dir = ARGS_SOURCE.path();
@@ -184,11 +183,11 @@ impl LoadFunctions {
                 };
 
                 // Load if some module was found.
-                let loaded = ld.load_script(CONTEXT, &target).await;
+                let loaded = ld.load_script(&target).await;
 
                 // If there are remaining arguments apply them immediately.
                 if !REST.is_empty() {
-                    traits::bind(CONTEXT, loaded,
+                    traits::bind(loaded,
                         metadata::Source::imbue(ARGS_SOURCE.with(types::Args { args: REST }.into()))).await
                 } else {
                     loaded
@@ -198,7 +197,7 @@ impl LoadFunctions {
 
         let ld = load_data.clone();
         let std = types::Unbound::new(
-            move |ctx, v| {
+            move |v| {
                 let ld = ld.clone();
                 async move {
                     let src = metadata::Source::get(&v);
@@ -212,7 +211,7 @@ impl LoadFunctions {
                         }
                     };
 
-                    let lib = ld.load_script(ctx, &path).await;
+                    let lib = ld.load_script(&path).await;
 
                     match_value!{v,
                         types::Args { args } => {
@@ -220,10 +219,10 @@ impl LoadFunctions {
                                 // If called with no args, return the loaded library.
                                 lib
                             } else {
-                                traits::bind(ctx, lib, metadata::Source::imbue(src.with(types::Args { args }.into()))).await
+                                traits::bind(lib, metadata::Source::imbue(src.with(types::Args { args }.into()))).await
                             }
                         }
-                        v => traits::bind(ctx, lib, v).await
+                        v => traits::bind(lib, v).await
                     }
                 }
                 .boxed()
@@ -235,7 +234,7 @@ impl LoadFunctions {
 
         let ld = load_data.clone();
         let workspace = types::Unbound::new(
-            move |ctx, v| {
+            move |v| {
                 let ld = ld.clone();
                 async move {
                     let src = metadata::Source::get(&v);
@@ -246,7 +245,7 @@ impl LoadFunctions {
                         None => (std::env::current_dir().expect("couldn't get current directory"), false)
                     };
 
-                    let resolved = ctx.shared_state.get(|| Ok(ResolvedWorkspaces::default())).unwrap();
+                    let resolved = Context::global().shared_state.get(|| Ok(ResolvedWorkspaces::default())).unwrap();
 
                     let path = try_result!({
                         let mut guard = resolved.map.lock();
@@ -276,7 +275,7 @@ impl LoadFunctions {
                         }
                     }.ok_or("no ancestor workspace found"));
 
-                    let lib = ld.load_script(ctx, &path).await;
+                    let lib = ld.load_script(&path).await;
 
                     match_value!{v,
                         types::Args { args } => {
@@ -284,10 +283,10 @@ impl LoadFunctions {
                                 // If called with no args, return the loaded library.
                                 lib
                             } else {
-                                traits::bind(ctx, lib, metadata::Source::imbue(src.with(types::Args { args }.into()))).await
+                                traits::bind(lib, metadata::Source::imbue(src.with(types::Args { args }.into()))).await
                             }
                         }
-                        v => traits::bind(ctx, lib, v).await
+                        v => traits::bind(lib, v).await
                     }
                 }
                 .boxed()

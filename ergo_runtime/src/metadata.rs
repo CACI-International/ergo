@@ -21,15 +21,15 @@ impl Doc {
     /// This retrieves the documentation.
     ///
     /// If no documentation is available, a string indicating the (possibly dynamic) type will be returned.
-    pub async fn get(ctx: &crate::Context, value: &Value) -> crate::Result<String> {
+    pub async fn get(value: &Value) -> crate::Result<String> {
         let mut value = value.clone();
         while value.get_metadata(&Doc).is_none() && !value.is_evaluated() {
-            ctx.eval_once(&mut value).await;
+            crate::Context::eval_once(&mut value).await;
         }
 
         if let Some(v) = value.get_metadata(&Doc) {
             let mut v = v.owned();
-            ctx.eval(&mut v).await?;
+            crate::Context::eval(&mut v).await?;
 
             match_value! {v,
                 crate::types::String(s) => return Ok(s.into()),
@@ -40,7 +40,7 @@ impl Doc {
             Ok(e) => Err(e.to_owned()),
             Err(v) => Ok(format!(
                 "value with type '{}'",
-                crate::traits::type_name(ctx, &v)
+                crate::traits::type_name(&v)
             )),
         }
     }

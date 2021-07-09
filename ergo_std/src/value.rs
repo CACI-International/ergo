@@ -7,7 +7,7 @@ use ergo_runtime::{
     metadata::{Runtime, Source},
     traits,
     type_system::ErgoType,
-    types, Value,
+    types, Context, Value,
 };
 use std::collections::HashMap as CacheMap;
 use std::sync::Arc;
@@ -39,7 +39,7 @@ pub fn module() -> Value {
 /// Returns a new value which has the same type and result as the given value, but has an identity
 /// derived from the result (typically by forcing the value and any inner values).
 async fn by_content(value: _) -> Value {
-    traits::value_by_content(CONTEXT, value, true).await
+    traits::value_by_content(value, true).await
 }
 
 #[derive(ErgoType)]
@@ -74,7 +74,10 @@ async fn cache(value: _, (no_persist): [_]) -> Value {
 
     let no_persist = no_persist.is_some();
 
-    let cached = CONTEXT.shared_state.get(|| Ok(Cached::default())).unwrap();
+    let cached = Context::global()
+        .shared_state
+        .get(|| Ok(Cached::default()))
+        .unwrap();
 
     let entry = cached
         .map
@@ -87,10 +90,10 @@ async fn cache(value: _, (no_persist): [_]) -> Value {
         let value = if no_persist {
             value
         } else {
-            let store = CONTEXT.store.item(item_name!("cache"));
-            let log = CONTEXT.log.sublog("cache");
+            let store = Context::global().store.item(item_name!("cache"));
+            let log = Context::global().log.sublog("cache");
 
-            match traits::read_from_store(CONTEXT, &store, id).await {
+            match traits::read_from_store(&store, id).await {
                 Ok(mut val) => {
                     log.debug(format!("successfully read cached value for {}", id));
                     val.copy_metadata(&value);
@@ -101,8 +104,8 @@ async fn cache(value: _, (no_persist): [_]) -> Value {
                         "failed to read cache value for {}, (re)caching: {}",
                         id, err
                     ));
-                    drop(traits::eval_nested(CONTEXT, value.clone()).await);
-                    if let Err(e) = traits::write_to_store(CONTEXT, &store, value.clone()).await {
+                    drop(traits::eval_nested(value.clone()).await);
+                    if let Err(e) = traits::write_to_store(&store, value.clone()).await {
                         log.warn(format!("failed to cache value for {}: {}", id, e));
                     } else {
                         log.debug(format!("wrote cache value for {}", id));
@@ -144,13 +147,13 @@ async fn variable(mut value: _, (depends): [_]) -> Value {
 ///
 /// Returns the argument as-is.
 async fn debug(value: _) -> Value {
-    let name = traits::type_name(CONTEXT, &value);
+    let name = traits::type_name(&value);
 
     let rest = if value.is_evaluated() {
         let mut s = String::from(", value: ");
         {
             let mut formatter = traits::Formatter::new(&mut s);
-            if let Err(e) = traits::display(CONTEXT, value.clone(), &mut formatter).await {
+            if let Err(e) = traits::display(value.clone(), &mut formatter).await {
                 drop(formatter);
                 s.push_str("<error: ");
                 s.push_str(&e.to_string());
@@ -162,7 +165,7 @@ async fn debug(value: _) -> Value {
         Default::default()
     };
 
-    CONTEXT.log.debug(
+    Context::global().log.debug(
         Source::get(&value)
             .with(format!("type: {}{}, id: {}", name, rest, value.id()))
             .to_string(),
@@ -176,7 +179,7 @@ async fn debug(value: _) -> Value {
 ///
 /// Arguments: `:value`
 async fn eval(mut value: _) -> Value {
-    drop(CONTEXT.eval(&mut value).await);
+    drop(Context::eval(&mut value).await);
     value
 }
 
@@ -234,7 +237,7 @@ async fn source_path(value: _) -> Value {
 ///
 /// Returns the dynamic binding corresponding to `key`, or `Unset` if none exists.
 async fn dynamic_binding_get(key: _) -> Value {
-    match CONTEXT.dynamic_scope.get(&key) {
+    match Context::with(|ctx| ctx.dynamic_scope.get(&key)) {
         None => types::Unset.into(),
         Some(r) => (*r).clone(),
     }
@@ -247,43 +250,36 @@ async fn dynamic_binding_get(key: _) -> Value {
 ///
 /// Returns the result of evaluating `eval` with all `bindings` set in the dynamic scope.
 async fn dynamic_binding_set(bindings: types::Map, mut eval: _) -> Value {
-    CONTEXT
-        .fork(
-            |ctx| {
-                for (k, v) in bindings.to_owned().0 {
-                    ctx.dynamic_scope.set(&Source::extract(k), v);
-                }
-            },
-            |ctx| async move {
-                drop(ctx.eval(&mut eval).await);
-                eval
-            },
-        )
-        .await
+    Context::fork(
+        |ctx| {
+            for (k, v) in bindings.to_owned().0 {
+                ctx.dynamic_scope.set(&Source::extract(k), v);
+            }
+        },
+        async move {
+            drop(Context::eval(&mut eval).await);
+            eval
+        },
+    )
+    .await
 }
 
 #[cfg(test)]
 mod test {
-    ergo_script::test! {
+    ergo_script::tests! {
         fn by_content(t) {
             t.assert_eq("self:value:by-content [a,b,c]:2", "c");
         }
-    }
 
-    ergo_script::test! {
         fn eval(t) {
             t.assert_script_ne("fn :a -> :a |> str", "str");
             t.assert_eq("self:value:eval <| fn :a -> :a |> str", "str");
         }
-    }
 
-    ergo_script::test! {
         fn source_path(t) {
             t.assert_eq("x = 1; self:value:source-path :x", "self:type:Unset:");
         }
-    }
 
-    ergo_script::test! {
         fn dynamic_binding(t) {
             t.assert_eq("self:value:dynamic:get something", "self:type:Unset:");
             t.assert_eq("v = self:value:dynamic:get something; self:value:dynamic:eval { something = value } :v", "value");
@@ -291,9 +287,7 @@ mod test {
                 say_hello = fn :name -> self:string:format 'hi, {}' :name
                 self:value:dynamic:eval { my_func = :say_hello } <| f dude", "'hi, dude'");
         }
-    }
 
-    ergo_script::test! {
         fn dynamic_binding_multiple_scopes(t) {
             t.assert_content_eq("the-value = self:value:dynamic:get the-value
                 [self:value:dynamic:eval {the-value = 10} :the-value, self:value:dynamic:eval {the-value = hi} :the-value]", "[10,hi]");

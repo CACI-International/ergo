@@ -46,21 +46,21 @@ pub trait Display {
 }
 
 /// Display the given value to the Formatter.
-pub async fn display(ctx: &Context, mut v: Value, f: &mut Formatter<'_>) -> crate::Result<()> {
-    ctx.eval(&mut v).await?;
-    match ctx.get_trait::<Display>(&v) {
+pub async fn display(mut v: Value, f: &mut Formatter<'_>) -> crate::Result<()> {
+    Context::eval(&mut v).await?;
+    match Context::get_trait::<Display>(&v) {
         None => {
-            write!(f, "<cannot display values of type {}>", type_name(ctx, &v))?;
+            write!(f, "<cannot display values of type {}>", type_name(&v))?;
             Ok(())
         }
-        Some(t) => t.fmt(ctx, v, f).await.into_result(),
+        Some(t) => t.fmt(v, f).await.into_result(),
     }
 }
 
 /// Display a value to a string.
-pub async fn to_string(ctx: &Context, v: Value) -> crate::Result<String> {
+pub async fn to_string(v: Value) -> crate::Result<String> {
     let mut s = String::new();
-    display(ctx, v, &mut Formatter::new(&mut s)).await?;
+    display(v, &mut Formatter::new(&mut s)).await?;
     Ok(s)
 }
 

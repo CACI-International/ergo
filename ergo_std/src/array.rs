@@ -13,12 +13,12 @@ pub fn module() -> Value {
 ///
 /// Arguments: `:value`
 async fn from(value: _) -> Value {
-    ergo_runtime::try_result!(traits::into::<types::Array>(CONTEXT, value).await).into()
+    ergo_runtime::try_result!(traits::into::<types::Array>(value).await).into()
 }
 
 #[cfg(test)]
 mod test {
-    ergo_script::test! {
+    ergo_script::tests! {
         fn from(t) {
             t.assert_content_eq("self:array:from <| self:iter:from [1,2,3]", "[1,2,3]");
         }

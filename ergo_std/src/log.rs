@@ -5,19 +5,19 @@ use ergo_runtime::{
 };
 use futures::FutureExt;
 
-pub fn function(ctx: &Context) -> Value {
-    logger(ctx.log.clone())
+pub fn function() -> Value {
+    logger(Context::global().log.clone())
 }
 
 fn logger(log: Log) -> Value {
     types::Unbound::new_no_doc(
-        move |ctx, arg| {
+        move |arg| {
             let log = log.clone();
             async move {
-                let ind = try_result!(ctx.eval_as::<types::Index>(arg).await)
+                let ind = try_result!(Context::eval_as::<types::Index>(arg).await)
                     .to_owned()
                     .0;
-                let ind = try_result!(ctx.eval_as::<types::String>(ind).await);
+                let ind = try_result!(Context::eval_as::<types::String>(ind).await);
 
                 let log = log.clone();
 
@@ -42,7 +42,7 @@ fn logger(log: Log) -> Value {
                             let mut s = String::new();
                             {
                                 let mut formatter = traits::Formatter::new(&mut s);
-                                try_result!(traits::display(CONTEXT, value, &mut formatter).await);
+                                try_result!(traits::display(value, &mut formatter).await);
                             }
                             log.debug(s);
                             types::Unit.into()
@@ -58,7 +58,7 @@ fn logger(log: Log) -> Value {
                             let mut s = String::new();
                             {
                                 let mut formatter = traits::Formatter::new(&mut s);
-                                try_result!(traits::display(CONTEXT, value, &mut formatter).await);
+                                try_result!(traits::display(value, &mut formatter).await);
                             }
                             log.info(s);
                             types::Unit.into()
@@ -74,7 +74,7 @@ fn logger(log: Log) -> Value {
                             let mut s = String::new();
                             {
                                 let mut formatter = traits::Formatter::new(&mut s);
-                                try_result!(traits::display(CONTEXT, value, &mut formatter).await);
+                                try_result!(traits::display(value, &mut formatter).await);
                             }
                             log.warn(s);
                             types::Unit.into()
@@ -90,7 +90,7 @@ fn logger(log: Log) -> Value {
                             let mut s = String::new();
                             {
                                 let mut formatter = traits::Formatter::new(&mut s);
-                                try_result!(traits::display(CONTEXT, value, &mut formatter).await);
+                                try_result!(traits::display(value, &mut formatter).await);
                             }
                             log.error(s);
                             types::Unit.into()

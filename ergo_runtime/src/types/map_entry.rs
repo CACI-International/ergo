@@ -42,9 +42,9 @@ ergo_traits_fn! {
     impl traits::Display for MapEntry {
         async fn fmt(&self, f: &mut traits::Formatter) -> crate::error::RResult<()> {
             async move {
-                traits::display(CONTEXT, self.key.clone(), f).await?;
+                traits::display(self.key.clone(), f).await?;
                 write!(f, " = ")?;
-                traits::display(CONTEXT, self.value.clone(), f).await?;
+                traits::display(self.value.clone(), f).await?;
                 Ok(())
             }.await.into()
 
@@ -57,8 +57,8 @@ ergo_traits_fn! {
         async fn put(&self, stored_ctx: &traits::StoredContext, item: crate::context::ItemContent) -> crate::RResult<()> {
             async move {
                 let ids = (self.key.id(), self.value.id());
-                stored_ctx.write_to_store(CONTEXT, self.key.clone()).await?;
-                stored_ctx.write_to_store(CONTEXT, self.value.clone()).await?;
+                stored_ctx.write_to_store(self.key.clone()).await?;
+                stored_ctx.write_to_store(self.value.clone()).await?;
                 Ok(bincode::serialize_into(item, &ids)?)
             }.await.into()
         }
@@ -66,8 +66,8 @@ ergo_traits_fn! {
         async fn get(stored_ctx: &traits::StoredContext, item: crate::context::ItemContent) -> crate::RResult<Erased> {
             async move {
                 let ids: (u128, u128) = bincode::deserialize_from(item)?;
-                let key = stored_ctx.read_from_store(CONTEXT, ids.0).await?;
-                let value = stored_ctx.read_from_store(CONTEXT, ids.1).await?;
+                let key = stored_ctx.read_from_store(ids.0).await?;
+                let value = stored_ctx.read_from_store(ids.1).await?;
                 Ok(Erased::new(MapEntry { key: Source::imbue(crate::Source::stored(key)), value: Source::imbue(crate::Source::stored(value)) }))
             }.await.into()
         }
@@ -75,8 +75,8 @@ ergo_traits_fn! {
 
     impl traits::Bind for MapEntry {
         async fn bind(&self, arg: Value) -> Value {
-            let ind = crate::try_result!(CONTEXT.eval_as::<super::Index>(arg).await).to_owned().0;
-            let ind = crate::try_result!(CONTEXT.eval_as::<super::String>(ind).await);
+            let ind = crate::try_result!(crate::Context::eval_as::<super::Index>(arg).await).to_owned().0;
+            let ind = crate::try_result!(crate::Context::eval_as::<super::String>(ind).await);
             let s = ind.as_ref().as_str();
             if s == "key" {
                 self.key.clone()

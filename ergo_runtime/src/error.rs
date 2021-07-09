@@ -362,6 +362,13 @@ impl From<&'_ Self> for Error {
     }
 }
 
+impl From<Error> for std::io::Error {
+    fn from(e: Error) -> Self {
+        // TODO downcast if possible
+        std::io::Error::new(std::io::ErrorKind::Other, e.error())
+    }
+}
+
 impl std::iter::FromIterator<Error> for Error {
     fn from_iter<I: IntoIterator<Item = Error>>(iter: I) -> Self {
         Self::aggregate(iter)

@@ -42,7 +42,7 @@ ergo_traits_fn! {
 
     // Anything: Into<Bool> (true)
     {
-        extern "C" fn to_bool<'a>(_data: &'a Erased, _ctx: &'a crate::Context, _v: crate::Value) ->
+        extern "C" fn to_bool<'a>(_data: &'a Erased, _v: crate::Value) ->
             BoxFuture<'a, crate::Value> {
             BoxFuture::new(async move {
                 // TODO eval `v` first?

@@ -5,10 +5,8 @@ use ergo_runtime::abi_stable::{
     std_types::{RArc, RString},
     StableAbi,
 };
-use ergo_runtime::context::{
-    DynamicScopeKey, Log, LogTask, RecordingWork, TaskManager, TaskPermit, Work,
-};
-use ergo_runtime::{metadata::Source, nsid, traits, try_result, types, Value};
+use ergo_runtime::context::{DynamicScopeKey, Log, LogTask, RecordingWork, TaskPermit, Work};
+use ergo_runtime::{metadata::Source, nsid, traits, try_result, types, Context, Value};
 
 pub const SCRIPT_TASK_PRIORITY_OFFSET: u32 = 1000;
 
@@ -43,7 +41,7 @@ pub async fn function(
 ) -> Value {
     let count = match count {
         Some(v) => {
-            let n = try_result!(traits::into::<types::Number>(CONTEXT, v).await);
+            let n = try_result!(traits::into::<types::Number>(v).await);
             try_result!(Source::extract(n)
                 .map(|n| n.as_ref().to_u32().ok_or("expected unsigned integer"))
                 .transpose_err()
@@ -56,7 +54,7 @@ pub async fn function(
         Some(v) => {
             let src = Source::get(&v);
             let priority = {
-                let n = try_result!(traits::into::<types::Number>(CONTEXT, v).await);
+                let n = try_result!(traits::into::<types::Number>(v).await);
                 try_result!(Source::extract(n)
                     .map(|n| n.as_ref().to_u32().ok_or("expected unsigned integer"))
                     .transpose_err()
@@ -85,47 +83,40 @@ pub async fn function(
     // XXX if more than one task relies on a single task, the task state of only one of them will
     // be correct (the others will not correctly be suspended because only one will actually
     // execute the `task ...` function)
-    let log = CONTEXT.log.sublog("task");
+    let log = Context::global().log.sublog("task");
     let work = RArc::new(RMutex::new(log.work(format!("{:x}", work_id))));
 
     let fut = async {
-        let parent_task = ParentTask::new(
-            description.clone(),
-            count,
-            log.clone(),
-            work.clone(),
-            &CONTEXT.task,
-        )
-        .await;
+        let parent_task =
+            ParentTask::new(description.clone(), count, log.clone(), work.clone()).await;
         let mut value = value;
-        CONTEXT
-            .spawn(
-                priority,
-                |ctx| {
-                    ctx.dynamic_scope
-                        .set(&ARGS_SOURCE.with(ParentTaskKey), parent_task)
-                },
-                move |ctx| async move {
-                    log.info(format!("starting: {}", &description));
-                    let ret = ctx.eval(&mut value).await;
-                    let errored = ret.is_err();
-                    if errored {
-                        work.lock().err();
-                    }
-                    log.info(format!(
-                        "complete{}: {}",
-                        if errored { " (failed)" } else { "" },
-                        description
-                    ));
-                    ret?;
-                    Ok(value)
-                },
-            )
-            .await
+        Context::spawn(
+            priority,
+            |ctx| {
+                ctx.dynamic_scope
+                    .set(&ARGS_SOURCE.with(ParentTaskKey), parent_task)
+            },
+            async move {
+                log.info(format!("starting: {}", &description));
+                let ret = Context::eval(&mut value).await;
+                let errored = ret.is_err();
+                if errored {
+                    work.lock().err();
+                }
+                log.info(format!(
+                    "complete{}: {}",
+                    if errored { " (failed)" } else { "" },
+                    description
+                ));
+                ret?;
+                Ok(value)
+            },
+        )
+        .await
     };
 
-    let res = match CONTEXT.dynamic_scope.get(&ParentTaskKey) {
-        Some(p) => p.suspend(&CONTEXT.task, fut).await,
+    let res = match Context::with(|ctx| ctx.dynamic_scope.get(&ParentTaskKey)) {
+        Some(p) => p.suspend(fut).await,
         None => fut.await,
     };
     try_result!(res)
@@ -168,13 +159,7 @@ enum ParentTaskState {
 
 impl ParentTask {
     /// Create a new ParentTask and start it.
-    pub async fn new(
-        description: RString,
-        count: u32,
-        log: Log,
-        work: RArc<RMutex<Work>>,
-        task_manager: &TaskManager,
-    ) -> Self {
+    pub async fn new(description: RString, count: u32, log: Log, work: RArc<RMutex<Work>>) -> Self {
         let pt = ParentTask {
             description,
             count,
@@ -182,16 +167,12 @@ impl ParentTask {
             work,
             state: RMutex::new(ParentTaskState::Suspended(0)),
         };
-        pt.start(task_manager).await;
+        pt.start().await;
         pt
     }
 
     /// Suspend the task while running the given future.
-    pub async fn suspend<Fut: std::future::Future>(
-        &self,
-        task_manager: &TaskManager,
-        f: Fut,
-    ) -> Fut::Output {
+    pub async fn suspend<Fut: std::future::Future>(&self, f: Fut) -> Fut::Output {
         {
             let mut state = self.state.lock();
             match &mut *state {
@@ -211,14 +192,14 @@ impl ParentTask {
             }
         };
         if start {
-            self.start(task_manager).await;
+            self.start().await;
         }
         ret
     }
 
     /// Start the task if applicable.
-    async fn start(&self, task_manager: &TaskManager) {
-        let task_permit = task_manager.task_acquire(self.count).await;
+    async fn start(&self) {
+        let task_permit = Context::global().task.task_acquire(self.count).await;
         let mut guard = self.state.lock();
         match &mut *guard {
             ParentTaskState::Suspended(0) => {

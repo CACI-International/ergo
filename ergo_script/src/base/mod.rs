@@ -29,5 +29,5 @@ pub async fn pat_args_to_index(ind: _) -> Value {
 #[types::ergo_fn]
 /// Bind the first argument using the value of the second argument.
 pub async fn bind(to: _, from: _) -> Value {
-    traits::bind(CONTEXT, to, from).await
+    traits::bind(to, from).await
 }

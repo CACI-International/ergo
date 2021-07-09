@@ -2,7 +2,7 @@
 
 use ergo_runtime::{
     context::item_name, depends, io, metadata::Source, traits, try_result, type_system::ErgoType,
-    types, value::match_value, Value,
+    types, value::match_value, Context, Value,
 };
 use glob::glob;
 use serde::{Deserialize, Serialize};
@@ -54,7 +54,7 @@ pub fn module() -> Value {
 /// The pattern is checked relative to the calling script directory, however specifying any path as
 /// part of the pattern (paths can contain glob patterns) will result in a search using that path.
 async fn glob_(pattern: _) -> Value {
-    let pattern = try_result!(traits::into::<types::String>(CONTEXT, pattern).await);
+    let pattern = try_result!(traits::into::<types::String>(pattern).await);
     let pattern_source = Source::get(&pattern);
 
     let mut path = ARGS_SOURCE
@@ -114,7 +114,7 @@ fn recursive_link<F: AsRef<Path>, T: AsRef<Path>>(from: F, to: T) -> Result<(), 
 /// All destination directories are automatically created.
 /// If `from` is a directory, it is recursively copied.
 async fn copy(from: types::Path, to: types::Path) -> Value {
-    let log = CONTEXT.log.sublog("fs::copy");
+    let log = Context::global().log.sublog("fs::copy");
 
     log.debug(format!(
         "copying {} to {}",
@@ -318,7 +318,7 @@ async fn archive(archive: types::Path, source: types::Path, (format): [types::St
 async fn unarchive(destination: types::Path, mut archive: _) -> Value {
     let to_path = destination.as_ref().as_ref();
 
-    try_result!(CONTEXT.eval(&mut archive).await);
+    try_result!(Context::eval(&mut archive).await);
     let archive_source = Source::get(&archive);
 
     use std::io::{Read, Seek};
@@ -398,11 +398,11 @@ async fn unarchive(destination: types::Path, mut archive: _) -> Value {
         bs@types::ByteStream {..} => {
             // Read the entire byte stream into memory (no AsyncRead support in decoders)
             let mut data = Vec::new();
-            use io::AsyncReadExt;
-            try_result!(bs.read().read_to_end(&CONTEXT.task, &mut data).await);
+            use futures::io::AsyncReadExt;
+            try_result!(bs.read().read_to_end(&mut data).await);
             try_result!(extract_to(std::io::Cursor::new(data), to_path));
         }
-        v => return traits::type_error(CONTEXT, v, "Path or ByteStream").into()
+        v => return traits::type_error(v, "Path or ByteStream").into()
     }
 
     types::Unit.into()
@@ -430,16 +430,16 @@ async fn sha1(file: types::Path, sum: types::String) -> Value {
 /// Returns a `Path` that is identified by the contents of the file to which the argument refers.
 /// `file` must exist and refer to a file.
 async fn track(mut file: _) -> Value {
-    try_result!(CONTEXT.eval(&mut file).await);
+    try_result!(Context::eval(&mut file).await);
     let file = match_value! {file,
         types::String(s) => s.as_str().into(),
         types::Path(p) => p.into_pathbuf(),
-        v => return traits::type_error(CONTEXT, v, "String or Path").into()
+        v => return traits::type_error(v, "String or Path").into()
     };
 
-    let store = CONTEXT.store.item(item_name!("track"));
+    let store = Context::global().store.item(item_name!("track"));
 
-    let loaded_info = try_result!(CONTEXT
+    let loaded_info = try_result!(Context::global()
         .shared_state
         .get(move || LoadedTrackInfo::new(store)));
     let guard = try_result!(loaded_info.info.read().map_err(|_| "poisoned"));
@@ -564,10 +564,10 @@ async fn read(file: types::Path) -> Value {
 ///
 /// Creates or overwrites the file with the bytes from the ByteStream.
 async fn write(file: types::Path, bytes: _) -> Value {
-    let bytes = try_result!(traits::into::<types::ByteStream>(CONTEXT, bytes).await);
+    let bytes = try_result!(traits::into::<types::ByteStream>(bytes).await);
 
     let mut f = io::Blocking::new(try_result!(std::fs::File::create(file.as_ref().as_ref())));
-    try_result!(ergo_runtime::io::copy(&CONTEXT.task, &mut bytes.as_ref().read(), &mut f).await);
+    try_result!(ergo_runtime::io::copy(&mut bytes.as_ref().read(), &mut f).await);
     types::Unit.into()
 }
 
@@ -577,12 +577,12 @@ async fn write(file: types::Path, bytes: _) -> Value {
 /// Arguments: `(Path :file) (Into<ByteStream> :bytes)`
 /// Creates or appends the file with the bytes from the ByteStream.
 async fn append(file: types::Path, bytes: _) -> Value {
-    let bytes = try_result!(traits::into::<types::ByteStream>(CONTEXT, bytes).await);
+    let bytes = try_result!(traits::into::<types::ByteStream>(bytes).await);
 
     let mut f = io::Blocking::new(try_result!(std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(file.as_ref().as_ref())));
-    try_result!(ergo_runtime::io::copy(&CONTEXT.task, &mut bytes.as_ref().read(), &mut f).await);
+    try_result!(ergo_runtime::io::copy(&mut bytes.as_ref().read(), &mut f).await);
     types::Unit.into()
 }

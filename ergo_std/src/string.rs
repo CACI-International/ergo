@@ -6,7 +6,7 @@ use ergo_runtime::{
     metadata::Source,
     nsid, traits, try_result, types,
     value::match_value,
-    Value,
+    Context, Value,
 };
 use futures::future::FutureExt;
 
@@ -142,12 +142,12 @@ fn format() -> Value {
         parser.into_inner()
     }
 
-    types::Unbound::new(|ctx, arg| {
+    types::Unbound::new(|arg| {
         async move {
             match_value!{ arg,
                 types::Args { mut args } => {
                     let format_string = try_result!(args.next().ok_or("missing format string"));
-                    let format_string = try_result!(ctx.eval_as::<types::String>(format_string).await);
+                    let format_string = try_result!(Context::eval_as::<types::String>(format_string).await);
 
                     let pos_args: Vec<_> = args.by_ref().collect();
                     let keyed_args = std::mem::take(&mut args.keyed);
@@ -170,7 +170,7 @@ fn format() -> Value {
                                 };
                                 match val {
                                     None => return source.with(format!("format string argument '{}' not found", disp)).into_error().into(),
-                                    Some(v) => try_result!(traits::display(ctx, v.clone(), &mut formatter).await)
+                                    Some(v) => try_result!(traits::display(v.clone(), &mut formatter).await)
                                 }
                             }
                         }
@@ -182,7 +182,7 @@ fn format() -> Value {
                 }
                 types::PatternArgs { mut args } => {
                     let format_string = try_result!(args.next().ok_or("missing format string"));
-                    let format_string = try_result!(ctx.eval_as::<types::String>(format_string).await);
+                    let format_string = try_result!(Context::eval_as::<types::String>(format_string).await);
 
                     let pos_args: Vec<_> = args.by_ref().collect();
                     let keyed_args = std::mem::take(&mut args.keyed);
@@ -234,10 +234,10 @@ fn format() -> Value {
 
                     let deps = depends![nsid!(std::string::format::pattern), ^@binds];
 
-                    types::Unbound::new_no_doc(move |ctx, arg| {
+                    types::Unbound::new_no_doc(move |arg| {
                         let binds = binds.clone();
                         async move {
-                            let s = try_result!(ctx.eval_as::<types::String>(arg).await);
+                            let s = try_result!(Context::eval_as::<types::String>(arg).await);
                             let s_source = Source::get(&s);
 
                             let mut bind_strings: std::collections::BTreeMap<Value, Vec<String>> = Default::default();
@@ -274,10 +274,10 @@ fn format() -> Value {
 
                             for (k,v) in bind_strings {
                                 if v.len() == 1 {
-                                    try_result!(traits::bind_no_error(ctx, k, Source::imbue(s_source.clone().with(crate::make_string(&v.into_iter().next().unwrap())))).await);
+                                    try_result!(traits::bind_no_error(k, Source::imbue(s_source.clone().with(crate::make_string(&v.into_iter().next().unwrap())))).await);
                                 } else {
                                     let v = Source::imbue(s_source.clone().with(types::Array(v.into_iter().map(|s| Source::imbue(s_source.clone().with(crate::make_string(&s)))).collect()).into()));
-                                    try_result!(traits::bind_no_error(ctx, k, v).await);
+                                    try_result!(traits::bind_no_error(k, v).await);
                                 }
                             }
 
@@ -285,7 +285,7 @@ fn format() -> Value {
                         }.boxed()
                     }, deps).into()
                 }
-                v => traits::bind_error(ctx, v).into()
+                v => traits::bind_error(v).into()
             }
         }.boxed()
     }, depends![nsid!(std::string::format)],
@@ -328,7 +328,7 @@ Substring matches are determined by non-greedily matching string portions of the
 ///
 /// Arguments: `:value`
 async fn from(value: _) -> Value {
-    ergo_runtime::try_result!(traits::into::<types::String>(CONTEXT, value).await).into()
+    ergo_runtime::try_result!(traits::into::<types::String>(value).await).into()
 }
 
 #[types::ergo_fn]
@@ -354,15 +354,15 @@ async fn split(pattern: types::String, s: types::String) -> Value {
 ///
 /// Returns a `String` representing the strings in `iter` separated by `separator`.
 async fn join(separator: types::String, iter: _) -> Value {
-    let iter = try_result!(traits::into::<types::Iter>(CONTEXT, iter).await);
+    let iter = try_result!(traits::into::<types::Iter>(iter).await);
 
-    let vals: Vec<_> = try_result!(iter.to_owned().collect(CONTEXT).await);
+    let vals: Vec<_> = try_result!(iter.to_owned().collect().await);
     let strs = try_result!(
-        CONTEXT
+        Context::global()
             .task
             .join_all(
                 vals.into_iter()
-                    .map(|v| CONTEXT.eval_as::<types::String>(v))
+                    .map(|v| Context::eval_as::<types::String>(v))
             )
             .await
     );
@@ -384,13 +384,11 @@ async fn trim(s: types::String) -> Value {
 mod test {
     use ergo_runtime::types::String;
 
-    ergo_script::test! {
+    ergo_script::tests! {
         fn chars(t) {
             t.assert_content_eq("self:array:from <| self:string:chars hello", "[h,e,l,l,o]");
         }
-    }
 
-    ergo_script::test! {
         fn format_create(t) {
             t.assert_value_eq("self:string:format \"hello {}\" world", &String::from("hello world"));
             t.assert_value_eq("self:string:format \"{1}{}{2}{0}\" a b c d", &String::from("baca"));
@@ -405,9 +403,7 @@ mod test {
             t.assert_fail("self:string:format \"{named}\" ^{:not-named=1}");
             t.assert_fail("self:string:format \"{{{}}\" a");
         }
-    }
 
-    ergo_script::test! {
         fn format_match(t) {
             t.assert_content_eq(r#"self:string:format "hello {}" :world = "hello world""#, "{ world = world }");
             t.assert_content_eq(r#"self:string:format "{1} {} {2} {0}" :a :b :c = "1 2 3 4""#, "{a = [2,4], b = 1, c = 3}");
@@ -422,26 +418,20 @@ mod test {
             t.assert_fail(r#"self:string:format "{named}" = s"#);
             t.assert_fail(r#"self:string:format "{{{}}" = s"#);
         }
-    }
 
-    ergo_script::test! {
         fn split(t) {
             t.assert_content_eq(r#"self:string:split l "hello world""#, r#"[he,"","o wor",d]"#);
             t.assert_content_eq(r#"self:string:split the "the fox jumps over the fence""#, r#"[""," fox jumps over "," fence"]"#);
             t.assert_content_eq(r#"self:string:split " " "the fox jumps over the fence""#, "[the,fox,jumps,over,the,fence]");
             t.assert_content_eq("self:string:split t tttt", r#"["","","","",""]"#);
         }
-    }
 
-    ergo_script::test! {
         fn join(t) {
             t.assert_content_eq(r#"self:string:join l [he,"","o wor",d]"#, r#""hello world""#);
             t.assert_content_eq(r#"self:string:join " " [the,fox,jumps,over,the,fence]"#, r#""the fox jumps over the fence""#);
             t.assert_content_eq(r#"self:string:join v ["","","","",""]"#, "vvvv");
         }
-    }
 
-    ergo_script::test! {
         fn trim(t) {
             t.assert_content_eq(r#"self:string:trim "
             something
