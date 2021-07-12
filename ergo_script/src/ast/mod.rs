@@ -1074,11 +1074,13 @@ impl<'a> ExpressionCompiler<'a> {
                 }
             },
             Index => |v| {
-                // Index expressions are considered forced.
                 let mut e_caps = Captures::default();
                 v.subexpressions_mut(|e| self.compile_captures(e, &mut e_caps));
                 v.captures = e_caps.direct.clone();
-                self.capture(e, src, &mut e_caps);
+                // Index expressions are considered forced if the value being indexed is a capture.
+                if v.value.expr_type() == ExpressionType::Capture {
+                    self.capture(e, src, &mut e_caps);
+                }
                 caps |= &e_caps;
             },
             Command => |v| {
@@ -1416,6 +1418,23 @@ mod test {
                     vec![a_key, ind1_key],
                 ),
             ],
+        );
+    }
+
+    #[test]
+    fn index_unforced() {
+        let mut ctx = keyset::Context::default();
+        let a_key = ctx.key();
+        assert_captures(
+            "a b |>:c",
+            E::block(vec![BI::Expr(src(E::index(
+                src(E::command(src(E::capture(a_key)), vec![CI::Expr(s("b"))])
+                    .set_captures(vec![a_key])),
+                s("c"),
+            )
+            .set_captures(vec![a_key])))])
+            .set_captures(vec![a_key]),
+            vec![(a_key, E::get(s("a")), vec![])],
         );
     }
 
