@@ -231,7 +231,8 @@ fn run(opts: Opts) -> Result<String, String> {
                         logger.new_error(e);
                     }
                 }
-            }),
+            })
+            .detect_deadlock(opts.detect_deadlock),
         load_path,
     )
     .expect("failed to create script context");

@@ -76,6 +76,13 @@ pub struct Opts {
     /// Check for common syntax mistakes while executing the script.
     pub lint: bool,
 
+    #[structopt(long)]
+    /// Enable deadlock detection.
+    ///
+    /// This comes with a performance penalty but may be useful to determine circular evaluation
+    /// cases.
+    pub detect_deadlock: bool,
+
     #[structopt(short, long)]
     /// Display documentation for the final value rather than executing it.
     ///

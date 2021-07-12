@@ -69,6 +69,8 @@ improvements, so no such distinction is made.
     index operations into the loaded value.
   * If `--expression` is used, arguments are passed as-is (and may have
     operators, other script types, etc).
+* Add a `--detect-deadlock` flag and functionality to detect deadlocks while
+  evaluating scripts.
 
 ### Evaluation Semantics
 The new evaluation semantics and data model are a drastic simplification over

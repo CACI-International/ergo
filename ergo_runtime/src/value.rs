@@ -204,13 +204,6 @@ impl Value {
         }
     }
 
-    /// Evaluate this value until it is typed.
-    pub async fn eval(&mut self) {
-        while !self.is_evaluated() {
-            self.eval_once().await;
-        }
-    }
-
     /// Return whether this value is fully evaluated (and has a type and data immediately available).
     pub fn is_evaluated(&self) -> bool {
         match &self.data {
@@ -358,6 +351,8 @@ pub trait MetadataKey {
 
 #[sabi_trait]
 trait DynamicNext: Clone + Send + Sync {
+    fn ref_id(&self) -> usize;
+
     #[sabi(last_prefix_field)]
     fn next(self) -> future::BoxFuture<'static, Value>;
 }
@@ -367,34 +362,51 @@ where
     F: FnOnce() -> Fut + Clone + Send + Sync + 'static,
     Fut: std::future::Future<Output = Value> + Send,
 {
+    fn ref_id(&self) -> usize {
+        self.as_ref() as *const futures::lock::Mutex<_> as usize
+    }
+
     fn next(self) -> future::BoxFuture<'static, Value> {
         future::BoxFuture::new(async move {
+            let lock_id = self.ref_id();
+            if Context::with(|ctx| ctx.evaluating.locking_would_deadlock(lock_id)) {
+                return crate::types::Error::from("deadlock detected").into();
+            }
+
             let mut guard = self.lock().await;
             match &mut *guard {
+                DynamicNextState::NeedContext {
+                    known_context_dependent: true,
+                    func,
+                } => {
+                    let func = func.clone();
+                    drop(guard);
+                    func().await
+                }
+                DynamicNextState::Done(val) => val.clone(),
                 DynamicNextState::NeedContext {
                     known_context_dependent,
                     func,
                 } => {
-                    // TODO determine if Pending is returned from a lock() call
-                    if *known_context_dependent {
-                        (func.clone())().await
-                    } else {
-                        let func = func.clone();
-                        let (val, accessed) = Context::fork(|_| {}, async move {
-                            let ret = func().await;
+                    Context::with(|ctx| ctx.evaluating.locked(lock_id));
+                    debug_assert!(!*known_context_dependent);
+                    let func = func.clone();
+                    let (val, accessed) =
+                        Context::fork(|ctx| ctx.evaluating.push(lock_id), async move {
+                            let val = func().await;
                             let accessed = Context::with(|ctx| ctx.dynamic_scope.accessed());
-                            (ret, accessed)
+                            (val, accessed)
                         })
                         .await;
-                        if accessed {
-                            *known_context_dependent = true;
-                        } else {
-                            *guard = DynamicNextState::Done(val.clone());
-                        }
-                        val
+                    if accessed {
+                        *known_context_dependent = true;
+                    } else {
+                        *guard = DynamicNextState::Done(val.clone());
                     }
+                    drop(guard);
+                    Context::with(|ctx| ctx.evaluating.unlocked(lock_id));
+                    val
                 }
-                DynamicNextState::Done(val) => val.clone(),
             }
         })
     }

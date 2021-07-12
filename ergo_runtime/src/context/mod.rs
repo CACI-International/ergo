@@ -9,6 +9,7 @@ use std::fmt;
 
 mod dynamic_scope;
 mod error_scope;
+mod evaluating;
 mod log;
 mod shared_state;
 mod store;
@@ -28,6 +29,7 @@ pub use self::log::{
 };
 pub use dynamic_scope::{DynamicScope, DynamicScopeKey, DynamicScopeRef};
 pub use error_scope::ErrorScope;
+pub use evaluating::Evaluating;
 pub use shared_state::SharedState;
 pub use store::{Item, ItemContent, ItemName, Store};
 pub use task::{thread_id, LocalKey, TaskManager, TaskPermit};
@@ -58,6 +60,8 @@ pub struct Context {
     pub dynamic_scope: DynamicScope,
     /// The error propagation interface.
     pub error_scope: ErrorScope,
+    /// The currently evaluating values.
+    pub(crate) evaluating: Evaluating,
 }
 
 /// A builder for a Context.
@@ -68,6 +72,7 @@ pub struct ContextBuilder {
     threads: Option<usize>,
     aggregate_errors: Option<bool>,
     error_scope: Option<ErrorScope>,
+    detect_deadlock: bool,
 }
 
 trait Fork {
@@ -144,6 +149,13 @@ impl ContextBuilder {
         self
     }
 
+    /// Set whether deadlock detection is enabled.
+    /// Default is false.
+    pub fn detect_deadlock(mut self, value: bool) -> Self {
+        self.detect_deadlock = value;
+        self
+    }
+
     /// Create a Context.
     pub fn build(self) -> Result<Context, BuilderError> {
         Ok(Context {
@@ -160,6 +172,7 @@ impl ContextBuilder {
             }),
             dynamic_scope: Default::default(),
             error_scope: self.error_scope.unwrap_or_default(),
+            evaluating: Evaluating::new(self.detect_deadlock),
         })
     }
 }
@@ -194,7 +207,23 @@ impl Context {
 
     /// Evaluate a value.
     pub async fn eval(value: &mut Value) -> crate::Result<()> {
-        value.eval().await;
+        if Self::with(|ctx| ctx.evaluating.deadlock_detect_enabled()) {
+            let mut set = std::collections::HashSet::<u128>::default();
+            while !value.is_evaluated() {
+                if !set.insert(value.id()) {
+                    *value = crate::metadata::Source::get(&value)
+                        .with("circular evaluation detected")
+                        .into_error()
+                        .into();
+                    break;
+                }
+                value.eval_once().await;
+            }
+        } else {
+            while !value.is_evaluated() {
+                value.eval_once().await;
+            }
+        }
         if value.is_type::<crate::types::Error>() {
             let error = value
                 .clone()
@@ -315,6 +344,7 @@ impl Fork for Context {
             global: self.global.fork(),
             dynamic_scope: self.dynamic_scope.fork(),
             error_scope: self.error_scope.fork(),
+            evaluating: self.evaluating.fork(),
         }
     }
 
@@ -323,5 +353,6 @@ impl Fork for Context {
         self.global.join(forked.global);
         self.dynamic_scope.join(forked.dynamic_scope);
         self.error_scope.join(forked.error_scope);
+        self.evaluating.join(forked.evaluating);
     }
 }
