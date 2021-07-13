@@ -29,6 +29,7 @@
   destructuring of strings.
 * Add `std:getopt` and `std:getopt:fn` to support simple conversion of string
   arguments containing long getopt-style flags to `Args`.
+* Add `std:identity` to get the identity of a value.
 
 ### Improvements
 * `std:match` now takes an array of cases rather than using the remaining

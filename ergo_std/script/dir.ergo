@@ -225,7 +225,7 @@ getopt-fn = :patargs -> :args -> bind :patargs <| plugin:getopt args:positional
 ##
 ## # Functions
 ## {{(mdoc:functions :self by-content cache debug default ergo-remote
-##    exec if import match optional required source-path task eval variable)}}
+##    eval exec identity if import match optional required source-path task variable)}}
 {
     ## The Any type.
     ##
@@ -428,7 +428,7 @@ getopt-fn = :patargs -> :args -> bind :patargs <| plugin:getopt args:positional
     }
 
     # Functions
-    import {by-content,cache,debug,eval,source-path,variable} = plugin:value
+    import {by-content,cache,debug,eval,identity,source-path,variable} = plugin:value
     import {optional,required} = :mtype
     default
     ergo-remote

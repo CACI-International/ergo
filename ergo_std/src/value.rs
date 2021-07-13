@@ -22,6 +22,7 @@ pub fn module() -> Value {
             "eval" = dynamic_binding_set()
         },
         "eval" = eval(),
+        "identity" = identity(),
         "meta" = crate::make_string_map! {
             "get" = meta_get(),
             "set" = meta_set()
@@ -169,11 +170,21 @@ async fn debug(value: _) -> Value {
 
     Context::global().log.debug(
         Source::get(&value)
-            .with(format!("type: {}{}, id: {}", name, rest, value.id()))
+            .with(format!("type: {}{}, id: {:032x}", name, rest, value.id()))
             .to_string(),
     );
 
     value
+}
+
+#[types::ergo_fn]
+/// Get the identity of a value.
+///
+/// Arguments: `:value`
+///
+/// Returns the identity as a 32-character hex string.
+async fn identity(value: _) -> Value {
+    types::String::from(format!("{:032x}", value.id())).into()
 }
 
 #[types::ergo_fn]
