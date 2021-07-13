@@ -91,7 +91,8 @@ pub async fn into<T: ErgoType + StableAbi + Eraseable>(
             Source::set_if_missing(&mut t, src);
             Ok(t)
         }
-        Err(e) => Err(src.with(e).into_error()),
+        // TODO add source if missing
+        Err(e) => Err(e),
     }
 }
 

@@ -3,7 +3,7 @@
 use abi_stable::StableAbi;
 
 /// A u128 wrapper.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, StableAbi)]
+#[derive(Clone, Copy, PartialEq, Eq, StableAbi)]
 #[repr(C, align(16))]
 pub struct U128([u64; 2]);
 
@@ -19,9 +19,15 @@ impl U128 {
     }
 }
 
+impl std::fmt::Debug for U128 {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        self.as_ref().fmt(f)
+    }
+}
+
 impl std::fmt::Display for U128 {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}", self.as_ref())
+        self.as_ref().fmt(f)
     }
 }
 

@@ -71,8 +71,7 @@ mod test {
         }
 
         fn match_case_body_failure(t) {
-            //TODO
-            t.assert_fail("self:match 1 [1 -> self:error:throw NO, 1 -> 1]");
+            t.assert_eq("self:match 1 [1 -> !self:types:Error: NO, 1 -> 2]", "2");
         }
 
         fn match_case_body_bind_failure(t) {

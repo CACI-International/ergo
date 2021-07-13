@@ -69,7 +69,7 @@ impl Default for Cached {
 /// rather than evaluating it. If not yet persisted, when the returned value is evaluated it will
 /// evaluate the inner value and persist it. Multiple values with the same id will be normalized to the
 /// same single runtime value.
-async fn cache(value: _, (no_persist): [_]) -> Value {
+async fn cache(mut value: _, (no_persist): [_]) -> Value {
     let id = value.id();
 
     let no_persist = no_persist.is_some();
@@ -88,6 +88,7 @@ async fn cache(value: _, (no_persist): [_]) -> Value {
     let mut guard = entry.lock().await;
     if guard.is_none() {
         let value = if no_persist {
+            drop(Context::eval(&mut value).await);
             value
         } else {
             let store = Context::global().store.item(item_name!("cache"));
@@ -96,7 +97,7 @@ async fn cache(value: _, (no_persist): [_]) -> Value {
             match traits::read_from_store(&store, id).await {
                 Ok(mut val) => {
                     log.debug(format!("successfully read cached value for {}", id));
-                    val.copy_metadata(&value);
+                    val.copy_metadata(&value); // TODO should this _not_ copy source location?
                     val
                 }
                 Err(err) => {
@@ -104,6 +105,7 @@ async fn cache(value: _, (no_persist): [_]) -> Value {
                         "failed to read cache value for {}, (re)caching: {}",
                         id, err
                     ));
+                    drop(Context::eval(&mut value).await);
                     drop(traits::eval_nested(value.clone()).await);
                     if let Err(e) = traits::write_to_store(&store, value.clone()).await {
                         log.warn(format!("failed to cache value for {}: {}", id, e));
