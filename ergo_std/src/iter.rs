@@ -117,7 +117,7 @@ async fn unique(iter: _) -> Value {
 async fn filter(func: _, iter: _) -> Value {
     let iter = try_result!(traits::into::<types::Iter>(iter).await);
 
-    let deps = depends![nsid!(std::iter::filter), iter];
+    let deps = depends![nsid!(std::iter::filter), func, iter];
 
     let iter = iter.to_owned();
 
@@ -522,8 +522,6 @@ async fn flatten(iter: _) -> Value {
 async fn map(func: _, iter: _) -> Value {
     let iter = try_result!(traits::into::<types::Iter>(iter).await);
 
-    let deps = depends![nsid!(std::iter::map), iter];
-
     let vals: Vec<_> = try_result!(iter.to_owned().collect().await);
     let new_iter = Context::global()
         .task
@@ -542,10 +540,11 @@ async fn map(func: _, iter: _) -> Value {
             .map(Ok)
         }))
         .await
-        .unwrap()
-        .into_iter();
+        .unwrap();
 
-    types::Iter::new_iter(new_iter, deps).into()
+    let deps = depends![^@new_iter];
+
+    types::Iter::new_iter(new_iter.into_iter(), deps).into()
 }
 
 #[types::ergo_fn]
@@ -559,7 +558,7 @@ async fn map(func: _, iter: _) -> Value {
 async fn map_lazy(func: _, iter: _) -> Value {
     let iter = try_result!(traits::into::<types::Iter>(iter).await);
 
-    let deps = depends![nsid!(std::iter::map_lazy), iter];
+    let deps = depends![nsid!(std::iter::map_lazy), func, iter];
 
     #[derive(Clone)]
     struct Map {
