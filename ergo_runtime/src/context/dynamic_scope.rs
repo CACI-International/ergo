@@ -17,6 +17,11 @@ pub trait DynamicScopeKey {
 
     /// Get the scope entry identifier for this key.
     fn id(&self) -> u128;
+
+    /// Return whether the scoped value affects consumer identity.
+    fn affects_identity(&self) -> bool {
+        true
+    }
 }
 
 impl DynamicScopeKey for Value {
@@ -83,7 +88,9 @@ impl DynamicScope {
     /// Get a value from the dynamic scope.
     pub fn get<T: DynamicScopeKey>(&self, key: &T) -> Option<DynamicScopeRef<T::Value>> {
         self.scope.get(&key.id()).map(|v| {
-            v.accessed.store(true, Ordering::Relaxed);
+            if key.affects_identity() {
+                v.accessed.store(true, Ordering::Relaxed);
+            }
             unsafe { DynamicScopeRef::new(EntryPointer(v.value.clone())) }
         })
     }
