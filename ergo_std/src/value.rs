@@ -66,11 +66,12 @@ impl Default for Cached {
 ///
 /// Caches the given value both at runtime and to persistent storage (to be cached across invocations).
 ///
-/// Returns a value identical to the argument, however possibly loads the value from a persisted store
-/// rather than evaluating it. If not yet persisted, when the returned value is evaluated it will
-/// evaluate the inner value and persist it. Multiple values with the same id will be normalized to the
-/// same single runtime value.
-async fn cache(mut value: _, (no_persist): [_]) -> Value {
+/// Returns a value with an identity derived from that of the argument, possibly loading the value
+/// from a persisted store rather than evaluating it. If not yet persisted, a copy of the value is
+/// evaluated and stored for future calls.
+///
+/// Multiple values with the same id will be deduplicated to the same single runtime value.
+async fn cache(value: _, (no_persist): [_]) -> Value {
     let id = value.id();
 
     let no_persist = no_persist.is_some();
@@ -88,8 +89,7 @@ async fn cache(mut value: _, (no_persist): [_]) -> Value {
         .clone();
     let mut guard = entry.lock().await;
     if guard.is_none() {
-        let value = if no_persist {
-            drop(Context::eval(&mut value).await);
+        let mut value = if no_persist {
             value
         } else {
             let store = Context::global().store.item(item_name!("cache"));
@@ -106,8 +106,6 @@ async fn cache(mut value: _, (no_persist): [_]) -> Value {
                         "failed to read cache value for {}, (re)caching: {}",
                         id, err
                     ));
-                    drop(Context::eval(&mut value).await);
-                    drop(traits::eval_nested(value.clone()).await);
                     if let Err(e) = traits::write_to_store(&store, value.clone()).await {
                         log.warn(format!("failed to cache value for {}: {}", id, e));
                     } else {
@@ -117,6 +115,7 @@ async fn cache(mut value: _, (no_persist): [_]) -> Value {
                 }
             }
         };
+        value.set_dependencies(depends![^CALL_DEPENDS, ergo_runtime::nsid!(std::cache::stored)]);
         *guard = Some(value);
     }
     guard.as_ref().unwrap().clone()
