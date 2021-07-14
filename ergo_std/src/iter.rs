@@ -17,6 +17,7 @@ pub fn module() -> Value {
         "flatten" = flatten(),
         "map" = map(),
         "map-lazy" = map_lazy(),
+        "no-errors" = no_errors(),
         "skip" = skip(),
         "skip-while" = skip_while(),
         "take" = take(),
@@ -32,6 +33,35 @@ pub fn module() -> Value {
 /// Arguments: `:value`
 async fn from(value: _) -> Value {
     try_result!(traits::into::<types::Iter>(value).await).into()
+}
+
+#[types::ergo_fn]
+/// Check that an iterator contains no errors.
+///
+/// Arguments: `(Into<Iter> :iter)`
+///
+/// Returns either the original Iter, or an aggregate Error if the iterator contained any errors.
+async fn no_errors(iter: _) -> Value {
+    let iter = try_result!(traits::into::<types::Iter>(iter).await);
+
+    let vals = try_result!(iter.clone().to_owned().collect::<Vec<_>>().await);
+
+    let mut errs = Vec::new();
+    for v in vals {
+        match v.as_type::<types::Error>() {
+            Ok(err) => errs.push(err.to_owned()),
+            _ => (),
+        }
+    }
+
+    if errs.is_empty() {
+        let mut iter = iter;
+        let deps = depends![nsid!(std::iter::no_errors::result), iter];
+        iter.set_dependencies(deps);
+        iter.into()
+    } else {
+        types::Error::aggregate(errs).into()
+    }
 }
 
 #[types::ergo_fn]

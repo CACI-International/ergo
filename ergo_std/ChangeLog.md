@@ -34,6 +34,7 @@
   execution (and not block calling threads), and add a `force-check` flag to
   allow forcing a file to be checked regardless of whether it was already
   checked (in case the file changed while scripts were executing).
+* Add `std:Iter:no-errors` to check for error values in an iterator.
 
 ### Improvements
 * `std:match` now takes an array of cases rather than using the remaining

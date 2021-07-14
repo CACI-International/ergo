@@ -278,7 +278,7 @@ getopt-fn = :patargs -> :args -> bind :patargs <| plugin:getopt args:positional
     ##
     ## # Functions
     ## {{
-    ##   (mdoc:functions :self from fold filter flatten map map-all skip skip-while
+    ##   (mdoc:functions :self from fold filter flatten map map-all no-errors skip skip-while
     ##    split take take-while unique zip)
     ## }}
     Iter = match-indices plugin:type:Iter {^plugin:iter, split = :iter-split}
