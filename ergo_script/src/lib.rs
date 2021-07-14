@@ -211,6 +211,14 @@ mod test {
     }
 
     #[test]
+    fn block_unset() -> Result<(), String> {
+        script_eval_to(
+            "b = {}; {b = b:b,:beta=two}",
+            SRMap(&[("beta", SRString("two"))]),
+        )
+    }
+
+    #[test]
     fn set_with_equals() -> Result<(), String> {
         script_eval_to(":a = \"1=2\"", SRMap(&[("a", SRString("1=2"))]))
     }
