@@ -14,6 +14,31 @@ use std::task::{Context, Poll};
 
 pub type Result<T> = std::io::Result<T>;
 
+/// Types that support adding context information.
+pub trait AddContext: Sized {
+    fn add_context_with<S: AsRef<str>, F: FnOnce() -> S>(self, context: F) -> Self;
+
+    fn add_context<S: AsRef<str>>(self, context: S) -> Self {
+        self.add_context_with(|| context)
+    }
+
+    fn add_context_str<S: ToString>(self, context: S) -> Self {
+        self.add_context_with(|| context.to_string())
+    }
+}
+
+impl AddContext for std::io::Error {
+    fn add_context_with<S: AsRef<str>, F: FnOnce() -> S>(self, context: F) -> Self {
+        Self::new(self.kind(), format!("{}: {}", context().as_ref(), self))
+    }
+}
+
+impl<T> AddContext for std::io::Result<T> {
+    fn add_context_with<S: AsRef<str>, F: FnOnce() -> S>(self, context: F) -> Self {
+        self.map_err(|e| e.add_context_with(context))
+    }
+}
+
 /// Wrap tokio::io::AsyncRead/AsyncWrite types.
 #[pin_project::pin_project]
 pub struct Tokio<T> {

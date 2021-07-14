@@ -95,6 +95,5 @@ scripts reside.
 * Add `fs:expose` or something named similarly to expose read-only files.
   * Change `fs:copy` behavior to actually make copies (i.e., write-able files).
 * Strongly control the lifetime of the thread pool using weak references in the
-  grease runtime.
+  runtime.
   * This will allow loaded plugins to be properly dropped rather than leaked.
-* Improve std::fs file not found errors (print the file!).

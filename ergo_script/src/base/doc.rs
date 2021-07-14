@@ -3,6 +3,7 @@
 use ergo_runtime::{
     context::{DynamicScopeKey, DynamicScopeRef},
     depends,
+    io::AddContext,
     metadata::{self, Doc},
     nsid, traits, try_result, types,
     value::match_value,
@@ -88,7 +89,7 @@ pub fn doc() -> Value {
             };
 
             if let Some(parent) = doc_path.parent() {
-                try_result!(std::fs::create_dir_all(parent));
+                try_result!(std::fs::create_dir_all(&parent).add_context_str(parent.display()));
             }
             let doc = try_result!(Context::fork(
                     |ctx| DocPath::new(path_source.with(doc_path.clone())).context(ctx, ARGS_SOURCE),
@@ -100,7 +101,7 @@ pub fn doc() -> Value {
             } else {
                 doc_path.set_extension("md");
             }
-            try_result!(std::fs::write(&doc_path, doc.as_bytes()));
+            try_result!(std::fs::write(&doc_path, doc.as_bytes()).add_context_str(doc_path.display()));
             types::Path::from(doc_path).into()
         }
     };
@@ -137,7 +138,7 @@ pub fn doc() -> Value {
                     doc_path.join(path_source.with(&rel_path));
                     let new_path = doc_path.current();
                     if let Some(parent) = new_path.parent() {
-                        try_result!(std::fs::create_dir_all(parent));
+                        try_result!(std::fs::create_dir_all(&parent).add_context_str(parent.display()));
                     }
                     let doc = try_result!(Context::fork(
                             move |ctx| doc_path.context(ctx, ARGS_SOURCE),
@@ -150,7 +151,7 @@ pub fn doc() -> Value {
                         rel_path.set_extension("md");
                     }
                     let output_file = old_doc_path.join(&rel_path);
-                    try_result!(std::fs::write(&output_file, doc.as_bytes()));
+                    try_result!(std::fs::write(&output_file, doc.as_bytes()).add_context_str(output_file.display()));
                     types::Path::from(rel_path).into()
                 }
             }
