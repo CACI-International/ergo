@@ -21,16 +21,8 @@ use std::sync::atomic::AtomicUsize;
 
 pub const EVAL_TASK_PRIORITY: u32 = 100;
 
-#[derive(Clone, Copy, Debug)]
-pub struct Evaluator {
-    deep_eval: bool,
-}
-
-impl Default for Evaluator {
-    fn default() -> Self {
-        Evaluator { deep_eval: false }
-    }
-}
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Evaluator;
 
 #[derive(Debug)]
 pub enum Capture {
@@ -340,11 +332,6 @@ impl BlockItemMode {
 }
 
 impl Evaluator {
-    pub fn evaluate_deep(mut self) -> Self {
-        self.deep_eval = true;
-        self
-    }
-
     /// Evaluate the given expression.
     pub fn evaluate(self, e: Expr, captures: &Captures) -> Value {
         self.evaluate_with_env(e, captures, None, &Sets::none())
@@ -469,11 +456,9 @@ impl Evaluator {
                             sets,
                         )
                         .await;
-                    //let immediate_bind = b.expr_type() == ast::ExpressionType::Set;
 
                     let new_sets = Sets::new();
                     let b = self
-                        //.evaluate_deep()
                         .evaluate_now_with_env(
                             b,
                             &captures,
@@ -486,43 +471,12 @@ impl Evaluator {
                     traits::bind_no_error(b, e).await?;
                     let new_sets = new_sets.into_inner();
 
-                    /*
-                    // Create proxy entries that will perform the bind.
-                    let bind_deps = depends![b, e];
-                    let ctx_c = ctx.clone();
-                    let to_bind = async move {
-                        let mut v = traits::bind(&ctx_c, b, e).await;
-                        ctx_c.eval(&mut v).await
-                    }
-                    .shared();
-                    */
-
                     if mode.doc() && sets.is_present() {
                         sets.extend(new_sets.clone());
                     }
 
                     for (cap, k, mut v) in new_sets {
-                        //let deps = depends![^bind_deps.clone(), k];
-                        //let to_bind = to_bind.clone();
                         Context::eval_once(&mut v).await;
-                        /*
-                        let v = if immediate_bind {
-                            // This is only the case for a set expression, which can never have an error when
-                            // binding, so we don't need to check the result of to_bind.
-                            assert!(to_bind.await.is_ok());
-                            ctx.eval_once(&mut v).await;
-                            v
-                        } else {
-                            let src = Source::get(&v);
-                            Source::imbue(src.with(Value::dyn_new(
-                                move |_| async move {
-                                    try_result!(to_bind.await);
-                                    v
-                                },
-                                deps,
-                            )))
-                        };
-                        */
 
                         env.insert(k, v.clone());
                         if let Some(cap) = cap {
@@ -548,11 +502,7 @@ impl Evaluator {
         local_env: Option<&LocalEnv>,
         sets: &Sets,
     ) -> Value {
-        let mut r = self.evaluate_with_env(e, captures, local_env, sets);
-        if self.deep_eval {
-            drop(Context::eval(&mut r).await);
-        }
-        r
+        self.evaluate_with_env(e, captures, local_env, sets)
     }
 
     /// Evaluate the given expression with an environment.
@@ -820,7 +770,8 @@ impl Evaluator {
                                     if let Some(last) = last {
                                         last
                                     } else {
-                                        types::Map(env.into()).into()
+                                        // Remove any Unset values
+                                        types::Map(env.into_iter().filter(|(_,v)| !v.is_type::<types::Unset>()).collect()).into()
                                     }
                                 }
                             }
