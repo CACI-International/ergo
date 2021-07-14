@@ -427,62 +427,109 @@ async fn sha1(file: types::Path, sum: types::String) -> Value {
 ///
 /// Arguments: `(StringOrPath :file)`
 ///
+/// Keyed Arguments:
+/// * `:force-check` - if set, always check the given file for a change, ignoring any cached
+///   change results from this run. This is useful if a file may have been changed while a script
+///   is executing.
+///
 /// Returns a `Path` that is identified by the contents of the file to which the argument refers.
 /// `file` must exist and refer to a file.
-async fn track(mut file: _) -> Value {
+async fn track(mut file: _, (force_check): [_]) -> Value {
     try_result!(Context::eval(&mut file).await);
     let file = match_value! {file,
         types::String(s) => s.as_str().into(),
         types::Path(p) => p.into_pathbuf(),
         v => return traits::type_error(v, "String or Path").into()
     };
+    let force_check = force_check.is_some();
 
-    let store = Context::global().store.item(item_name!("track"));
+    let loaded_info = try_result!(Context::global().shared_state.get(|| {
+        let store = Context::global().store.item(item_name!("track"));
+        LoadedTrackInfo::new(store)
+    }));
 
-    let loaded_info = try_result!(Context::global()
-        .shared_state
-        .get(move || LoadedTrackInfo::new(store)));
-    let guard = try_result!(loaded_info.info.read().map_err(|_| "poisoned"));
+    let hash = {
+        let file_entry = loaded_info.info.get(file.clone());
+        let mut guard = file_entry.lock().await;
+        match &mut *guard {
+            Some((_, Some(v))) if !force_check => *v,
+            other => {
+                let meta = try_result!(std::fs::metadata(&file));
+                let modification_time = try_result!(meta.modified());
 
-    let meta = try_result!(std::fs::metadata(&file));
-    let mod_time = try_result!(meta.modified());
+                let calc_hash = other
+                    .as_ref()
+                    .map(|(data, _)| data.modification_time < modification_time)
+                    .unwrap_or(true);
 
-    let calc_hash = guard
-        .get(&file)
-        .map(|data| data.modification_time < mod_time)
-        .unwrap_or(true);
-
-    let hash = if calc_hash {
-        drop(guard);
-        let mut guard = try_result!(loaded_info.info.write().map_err(|_| "poisoned"));
-        // Check again in case there was a race for the write lock
-        let entry = guard.get(&file);
-        let calc_hash = entry
-            .map(|data| data.modification_time < mod_time)
-            .unwrap_or(true);
-        if calc_hash {
-            let f = try_result!(std::fs::File::open(&file));
-            let hash = try_result!(ergo_runtime::hash::hash_read(f));
-            guard.insert(
-                file.clone(),
-                FileData {
-                    modification_time: mod_time,
-                    content_hash: hash,
-                },
-            );
-            hash
-        } else {
-            entry.unwrap().content_hash
+                if calc_hash {
+                    let f = try_result!(std::fs::File::open(&file));
+                    let content_hash = try_result!(ergo_runtime::hash::hash_read(f));
+                    *other = Some((
+                        FileData {
+                            modification_time,
+                            content_hash,
+                        },
+                        Some(content_hash),
+                    ));
+                    content_hash
+                } else {
+                    let inner = other.as_mut().unwrap();
+                    inner.1 = Some(inner.0.content_hash);
+                    inner.0.content_hash
+                }
+            }
         }
-    } else {
-        let hash = guard.get(&file).unwrap().content_hash;
-        drop(guard);
-        hash
     };
 
     let mut v: Value = types::Path::from(file).into();
     v.set_dependencies(depends![v.id(), hash]);
     v
+}
+
+/// A HashMap which allows insertion+retrieval of values by reference.
+struct RefHashMap<K, V> {
+    inner: std::sync::Mutex<std::collections::HashMap<K, Box<V>>>,
+}
+
+impl<K, V> Default for RefHashMap<K, V> {
+    fn default() -> Self {
+        RefHashMap {
+            inner: Default::default(),
+        }
+    }
+}
+
+impl<K: Eq + std::hash::Hash, V> std::iter::FromIterator<(K, V)> for RefHashMap<K, V> {
+    fn from_iter<T>(iter: T) -> Self
+    where
+        T: IntoIterator<Item = (K, V)>,
+    {
+        RefHashMap {
+            inner: std::sync::Mutex::new(iter.into_iter().map(|(k, v)| (k, Box::new(v))).collect()),
+        }
+    }
+}
+
+impl<K, V> RefHashMap<K, V> {
+    pub fn into_entries(self) -> Vec<(K, V)> {
+        self.inner
+            .into_inner()
+            .unwrap()
+            .into_iter()
+            .map(|(k, v)| (k, *v))
+            .collect()
+    }
+}
+
+impl<K: Eq + std::hash::Hash, V: Default> RefHashMap<K, V> {
+    pub fn get(&self, key: K) -> &V {
+        let v =
+            std::ptr::NonNull::from(self.inner.lock().unwrap().entry(key).or_default().as_ref());
+        // Safety: We only support adding entries to the hashmap, and as long as a reference is
+        // maintained the value will be present.
+        unsafe { v.as_ref() }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -491,11 +538,10 @@ struct FileData {
     content_hash: u128,
 }
 
-type TrackInfo = std::collections::HashMap<std::path::PathBuf, FileData>;
-
 #[derive(ErgoType)]
 struct LoadedTrackInfo {
-    pub info: std::sync::RwLock<TrackInfo>,
+    pub info:
+        RefHashMap<std::path::PathBuf, futures::lock::Mutex<Option<(FileData, Option<u128>)>>>,
     item: ergo_runtime::context::Item,
 }
 
@@ -503,32 +549,35 @@ impl LoadedTrackInfo {
     pub fn new(item: ergo_runtime::context::Item) -> ergo_runtime::Result<Self> {
         let info = if item.exists() {
             let content = item.read()?;
-            bincode::deserialize_from(content).map_err(|e| e.to_string())?
+            let stored: Vec<(std::path::PathBuf, FileData)> =
+                bincode::deserialize_from(content).map_err(|e| e.to_string())?;
+            stored
+                .into_iter()
+                .map(|(k, v)| (k, futures::lock::Mutex::new(Some((v, None)))))
+                .collect()
         } else {
-            TrackInfo::new()
+            Default::default()
         };
-        Ok(LoadedTrackInfo {
-            info: std::sync::RwLock::new(info),
-            item,
-        })
+        Ok(LoadedTrackInfo { info, item })
     }
 }
 
 impl std::ops::Drop for LoadedTrackInfo {
     fn drop(&mut self) {
-        if let Ok(info) = std::mem::take(&mut self.info).into_inner() {
-            let content = match self.item.write() {
-                Err(e) => {
-                    eprintln!("could not open fs::track info for writing: {}", e);
-                    return;
-                }
-                Ok(v) => v,
-            };
-            if let Err(e) = bincode::serialize_into(content, &info) {
-                eprintln!("error while serializing fs::track info: {}", e);
+        let content = match self.item.write() {
+            Err(e) => {
+                eprintln!("could not open fs::track info for writing: {}", e);
+                return;
             }
-        } else {
-            eprintln!("poisoned lock guard in fs::track info; not storing");
+            Ok(v) => v,
+        };
+        let entries = std::mem::take(&mut self.info).into_entries();
+        let entries: Vec<(std::path::PathBuf, FileData)> = entries
+            .into_iter()
+            .filter_map(|(k, v)| v.into_inner().map(|v| (k, v.0)))
+            .collect();
+        if let Err(e) = bincode::serialize_into(content, &entries) {
+            eprintln!("error while serializing fs::track info: {}", e);
         }
     }
 }

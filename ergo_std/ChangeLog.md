@@ -30,6 +30,10 @@
 * Add `std:getopt` and `std:getopt:fn` to support simple conversion of string
   arguments containing long getopt-style flags to `Args`.
 * Add `std:identity` to get the identity of a value.
+* Optimize the behavior of `std:fs:track` to share results throughout a single
+  execution (and not block calling threads), and add a `force-check` flag to
+  allow forcing a file to be checked regardless of whether it was already
+  checked (in case the file changed while scripts were executing).
 
 ### Improvements
 * `std:match` now takes an array of cases rather than using the remaining
