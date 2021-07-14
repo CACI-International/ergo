@@ -453,18 +453,27 @@ async fn track(mut file: _) -> Value {
         .unwrap_or(true);
 
     let hash = if calc_hash {
-        let f = try_result!(std::fs::File::open(&file));
-        let hash = try_result!(ergo_runtime::hash::hash_read(f));
         drop(guard);
         let mut guard = try_result!(loaded_info.info.write().map_err(|_| "poisoned"));
-        guard.insert(
-            file.clone(),
-            FileData {
-                modification_time: mod_time,
-                content_hash: hash,
-            },
-        );
-        hash
+        // Check again in case there was a race for the write lock
+        let entry = guard.get(&file);
+        let calc_hash = entry
+            .map(|data| data.modification_time < mod_time)
+            .unwrap_or(true);
+        if calc_hash {
+            let f = try_result!(std::fs::File::open(&file));
+            let hash = try_result!(ergo_runtime::hash::hash_read(f));
+            guard.insert(
+                file.clone(),
+                FileData {
+                    modification_time: mod_time,
+                    content_hash: hash,
+                },
+            );
+            hash
+        } else {
+            entry.unwrap().content_hash
+        }
     } else {
         let hash = guard.get(&file).unwrap().content_hash;
         drop(guard);
