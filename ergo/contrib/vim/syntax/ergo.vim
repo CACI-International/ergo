@@ -5,7 +5,7 @@ if exists("b:current_syntax")
 	finish
 endif
 
-set iskeyword=$,%,&,*,+,45-57,63-90,95-122,126,~
+set iskeyword=$,%,&,',*,+,45-57,63-90,95-122,126,~
 syn match ergoMerge /\^/
 syn match ergoForce /!/
 syn match ergoFunc /->/
@@ -22,7 +22,9 @@ syn match ergoIndexOperator contained /:/
 syn match ergoNoArgCommandOperator /:\_s/
 
 syn match ergoDataDelimiter /[\[\]{}]/
-syn region ergoQuotedString start=/\(\\\)\@<!"/ skip=/\\[\\"]/ end=/"/
+syn region ergoQuotedString contains=ergoStringEscape,ergoStringEscapeError start=/\(\\\)\@<!"/ skip=/\\[\\"]/ end=/"/
+syn match ergoStringEscapeError display contained /\\\(u{.*}\|.\)/
+syn match ergoStringEscape contained /\\\([\\"nt]\|u{\x\{1,6}}\)/
 syn region ergoRawQuotedString start=/\z('\+\)/ end=/\z1/
 syn match ergoComment contains=ergoDocComment,ergoTodo /#.*$/
 syn match ergoDocComment contains=ergoTodo /##.*$/
@@ -35,6 +37,8 @@ hi def link ergoComment Comment
 hi def link ergoDocComment SpecialComment
 hi def link ergoTodo Todo
 hi def link ergoQuotedString String
+hi def link ergoStringEscape Special
+hi def link ergoStringEscapeError Error
 hi def link ergoRawQuotedString String
 hi def link ergoDataDelimiter Normal
 hi def link ergoNoArgCommandOperator Normal
