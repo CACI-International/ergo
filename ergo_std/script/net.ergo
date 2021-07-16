@@ -19,6 +19,7 @@ download = fn (plugin:type:String :url) (plugin:type:Path :target) ^:rest -> {
 ##
 ## The url can resolve to anything that `fs:unarchive` accepts.
 ## Caches the result, only downloading a particular url once.
+##
 ## Returns the unpacked remote archive directory.
 unarchive-remote = fn :url -> plugin:value:cache {
     out = plugin:path:new:
