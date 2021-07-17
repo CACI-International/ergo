@@ -82,6 +82,30 @@ with-output-path = fn :f -> {
     { !f :file, :file }
 }
 
+## Match a path value or bind the source path of the value.
+##
+## Pattern Arguments: `:source`
+##
+## Pattern Keyed Arguments:
+## * `parent` - if present, the parent directory of the source path will be used.
+## * `no-source` - the value to bind if no source information is available, defaulting to
+##   `std:env:current-dir`.
+##
+## When called in a pattern expression and bound, if the bound value is a Path, `source` will be
+## bound to that path. Otherwise `source` will be bound to the source path of the bound value, or
+## its parent directory if `parent` is present. If the bound value has no source path,
+## `default` is bound.
+##
+## This is of particular use with function arguments to get function call site source paths and
+## allow them to be overriden.
+path-or-source = pat ^{parent,no-source = default :no-source as plugin:env:current-dir} :x -> matches [
+    plugin:type:Path :p -> bind :x :p
+    :other -> bind :x <| plugin:match (plugin:value:source-path :other) [
+        plugin:type:Path :p -> plugin:match :parent [plugin:type:Unset -> :p, _ -> plugin:path:parent :p]
+        plugin:type:Unset -> :no-source
+    ]
+]
+
 ## Create a recursive function. The passed function will be passed itself as the first argument, and
 ## all other arguments will be forwarded.
 ##
@@ -211,6 +235,13 @@ if = fn :cond :if_true ^:if_false -> plugin:match (plugin:bool:from :cond) [
 ## Passes all positional arguments to `std:getopt` and binds the result to the pattern arguments.
 getopt-fn = :patargs -> :args -> bind :patargs <| plugin:getopt args:positional
 
+## Map a possibly-Unset value.
+##
+## Arguments: `(Function :f) :value`
+##
+## If `value` is Unset, returns `value`, otherwise return `f` applied to `value`.
+unset-map = fn :f :v -> plugin:match :v [plugin:type:Unset -> :v, _ -> f :v]
+
 ## The ergo standard library.
 ##
 ## This library provides a number of submodules that group related functions, as well as some
@@ -221,11 +252,11 @@ getopt-fn = :patargs -> :args -> bind :patargs <| plugin:getopt args:positional
 ## {{mdoc:modules :self Any Array Bool Error Function Iter Map MapEntry Number Path String Unit Unset}}
 ##
 ## # Modules
-## {{mdoc:modules :self doc dynamic env fs io json log meta net type}}
+## {{mdoc:modules :self doc dynamic env fs io json log meta net source type}}
 ##
 ## # Functions
 ## {{(mdoc:functions :self by-content cache debug default ergo-remote
-##    eval exec identity if import match optional required source-path task variable)}}
+##    eval exec identity if import match optional required task variable)}}
 {
     ## The Any type.
     ##
@@ -320,8 +351,8 @@ getopt-fn = :patargs -> :args -> bind :patargs <| plugin:getopt args:positional
     ## {{type-function:}}
     ##
     ## # Functions
-    ## {{mdoc:functions :self new join split name parent relative with-output}}
-    Path = match-indices plugin:type:Path {^plugin:path, with-output = :with-output-path}
+    ## {{mdoc:functions :self new join split name or-source parent relative with-output}}
+    Path = match-indices plugin:type:Path {^plugin:path, with-output = :with-output-path, or-source = :path-or-source}
 
     ## The String type and related functions.
     ##
@@ -343,8 +374,11 @@ getopt-fn = :patargs -> :args -> bind :patargs <| plugin:getopt args:positional
     ## If called with no arguments, returns an Unset instance.
     ##
     ## When indexing maps, `Unset` is returned if a key does not exist.
-    ## To remove values from a map, you may bind them to `Unset` instances. 
-    Unset = plugin:type:Unset
+    ## To remove values from a map, you may bind them to `Unset` values.
+    ##
+    ## # Functions
+    ## {{mdoc:functions :self map}}
+    Unset = match-indices plugin:type:Unset {map = :unset-map}
 
     ## Documentation helpers.
     ##
@@ -420,6 +454,21 @@ getopt-fn = :patargs -> :args -> bind :patargs <| plugin:getopt args:positional
         import { http } = plugin:net
     }
 
+    ## Value source location functions.
+    ##
+    ## {{mdoc:functions :self copy dir path}}
+    source = {
+        copy = plugin:value:source-copy
+        ## Get the source directory of a value.
+        ##
+        ## Arguments: `:value`
+        ##
+        ## Returns the parent directory of the source path of `value`, or Unset if no source path is
+        ## available.
+        dir = fn :x -> unset-map plugin:path:parent <| plugin:value:source-path :x
+        path = plugin:value:source-path
+    }
+
     ## Type creation.
     ##
     ## {{mdoc:functions :self new enum struct}}
@@ -429,7 +478,7 @@ getopt-fn = :patargs -> :args -> bind :patargs <| plugin:getopt args:positional
     }
 
     # Functions
-    import {by-content,cache,debug,eval,identity,source-path,variable} = plugin:value
+    import {by-content,cache,debug,eval,identity,variable} = plugin:value
     import {optional,required} = :mtype
     default
     ergo-remote

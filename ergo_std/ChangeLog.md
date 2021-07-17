@@ -15,8 +15,10 @@
 * `std:script` is removed as the runtime no longer supports
 * Add `std:if`, which works the same as the old built-in (though without
   equivalent IfBind support).
-* Add `std:source-path` to get the source script of any value as a Path, if
-  available.
+* Add `std:source` module to get/manipulate source information of values.
+  * `path` returns the source path, if available.
+  * `dir` returns the parent of the source path, if available.
+  * `copy` copies the source information of one value to another.
 * Add `std:net:http`, which is mostly HTTP-feature-complete.
   * `std:net:download` still exists, but is implemented using `std:net:http` and
     now supports all keyed argments that `std:net:http` does.
@@ -35,6 +37,7 @@
   allow forcing a file to be checked regardless of whether it was already
   checked (in case the file changed while scripts were executing).
 * Add `std:Iter:no-errors` to check for error values in an iterator.
+* Add `std:Unset:map` to easily map functions on Unset values.
 
 ### Improvements
 * `std:match` now takes an array of cases rather than using the remaining

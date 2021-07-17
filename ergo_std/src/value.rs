@@ -27,6 +27,7 @@ pub fn module() -> Value {
             "get" = meta_get(),
             "set" = meta_set()
         },
+        "source-copy" = source_copy(),
         "source-path" = source_path(),
         "variable" = variable()
     }
@@ -240,6 +241,19 @@ async fn source_path(value: _) -> Value {
         None => types::Unset.into(),
         Some(p) => types::Path::from(p).into(),
     }
+}
+
+#[types::ergo_fn]
+/// Copy the source path of one value to another.
+///
+/// Arguments: `:from :to`
+///
+/// Returns `to` with its source set to that of `from`.
+async fn source_copy(from: _, mut to: _) -> Value {
+    if let Some(src) = Source::get_option(&from) {
+        Source::set(&mut to, src);
+    }
+    to
 }
 
 #[types::ergo_fn]
