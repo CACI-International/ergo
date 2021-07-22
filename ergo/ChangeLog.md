@@ -128,6 +128,11 @@ values to strictly _not_ have any further evaluation necessary allows for the
 moments where you _do_ evaluate values (which would have to be
 dynamically-typed) to produce `Error`-typed values representing any errors.
 
+#### The `Error` Type
+The new `Error` type behaves just like other types. In the future it will also
+support persisting so that you can cache error results as well. The type
+supports `Into<Bool>`, always converting to a `false` value (just like `Unset`).
+
 Types and traits still exist as before and operate in the same ways.
 
 ## 1.0.0-beta.9.1  -- 2021-04-05

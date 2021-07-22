@@ -2,7 +2,7 @@
 
 use crate as ergo_runtime;
 use crate::type_system::{ergo_traits_fn, ErgoType};
-use crate::{depends, Dependencies, TypedValue};
+use crate::{depends, traits, Dependencies, TypedValue};
 
 /// Script error type.
 pub use crate::Error;
@@ -16,6 +16,12 @@ impl From<&'_ Error> for Dependencies {
 impl From<Error> for TypedValue<Error> {
     fn from(v: Error) -> Self {
         Self::constant(v)
+    }
+}
+
+impl From<Error> for super::Bool {
+    fn from(_: Error) -> Self {
+        super::Bool(false)
     }
 }
 
@@ -78,6 +84,8 @@ ergo_traits_fn! {
         }
     }
     */
+
+    traits::IntoTyped::<super::Bool>::add_impl::<Error>(traits);
 
     crate::ergo_display_basic!(traits, Error);
     crate::ergo_type_name!(traits, Error);
