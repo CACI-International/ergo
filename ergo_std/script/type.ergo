@@ -66,6 +66,20 @@ required = pat :out -> :v -> !match :v [
     :other -> bind :out :other
 ]
 
+## Match one of a number of types.
+##
+## Arguments: `(Array :types)`
+##
+## Each item in `types` should be a type capable of being called in a pattern expression with a
+## single argument to bind.
+##
+## Returns a type that will check arguments like typical type functions.
+Or = fn (type:Array :tps) -> {
+    basic-type <| pat :out -> :v -> {
+        match :v <| plugin:value:source-copy :tps <| array:from <| iter:map (fn :tp -> tp !:out -> ()) :tps
+    }
+}
+
 ## Create an enumeration type.
 ## 
 ## Arguments: `(String :name) (Map :variants)`
@@ -121,4 +135,4 @@ enum = fn (type:String :name) (type:Map :variants) -> {
 ## ```
 struct = fn (type:String :name) (type:Map :fields) -> type:new :name <| MapValues :fields
 
-{optional,required,MapValues,MapOf,ArrayValues,ArrayOf,enum,struct}
+{optional,required,MapValues,MapOf,ArrayValues,ArrayOf,Or,enum,struct}

@@ -485,7 +485,7 @@ bind-or = pat (plugin:type:Array :cases) -> :v -> plugin:match :v :cases
 
     ## Value source location functions.
     ##
-    ## {{mdoc:functions :self copy dir path}}
+    ## {{mdoc:functions :self copy dir path map}}
     source = {
         copy = plugin:value:source-copy
         ## Get the source directory of a value.
@@ -496,13 +496,17 @@ bind-or = pat (plugin:type:Array :cases) -> :v -> plugin:match :v :cases
         ## available.
         dir = fn :x -> unset-map plugin:path:parent <| plugin:value:source-path :x
         path = plugin:value:source-path
+        ## Map a function on a value, retaining the value's source.
+        ##
+        ## Arguments: `(Function :f) :value`
+        map = fn :f :v -> plugin:value:source-copy :v (f :v)
     }
 
     ## Type creation.
     ##
-    ## {{mdoc:functions :self new enum struct}}
+    ## {{mdoc:functions :self new enum struct Or}}
     type = {
-        import {new} = plugin:type
+        import {new,Or} = plugin:type
         import {enum,struct} = :mtype
     }
 

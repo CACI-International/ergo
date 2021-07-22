@@ -19,6 +19,7 @@
   * `path` returns the source path, if available.
   * `dir` returns the parent of the source path, if available.
   * `copy` copies the source information of one value to another.
+  * `map` maps a function on a value but retains the original value's source.
 * Add `std:net:http`, which is mostly HTTP-feature-complete.
   * `std:net:download` still exists, but is implemented using `std:net:http` and
     now supports all keyed argments that `std:net:http` does.
@@ -40,6 +41,7 @@
 * Add `std:Unset:map` to easily map functions on Unset values.
 * Add a `bind` module with `and` and `or` functions, to help with binding
   multiple cases.
+* Add `std:type:Or` to create types which can be multiple other types.
 
 ### Improvements
 * `std:match` now takes an array of cases rather than using the remaining
