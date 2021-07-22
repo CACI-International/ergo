@@ -242,6 +242,25 @@ getopt-fn = :patargs -> :args -> bind :patargs <| plugin:getopt args:positional
 ## If `value` is Unset, returns `value`, otherwise return `f` applied to `value`.
 unset-map = fn :f :v -> plugin:match :v [plugin:type:Unset -> :v, _ -> f :v]
 
+## Bind a value to each binding provided.
+##
+## Pattern Arguments: `Array :cases`
+##
+## When bound with a value `v`, binds each value in `cases` with `v`, failing if any encounter an
+## error.
+bind-and = pat (plugin:type:Array :cases) -> :v -> {
+    plugin:iter:map (fn :case -> bind :case :v) :cases
+    ()
+}
+
+## Bind a value to at least one of the bindings provided.
+##
+## Pattern Arguments: `Array :cases`
+##
+## When bound with a value `v`, binds each value in `cases` with `v` until one does not error, and
+## produces an error if none match.
+bind-or = pat (plugin:type:Array :cases) -> :v -> plugin:match :v :cases
+
 ## The ergo standard library.
 ##
 ## This library provides a number of submodules that group related functions, as well as some
@@ -252,11 +271,12 @@ unset-map = fn :f :v -> plugin:match :v [plugin:type:Unset -> :v, _ -> f :v]
 ## {{mdoc:modules :self Any Array Bool Error Function Iter Map MapEntry Number Path String Unit Unset}}
 ##
 ## # Modules
-## {{mdoc:modules :self doc dynamic env fs io json log meta net source type}}
+## {{mdoc:modules :self bind doc dynamic env fs io json log meta net source type}}
 ##
 ## # Functions
 ## {{(mdoc:functions :self by-content cache debug default ergo-remote
-##    eval exec identity if import match optional required task variable)}}
+##    eval exec getopt identity if import match optional required task
+##    variable)}}
 {
     ## The Any type.
     ##
@@ -380,6 +400,15 @@ unset-map = fn :f :v -> plugin:match :v [plugin:type:Unset -> :v, _ -> f :v]
     ## {{mdoc:functions :self map}}
     Unset = match-indices plugin:type:Unset {map = :unset-map}
 
+    ## Binding helpers.
+    ##
+    ## # Functions
+    ## {{mdoc:functions :self and or}}
+    bind = {
+        and = :bind-and
+        or = :bind-or
+    }
+
     ## Documentation helpers.
     ##
     ## {{mdoc:functions :self summary modules functions}}
@@ -483,6 +512,10 @@ unset-map = fn :f :v -> plugin:match :v [plugin:type:Unset -> :v, _ -> f :v]
     default
     ergo-remote
     exec = plugin:exec
+    ## {{native-doc plugin:getopt}}
+    ##
+    ## # Functions
+    ## {{mdoc:functions :self fn}}
     getopt = match-indices plugin:getopt {fn = getopt-fn}
     import
     if

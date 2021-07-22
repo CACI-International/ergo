@@ -38,6 +38,8 @@
   checked (in case the file changed while scripts were executing).
 * Add `std:Iter:no-errors` to check for error values in an iterator.
 * Add `std:Unset:map` to easily map functions on Unset values.
+* Add a `bind` module with `and` and `or` functions, to help with binding
+  multiple cases.
 
 ### Improvements
 * `std:match` now takes an array of cases rather than using the remaining
