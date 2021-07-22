@@ -68,15 +68,15 @@ required = pat :out -> :v -> !match :v [
 
 ## Match one of a number of types.
 ##
-## Arguments: `(Array :types)`
+## Arguments: `^:types`
 ##
 ## Each item in `types` should be a type capable of being called in a pattern expression with a
 ## single argument to bind.
 ##
 ## Returns a type that will check arguments like typical type functions.
-Or = fn (type:Array :tps) -> {
+Or = fn ^:tps -> {
     basic-type <| pat :out -> :v -> {
-        match :v <| plugin:value:source-copy :tps <| array:from <| iter:map (fn :tp -> tp !:out -> ()) :tps
+        match :v <| plugin:value:source-copy :tps <| array:from <| iter:map (fn :tp -> tp !:out -> ()) tps:positional
     }
 }
 

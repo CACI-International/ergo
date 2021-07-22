@@ -13,6 +13,16 @@ mdoc = ergo doc
 mnet = ergo net
 mtype = ergo type
 
+## {{native-doc plugin:value:eval}}
+##
+## Pattern Arguments: `:value`
+##
+## When used in a pattern, evaluates the bound value before binding to the argument.
+eval = matches [
+    fn :x -> plugin:value:eval :x
+    pat :out -> :x -> bind :out (!plugin:value:eval :x)
+]
+
 ## Load a remote archive.
 ##
 ## Fetches the archive with `net:unarchive-remote`, and loads the archive from the root directory.
@@ -244,22 +254,22 @@ unset-map = fn :f :v -> plugin:match :v [plugin:type:Unset -> :v, _ -> f :v]
 
 ## Bind a value to each binding provided.
 ##
-## Pattern Arguments: `Array :cases`
+## Pattern Arguments: `^:cases`
 ##
 ## When bound with a value `v`, binds each value in `cases` with `v`, failing if any encounter an
 ## error.
-bind-and = pat (plugin:type:Array :cases) -> :v -> {
-    plugin:iter:map (fn :case -> bind :case :v) :cases
+bind-and = pat ^:cases -> :v -> {
+    plugin:iter:map (fn :case -> bind :case :v) cases:positional
     ()
 }
 
 ## Bind a value to at least one of the bindings provided.
 ##
-## Pattern Arguments: `Array :cases`
+## Pattern Arguments: `^:cases`
 ##
 ## When bound with a value `v`, binds each value in `cases` with `v` until one does not error, and
 ## produces an error if none match.
-bind-or = pat (plugin:type:Array :cases) -> :v -> plugin:match :v :cases
+bind-or = pat ^:cases -> :v -> plugin:match :v cases:posiitonal
 
 ## The ergo standard library.
 ##
@@ -511,10 +521,11 @@ bind-or = pat (plugin:type:Array :cases) -> :v -> plugin:match :v :cases
     }
 
     # Functions
-    import {by-content,cache,debug,eval,identity,variable} = plugin:value
+    import {by-content,cache,debug,identity,variable} = plugin:value
     import {optional,required} = :mtype
     default
     ergo-remote
+    eval
     exec = plugin:exec
     ## {{native-doc plugin:getopt}}
     ##
