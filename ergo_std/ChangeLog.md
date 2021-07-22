@@ -69,6 +69,8 @@
   to `Iter:map-lazy`.
 * Reordered `std:fs:unarchive` parameters to make more convenient to use with
   pipe operators.
+* Changed `std:env:path-search` to return `Unset` rather than `Error` if no
+  binary is found.
 
 ### Migration Guide
 * `std:match` cases should be passed as an array.

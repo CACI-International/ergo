@@ -109,25 +109,25 @@ fn home() -> Value {
 /// Arguments: `(StringOrPath :name)`
 ///
 /// If a Path is passed, it will simply be returned as-is. If a String is passed, it will search
-/// for the string in PATH. If not found, an error is returned. Otherwise the Path of the resolved
+/// for the string in PATH. If not found, Unset is returned. Otherwise the Path of the resolved
 /// file is returned.
 async fn path_search(mut string_or_path: _) -> Value {
     try_result!(Context::eval(&mut string_or_path).await);
     match_value! { string_or_path,
         p@types::Path(_) => p.into(),
         types::String(name) => {
-                let paths = std::env::var_os("PATH")
-                    .map(|path| std::env::split_paths(&path).collect())
-                    .unwrap_or(vec![]);
+            let paths = std::env::var_os("PATH")
+                .map(|path| std::env::split_paths(&path).collect())
+                .unwrap_or(vec![]);
 
-                for p in paths {
-                    let path = p.join(name.as_str());
-                    if path.is_file() {
-                        return types::Path::from(path).into();
-                    }
+            for p in paths {
+                let path = p.join(name.as_str());
+                if path.is_file() {
+                    return types::Path::from(path).into();
                 }
+            }
 
-                ARGS_SOURCE.with(format!("could not find {} in PATH", name.as_str())).into_error().into()
+            types::Unset.into()
         }
         other => traits::type_error(other, "String or Path").into()
     }
