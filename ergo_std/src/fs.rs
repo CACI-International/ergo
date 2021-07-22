@@ -82,11 +82,56 @@ async fn glob_(pattern: _) -> Value {
     }
 }
 
-fn recursive_link<F: AsRef<Path>, T: AsRef<Path>>(from: F, to: T) -> Result<(), std::io::Error> {
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum LinkMode {
+    Copy,
+    Hard,
+    Symbolic,
+    Fallback(Vec<LinkMode>),
+}
+
+impl std::str::FromStr for LinkMode {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "symbolic" => Ok(LinkMode::Symbolic),
+            "hard" => Ok(LinkMode::Hard),
+            "none" => Ok(LinkMode::Copy),
+            _ => Err("unsupported shallow specification"),
+        }
+    }
+}
+
+#[cfg(unix)]
+fn symlink_dir<P: AsRef<Path>, Q: AsRef<Path>>(original: P, link: Q) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(original, link)
+}
+
+#[cfg(windows)]
+fn symlink_dir<P: AsRef<Path>, Q: AsRef<Path>>(original: P, link: Q) -> std::io::Result<()> {
+    std::os::windows::fs::symlink_dir(original, link)
+}
+
+#[cfg(unix)]
+fn symlink_file<P: AsRef<Path>, Q: AsRef<Path>>(original: P, link: Q) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(original, link)
+}
+
+#[cfg(windows)]
+fn symlink_file<P: AsRef<Path>, Q: AsRef<Path>>(original: P, link: Q) -> std::io::Result<()> {
+    std::os::windows::fs::symlink_file(original, link)
+}
+
+fn recursive_link<F: AsRef<Path>, T: AsRef<Path>>(
+    from: F,
+    to: T,
+    mode: &LinkMode,
+) -> std::io::Result<()> {
     if to.as_ref().is_dir() {
         let mut to = to.as_ref().to_owned();
         to.push(from.as_ref().file_name().expect("path ends in .."));
-        return recursive_link(from, &to);
+        return recursive_link(from, &to, mode);
     }
 
     if to.as_ref().is_file() {
@@ -95,30 +140,81 @@ fn recursive_link<F: AsRef<Path>, T: AsRef<Path>>(from: F, to: T) -> Result<(), 
 
     let meta = std::fs::metadata(from.as_ref()).add_context_str(from.as_ref().display())?;
     if meta.is_dir() {
-        std::fs::create_dir_all(to.as_ref()).add_context_str(to.as_ref().display())?;
-        for d in from
-            .as_ref()
-            .read_dir()
-            .add_context_str(from.as_ref().display())?
-        {
-            let d = d.add_context_str(from.as_ref().display())?;
-            let name = d.file_name();
-            let mut to = to.as_ref().to_owned();
-            to.push(name);
-            recursive_link(d.path(), &to)?;
+        if mode == &LinkMode::Symbolic {
+            symlink_dir(from.as_ref(), to.as_ref()).add_context_with(|| {
+                format!(
+                    "while symlinking {} to {}",
+                    from.as_ref().display(),
+                    to.as_ref().display()
+                )
+            })?;
+        } else {
+            std::fs::create_dir_all(to.as_ref()).add_context_str(to.as_ref().display())?;
+            for d in from
+                .as_ref()
+                .read_dir()
+                .add_context_str(from.as_ref().display())?
+            {
+                let d = d.add_context_str(from.as_ref().display())?;
+                let name = d.file_name();
+                let mut to = to.as_ref().to_owned();
+                to.push(name);
+                recursive_link(d.path(), &to, mode)?;
+            }
         }
         Ok(())
     } else {
         if let Some(parent) = to.as_ref().parent() {
             std::fs::create_dir_all(parent).add_context_str(parent.display())?;
         }
-        std::fs::hard_link(from.as_ref(), to.as_ref()).add_context_with(|| {
-            format!(
-                "while hardlinking {} to {}",
-                from.as_ref().display(),
-                to.as_ref().display()
-            )
-        })
+
+        fn do_copy<P: AsRef<Path>, Q: AsRef<Path>>(
+            from: P,
+            to: Q,
+            mode: &LinkMode,
+        ) -> std::io::Result<()> {
+            match mode {
+                LinkMode::Copy => std::fs::copy(from.as_ref(), to.as_ref())
+                    .add_context_with(|| {
+                        format!(
+                            "while copying {} to {}",
+                            from.as_ref().display(),
+                            to.as_ref().display()
+                        )
+                    })
+                    .map(|_| ()),
+                LinkMode::Hard => {
+                    std::fs::hard_link(from.as_ref(), to.as_ref()).add_context_with(|| {
+                        format!(
+                            "while hardlinking {} to {}",
+                            from.as_ref().display(),
+                            to.as_ref().display()
+                        )
+                    })
+                }
+                LinkMode::Symbolic => {
+                    symlink_file(from.as_ref(), to.as_ref()).add_context_with(|| {
+                        format!(
+                            "while symlinking {} to {}",
+                            from.as_ref().display(),
+                            to.as_ref().display()
+                        )
+                    })
+                }
+                LinkMode::Fallback(modes) => {
+                    let mut last_result = Ok(());
+                    for m in modes {
+                        last_result = do_copy(from.as_ref(), to.as_ref(), m);
+                        if last_result.is_ok() {
+                            return Ok(());
+                        }
+                    }
+                    last_result
+                }
+            }
+        }
+
+        do_copy(from, to, mode)
     }
 }
 
@@ -127,10 +223,18 @@ fn recursive_link<F: AsRef<Path>, T: AsRef<Path>>(from: F, to: T) -> Result<(), 
 ///
 /// Arguments: `(Path :from) (Path :to)`
 ///
+/// Keyed Arguments:
+/// * `:shallow` - Create a shallow copy. May be set to one of the following values:
+///   * `symbolic` - symbolic links will be created
+///   * `hard` - hard links will be created
+///   * `none` - do not make a shallow copy
+///   * `Array :modes` - an array of the above, trying the next option on failure
+///   * `()` (by using `^shallow`, for instance) - the same as `[hard,symbolic]`
+///
 /// If the destination is an existing directory, `from` is copied with the same basename into that directory.
 /// All destination directories are automatically created.
 /// If `from` is a directory, it is recursively copied.
-async fn copy(from: types::Path, to: types::Path) -> Value {
+async fn copy(from: types::Path, to: types::Path, (shallow): [_]) -> Value {
     let log = Context::global().log.sublog("fs::copy");
 
     log.debug(format!(
@@ -139,9 +243,36 @@ async fn copy(from: types::Path, to: types::Path) -> Value {
         to.as_ref().0.as_ref().display()
     ));
 
+    let link_mode = match shallow {
+        None => LinkMode::Copy,
+        Some(mut v) => {
+            try_result!(Context::eval(&mut v).await);
+            let source = Source::get(&v);
+            match_value! { v,
+                types::Unit => LinkMode::Fallback(vec![LinkMode::Hard, LinkMode::Symbolic]),
+                types::String(s) => try_result!(s.parse::<LinkMode>().map_err(|e| source.with(e).into_error())),
+                types::Array(arr) => {
+                    if arr.is_empty() {
+                        return source.with("no shallow mode(s) specified").into_error().into();
+                    }
+                    let mut ret = Vec::new();
+                    for v in arr {
+                        let v = try_result!(Context::eval_as::<types::String>(v).await);
+                        let src = Source::get(&v);
+                        let types::String(s) = v.as_ref();
+                        ret.push(try_result!(s.parse::<LinkMode>().map_err(|e| src.with(e).into_error())));
+                    }
+                    LinkMode::Fallback(ret)
+                }
+                o => return traits::type_error(o, "String, Array, or Unit").into()
+            }
+        }
+    };
+
     try_result!(recursive_link(
         from.as_ref().0.as_ref(),
-        to.as_ref().0.as_ref()
+        to.as_ref().0.as_ref(),
+        &link_mode
     ));
     types::Unit.into()
 }
@@ -240,7 +371,8 @@ async fn archive(archive: types::Path, source: types::Path, (format): [types::St
     match ext.as_str() {
         "dir" => try_result!(recursive_link(
             source.as_ref().as_ref(),
-            archive.as_ref().as_ref()
+            archive.as_ref().as_ref(),
+            &LinkMode::Copy,
         )),
         "zip" => {
             let path = source.as_ref().as_ref();
@@ -410,7 +542,7 @@ async fn unarchive(destination: types::Path, mut archive: _) -> Value {
         types::Path(p) => {
             let path = p.as_ref();
             if path.is_dir() {
-                try_result!(recursive_link(path, to_path));
+                try_result!(recursive_link(path, to_path, &LinkMode::Copy));
             } else if path.is_file() {
                 try_result!(extract_to(try_result!(std::fs::File::open(&path).add_context_str(path.display())), to_path).map_err(|e| ARGS_SOURCE.with(e.error())));
             }

@@ -89,11 +89,7 @@ scripts reside.
   * Right now it only cancels tasks.
 * Persist command timing information for better estimates.
 * Add value dependency tree print to help debug consistency issues.
-* Change `path:new` to have identity based on source file and occurrence/seed
-  value.
 * Deduplicate values based on identity.
-* Add `fs:expose` or something named similarly to expose read-only files.
-  * Change `fs:copy` behavior to actually make copies (i.e., write-able files).
 * Strongly control the lifetime of the thread pool using weak references in the
   runtime.
   * This will allow loaded plugins to be properly dropped rather than leaked.

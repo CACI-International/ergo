@@ -62,6 +62,8 @@
 * Updated numeric arguments of functions to take the new `Number` type.
 * `std:net:http` will use the system native certificates rather than the mozilla
   webpki set.
+* `std:fs:copy` now supports a `shallow` keyed argument, which may be used to
+  make shallow copies rather than actual file copies.
 
 ### Breaking Changes
 * Renamed the `task-count` keyed argument of `task` to `count`.
@@ -71,6 +73,7 @@
   pipe operators.
 * Changed `std:env:path-search` to return `Unset` rather than `Error` if no
   binary is found.
+* `std:fs:copy` now defaults to making actual copies rather than hard links.
 
 ### Migration Guide
 * `std:match` cases should be passed as an array.
