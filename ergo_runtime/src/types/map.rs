@@ -118,6 +118,18 @@ ergo_traits_fn! {
                 super::Index(index) => {
                     self.0.get(&index).cloned().unwrap_or(super::Unset.into())
                 },
+                super::Args { args } | super::PatternArgs { args } => {
+                    if !args.positional.is_empty() {
+                        source.with("cannot bind to map when positional arguments present").into_error().into()
+                    } else {
+                        crate::try_result!(traits::bind_map(
+                                self.0.clone(),
+                                source.with(args.keyed),
+                                false
+                        ).await);
+                        super::Unit.into()
+                    }
+                },
                 Map(map) => {
                     crate::try_result!(traits::bind_map(self.0.clone(), source.with(map.clone()), false).await);
                     super::Unit.into()
