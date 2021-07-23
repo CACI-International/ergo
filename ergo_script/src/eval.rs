@@ -208,7 +208,9 @@ impl Captures {
                 if let Some(get) = expression.value().as_ref::<ast::Get>() {
                     if let Some(s) = (*get.value).as_ref::<ast::String>() {
                         match with.get(s.0.as_str()) {
-                            Some(r) => resolves.push((*k, r.clone())),
+                            Some(r) => {
+                                resolves.push((*k, r.clone()));
+                            }
                             None => {
                                 return Err(get.value.source().with("unbound value").into_error())
                             }

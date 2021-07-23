@@ -231,7 +231,7 @@ iter-split = fn :n :iter -> [plugin:iter:take :n :iter, plugin:iter:skip :n :ite
 if = fn :cond :if_true ^:if_false -> plugin:match (plugin:bool:from :cond) [
     plugin:bool:true -> :if_true
     plugin:bool:false -> plugin:match if_false:positional [
-        [] -> plugin:type:Unset:
+        [] -> :unset
         [:if_false] -> :if_false
         [_,^:rest] -> plugin:type:Error: (source=:rest) "too many arguments supplied to if"
     ]

@@ -31,3 +31,8 @@ pub async fn pat_args_to_index(ind: _) -> Value {
 pub async fn bind(to: _, from: _) -> Value {
     traits::bind(to, from).await
 }
+
+/// An `Unset` value.
+pub fn unset() -> Value {
+    types::Unset.into()
+}

@@ -14,9 +14,9 @@ syn match ergoSugar /\(|>\?\|<|\)/
 
 syn match ergoGetSet /:/
 
-syn match ergoIndex contains=ergoIndexOperator,ergoFunctions /\k\+\(:\k\+\)*/
+syn match ergoIndex contains=ergoIndexOperator,ergoBuiltins /\k\+\(:\k\+\)*/
 syn match ergoPipeIndex contains=ergoIndexOperator,ergoSugar /|>\(:\k\+\)\+/
-syn match ergoIndexPipe contains=ergoIndexOperator,ergoFunctions /\(\k\+:\)\+\ze<|/
+syn match ergoIndexPipe contains=ergoIndexOperator,ergoBuiltins /\(\k\+:\)\+\ze<|/
 syn match ergoIndexOperator contained /:/
 
 syn match ergoNoArgCommandOperator /:\_s/
@@ -28,7 +28,7 @@ syn match ergoStringEscape contained /\\\([\\"nt]\|u{\x\{1,6}}\)/
 syn region ergoRawQuotedString start=/\z('\+\)/ end=/\z1/
 syn match ergoComment contains=ergoDocComment,ergoTodo /#.*$/
 syn match ergoDocComment contains=ergoTodo /##.*$/
-syn match ergoFunctions contained /\<\(ergo\|pat\|fn\|index\|std\|workspace\|doc\|bind\)\>/
+syn match ergoBuiltins contained /\<\(ergo\|pat\|fn\|index\|std\|workspace\|doc\|bind\|unset\)\>/
 syn keyword ergoTodo contained TODO FIXME XXX
 
 let b:current_syntax = "ergo"
@@ -49,4 +49,4 @@ hi def link ergoFunc Operator
 hi def link ergoBind Operator
 hi def link ergoSugar Macro
 hi def link ergoIndexOperator Operator
-hi def link ergoFunctions Function
+hi def link ergoBuiltins Function

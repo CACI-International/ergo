@@ -304,11 +304,11 @@ mod test {
         }
 
         fn source_path(t) {
-            t.assert_eq("x = 1; self:value:source-path :x", "self:type:Unset:");
+            t.assert_eq("x = 1; self:value:source-path :x", ":unset");
         }
 
         fn dynamic_binding(t) {
-            t.assert_eq("self:value:dynamic:get something", "self:type:Unset:");
+            t.assert_eq("self:value:dynamic:get something", ":unset");
             t.assert_eq("v = self:value:dynamic:get something; self:value:dynamic:eval { something = value } :v", "value");
             t.assert_eq("f = fn :x -> <| self:value:dynamic:get my_func |> :x
                 say_hello = fn :name -> self:string:format 'hi, {}' :name

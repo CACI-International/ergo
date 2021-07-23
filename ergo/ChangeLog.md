@@ -71,6 +71,8 @@ improvements, so no such distinction is made.
     operators, other script types, etc).
 * Add a `--detect-deadlock` flag and functionality to detect deadlocks while
   evaluating scripts.
+* Add a `bind` builtin function for binding values explicitly.
+* Add an `unset` builtin value that is an Unset-typed value.
 
 ### Evaluation Semantics
 The new evaluation semantics and data model are a drastic simplification over

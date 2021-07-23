@@ -301,7 +301,7 @@ fn make_match_fn<S: Into<String>>(
 fn match_unset() -> Value {
     make_match_fn(
         types::Unset::ergo_type(),
-        Ok(types::Unset.into()),
+        Err("cannot compose; use script builtin `unset`".into()),
         "Matches an Unset value.",
     )
 }
@@ -495,10 +495,10 @@ mod test {
 
         fn unset(t) {
             t.assert_success("self:type:Unset {}:key");
+            t.assert_success("self:type:Unset :unset");
             t.assert_fail("self:type:Unset str");
-            t.assert_success("fn (self:type:Unset :x) -> () |> {}:key");
-            t.assert_success("fn self:type:Unset -> () |> {}:key");
-            t.assert_success("fn (self:type:Unset :x) -> () |> self:type:Unset:");
+            t.assert_success("fn (self:type:Unset :x) -> () |> :unset");
+            t.assert_success("fn self:type:Unset -> () |> :unset");
         }
 
         fn unit(t) {

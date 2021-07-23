@@ -686,7 +686,7 @@ mod test {
             t.assert_content_eq("self:iter:zip [a,b] [1,2] [x,y,z]", "self:iter:from [[a,1,x],[b,2,y]]");
             t.assert_content_eq("self:iter:zip :x :y = self:iter:from [[a,1],[b,2]]; [:x, :y]", "[self:iter:from [a,b],self:iter:from [1,2]]");
             t.assert_content_eq(
-                "self:iter:zip :x :y :z = self:iter:from [[a,1,x],[b,2],[c,3,y,q],[d,!self:type:Unset:,z]]; [:x, :y, :z]",
+                "self:iter:zip :x :y :z = self:iter:from [[a,1,x],[b,2],[c,3,y,q],[d,:unset,z]]; [:x, :y, :z]",
                 "[self:iter:from [a,b,c,d],self:iter:from [1,2,3],self:iter:from [x,y,z]]"
             );
         }

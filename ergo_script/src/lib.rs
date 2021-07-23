@@ -46,6 +46,7 @@ impl Runtime {
             ("index", base::pat_args_to_index()),
             ("doc", base::doc()),
             ("bind", base::bind()),
+            ("unset", base::unset()),
         ]
         .into_iter()
         .map(|(k, v)| {
@@ -198,6 +199,11 @@ mod test {
     }
 
     #[test]
+    fn unset() -> Result<(), String> {
+        script_eval_to(":unset", SRUnset)
+    }
+
+    #[test]
     fn array() -> Result<(), String> {
         script_eval_to("[a,b]", SRArray(&[SRString("a"), SRString("b")]))
     }
@@ -213,7 +219,7 @@ mod test {
     #[test]
     fn block_unset() -> Result<(), String> {
         script_eval_to(
-            "b = {}; {b = b:b,:beta=two}",
+            "{b = :unset,:beta=two}",
             SRMap(&[("beta", SRString("two"))]),
         )
     }

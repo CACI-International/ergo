@@ -76,6 +76,7 @@
 * `std:fs:copy` now defaults to making actual copies rather than hard links.
 * Reordered `std:meta:{get,set}` parameters to put the value last, aligning
   better with other function signatures.
+* Removed the `std:Unset:` function in favor of the builtin `:unset`.
 
 ### Migration Guide
 * `std:match` cases should be passed as an array.
