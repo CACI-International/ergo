@@ -596,6 +596,13 @@ impl<K, V> ScopeMap<K, V> {
         )
     }
 
+    pub fn close_disjoint_set_scope(&mut self, scope: Option<Scope<K, V>>) -> HashMap<K, V> {
+        match Rc::try_unwrap(std::mem::replace(&mut self.set_scope, scope).unwrap()) {
+            Err(_) => panic!("invalid disjoin set scope state"),
+            Ok(v) => v.into_inner(),
+        }
+    }
+
     pub fn restore_set_scope(&mut self, scope: Option<Scope<K, V>>) {
         self.set_scope = scope;
     }
@@ -875,7 +882,6 @@ pub type Context = keyset::Context;
 #[derive(Default)]
 struct Lint {
     unused_bindings: HashSet<Source<CaptureKey>>,
-    ignore_unused_bindings: bool,
     ignore_string_binding_conflict: bool,
     messages: Vec<Source<std::string::String>>,
 }
@@ -987,9 +993,7 @@ impl<'a> ExpressionCompiler<'a> {
 
     fn unused_binding(&mut self, key: Source<CaptureKey>) {
         if let Some(v) = &mut self.lint {
-            if !v.ignore_unused_bindings {
-                v.unused_bindings.insert(key);
-            }
+            v.unused_bindings.insert(key);
         }
     }
 
@@ -1004,17 +1008,6 @@ impl<'a> ExpressionCompiler<'a> {
             v.ignore_string_binding_conflict = true;
         }
         self
-    }
-
-    fn ignore_unused_bindings<R, F: FnOnce(&mut Self) -> R>(&mut self, ignore: bool, f: F) -> R {
-        if ignore && self.lint.is_some() {
-            self.lint.as_mut().unwrap().ignore_unused_bindings = true;
-            let ret = f(self);
-            self.lint.as_mut().unwrap().ignore_unused_bindings = false;
-            ret
-        } else {
-            f(self)
-        }
     }
 
     fn check_string_binding_conflict(&mut self, e: &Expr) {
@@ -1100,13 +1093,16 @@ impl<'a> ExpressionCompiler<'a> {
                         BlockItem::Bind(b, e) => {
                             self.compile_captures(&mut *e, &mut e_caps);
                             let old_scope = self.capture_mapping.current_as_set_scope();
-                            self.ignore_unused_bindings(ignore_unused_bindings, |me| me.compile_captures(&mut *b, &mut e_caps));
+                            self.compile_captures(&mut *b, &mut e_caps);
                             self.capture_mapping.restore_set_scope(old_scope);
                         }
                         BlockItem::Expr(e) | BlockItem::Merge(e) => self.compile_captures(&mut *e, &mut e_caps)
                     }
                 }
                 let in_scope = self.capture_mapping.up();
+                if ignore_unused_bindings {
+                    in_scope.values().for_each(|k| self.used_binding(*k));
+                }
                 let in_scope_captures = in_scope.into_iter().map(|v| v.1).collect();
 
                 e_caps.free.difference_with(&in_scope_captures);
@@ -1198,7 +1194,9 @@ impl<'a> ExpressionCompiler<'a> {
                             self.compile_captures(&mut *e, &mut e_caps);
                             let old_scope = self.capture_mapping.disjoint_set_scope();
                             self.compile_captures(&mut *b, &mut e_caps);
-                            self.capture_mapping.restore_set_scope(old_scope);
+                            let this_scope = self.capture_mapping.close_disjoint_set_scope(old_scope);
+                            // Consider any binds in scope to be used.
+                            this_scope.values().for_each(|k| self.used_binding(*k));
                         }
                         BlockItem::Expr(e) | BlockItem::Merge(e) => self.compile_captures(&mut *e, &mut e_caps)
                     }
@@ -1215,7 +1213,9 @@ impl<'a> ExpressionCompiler<'a> {
                             self.compile_captures(&mut *e, &mut e_caps);
                             let old_scope = self.capture_mapping.disjoint_set_scope();
                             self.compile_captures(&mut *b, &mut e_caps);
-                            self.capture_mapping.restore_set_scope(old_scope);
+                            let this_scope = self.capture_mapping.close_disjoint_set_scope(old_scope);
+                            // Consider any binds in scope to be used.
+                            this_scope.values().for_each(|k| self.used_binding(*k));
                         }
                         BlockItem::Expr(e) | BlockItem::Merge(e) => self.compile_captures(&mut *e, &mut e_caps)
                     }
@@ -1686,8 +1686,12 @@ mod test {
         fn unused_binding() {
             assert_no_lint_message("a = 100; :a");
             assert_lint_message("a = 100; b = 10; :b");
-            // maps should not issue lints
+            // maps should not issue unused binding lints
             assert_no_lint_message("a = 1; b = 2");
+            // commands should not issue unused binding lints
+            assert_no_lint_message("a (b=1)");
+            // nested bindings should not issue unused binding lints
+            assert_no_lint_message("{a,b} = :c");
         }
 
         #[test]
