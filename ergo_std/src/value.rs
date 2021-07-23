@@ -199,10 +199,10 @@ async fn eval(mut value: _) -> Value {
 #[types::ergo_fn]
 /// Get metadata of a value.
 ///
-/// Arguments: `:value :metadata-key`
+/// Arguments: `:metadata-key :value`
 ///
 /// Returns the metadata value or `Unset` if no key is set.
-async fn meta_get(value: _, metadata_key: _) -> Value {
+async fn meta_get(metadata_key: _, value: _) -> Value {
     match value.get_metadata(&Runtime {
         key: metadata_key.id(),
     }) {
@@ -214,17 +214,18 @@ async fn meta_get(value: _, metadata_key: _) -> Value {
 #[types::ergo_fn]
 /// Set metadata of a value.
 ///
-/// Arguments: `:value :metadata-key (Optional :metadata-value)`
+/// Arguments: `:metadata-key :metadata-value :value`
 ///
-/// You may omit the metadata value to unset a metadata key.
-async fn meta_set(mut value: _, metadata_key: _, metadata_value: [_]) -> Value {
+/// You may have an `Unset` `metadata-value` to remove a metadata key.
+async fn meta_set(metadata_key: _, metadata_value: _, mut value: _) -> Value {
     let key = Runtime {
         key: metadata_key.id(),
     };
 
-    match metadata_value {
-        Some(meta) => value.set_metadata(&key, meta),
-        None => value.clear_metadata(&key),
+    if metadata_value.is_type::<types::Unset>() {
+        value.clear_metadata(&key);
+    } else {
+        value.set_metadata(&key, metadata_value);
     }
     value
 }
