@@ -15,18 +15,16 @@ download = fn (plugin:type:String :url) (plugin:type:Path :target) ^:rest -> {
 
 ## Open a remote archive file.
 ##
-## Arguments: `(String :url)`
+## All arguments are forwarded to `std:net:http`.
 ##
-## The url can resolve to anything that `fs:unarchive` accepts.
+## The url can resolve to any content that `fs:unarchive` accepts.
 ## Caches the result, only downloading a particular url once.
 ##
 ## Returns the unpacked remote archive directory.
-unarchive-remote = fn :url -> plugin:value:cache {
-    out = plugin:path:new:
+unarchive-remote = fn ^:args -> plugin:value:cache {
     unpacked-dir = plugin:path:new:
-    plugin:net:download :url :out
-    plugin:fs:unarchive :unpacked-dir :out
-    plugin:fs:remove :out
+    archive = plugin:net:http ^:args |>:body
+    plugin:fs:unarchive :unpacked-dir :archive
     :unpacked-dir
 }
 
