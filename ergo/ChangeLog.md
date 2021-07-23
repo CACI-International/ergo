@@ -73,6 +73,10 @@ improvements, so no such distinction is made.
   evaluating scripts.
 * Add a `bind` builtin function for binding values explicitly.
 * Add an `unset` builtin value that is an Unset-typed value.
+* Change the `index` builtin to also support function calls, where `index :a b`
+  is the same as `a:b`.
+  * This is useful to force a delayed index when otherwise an index operator
+    would cause an expression to be captured (and thus evaluated ASAP).
 
 ### Evaluation Semantics
 The new evaluation semantics and data model are a drastic simplification over

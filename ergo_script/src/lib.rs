@@ -43,7 +43,7 @@ impl Runtime {
             ("workspace", load_functions.workspace),
             ("fn", base::pat_args_to_args()),
             ("pat", base::pat_args_to_pat_args()),
-            ("index", base::pat_args_to_index()),
+            ("index", base::index()),
             ("doc", base::doc()),
             ("bind", base::bind()),
             ("unset", base::unset()),
@@ -328,6 +328,8 @@ mod test {
         script_eval_to("{:alpha=one,:beta=two}:beta", SRString("two"))?;
         script_eval_to("{:alpha=one,:beta=two}:omega", SRUnset)?;
         script_eval_to("{:alpha=[a,{:key=b}]}:alpha:1:key", SRString("b"))?;
+        script_eval_to("index {a=1} a", SRString("1"))?;
+        script_eval_to("index [a,b,c] 1", SRString("b"))?;
         Ok(())
     }
 
@@ -619,6 +621,12 @@ mod test {
         fn map_args() -> Result<(), String> {
             script_eval_to("{a,b} -> :a |> (a=1) (b=2)", SRString("1"))?;
             script_fail("{a,b} -> :a |> arg")?;
+            Ok(())
+        }
+
+        #[test]
+        fn index() -> Result<(), String> {
+            script_eval_to("a = index :p -> :p; a:hello", SRString("hello"))?;
             Ok(())
         }
 
