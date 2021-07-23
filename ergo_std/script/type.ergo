@@ -1,4 +1,4 @@
-{type,match,map,iter,array,eval,^_} = ergo plugin
+{type,match,map,iter,array,eval,value,^_} = ergo plugin
 
 basic-type = fn :check -> :a -> !match :a [
     :check
@@ -76,7 +76,7 @@ required = pat :out -> :v -> !match :v [
 ## Returns a type that will check arguments like typical type functions.
 Or = fn ^:tps -> {
     basic-type <| pat :out -> :v -> {
-        match :v <| plugin:value:source-copy :tps <| array:from <| iter:map (fn :tp -> tp !:out -> ()) tps:positional
+        match :v <| value:source-copy :tps <| array:from <| iter:map (fn :tp -> tp !:out -> ()) tps:positional
     }
 }
 
