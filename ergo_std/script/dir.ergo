@@ -530,7 +530,7 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:posiitonal
     ##
     ## # Functions
     ## {{mdoc:functions :self fn}}
-    getopt = match-indices plugin:getopt {fn = getopt-fn}
+    getopt = match-indices plugin:getopt {fn = :getopt-fn}
     import
     if
     ## {{native-doc plugin:match}}

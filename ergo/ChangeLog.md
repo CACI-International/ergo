@@ -79,6 +79,8 @@ improvements, so no such distinction is made.
     would cause an expression to be captured (and thus evaluated ASAP).
 * Add lints for unused bindings and unnecessary force expressions, and improve
   linting for string/binding conflicts.
+* Add lint levels, defaulting to "on" when set without a level, and supporting
+  more aggressive (but less accurate) lints with "aggressive".
 
 ### Evaluation Semantics
 The new evaluation semantics and data model are a drastic simplification over

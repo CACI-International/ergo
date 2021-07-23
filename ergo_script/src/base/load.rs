@@ -20,7 +20,7 @@ pub struct LoadData {
     pub load_path: Arc<Vec<PathBuf>>,
     pub top_level_env: Arc<RMutex<BTreeMap<String, Value>>>,
     pub ast_context: Arc<RMutex<crate::ast::Context>>,
-    pub lint: Arc<std::sync::atomic::AtomicBool>,
+    pub lint: Arc<RMutex<crate::ast::LintLevel>>,
 }
 
 impl LoadData {
@@ -30,7 +30,7 @@ impl LoadData {
             load_path: Arc::new(load_path),
             top_level_env: Arc::new(RMutex::new(Default::default())),
             ast_context: Arc::new(RMutex::new(Default::default())),
-            lint: Arc::new(false.into()),
+            lint: Arc::new(RMutex::new(Default::default())),
         }
     }
 
@@ -46,14 +46,14 @@ impl LoadData {
         *self.top_level_env.lock() = env;
     }
 
-    /// Get whether linting is enabled.
-    pub fn lint(&self) -> bool {
-        self.lint.load(std::sync::atomic::Ordering::Relaxed)
+    /// Get the lint level.
+    pub fn lint_level(&self) -> crate::ast::LintLevel {
+        *self.lint.lock()
     }
 
-    /// Set whether linting is enabled.
-    pub fn set_lint(&self, lint: bool) {
-        self.lint.store(lint, std::sync::atomic::Ordering::Relaxed);
+    /// Set the lint level.
+    pub fn set_lint_level(&self, level: crate::ast::LintLevel) {
+        *self.lint.lock() = level;
     }
 
     /// Resolve a path to the full script path, based on the load path.
@@ -94,7 +94,7 @@ impl LoadData {
                         if !is_plugin(&path) {
                             let script_result = {
                                 let mut guard = me.ast_context.lock();
-                                crate::Script::load(source, &mut *guard, me.lint())
+                                crate::Script::load(source, &mut *guard, me.lint_level())
                             };
                             match script_result {
                                 Err(e) => Err(e),

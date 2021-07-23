@@ -72,9 +72,12 @@ pub struct Opts {
     /// Clear the storage directory prior to executing.
     pub clean: bool,
 
-    #[structopt(short, long)]
+    #[structopt(short, long, require_equals=true)]
     /// Check for common syntax mistakes while executing the script.
-    pub lint: bool,
+    ///
+    /// If the value is omitted, defaults to "on".
+    /// May be "off", "on", or "aggressive".
+    pub lint: Option<Option<ergo_script::LintLevel>>,
 
     #[structopt(long)]
     /// Enable deadlock detection.

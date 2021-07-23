@@ -847,7 +847,7 @@ impl DocCommentPart {
 pub fn load(
     src: Source<()>,
     ctx: &mut Context,
-    lint: bool,
+    lint: LintLevel,
 ) -> Result<
     (
         Expr,
@@ -879,11 +879,49 @@ pub fn load(
 /// Global context for compilation.
 pub type Context = keyset::Context;
 
-#[derive(Default)]
+#[derive(Debug, PartialEq, PartialOrd, Eq, Ord, Clone, Copy)]
+/// The lint level.
+pub enum LintLevel {
+    Off,
+    On,
+    Aggressive,
+}
+
+impl std::str::FromStr for LintLevel {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "off" => Ok(LintLevel::Off),
+            "on" => Ok(LintLevel::On),
+            "aggressive" => Ok(LintLevel::Aggressive),
+            _ => Err("invalid lint level"),
+        }
+    }
+}
+
+impl Default for LintLevel {
+    fn default() -> Self {
+        LintLevel::Off
+    }
+}
+
 struct Lint {
+    level: LintLevel,
     unused_bindings: HashSet<Source<CaptureKey>>,
     ignore_string_binding_conflict: bool,
     messages: Vec<Source<std::string::String>>,
+}
+
+impl Lint {
+    pub fn new(level: LintLevel) -> Self {
+        Lint {
+            level,
+            unused_bindings: Default::default(),
+            ignore_string_binding_conflict: Default::default(),
+            messages: Default::default(),
+        }
+    }
 }
 
 struct ExpressionCompiler<'a> {
@@ -977,11 +1015,11 @@ impl<'a> ExpressionCompiler<'a> {
         }
     }
 
-    pub fn enable_lint(&mut self, lint: bool) {
-        if lint {
-            self.lint = Some(Default::default());
-        } else {
+    pub fn enable_lint(&mut self, level: LintLevel) {
+        if level == LintLevel::Off {
             self.lint = None;
+        } else {
+            self.lint = Some(Lint::new(level));
         }
     }
 
@@ -1012,7 +1050,9 @@ impl<'a> ExpressionCompiler<'a> {
 
     fn check_string_binding_conflict(&mut self, e: &Expr) {
         if let Some(v) = &mut self.lint {
-            if !std::mem::take(&mut v.ignore_string_binding_conflict)
+            let ignore = std::mem::take(&mut v.ignore_string_binding_conflict);
+            if v.level == LintLevel::Aggressive
+                && !ignore
                 && e.expr_type() == ExpressionType::String
                 && self.capture_mapping.get(&e.id()).is_some()
             {
@@ -1711,7 +1751,7 @@ mod test {
             let (_, _, lints) = super::super::load(
                 Source::new(StringSource::new("<string>", s.to_owned())),
                 &mut ctx,
-                true,
+                LintLevel::Aggressive,
             )
             .unwrap();
             dbg!(&lints);
@@ -1723,7 +1763,7 @@ mod test {
             let (_, _, lints) = super::super::load(
                 Source::new(StringSource::new("<string>", s.to_owned())),
                 &mut ctx,
-                true,
+                LintLevel::Aggressive,
             )
             .unwrap();
             dbg!(&lints);
@@ -1759,7 +1799,7 @@ mod test {
         let (e, m, _) = super::load(
             Source::new(StringSource::new("<string>", s.to_owned())),
             &mut ctx,
-            false,
+            LintLevel::Off,
         )?;
         Ok((
             e,

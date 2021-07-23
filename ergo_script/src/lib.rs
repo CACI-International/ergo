@@ -23,6 +23,8 @@ pub mod constants {
     pub const PLUGIN_ENTRY: &'static str = concat!("_", program_name!(), "_plugin");
 }
 
+pub use ast::LintLevel;
+
 use eval::*;
 
 /// Script runtime functions.
@@ -65,16 +67,16 @@ impl Runtime {
         Ok(Runtime { load_data, ctx })
     }
 
-    /// Enable linting when loading scripts.
-    pub fn enable_lint(&self) {
-        self.load_data.set_lint(true);
+    /// Set the lint level when loading scripts.
+    pub fn lint_level(&self, level: LintLevel) {
+        self.load_data.set_lint_level(level);
     }
 
     /// Load a script from a Source.
     pub fn load(&self, src: Source<()>) -> Result<Script, Error> {
         let mut s = {
             let mut guard = self.load_data.ast_context.lock();
-            Script::load(src, &mut *guard, self.load_data.lint())?
+            Script::load(src, &mut *guard, self.load_data.lint_level())?
         };
         s.top_level_env(self.load_data.top_level_env.lock().clone());
         Ok(s)
@@ -151,8 +153,12 @@ pub struct Script {
 
 impl Script {
     /// Load a script from a Source.
-    pub(crate) fn load(src: Source<()>, ctx: &mut ast::Context, lint: bool) -> Result<Self, Error> {
-        ast::load(src, ctx, lint).map(|(ast, captures, lint_messages)| Script {
+    pub(crate) fn load(
+        src: Source<()>,
+        ctx: &mut ast::Context,
+        lint_level: LintLevel,
+    ) -> Result<Self, Error> {
+        ast::load(src, ctx, lint_level).map(|(ast, captures, lint_messages)| Script {
             ast,
             captures: captures.into_iter().collect(),
             top_level_env: Default::default(),

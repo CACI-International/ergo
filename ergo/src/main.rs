@@ -237,8 +237,8 @@ fn run(opts: Opts) -> Result<String, String> {
     )
     .expect("failed to create script context");
 
-    if opts.lint {
-        runtime.enable_lint();
+    if let Some(level) = opts.lint {
+        runtime.lint_level(level.unwrap_or(ergo_script::LintLevel::On));
     }
 
     // Set interrupt signal handler to abort tasks.
