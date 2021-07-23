@@ -869,7 +869,7 @@ struct ExpressionCompiler<'a> {
     capture_mapping: ScopeMap<u128, CaptureKey>,
 }
 
-// We have a two competing goals for capture calculation to satisfy. These are:
+// We have two competing goals for capture calculation to satisfy. These are:
 //
 // 1. We need to know which captures a particular capture depends on. This is used to determine
 //    when a capture can be evaluated: when all dependent captures have been evaluated, it can be.
@@ -1064,7 +1064,11 @@ impl<'a> ExpressionCompiler<'a> {
                             *e = Expression::capture(key);
                             caps.insert_free(key);
                         }
-                        None => self.capture(e, src, caps),
+                        None => {
+                            let mut e_caps = Captures::default();
+                            self.capture(e, src, &mut e_caps);
+                            caps |= &e_caps;
+                        }
                     }
                 } else {
                     let mut e_caps = Captures::default();
@@ -1387,6 +1391,26 @@ mod test {
             .set_captures(vec![a_key])))])
             .set_captures(vec![a_key]),
             vec![(a_key, E::get(s("a")), vec![])],
+        );
+    }
+
+    #[test]
+    fn multiple_unbound_captures() {
+        let mut ctx = keyset::Context::default();
+        let a_key = ctx.key();
+        let b_key = ctx.key();
+        assert_captures(
+            "a :b",
+            E::block(vec![BI::Expr(src(E::command(
+                src(E::capture(a_key)),
+                vec![CI::Expr(src(E::capture(b_key)))],
+            )
+            .set_captures(vec![a_key, b_key])))])
+            .set_captures(vec![a_key, b_key]),
+            vec![
+                (a_key, E::get(s("a")), vec![]),
+                (b_key, E::get(s("b")), vec![]),
+            ],
         );
     }
 
