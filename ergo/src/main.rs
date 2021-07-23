@@ -237,7 +237,9 @@ fn run(opts: Opts) -> Result<String, String> {
     )
     .expect("failed to create script context");
 
-    // TODO opts.lint
+    if opts.lint {
+        runtime.enable_lint();
+    }
 
     // Set interrupt signal handler to abort tasks.
     //

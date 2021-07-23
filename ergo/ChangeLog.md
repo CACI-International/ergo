@@ -77,6 +77,8 @@ improvements, so no such distinction is made.
   is the same as `a:b`.
   * This is useful to force a delayed index when otherwise an index operator
     would cause an expression to be captured (and thus evaluated ASAP).
+* Add lints for unused bindings and unnecessary force expressions, and improve
+  linting for string/binding conflicts.
 
 ### Evaluation Semantics
 The new evaluation semantics and data model are a drastic simplification over

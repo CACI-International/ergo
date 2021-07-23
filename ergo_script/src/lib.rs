@@ -65,11 +65,16 @@ impl Runtime {
         Ok(Runtime { load_data, ctx })
     }
 
+    /// Enable linting when loading scripts.
+    pub fn enable_lint(&self) {
+        self.load_data.set_lint(true);
+    }
+
     /// Load a script from a Source.
     pub fn load(&self, src: Source<()>) -> Result<Script, Error> {
         let mut s = {
             let mut guard = self.load_data.ast_context.lock();
-            Script::load(src, &mut *guard)?
+            Script::load(src, &mut *guard, self.load_data.lint())?
         };
         s.top_level_env(self.load_data.top_level_env.lock().clone());
         Ok(s)
@@ -141,15 +146,17 @@ pub struct Script {
     ast: ast::Expr,
     captures: eval::Captures,
     top_level_env: BTreeMap<String, Value>,
+    lint_messages: Vec<Source<String>>,
 }
 
 impl Script {
     /// Load a script from a Source.
-    pub(crate) fn load(src: Source<()>, ctx: &mut ast::Context) -> Result<Self, Error> {
-        ast::load(src, ctx).map(|(ast, captures)| Script {
+    pub(crate) fn load(src: Source<()>, ctx: &mut ast::Context, lint: bool) -> Result<Self, Error> {
+        ast::load(src, ctx, lint).map(|(ast, captures, lint_messages)| Script {
             ast,
             captures: captures.into_iter().collect(),
             top_level_env: Default::default(),
+            lint_messages,
         })
     }
 
@@ -163,15 +170,28 @@ impl Script {
         self.top_level_env.extend(env);
     }
 
-    /// Evaluate the script with the given runtime and additional load paths.
+    /// Evaluate the script.
+    ///
+    /// This must be called with the Context set.
     pub async fn evaluate(self) -> Result<Value, Error> {
-        let top_level_env = self.top_level_env;
+        let Script {
+            top_level_env,
+            lint_messages,
+            mut captures,
+            ast,
+        } = self;
+
+        if !lint_messages.is_empty() {
+            let lint_log = Context::global().log.sublog("lint");
+            for m in lint_messages {
+                lint_log.warn(m);
+            }
+        }
 
         let evaluator = Evaluator::default();
-        let mut captures = self.captures;
         captures.resolve_string_gets(top_level_env)?;
         captures.evaluate_ready(evaluator).await;
-        Ok(evaluator.evaluate(self.ast, &captures))
+        Ok(evaluator.evaluate(ast, &captures))
     }
 }
 

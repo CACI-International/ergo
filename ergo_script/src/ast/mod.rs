@@ -7,7 +7,7 @@ use ergo_runtime::abi_stable::type_erase::{Eraseable, Erased};
 use ergo_runtime::source::{IntoSource, Source};
 use ergo_runtime::{depends, Dependencies, Error, ResultIterator};
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::hash::Hasher;
 use std::rc::Rc;
@@ -840,7 +840,15 @@ impl DocCommentPart {
 pub fn load(
     src: Source<()>,
     ctx: &mut Context,
-) -> Result<(Expr, HashMap<CaptureKey, (Expr, CaptureSet)>), Error> {
+    lint: bool,
+) -> Result<
+    (
+        Expr,
+        HashMap<CaptureKey, (Expr, CaptureSet)>,
+        Vec<Source<std::string::String>>,
+    ),
+    Error,
+> {
     let toks = tokenize::Tokens::from(src.open()?);
     let tree_toks = tokenize_tree::TreeTokens::from(toks);
     let tree_parser = parse_tree::Parser::from(tree_toks);
@@ -855,18 +863,29 @@ pub fn load(
         })?;
 
     let mut compiler = ExpressionCompiler::with_context(ctx);
+    compiler.enable_lint(lint);
     compiler.compile_captures(&mut expr, &mut Default::default());
-    Ok((expr, compiler.into_captures()))
+    let lint_messages = compiler.lint_messages();
+    Ok((expr, compiler.into_captures(), lint_messages))
 }
 
 /// Global context for compilation.
 pub type Context = keyset::Context;
+
+#[derive(Default)]
+struct Lint {
+    unused_bindings: HashSet<Source<CaptureKey>>,
+    ignore_unused_bindings: bool,
+    ignore_string_binding_conflict: bool,
+    messages: Vec<Source<std::string::String>>,
+}
 
 struct ExpressionCompiler<'a> {
     capture_context: &'a mut Context,
     captures: HashMap<Expr, (CaptureKey, CaptureSet)>,
     needed_by: HashMap<CaptureKey, CaptureSet>,
     capture_mapping: ScopeMap<u128, CaptureKey>,
+    lint: Option<Lint>,
 }
 
 // We have two competing goals for capture calculation to satisfy. These are:
@@ -948,6 +967,66 @@ impl<'a> ExpressionCompiler<'a> {
             captures: Default::default(),
             needed_by: Default::default(),
             capture_mapping: Default::default(),
+            lint: Default::default(),
+        }
+    }
+
+    pub fn enable_lint(&mut self, lint: bool) {
+        if lint {
+            self.lint = Some(Default::default());
+        } else {
+            self.lint = None;
+        }
+    }
+
+    fn add_lint(&mut self, src: Source<()>, lint: &str) {
+        if let Some(v) = &mut self.lint {
+            v.messages.push(src.with(lint.into()));
+        }
+    }
+
+    fn unused_binding(&mut self, key: Source<CaptureKey>) {
+        if let Some(v) = &mut self.lint {
+            if !v.ignore_unused_bindings {
+                v.unused_bindings.insert(key);
+            }
+        }
+    }
+
+    fn used_binding(&mut self, key: CaptureKey) {
+        if let Some(v) = &mut self.lint {
+            v.unused_bindings.remove(&key);
+        }
+    }
+
+    fn ignore_string_binding_conflict(&mut self) -> &mut Self {
+        if let Some(v) = &mut self.lint {
+            v.ignore_string_binding_conflict = true;
+        }
+        self
+    }
+
+    fn ignore_unused_bindings<R, F: FnOnce(&mut Self) -> R>(&mut self, ignore: bool, f: F) -> R {
+        if ignore && self.lint.is_some() {
+            self.lint.as_mut().unwrap().ignore_unused_bindings = true;
+            let ret = f(self);
+            self.lint.as_mut().unwrap().ignore_unused_bindings = false;
+            ret
+        } else {
+            f(self)
+        }
+    }
+
+    fn check_string_binding_conflict(&mut self, e: &Expr) {
+        if let Some(v) = &mut self.lint {
+            if !std::mem::take(&mut v.ignore_string_binding_conflict)
+                && e.expr_type() == ExpressionType::String
+                && self.capture_mapping.get(&e.id()).is_some()
+            {
+                v.messages.push(e.source().with(
+                    "string matches a binding in scope; did you mean to use the binding?".into(),
+                ));
+            }
         }
     }
 
@@ -973,6 +1052,19 @@ impl<'a> ExpressionCompiler<'a> {
         e_caps.insert_free(key);
     }
 
+    pub fn lint_messages(&mut self) -> Vec<Source<std::string::String>> {
+        self.lint
+            .take()
+            .map(|lint| {
+                let mut messages = lint.messages;
+                for v in lint.unused_bindings {
+                    messages.push(v.with("unused binding".into()));
+                }
+                messages
+            })
+            .unwrap_or_default()
+    }
+
     pub fn into_captures(self) -> HashMap<CaptureKey, (Expr, CaptureSet)> {
         self.captures
             .into_iter()
@@ -981,6 +1073,7 @@ impl<'a> ExpressionCompiler<'a> {
     }
 
     pub fn compile_captures(&mut self, e: &mut Expr, mut caps: &mut Captures) {
+        self.check_string_binding_conflict(e);
         let src = e.source();
         let e = &mut **e;
         match_expression_mut!(e,
@@ -996,12 +1089,18 @@ impl<'a> ExpressionCompiler<'a> {
             Block => |v| {
                 self.capture_mapping.down();
                 let mut e_caps = Captures::default();
+                // Only warn about unused sets in bindings if the last value is an expression. This
+                // isn't completely accurate (a merged array may produce a final value rather than
+                // a map), but it is good enough and eliminates many false-positive lints.
+                let ignore_unused_bindings = v.items.last()
+                        .map(|e| match e { BlockItem::Expr(_) => false, _ => true })
+                        .unwrap_or_default();
                 for i in &mut v.items {
                     match i {
                         BlockItem::Bind(b, e) => {
                             self.compile_captures(&mut *e, &mut e_caps);
                             let old_scope = self.capture_mapping.current_as_set_scope();
-                            self.compile_captures(&mut *b, &mut e_caps);
+                            self.ignore_unused_bindings(ignore_unused_bindings, |me| me.compile_captures(&mut *b, &mut e_caps));
                             self.capture_mapping.restore_set_scope(old_scope);
                         }
                         BlockItem::Expr(e) | BlockItem::Merge(e) => self.compile_captures(&mut *e, &mut e_caps)
@@ -1046,6 +1145,7 @@ impl<'a> ExpressionCompiler<'a> {
                 if v.value.expr_type() == ExpressionType::String {
                     let key = self.capture_context.key();
                     self.capture_mapping.insert(v.value.id(), key);
+                    self.unused_binding(src.with(key));
                     v.capture_key = Some(key);
                 } else {
                     let mut e_caps = Captures::default();
@@ -1061,6 +1161,7 @@ impl<'a> ExpressionCompiler<'a> {
                     let key = self.capture_mapping.get(&v.value.id()).map(|v| *v);
                     match key {
                         Some(key) => {
+                            self.used_binding(key);
                             *e = Expression::capture(key);
                             caps.insert_free(key);
                         }
@@ -1079,7 +1180,8 @@ impl<'a> ExpressionCompiler<'a> {
             },
             Index => |v| {
                 let mut e_caps = Captures::default();
-                v.subexpressions_mut(|e| self.compile_captures(e, &mut e_caps));
+                self.compile_captures(&mut v.value, &mut e_caps);
+                self.ignore_string_binding_conflict().compile_captures(&mut v.index, &mut e_caps);
                 v.captures = e_caps.direct.clone();
                 // Index expressions are considered forced if the value being indexed is a capture.
                 if v.value.expr_type() == ExpressionType::Capture {
@@ -1128,7 +1230,7 @@ impl<'a> ExpressionCompiler<'a> {
                     let src = v.value.source();
                     self.capture(&mut *v.value, src, &mut e_caps);
                 } else {
-                    // TODO: Warn about unnecessary force
+                    self.add_lint(src, "force expression does nothing (expression already captured)");
                 }
                 caps |= &e_caps;
                 // Replace this expression with the capture expression (replacing _it_ with a unit
@@ -1577,6 +1679,54 @@ mod test {
         );
     }
 
+    mod lints {
+        use super::*;
+
+        #[test]
+        fn unused_binding() {
+            assert_no_lint_message("a = 100; :a");
+            assert_lint_message("a = 100; b = 10; :b");
+            // maps should not issue lints
+            assert_no_lint_message("a = 1; b = 2");
+        }
+
+        #[test]
+        fn string_binding_conflict() {
+            assert_lint_message("fn :x -> x");
+            assert_no_lint_message("fn :x :y -> { y, x = x:y }");
+        }
+
+        #[test]
+        fn unnecessary_force() {
+            assert_lint_message("a = {}, !a:b");
+            assert_lint_message("!:something");
+        }
+
+        fn assert_lint_message(s: &str) {
+            let mut ctx = super::super::Context::default();
+            let (_, _, lints) = super::super::load(
+                Source::new(StringSource::new("<string>", s.to_owned())),
+                &mut ctx,
+                true,
+            )
+            .unwrap();
+            dbg!(&lints);
+            assert!(!lints.is_empty());
+        }
+
+        fn assert_no_lint_message(s: &str) {
+            let mut ctx = super::super::Context::default();
+            let (_, _, lints) = super::super::load(
+                Source::new(StringSource::new("<string>", s.to_owned())),
+                &mut ctx,
+                true,
+            )
+            .unwrap();
+            dbg!(&lints);
+            assert!(lints.is_empty());
+        }
+    }
+
     fn assert(s: &str, expected: E) {
         assert_captures(s, expected, vec![]);
     }
@@ -1602,9 +1752,10 @@ mod test {
 
     fn load(s: &str) -> Result<(Expr, HashMap<CaptureKey, (Expression, CaptureSet)>), Error> {
         let mut ctx = super::Context::default();
-        let (e, m) = super::load(
+        let (e, m, _) = super::load(
             Source::new(StringSource::new("<string>", s.to_owned())),
             &mut ctx,
+            false,
         )?;
         Ok((
             e,
