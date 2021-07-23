@@ -25,10 +25,10 @@ eval = matches [
 
 ## Load a remote archive.
 ##
-## Fetches the archive with `net:unarchive-remote`, and loads the archive from the root directory.
+## Fetches the archive with `net:unarchive`, and loads the archive from the root directory.
 ##
 ## Arguments: `(String :url)`
-ergo-remote = fn :url -> ergo <| mnet:unarchive-remote :url
+ergo-remote = fn :url -> ergo <| mnet:unarchive :url
 
 ## Return any bound value as-is.
 ##
@@ -235,7 +235,6 @@ if = fn :cond :if_true ^:if_false -> plugin:match (plugin:bool:from :cond) [
         [:if_false] -> :if_false
         [_,^:rest] -> plugin:type:Error: (source=:rest) "too many arguments supplied to if"
     ]
-    #[plugin:bool:false, [:if_false]] -> :if_false
 ]
 
 ## Create a function which takes only string arguments as interpreted by `std:getopt`.
@@ -487,9 +486,9 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:posiitonal
 
     ## Networking functions.
     ##
-    ## {{mdoc:functions :self download http unarchive-remote}}
+    ## {{mdoc:functions :self download http unarchive}}
     net = {
-        import {download, unarchive-remote} = :mnet
+        import {download, unarchive} = :mnet
         import { http } = plugin:net
     }
 

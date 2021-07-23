@@ -77,6 +77,7 @@
 * Reordered `std:meta:{get,set}` parameters to put the value last, aligning
   better with other function signatures.
 * Removed the `std:Unset:` function in favor of the builtin `:unset`.
+* Rename `std:net:unarchive-remote` to `std:net:unarchive`.
 
 ### Migration Guide
 * `std:match` cases should be passed as an array.

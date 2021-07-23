@@ -21,11 +21,11 @@ download = fn (plugin:type:String :url) (plugin:type:Path :target) ^:rest -> {
 ## Caches the result, only downloading a particular url once.
 ##
 ## Returns the unpacked remote archive directory.
-unarchive-remote = fn ^:args -> plugin:value:cache {
+unarchive = fn ^:args -> plugin:value:cache {
     unpacked-dir = plugin:path:new:
     archive = plugin:net:http ^:args |>:body
     plugin:fs:unarchive :unpacked-dir :archive
     :unpacked-dir
 }
 
-{download, unarchive-remote}
+{download, unarchive}
