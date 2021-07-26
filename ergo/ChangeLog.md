@@ -84,6 +84,9 @@ improvements, so no such distinction is made.
 * Only apply the syntax sugar that expands a string in a block/map to a set/get
   expression to unquoted strings; quoted strings will be parsed as a normal
   string.
+* Allow `PatternArgs` types to be bound to `Args` types for convenience.
+  * Otherwise, you'd have to use `bind (fn ^:pat-args -> ()) :args`, which is
+    awkward.
 
 ### Evaluation Semantics
 The new evaluation semantics and data model are a drastic simplification over

@@ -357,6 +357,9 @@ ergo_traits_fn! {
                 PatternArgs { args } => {
                     bind_args(&self.args, src.with(args), |args| PatternArgs { args }.into()).await.into()
                 }
+                Args { args } => {
+                    bind_args(&self.args, src.with(args), |args| Args { args }.into()).await.into()
+                }
                 super::Index(ind) => {
                     args_index(ind, &self.args).await
                 }
