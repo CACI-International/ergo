@@ -108,7 +108,10 @@ async fn cache(value: _, (no_persist): [_]) -> Value {
                         id, err
                     ));
                     if let Err(e) = traits::write_to_store(&store, value.clone()).await {
-                        log.warn(format!("failed to cache value for {}: {}", id, e));
+                        log.warn(
+                            Source::get(&value)
+                                .with(format!("failed to cache value for {}: {}", id, e)),
+                        );
                     } else {
                         log.debug(format!("wrote cache value for {}", id));
                     }

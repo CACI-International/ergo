@@ -583,7 +583,16 @@ impl Evaluator {
                 metadata::Doc::set(&mut val, doc);
                 val
             },
-            Capture => |capture| captures.get(capture.0).ok_or_else(|| capture.0).expect("internal capture error").clone(),
+            Capture => |capture| match captures.get(capture.0) {
+                None => {
+                    if cfg!(debug_assertions) {
+                        panic!("{}", source.clone().with(format!("internal capture error: {:?}", capture.0)));
+                    } else {
+                        types::Unset.into()
+                    }
+                }
+                Some(v) => v.clone()
+            },
             Function => |func| {
                 let captures = captures.subset(&func.captures);
                 let deps = depends![e, ^&captures];
@@ -686,27 +695,6 @@ impl Evaluator {
             let (source, e) = e.take();
 
             let source_c = source.clone();
-            macro_rules! command_impl {
-                ( $cmd:expr, $arg_type:ident ) => {{
-                    let src = $cmd.function.source();
-                    let mut function = self.eval_with_env($cmd.function.clone(), &captures, None, sets).await;
-                    match self
-                        .evaluate_block_items($cmd.args.clone(), captures.clone(), BlockItemMode::Command, sets)
-                        .await
-                    {
-                        Err(e) => e.into(),
-                        Ok((pos, keyed, _)) => {
-                            if let Err(e) = Context::eval(&mut function).await {
-                                let mut val = e.into();
-                                Source::set_if_missing(&mut val, src);
-                                return val;
-                            }
-                            let args = types::args::Arguments::new(pos, keyed).unchecked();
-                            traits::bind(function, Source::imbue(source_c.with(types::$arg_type { args }.into()))).await
-                        }
-                    }
-                }};
-            }
 
             crate::match_expression!(e,
                 Unit => |_| self.eval_with_env(source.with(e), captures, local_env, sets).await,
@@ -788,8 +776,51 @@ impl Evaluator {
                             }
                             traits::bind(value, Source::imbue(source_c.with(types::Index(index).into()))).await
                         },
-                        Command => |cmd| command_impl!(cmd, Args),
-                        PatternCommand => |cmd| command_impl!(cmd, PatternArgs),
+                        Command => |cmd| {
+                            let src = cmd.function.source();
+                            let mut function = self.eval_with_env(cmd.function.clone(), &captures, None, sets).await;
+                            match self
+                                .evaluate_block_items(cmd.args.clone(), captures.clone(), BlockItemMode::Command, sets)
+                                .await
+                            {
+                                Err(e) => e.into(),
+                                Ok((pos, keyed, _)) => {
+                                    if let Err(e) = Context::eval(&mut function).await {
+                                        let mut val = e.into();
+                                        Source::set_if_missing(&mut val, src);
+                                        return val;
+                                    }
+                                    let args = types::args::Arguments::new(pos, keyed).unchecked();
+                                    traits::bind(function, Source::imbue(source_c.with(types::Args { args }.into()))).await
+                                }
+                            }
+                        },
+                        PatternCommand => |cmd| {
+                            let src = cmd.function.source();
+                            let mut function = self.eval_with_env(cmd.function.clone(), &captures, None, sets).await;
+                            match self
+                                .evaluate_block_items(cmd.args.clone(), captures.clone(), BlockItemMode::Command, sets)
+                                .await
+                            {
+                                Err(e) => e.into(),
+                                Ok((pos, keyed, _)) => {
+                                    if let Err(e) = Context::eval(&mut function).await {
+                                        let mut val = e.into();
+                                        Source::set_if_missing(&mut val, src);
+                                        return val;
+                                    }
+                                    let args = types::args::Arguments::new(pos, keyed).unchecked();
+                                    let pat_args = Source::imbue(source_c.with(types::PatternArgs { args }.into()));
+                                    // Pattern commands have all arguments evaluated immediately in
+                                    // debug builds to ensure that any set expressions are
+                                    // evaluated and properly added to the capture scope.
+                                    if cfg!(debug_assertions) {
+                                        try_result!(traits::eval_nested(pat_args.clone()).await);
+                                    }
+                                    traits::bind(function, pat_args).await
+                                }
+                            }
+                        },
                         _ => panic!("unexpected expression")
                     );
 

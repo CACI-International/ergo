@@ -382,6 +382,27 @@ mod test {
     }
 
     #[test]
+    fn bindings_unset() -> Result<(), String> {
+        script_eval_to(
+            "do-nothing = pat :x -> :v -> (); f = fn (do-nothing :x) -> :x; f hi",
+            SRUnset,
+        )?;
+        script_eval_to(
+            "do-nothing = pat :x -> :v -> (); f = fn (do-nothing (do-nothing :x)) -> :x; f hi",
+            SRUnset,
+        )?;
+        script_eval_to(
+            "do-nothing = pat :x -> :v -> (); f = fn (do-nothing [do-nothing :x]) -> :x; f hi",
+            SRUnset,
+        )?;
+        script_eval_to(
+            "do-nothing = pat :x -> :v -> (); f = fn (do-nothing {k = do-nothing :x}) -> :x; f hi",
+            SRUnset,
+        )?;
+        Ok(())
+    }
+
+    #[test]
     fn function() -> Result<(), String> {
         script_eval_to(":f = fn ^_ -> a\nf something", SRString("a"))?;
         script_eval_to(":f = fn :b -> :b\nf b", SRString("b"))?;
