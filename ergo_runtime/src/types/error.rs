@@ -72,18 +72,17 @@ where
 }
 
 ergo_traits_fn! {
-    // TODO
-    /*
     impl traits::Stored for Error {
-        async fn put(&self, _stored_ctx: &traits::StoredContext, item: crate::context::ItemContent) -> crate::RResult<()> {
-            bincode::serialize_into(item, &self.0.to_string()).into()
+        async fn put(&self, _stored_ctx: &traits::StoredContext, _item: crate::context::ItemContent) -> crate::RResult<()> {
+            // XXX for now, don't store anything but silently succeed (we will always fail in
+            // `get`). In the future we will support storing Errors.
+            Ok(()).into()
         }
 
-        async fn get(_stored_ctx: &traits::StoredContext, item: crate::context::ItemContent) -> crate::RResult<Erased> {
-            bincode::deserialize_from(item).map(|b: | Erased::new(Bool(b))).into()
+        async fn get(_stored_ctx: &traits::StoredContext, _item: crate::context::ItemContent) -> crate::RResult<crate::abi_stable::type_erase::Erased> {
+            Err("support for persisting errors not yet implemented".into()).into()
         }
     }
-    */
 
     traits::IntoTyped::<super::Bool>::add_impl::<Error>(traits);
 

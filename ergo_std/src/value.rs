@@ -256,6 +256,8 @@ async fn source_path(value: _) -> Value {
 async fn source_copy(from: _, mut to: _) -> Value {
     if let Some(src) = Source::get_option(&from) {
         Source::set(&mut to, src);
+    } else {
+        to.clear_metadata(&Source);
     }
     to
 }

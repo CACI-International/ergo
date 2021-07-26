@@ -21,6 +21,7 @@ pub struct LoadData {
     pub top_level_env: Arc<RMutex<BTreeMap<String, Value>>>,
     pub ast_context: Arc<RMutex<crate::ast::Context>>,
     pub lint: Arc<RMutex<crate::ast::LintLevel>>,
+    pub backtrace: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl LoadData {
@@ -31,6 +32,7 @@ impl LoadData {
             top_level_env: Arc::new(RMutex::new(Default::default())),
             ast_context: Arc::new(RMutex::new(Default::default())),
             lint: Arc::new(RMutex::new(Default::default())),
+            backtrace: Arc::new(false.into()),
         }
     }
 
@@ -54,6 +56,17 @@ impl LoadData {
     /// Set the lint level.
     pub fn set_lint_level(&self, level: crate::ast::LintLevel) {
         *self.lint.lock() = level;
+    }
+
+    /// Get whether backtraces are enabled.
+    pub fn backtrace(&self) -> bool {
+        self.backtrace.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Set whether backtraces are enabled.
+    pub fn set_backtrace(&self, backtrace: bool) {
+        self.backtrace
+            .store(backtrace, std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Resolve a path to the full script path, based on the load path.
@@ -100,6 +113,9 @@ impl LoadData {
                                 Err(e) => Err(e),
                                 Ok(mut s) => {
                                     s.top_level_env(me.top_level_env.lock().clone());
+                                    if me.backtrace() {
+                                        s.enable_backtrace();
+                                    }
                                     s.evaluate().await
                                 }
                             }

@@ -87,6 +87,8 @@ improvements, so no such distinction is made.
 * Allow `PatternArgs` types to be bound to `Args` types for convenience.
   * Otherwise, you'd have to use `bind (fn ^:pat-args -> ()) :args`, which is
     awkward.
+* Add a `--backtrace` argument to turn on evaluation backtrace context for
+  errors.
 
 ### Evaluation Semantics
 The new evaluation semantics and data model are a drastic simplification over

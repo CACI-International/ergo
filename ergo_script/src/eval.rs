@@ -22,7 +22,9 @@ use std::sync::atomic::AtomicUsize;
 pub const EVAL_TASK_PRIORITY: u32 = 100;
 
 #[derive(Clone, Copy, Debug, Default)]
-pub struct Evaluator;
+pub struct Evaluator {
+    pub backtrace: bool,
+}
 
 #[derive(Debug)]
 pub enum Capture {
@@ -683,8 +685,32 @@ impl Evaluator {
         val
     }
 
+    async fn evaluate_now_with_env(
+        self,
+        e: Expr,
+        captures: &Captures,
+        local_env: Option<&LocalEnv>,
+        sets: &Sets,
+    ) -> Value {
+        let src = e.source();
+        let v = self
+            .evaluate_now_with_env_impl(e, captures, local_env, sets)
+            .await;
+        if self.backtrace {
+            match v.as_type::<types::Error>() {
+                Ok(err) => err
+                    .to_owned()
+                    .with_context(src.with("while evaluating"))
+                    .into(),
+                Err(v) => v,
+            }
+        } else {
+            v
+        }
+    }
+
     /// Evaluate the given expression immediately with an environment.
-    fn evaluate_now_with_env<'a>(
+    fn evaluate_now_with_env_impl<'a>(
         self,
         e: Expr,
         captures: &'a Captures,

@@ -38,7 +38,7 @@ fn parse_error_limit(arg: &str) -> Result<Option<usize>, std::num::ParseIntError
 /// Ergo is a runtime and language built for lazy task execution.
 pub struct Opts {
     #[structopt(long = "log", default_value = "warn")]
-    /// The log level used for tasks.
+    /// The runtime log level.
     ///
     /// May be "debug", "info", "warn", or "error".
     pub log_level: LogLevel,
@@ -85,6 +85,10 @@ pub struct Opts {
     /// This comes with a performance penalty but may be useful to determine circular evaluation
     /// cases.
     pub detect_deadlock: bool,
+
+    #[structopt(long)]
+    /// Enable evaluation backtraces on errors.
+    pub backtrace: bool,
 
     #[structopt(short, long)]
     /// Display documentation for the final value rather than executing it.

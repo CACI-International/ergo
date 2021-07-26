@@ -241,6 +241,8 @@ fn run(opts: Opts) -> Result<String, String> {
         runtime.lint_level(level.unwrap_or(ergo_script::LintLevel::On));
     }
 
+    runtime.backtrace(opts.backtrace);
+
     // Set interrupt signal handler to abort tasks.
     //
     // Keep signal_handler_task in scope until the handler is no longer needed.

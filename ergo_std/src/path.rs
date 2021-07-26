@@ -132,11 +132,13 @@ async fn name(path: types::Path) -> Value {
 /// Returns a Path that is composed of the largest component suffix of `child` that are not
 /// components of `base`.
 async fn relative(base: types::Path, child: types::Path) -> Value {
-    try_result!(child
+    child
         .as_ref()
         .as_ref()
         .strip_prefix(base.as_ref().as_ref())
-        .map(|p| types::Path::from(p).into()))
+        .map(|p| types::Path::from(p))
+        .map_err(|e| ARGS_SOURCE.with(e).into_error())
+        .into()
 }
 
 #[cfg(test)]

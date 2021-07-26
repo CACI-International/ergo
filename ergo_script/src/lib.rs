@@ -72,6 +72,11 @@ impl Runtime {
         self.load_data.set_lint_level(level);
     }
 
+    /// Set whether backtraces are enabled when loading scripts.
+    pub fn backtrace(&self, backtrace: bool) {
+        self.load_data.set_backtrace(backtrace);
+    }
+
     /// Load a script from a Source.
     pub fn load(&self, src: Source<()>) -> Result<Script, Error> {
         let mut s = {
@@ -79,6 +84,9 @@ impl Runtime {
             Script::load(src, &mut *guard, self.load_data.lint_level())?
         };
         s.top_level_env(self.load_data.top_level_env.lock().clone());
+        if self.load_data.backtrace() {
+            s.enable_backtrace();
+        }
         Ok(s)
     }
 
@@ -149,6 +157,7 @@ pub struct Script {
     captures: eval::Captures,
     top_level_env: BTreeMap<String, Value>,
     lint_messages: Vec<Source<String>>,
+    backtrace: bool,
 }
 
 impl Script {
@@ -163,6 +172,7 @@ impl Script {
             captures: captures.into_iter().collect(),
             top_level_env: Default::default(),
             lint_messages,
+            backtrace: false,
         })
     }
 
@@ -176,6 +186,11 @@ impl Script {
         self.top_level_env.extend(env);
     }
 
+    /// Enable backtrace on errors while evaluating values from this script.
+    pub fn enable_backtrace(&mut self) {
+        self.backtrace = true;
+    }
+
     /// Evaluate the script.
     ///
     /// This must be called with the Context set.
@@ -185,6 +200,7 @@ impl Script {
             lint_messages,
             mut captures,
             ast,
+            backtrace,
         } = self;
 
         if !lint_messages.is_empty() {
@@ -194,7 +210,7 @@ impl Script {
             }
         }
 
-        let evaluator = Evaluator::default();
+        let evaluator = Evaluator { backtrace };
         captures.resolve_string_gets(top_level_env)?;
         captures.evaluate_ready(evaluator).await;
         Ok(evaluator.evaluate(ast, &captures))

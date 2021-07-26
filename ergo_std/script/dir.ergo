@@ -19,7 +19,7 @@ mtype = ergo type
 ##
 ## When used in a pattern, evaluates the bound value before binding to the argument.
 eval = matches [
-    fn :x -> plugin:value:eval :x
+    fn :x -> !plugin:value:eval :x
     pat :out -> :x -> bind :out (!plugin:value:eval :x)
 ]
 
