@@ -312,8 +312,8 @@ fn to_expression<E>(
     let string_implies = ctx.string_implies;
     ctx = ctx.string_implies(StringImplies::None);
     match t {
-        Tree::String(s) => {
-            if ctx.pattern && s == "_" {
+        Tree::String(s, quoted) => {
+            if ctx.pattern && s == "_" && !quoted {
                 Ok(source.with(Expression::bind_any()))
             } else {
                 let s = source.clone().with(Expression::string(s));

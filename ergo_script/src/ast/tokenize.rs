@@ -62,7 +62,10 @@ impl<I: Iterator> Iterator for LookaheadIterator<I> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SymbolicToken {
     /// A string, either from quoted or unquoted words.
-    String(String),
+    String {
+        string: String,
+        quoted: bool,
+    },
     /// A doc string.
     ///
     /// Doc strings will always be present immediately after `Token::DocComment`, and immediately
@@ -104,8 +107,11 @@ pub enum Token {
 }
 
 impl Token {
-    pub fn string<S: Into<String>>(s: S) -> Self {
-        Token::Symbol(SymbolicToken::String(s.into()))
+    pub fn string<S: Into<String>>(s: S, quoted: bool) -> Self {
+        Token::Symbol(SymbolicToken::String {
+            string: s.into(),
+            quoted,
+        })
     }
 
     pub fn doc_string<S: Into<String>>(s: S) -> Self {
@@ -203,7 +209,7 @@ impl Token {
     pub fn implies_value_when_before(&self) -> bool {
         match self {
             Token::Symbol(SymbolicToken::PipeRight)
-            | Token::Symbol(SymbolicToken::String(_))
+            | Token::Symbol(SymbolicToken::String { .. })
             | Token::Pair { open: false, .. } => true,
             _ => false,
         }
@@ -212,7 +218,7 @@ impl Token {
     pub fn implies_value_when_after(&self) -> bool {
         match self {
             Token::Symbol(SymbolicToken::PipeLeft)
-            | Token::Symbol(SymbolicToken::String(_))
+            | Token::Symbol(SymbolicToken::String { .. })
             | Token::Symbol(SymbolicToken::Colon)
             | Token::Symbol(SymbolicToken::Bang)
             | Token::Pair { open: true, .. } => true,
@@ -225,7 +231,8 @@ impl fmt::Display for SymbolicToken {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use SymbolicToken::*;
         match self {
-            String(s) => write!(f, "{}", s),
+            // TODO handle quoted
+            String { string, .. } => write!(f, "{}", string),
             DocString(s) => write!(f, "{}", s),
             Equal => write!(f, "="),
             Caret => write!(f, "^"),
@@ -387,7 +394,7 @@ impl DocComment {
 #[derive(Debug)]
 enum Pending {
     None,
-    String(String, ergo_runtime::source::Location),
+    String(String, bool, ergo_runtime::source::Location),
     Result(Result<Source<Token>, Source<Error>>),
 }
 
@@ -439,9 +446,9 @@ impl<I: Iterator<Item = char>> Tokens<I> {
     fn push_str(&mut self, c: char) {
         match &mut self.pending {
             Pending::None => {
-                self.pending = Pending::String(c.into(), self.source.location.clone());
+                self.pending = Pending::String(c.into(), false, self.source.location.clone());
             }
-            Pending::String(s, l) => {
+            Pending::String(s, _, l) => {
                 s.push(c);
                 *l = &*l + &self.source.location;
             }
@@ -452,13 +459,22 @@ impl<I: Iterator<Item = char>> Tokens<I> {
     fn extend_str(&mut self, s: String) {
         match &mut self.pending {
             Pending::None => {
-                self.pending = Pending::String(s, self.source.location.clone());
+                self.pending = Pending::String(s, false, self.source.location.clone());
             }
-            Pending::String(st, l) => {
+            Pending::String(st, _, l) => {
                 st.push_str(&s);
                 *l = &*l + &self.source.location;
             }
             Pending::Result(_) => panic!("cannot extend string"),
+        }
+    }
+
+    fn quoted_str(&mut self) {
+        match &mut self.pending {
+            Pending::String(_, quoted, _) => {
+                *quoted = true;
+            }
+            _ => panic!("invalid pending string state"),
         }
     }
 
@@ -651,6 +667,7 @@ impl<I: Iterator<Item = char>> Tokens<I> {
                             } else {
                                 if c == '"' {
                                     self.extend_str(s);
+                                    self.quoted_str();
                                     return self.next_non_string();
                                 } else if c == '\\' {
                                     escape = true;
@@ -686,6 +703,7 @@ impl<I: Iterator<Item = char>> Tokens<I> {
                         } else {
                             s.truncate(s.len() - close_count);
                             self.extend_str(s);
+                            self.quoted_str();
                             return self.next_non_string();
                         }
                     } else {
@@ -706,10 +724,10 @@ impl<I: Iterator<Item = char>> Iterator for Tokens<I> {
 
     fn next(&mut self) -> Option<Self::Item> {
         match std::mem::take(&mut self.pending) {
-            Pending::String(s, l) => {
+            Pending::String(s, quoted, l) => {
                 let mut src = self.source.clone();
                 src.location = l;
-                return Some(Ok(src.with(Token::string(s))));
+                return Some(Ok(src.with(Token::string(s, quoted))));
             }
             Pending::Result(r) => {
                 return Some(r);
@@ -719,11 +737,11 @@ impl<I: Iterator<Item = char>> Iterator for Tokens<I> {
 
         let next = self.next_non_string();
 
-        if let Pending::String(s, l) = std::mem::take(&mut self.pending) {
+        if let Pending::String(s, quoted, l) = std::mem::take(&mut self.pending) {
             self.pending = next.map(Pending::Result).unwrap_or(Pending::None);
             let mut src = self.source.clone();
             src.location = l;
-            Some(Ok(src.with(Token::string(s))))
+            Some(Ok(src.with(Token::string(s, quoted))))
         } else {
             next
         }
@@ -780,28 +798,31 @@ mod test {
         assert_tokens(
             "hello \"world[]{}():!,;=^|<||>->\" \"escape\\\"quote\\n\"",
             &[
-                Token::string("hello"),
+                Token::string("hello", false),
                 Token::Whitespace,
-                Token::string("world[]{}():!,;=^|<||>->"),
+                Token::string("world[]{}():!,;=^|<||>->", true),
                 Token::Whitespace,
-                Token::string("escape\"quote\n"),
+                Token::string("escape\"quote\n", true),
             ],
         )
     }
 
     #[test]
     fn raw_strings() -> Result<(), Source<Error>> {
-        assert_tokens(r"'hello \\\n world'", &[Token::string(r"hello \\\n world")])?;
+        assert_tokens(
+            r"'hello \\\n world'",
+            &[Token::string(r"hello \\\n world", true)],
+        )?;
         assert_tokens(
             r#"'''with ' quotes '' "123'''"#,
-            &[Token::string(r#"with ' quotes '' "123"#)],
+            &[Token::string(r#"with ' quotes '' "123"#, true)],
         )?;
         Ok(())
     }
 
     #[test]
     fn quote_concat_strings() -> Result<(), Source<Error>> {
-        assert_tokens("hello\"world\"'hi'", &[Token::string("helloworldhi")])
+        assert_tokens("hello\"world\"'hi'", &[Token::string("helloworldhi", true)])
     }
 
     #[test]
@@ -809,41 +830,41 @@ mod test {
         assert_tokens(
             "a[b]c{d}e(f)g:h,i;j^k=l\nm n|o<|p|>q!r->",
             &[
-                Token::string("a"),
+                Token::string("a", false),
                 Token::open_bracket(),
-                Token::string("b"),
+                Token::string("b", false),
                 Token::close_bracket(),
-                Token::string("c"),
+                Token::string("c", false),
                 Token::open_curly(),
-                Token::string("d"),
+                Token::string("d", false),
                 Token::close_curly(),
-                Token::string("e"),
+                Token::string("e", false),
                 Token::open_paren(),
-                Token::string("f"),
+                Token::string("f", false),
                 Token::close_paren(),
-                Token::string("g"),
+                Token::string("g", false),
                 Token::colon(),
-                Token::string("h"),
+                Token::string("h", false),
                 Token::Comma,
-                Token::string("i"),
+                Token::string("i", false),
                 Token::Semicolon,
-                Token::string("j"),
+                Token::string("j", false),
                 Token::caret(),
-                Token::string("k"),
+                Token::string("k", false),
                 Token::equal(),
-                Token::string("l"),
+                Token::string("l", false),
                 Token::Newline,
-                Token::string("m"),
+                Token::string("m", false),
                 Token::Whitespace,
-                Token::string("n"),
+                Token::string("n", false),
                 Token::pipe(),
-                Token::string("o"),
+                Token::string("o", false),
                 Token::pipe_left(),
-                Token::string("p"),
+                Token::string("p", false),
                 Token::pipe_right(),
-                Token::string("q"),
+                Token::string("q", false),
                 Token::bang(),
-                Token::string("r"),
+                Token::string("r", false),
                 Token::arrow(),
             ],
         )
@@ -851,7 +872,7 @@ mod test {
 
     #[test]
     fn unicode_escape() -> Result<(), Source<Error>> {
-        assert_tokens(r#""my \u{65}scape""#, &[Token::string("my escape")])
+        assert_tokens(r#""my \u{65}scape""#, &[Token::string("my escape", true)])
     }
 
     #[test]
@@ -914,9 +935,9 @@ mod test {
                 Token::DocComment,
                 Token::doc_string("This is a doc comment"),
                 Token::Newline,
-                Token::string("hello"),
+                Token::string("hello", false),
                 Token::Whitespace,
-                Token::string("world"),
+                Token::string("world", false),
             ],
         )?;
         assert_tokens(
@@ -932,7 +953,7 @@ mod test {
                 Token::DocComment,
                 Token::doc_string("  and more"),
                 Token::Newline,
-                Token::string("hello"),
+                Token::string("hello", false),
             ],
         )?;
         Ok(())
@@ -947,7 +968,7 @@ mod test {
                 Token::doc_string("doc comment "),
                 Token::open_doc_curly(),
                 Token::Whitespace,
-                Token::string("hello"),
+                Token::string("hello", false),
                 Token::Whitespace,
                 Token::close_doc_curly(),
                 Token::doc_string(""),
@@ -961,7 +982,7 @@ mod test {
                 Token::open_doc_curly(),
                 Token::Newline,
                 Token::DocComment,
-                Token::string("hello"),
+                Token::string("hello", false),
                 Token::Newline,
                 Token::DocComment,
                 Token::close_doc_curly(),

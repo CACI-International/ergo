@@ -235,7 +235,10 @@ mod test {
     use TreeToken::*;
 
     fn s(s: &str) -> TreeToken {
-        Symbol(String(s.into()))
+        Symbol(String {
+            string: s.into(),
+            quoted: false,
+        })
     }
 
     #[test]

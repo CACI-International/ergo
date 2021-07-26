@@ -10,7 +10,7 @@ pub type TreeVec = Vec<Source<Tree>>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Tree {
-    String(String),
+    String(String, bool),
     DocString(String),
     Bang(Box<Source<Tree>>),
     Caret(Box<Source<Tree>>),
@@ -182,7 +182,9 @@ where
                 let (source, t) = t.take();
                 Ok(Some(match t {
                     TreeToken::Symbol(s) => source.with(match s {
-                        SymbolicToken::String(s) => Tree::String(s).into(),
+                        SymbolicToken::String { string, quoted } => {
+                            Tree::String(string, quoted).into()
+                        }
                         SymbolicToken::DocString(s) => Tree::DocString(s).into(),
                         o => o.into(),
                     }),
@@ -209,12 +211,15 @@ where
                                     .map(|v| {
                                         let (source, v) = v.take();
                                         match v {
-                                            Tree::String(s) => {
-                                                let colon = Box::from(source.clone().with(
-                                                    Tree::ColonPrefix(
-                                                        source.clone().with(Tree::String(s)).into(),
-                                                    ),
-                                                ));
+                                            Tree::String(s, false) => {
+                                                let colon = Box::from(
+                                                    source.clone().with(Tree::ColonPrefix(
+                                                        source
+                                                            .clone()
+                                                            .with(Tree::String(s, false))
+                                                            .into(),
+                                                    )),
+                                                );
                                                 source
                                                     .with(Tree::Equal(colon.clone(), colon.clone()))
                                             }
@@ -734,13 +739,13 @@ mod test {
     where
         R: From<Source<Tree>>,
     {
-        src(String(s.into()))
+        src(String(s.into(), false))
     }
 
     #[test]
     fn string() {
-        assert_single("s", String("s".into()));
-        assert_single("\"hello world\"", String("hello world".into()));
+        assert_single("s", String("s".into(), false));
+        assert_single("\"hello world\"", String("hello world".into(), true));
     }
 
     #[test]
@@ -754,7 +759,7 @@ mod test {
     #[test]
     fn parens() {
         assert_single("a b", Parens(vec![s("a"), s("b")]));
-        assert_single("((a))", String("a".into()));
+        assert_single("((a))", String("a".into(), false));
     }
 
     #[test]
@@ -857,7 +862,7 @@ mod test {
         assert_same("a b <| c", "a b c");
         assert_same(
             "a | b <| c <| d | e |> f <| g | h",
-            "b (c ((e d) f (h g))) a"
+            "b (c ((e d) f (h g))) a",
         );
         assert_same("a b |>:<| c d", "(a b):(c d)");
         assert_same("a b <|", "a b ()");

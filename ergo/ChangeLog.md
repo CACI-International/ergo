@@ -81,6 +81,9 @@ improvements, so no such distinction is made.
   linting for string/binding conflicts.
 * Add lint levels, defaulting to "on" when set without a level, and supporting
   more aggressive (but less accurate) lints with "aggressive".
+* Only apply the syntax sugar that expands a string in a block/map to a set/get
+  expression to unquoted strings; quoted strings will be parsed as a normal
+  string.
 
 ### Evaluation Semantics
 The new evaluation semantics and data model are a drastic simplification over

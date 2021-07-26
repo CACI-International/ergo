@@ -268,6 +268,11 @@ mod test {
     }
 
     #[test]
+    fn block_string() -> Result<(), String> {
+        script_eval_to(":a = 1\n:b = 2\n{:c=3,a,\"b\"}", SRString("b"))
+    }
+
+    #[test]
     fn block_set_ref() -> Result<(), String> {
         script_eval_to(":a = b\n{::a = 1}", SRMap(&[("b", SRString("1"))]))
     }
