@@ -73,6 +73,9 @@ impl Default for Cached {
 ///
 /// Multiple values with the same id will be deduplicated to the same single runtime value.
 async fn cache(value: _, (no_persist): [_]) -> Value {
+    // TODO revisit the return identity (maybe it should not be the same for cache hit or miss?)
+    // It is inconvenient/confusing for match expressions since the returned value will be typed
+    // but will not have a typical identity based on the value content.
     let id = value.id();
 
     let no_persist = no_persist.is_some();
