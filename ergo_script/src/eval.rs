@@ -357,19 +357,36 @@ impl Evaluator {
         mut captures: Captures,
         mode: BlockItemMode,
         sets: &Sets,
-    ) -> Result<(Vec<Value>, LocalEnv, bool)> {
+    ) -> Result<(Vec<Value>, LocalEnv)> {
         let mut env = LocalEnv::new();
         let mut results = Vec::new();
         let mut errs = Vec::new();
-        let mut last_normal = false;
         let mut had_unbound = false;
         let mut has_errors = false;
 
-        for i in items {
+        async fn push_result(
+            mode: BlockItemMode,
+            results: &mut Vec<Value>,
+            v: Value,
+            last: bool,
+        ) -> Result<()> {
+            if mode.command() || last {
+                results.push(v);
+                Ok(())
+            } else {
+                traits::eval_nested(v).await
+            }
+        }
+
+        let mut items = items.into_iter().peekable();
+
+        while let Some(i) = items.next() {
+            let last_item = items.peek().is_none();
             match i {
                 ast::BlockItem::Expr(e) => {
-                    last_normal = true;
-                    results.push(
+                    push_result(
+                        mode,
+                        &mut results,
                         self.eval_with_env(
                             e,
                             &captures,
@@ -377,7 +394,9 @@ impl Evaluator {
                             sets,
                         )
                         .await,
-                    );
+                        last_item,
+                    )
+                    .await?;
                 }
                 ast::BlockItem::Merge(e) => {
                     let mut val = self
@@ -392,23 +411,21 @@ impl Evaluator {
                     drop(Context::eval(&mut val).await);
                     match_value! { val.clone(),
                         s@types::String(_) => {
-                            last_normal = false;
                             env.insert(Source::imbue(val_source.clone().with(s.into())), Source::imbue(val_source.with(types::Unit.into())));
                         }
                         types::Array(arr) => {
                             // TODO should this implicitly evaluate to a unit type when the array is
                             // empty?
-                            if !arr.is_empty() {
-                                last_normal = true;
+                            let mut arr = arr.into_iter().peekable();
+                            while let Some(v) = arr.next() {
+                                let last_arr = arr.peek().is_none();
+                                push_result(mode, &mut results, v, last_item && last_arr).await?;
                             }
-                            results.extend(arr);
                         }
                         types::Map(map) => {
-                            last_normal = false;
                             env.extend(map);
                         }
                         types::Unbound {..} => {
-                            last_normal = false;
                             if mode.command() {
                                 results.push(Source::imbue(val_source.with(types::BindRest(val).into())));
                             } else {
@@ -451,7 +468,6 @@ impl Evaluator {
                     }
                 }
                 ast::BlockItem::Bind(b, e) => {
-                    last_normal = false;
                     let e = self
                         .eval_with_env(
                             e,
@@ -495,7 +511,7 @@ impl Evaluator {
         if has_errors {
             Err(types::Error::aggregate(errs))
         } else {
-            Ok((results, env, last_normal))
+            Ok((results, env))
         }
     }
 
@@ -552,12 +568,8 @@ impl Evaluator {
                                         // Evaluate as a block, displaying the final value and
                                         // merging the scope into the doc comment scope.
                                         let sets = Sets::new();
-                                        let (mut vals, _, has_val) = self.evaluate_block_items(es, captures.clone(), BlockItemMode::DocBlock, &sets).await?;
-
-                                        let last = if has_val { vals.pop() } else { None };
-                                        for v in vals {
-                                            traits::eval_nested(v).await?;
-                                        }
+                                        let (mut vals, _) = self.evaluate_block_items(es, captures.clone(), BlockItemMode::DocBlock, &sets).await?;
+                                        debug_assert!(vals.len() < 2);
 
                                         for (cap, k, v) in sets.into_inner() {
                                             if let Some(cap) = cap {
@@ -570,7 +582,7 @@ impl Evaluator {
                                         // Only add to string if the last value wasn't a bind
                                         // expression (to support using a block to only add
                                         // bindings).
-                                        if let Some(mut last) = last {
+                                        if let Some(mut last) = vals.pop() {
                                             Context::eval(&mut last).await?;
                                             traits::display(last, &mut formatter).await?;
                                         }
@@ -774,20 +786,14 @@ impl Evaluator {
                         Block => |block| {
                             match self.evaluate_block_items(block.items.clone(), captures.clone(), BlockItemMode::Block, sets).await {
                                 Err(e) => e.into(),
-                                Ok((mut vals, env, sequence)) => {
-                                    let last = if sequence { vals.pop() } else { None };
-                                    for v in vals {
-                                        if let Err(e) = traits::eval_nested(v).await {
-                                            let mut val = e.into();
-                                            Source::set_if_missing(&mut val, source_c);
-                                            return val;
+                                Ok((mut vals, env)) => {
+                                    debug_assert!(vals.len() < 2);
+                                    match vals.pop() {
+                                        Some(last) => last,
+                                        None => {
+                                            // Remove any Unset values
+                                            types::Map(env.into_iter().filter(|(_,v)| !v.is_type::<types::Unset>()).collect()).into()
                                         }
-                                    }
-                                    if let Some(last) = last {
-                                        last
-                                    } else {
-                                        // Remove any Unset values
-                                        types::Map(env.into_iter().filter(|(_,v)| !v.is_type::<types::Unset>()).collect()).into()
                                     }
                                 }
                             }
@@ -810,7 +816,7 @@ impl Evaluator {
                                 .await
                             {
                                 Err(e) => e.into(),
-                                Ok((pos, keyed, _)) => {
+                                Ok((pos, keyed)) => {
                                     if let Err(e) = Context::eval(&mut function).await {
                                         let mut val = e.into();
                                         Source::set_if_missing(&mut val, src);
@@ -829,7 +835,7 @@ impl Evaluator {
                                 .await
                             {
                                 Err(e) => e.into(),
-                                Ok((pos, keyed, _)) => {
+                                Ok((pos, keyed)) => {
                                     if let Err(e) = Context::eval(&mut function).await {
                                         let mut val = e.into();
                                         Source::set_if_missing(&mut val, src);
