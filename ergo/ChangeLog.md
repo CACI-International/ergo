@@ -137,7 +137,7 @@ Values have changed in the runtime such that a dynamically-typed value can be
 evaluated to return a new (possibly dynamically-typed) value, and typed values
 represent a value which cannot be further evaluated (though a typed value _can_
 contain other values which can then be evaluated, e.g. items in an `Array`-typed
-values). This change was made to both simplify runtime semantics but also to
+value). This change was made to both simplify runtime semantics but also to
 allow runtime errors to be lifted to first-class types. Previously in the
 runtime, a typed value might still need to be evaluated to get the value data,
 however that evaluation could result in an error, and there would be no way to

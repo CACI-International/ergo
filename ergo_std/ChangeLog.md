@@ -12,7 +12,8 @@
   value is the same as evaluating the value.
 * `std:seq` is removed as sequencing values is a syntax-level feature.
 * `std:error` is removed as errors are first-class types.
-* `std:script` is removed as the runtime no longer supports
+* `std:script` is removed as the runtime no longer supports getting script paths
+  in this way.
 * Add `std:if`, which works the same as the old built-in (though without
   equivalent IfBind support).
 * Add `std:source` module to get/manipulate source information of values.
