@@ -157,7 +157,7 @@ where
             if !remaining.is_empty() {
                 let mut errs = Vec::new();
                 for v in remaining {
-                    errs.push(Source::get(&v).with("no binding matches this value").into_error());
+                    errs.push(Source::get(&v).with("extraneous value").into_error());
                 }
                 Err(crate::Error::aggregate(errs))
             } else {

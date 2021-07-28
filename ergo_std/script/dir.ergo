@@ -189,7 +189,10 @@ match-indices = fn :fallback :from -> {
             plugin:type:Unset -> !plugin:type:Error: (source = :from) <| plugin:string:format "missing index: {}" :i
             :pass
         ]
-        :fallback
+        # We want the binding to occur immediately, but if there is an error we do not want to make
+        # `matches` consider it a match error and move on (to improve the overall error reported in
+        # this case).
+        :other -> { v = !bind :fallback :other; :v }
     ]
 }
 
