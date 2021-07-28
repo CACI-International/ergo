@@ -67,15 +67,16 @@ impl Default for Cached {
 ///
 /// Caches the given value both at runtime and to persistent storage (to be cached across invocations).
 ///
+/// If cached to persistent storage, the returned value is typically a deeply evaluated value
+/// (since all values need to be evaluated to persist the value). Otherwise the value is not deeply
+/// evaluated as the runtime cache can be used.
+///
 /// Returns a value with an identity derived from that of the argument, possibly loading the value
 /// from a persisted store rather than evaluating it. If not yet persisted, a copy of the value is
 /// evaluated and stored for future calls.
 ///
 /// Multiple values with the same id will be deduplicated to the same single runtime value.
 async fn cache(value: _, (no_persist): [_]) -> Value {
-    // TODO revisit the return identity (maybe it should not be the same for cache hit or miss?)
-    // It is inconvenient/confusing for match expressions since the returned value will be typed
-    // but will not have a typical identity based on the value content.
     let id = value.id();
 
     let no_persist = no_persist.is_some();
@@ -93,16 +94,15 @@ async fn cache(value: _, (no_persist): [_]) -> Value {
         .clone();
     let mut guard = entry.lock().await;
     if guard.is_none() {
-        let mut value = if no_persist {
+        let cached_value = if no_persist {
             value
         } else {
             let store = Context::global().store.item(item_name!("cache"));
             let log = Context::global().log.sublog("cache");
 
-            match traits::read_from_store(&store, id).await {
-                Ok(mut val) => {
+            let mut stored_val = match traits::read_from_store(&store, id).await {
+                Ok(val) => {
                     log.debug(format!("successfully read cached value for {}", id));
-                    val.copy_metadata(&value); // TODO should this _not_ copy source location?
                     val
                 }
                 Err(err) => {
@@ -118,12 +118,25 @@ async fn cache(value: _, (no_persist): [_]) -> Value {
                     } else {
                         log.debug(format!("wrote cache value for {}", id));
                     }
-                    value
+
+                    // Read the stored value to ensure the returned value has a consistent identity
+                    // whether we have a cache hit or miss.
+                    match traits::read_from_store(&store, id).await {
+                        Ok(val) => val,
+                        Err(err) => {
+                            log.debug(format!(
+                                "failed to read just-written value for {}: {}; falling back to original value",
+                                id, err
+                            ));
+                            value.clone()
+                        }
+                    }
                 }
-            }
+            };
+            stored_val.copy_metadata(&value); // TODO should this _not_ copy source location?
+            stored_val
         };
-        value.set_dependencies(depends![^CALL_DEPENDS, ergo_runtime::nsid!(std::cache::stored)]);
-        *guard = Some(value);
+        *guard = Some(cached_value);
     }
     guard.as_ref().unwrap().clone()
 }
