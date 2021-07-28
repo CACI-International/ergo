@@ -694,25 +694,26 @@ impl Expression {
         )
     }
 
-    fn update_capture_id(&mut self) -> bool {
-        if self.expr_type() == ExpressionType::Capture {
-            true
-        } else {
-            let mut updated = false;
-            self.subexpressions_mut(|e| {
-                updated |= e.update_capture_id();
-            });
-            if updated {
-                use ergo_runtime::hash::HashFn;
-                let mut hasher = HashFn::default();
-                hasher.write_u8(self.expr_type() as u8);
-                match_all!(self => |v| v.hash_content(&mut hasher));
-                self.as_mut_inner().id = hasher.finish_ext();
-                true
-            } else {
-                false
+    fn local_capture_id(&self) -> (u128, bool) {
+        use ergo_runtime::hash::HashFn;
+        let mut hasher = HashFn::default();
+        hasher.write_u8(self.expr_type() as u8);
+        let mut changed = false;
+        self.subexpressions(|e| match e {
+            SubExpr::Discriminant(i) => hasher.write_u8(i),
+            SubExpr::SubExpr(e) => {
+                let (id, c) = e.local_capture_id();
+                changed |= c;
+                hasher.write_u128(id);
             }
-        }
+        });
+        let id = if changed {
+            hasher.finish_ext()
+        } else {
+            self.id()
+        };
+        changed |= self.expr_type() == ExpressionType::Capture;
+        (id, changed)
     }
 }
 
@@ -926,7 +927,7 @@ impl Lint {
 
 struct ExpressionCompiler<'a> {
     capture_context: &'a mut Context,
-    captures: HashMap<Expr, (CaptureKey, CaptureSet)>,
+    captures: HashMap<u128, (CaptureKey, Expr, CaptureSet)>,
     needed_by: HashMap<CaptureKey, CaptureSet>,
     capture_mapping: ScopeMap<u128, CaptureKey>,
     lint: Option<Lint>,
@@ -1066,16 +1067,22 @@ impl<'a> ExpressionCompiler<'a> {
     fn capture(&mut self, e: &mut Expression, source: Source<()>, e_caps: &mut Captures) {
         // Temporarily replace the expression with a unit type until we determine
         // the capture key.
-        let mut old_e = std::mem::replace(e, Expression::unit());
-        old_e.update_capture_id();
+        let old_e = std::mem::replace(e, Expression::unit());
+        let capture_id = old_e.local_capture_id().0;
         let ExpressionCompiler {
             captures,
             capture_context,
             ..
         } = self;
         let key = captures
-            .entry(source.with(old_e))
-            .or_insert_with(|| (capture_context.key(), e_caps.free.clone()))
+            .entry(capture_id)
+            .or_insert_with(|| {
+                (
+                    capture_context.key(),
+                    source.with(old_e),
+                    e_caps.free.clone(),
+                )
+            })
             .0;
         for cap in e_caps.all.iter() {
             self.needed_by.entry(cap).or_default().insert(key);
@@ -1101,7 +1108,7 @@ impl<'a> ExpressionCompiler<'a> {
     pub fn into_captures(self) -> HashMap<CaptureKey, (Expr, CaptureSet)> {
         self.captures
             .into_iter()
-            .map(|(e, (k, c))| (k, (e, c)))
+            .map(|(_, (k, e, c))| (k, (e, c)))
             .collect()
     }
 
@@ -1791,7 +1798,7 @@ mod test {
                     .map(|(key, e, free)| (key, (e, free.into_iter().collect())))
                     .collect::<HashMap<_, _>>()
         );
-        assert!(e == expected);
+        assert!(e.struct_eq(&expected));
     }
 
     fn load(s: &str) -> Result<(Expr, HashMap<CaptureKey, (Expression, CaptureSet)>), Error> {

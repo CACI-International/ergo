@@ -731,6 +731,31 @@ mod test {
         }
     }
 
+    mod identity {
+        use super::*;
+
+        #[test]
+        fn function_with_captures() -> Result<(), String> {
+            script_eval_id_eq(
+                "k = fn :b -> :b; fn :x -> !k :x",
+                "k = fn :b -> :b; hi = !k hi; fn :x -> !k :x",
+            )?;
+            script_eval_id_eq(
+                "k = fn :b -> :b; r = fn :x -> :x; fn :x -> r :x",
+                "k = fn :b -> :b; hi = !k hi; r = fn :x -> :x; fn :x -> r :x",
+            )?;
+            Ok(())
+        }
+
+        #[test]
+        fn same_capture_expressions() -> Result<(), String> {
+            script_eval_to(
+                "k = fn :a -> :a; p = fn :x -> !k :x; q = fn :x -> !k :x; [p hi, q hi]",
+                SRArray(&[SRString("hi"), SRString("hi")]),
+            )
+        }
+    }
+
     fn script_eval_to(s: &str, expected: ScriptResult) -> Result<(), String> {
         let runtime = make_runtime()?;
         let script = script_eval(&runtime, s);
@@ -749,6 +774,16 @@ mod test {
         let runtime = make_runtime()?;
         let mut should_fail = script_eval(&runtime, s)?;
         assert!(runtime.block_on(async move { Context::eval(&mut should_fail).await.is_err() }));
+        Ok(())
+    }
+
+    fn script_eval_id_eq(a: &str, b: &str) -> Result<(), String> {
+        let runtime = make_runtime()?;
+        let mut a = script_eval(&runtime, a)?;
+        let mut b = script_eval(&runtime, b)?;
+        runtime.block_on(Context::eval(&mut a)).unwrap();
+        runtime.block_on(Context::eval(&mut b)).unwrap();
+        assert!(a.id() == b.id());
         Ok(())
     }
 
