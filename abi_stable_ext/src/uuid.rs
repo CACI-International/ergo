@@ -62,13 +62,3 @@ impl std::str::FromStr for Uuid {
             .map_err(|e| Self::Err::from_box(e.into()))
     }
 }
-
-/// The root namespace UUID, for use with v3/v5 UUIDs.
-pub const NAMESPACE_GREASE: Uuid = Uuid::from_bytes([
-    0x66, 0xfc, 0xed, 0x11, 0x59, 0x91, 0x4d, 0x46, 0xae, 0xd6, 0x70, 0x3c, 0xfd, 0x03, 0x70, 0x66,
-]);
-
-/// Create a v5 UUID within the grease namespace.
-pub fn grease_uuid(name: &[u8]) -> Uuid {
-    Uuid::new_v5(&NAMESPACE_GREASE, name)
-}
