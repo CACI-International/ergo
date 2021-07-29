@@ -28,7 +28,9 @@ improvements, so no such distinction is made.
   positional arguments are grouped and matched as before. This is far more
   elegant than the prior `fn a ^:rest ^{^:kw}` forms.
 * The `Args` and `PatternArgs` types support indexing with `positional` and
-  `keyed` to get the `Array` and `Map` of arguments, respectively.
+  `keyed` to get the `Array` and `Map` of arguments, respectively. They also
+  support `Into<Array>` and `Into<Map>`, where unhandled keyed or positional
+  arguments (respectively) will cause an error.
 * A merge of a `String`-typed value in a command or a block will bind the item to
   a unit value, e.g. `a b ^c` will be the same as `a b (c=())`, and `{ ^v }`
   will be the same as `{ v = () }`. This is useful shorthand for toggle flags.

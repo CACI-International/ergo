@@ -22,5 +22,10 @@ mod test {
         fn from(t) {
             t.assert_content_eq("self:array:from <| self:iter:from [1,2,3]", "[1,2,3]");
         }
+
+        fn from_args(t) {
+            t.assert_eq("fn ^:args -> self:array:from :args |> 1 2 3", "[1,2,3]");
+            t.assert_fail("fn ^:args -> self:array:from :args |> 1 2 (k=3)");
+        }
     }
 }

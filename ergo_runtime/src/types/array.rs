@@ -118,15 +118,6 @@ ergo_traits_fn! {
                     })
                     .transpose_err_with_context("while indexing array").into()
                 },
-                super::Args { mut args } | super::PatternArgs { mut args } => {
-                    crate::try_result!(args.unused_keyed());
-                    crate::try_result!(traits::bind_array(
-                            self.0.clone(),
-                            source.with(args.collect()),
-                            |_,rest| Array(rest.into()).into()
-                    ).await);
-                    super::Unit.into()
-                },
                 Array(arr) => {
                     crate::try_result!(traits::bind_array(
                             self.0.clone(),

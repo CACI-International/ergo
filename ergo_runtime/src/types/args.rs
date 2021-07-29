@@ -396,6 +396,22 @@ ergo_traits_fn! {
         }
     }
 
+    impl traits::IntoTyped<super::Array> for Args {
+        async fn into_typed(self) -> crate::Value {
+            let mut args = self.to_owned().args;
+            crate::try_result!(args.unused_keyed());
+            super::Array(args.collect()).into()
+        }
+    }
+
+    impl traits::IntoTyped<super::Map> for Args {
+        async fn into_typed(self) -> crate::Value {
+            let mut args = self.to_owned().args;
+            crate::try_result!(args.unused_positional());
+            super::Map(args.keyed).into()
+        }
+    }
+
     traits::Nested::add_impl::<PatternArgs>(traits);
 
     impl traits::Bind for PatternArgs {
@@ -415,6 +431,22 @@ ergo_traits_fn! {
                 }
                 v => traits::bind_error(v).into()
             }
+        }
+    }
+
+    impl traits::IntoTyped<super::Array> for PatternArgs {
+        async fn into_typed(self) -> crate::Value {
+            let mut args = self.to_owned().args;
+            crate::try_result!(args.unused_keyed());
+            super::Array(args.collect()).into()
+        }
+    }
+
+    impl traits::IntoTyped<super::Map> for PatternArgs {
+        async fn into_typed(self) -> crate::Value {
+            let mut args = self.to_owned().args;
+            crate::try_result!(args.unused_positional());
+            super::Map(args.keyed).into()
         }
     }
 }

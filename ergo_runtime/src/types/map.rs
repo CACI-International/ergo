@@ -118,15 +118,6 @@ ergo_traits_fn! {
                 super::Index(index) => {
                     self.0.get(&index).cloned().unwrap_or(super::Unset.into())
                 },
-                super::Args { mut args } | super::PatternArgs { mut args } => {
-                    crate::try_result!(args.unused_positional());
-                    crate::try_result!(traits::bind_map(
-                            self.0.clone(),
-                            source.with(args.keyed),
-                            false
-                    ).await);
-                    super::Unit.into()
-                },
                 Map(map) => {
                     crate::try_result!(traits::bind_map(self.0.clone(), source.with(map.clone()), false).await);
                     super::Unit.into()

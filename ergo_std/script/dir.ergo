@@ -233,7 +233,7 @@ iter-split = fn :n :iter -> [plugin:iter:take :n :iter, plugin:iter:skip :n :ite
 ## `if_false` is omitted, an Unset value will be returned.
 if = fn :cond :if_true ^:if_false -> plugin:match (plugin:bool:from :cond) [
     plugin:bool:true -> :if_true
-    plugin:bool:false -> plugin:match if_false:positional [
+    plugin:bool:false -> plugin:match (plugin:array:from :if_false) [
         [] -> :unset
         [:if_false] -> :if_false
         [_,^:rest] -> plugin:type:Error: (source=:rest) "too many arguments supplied to if"
@@ -271,7 +271,7 @@ bind-and = pat ^:cases -> :v -> {
 ##
 ## When bound with a value `v`, binds each value in `cases` with `v` until one does not error, and
 ## produces an error if none match.
-bind-or = pat ^:cases -> :v -> plugin:match :v cases:posiitonal
+bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
 
 ## The ergo standard library.
 ##

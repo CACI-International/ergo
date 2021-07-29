@@ -26,5 +26,10 @@ mod test {
         fn iter(t) {
             t.assert_content_eq("self:map:from <| self:iter:map (fn (self:type:MapEntry: :key :value) -> self:type:MapEntry: :key ()) {a=1,b=2}", "{a=(),b=()}");
         }
+
+        fn from_args(t) {
+            t.assert_eq("fn ^:args -> self:map:from :args |> (a=1) (b=2)", "{a=1,b=2}");
+            t.assert_fail("fn ^:args -> self:map:from :args |> (a=1) 2");
+        }
     }
 }

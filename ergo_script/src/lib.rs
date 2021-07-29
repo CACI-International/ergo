@@ -647,13 +647,6 @@ mod test {
         }
 
         #[test]
-        fn array_args() -> Result<(), String> {
-            script_eval_to("[a,b,:c] -> :c |> a b 10", SRString("10"))?;
-            script_fail("[a,b,:c] -> :c |> a b 10 ^kw")?;
-            Ok(())
-        }
-
-        #[test]
         fn map() -> Result<(), String> {
             script_eval_to(
                 "{a,:b=:binding} = {:a=1,:b=2}",
@@ -682,13 +675,6 @@ mod test {
         fn map_mismatch() -> Result<(), String> {
             script_fail("fn {a,b} -> () |> {a=1,b=2,c=3}")?;
             script_fail("fn {:a,^:keys,^:keys2} -> () |> {:a=1}")?;
-            Ok(())
-        }
-
-        #[test]
-        fn map_args() -> Result<(), String> {
-            script_eval_to("{a,b} -> :a |> (a=1) (b=2)", SRString("1"))?;
-            script_fail("{a,b} -> :a |> arg")?;
             Ok(())
         }
 
