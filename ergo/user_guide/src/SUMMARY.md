@@ -37,5 +37,3 @@
   - [type](std/type.md)
 ---
 - [RFC](rfc/intro.md)
-  - [Macros](rfc/macros.md)
-  - [Script Design](rfc/script-design.md)

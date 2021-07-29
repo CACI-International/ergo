@@ -2,7 +2,7 @@
 
 Ergo is a concurrent task runner, allowing users to write scripts (which in the
 simple cases closely resemble typical shell scripts) to describe what they want
-done. The scripts manage all dependencies among commands and can be used to
+done. The scripts manage all dependencies while evaluating and can be used to
 expose multiple outputs on the command-line.
 
 This book serves as an introduction to ergo, describing how it works and what you
