@@ -1,4 +1,4 @@
-{type,match,map,iter,array,eval,value,^_} = ergo plugin
+{type,match,map,iter,array,value,^_} = ergo plugin
 
 basic-type = fn :check -> :a -> !match :a [
     :check
@@ -14,7 +14,7 @@ basic-type = fn :check -> :a -> !match :a [
 ##
 ## Returns a type that will check arguments like typical type functions.
 MapValues = fn (type:Map :fields) -> basic-type <| pat :out -> type:Map :m -> {
-    bind :out <| !map:from <| iter:map (fn (type:MapEntry: :k :v) -> type:MapEntry: :k (fields::k :v)) :m
+    bind :out <| !map:from <| iter:map (fn (type:MapEntry: :k :v) -> type:MapEntry: :k (!fields::k :v)) :m
 }
 
 ## Match maps where all keys match a specific type and all values match a specific type.
@@ -110,7 +110,7 @@ enum = fn (type:String :name) (type:Map :variants) -> {
         fn ^:args -> tp: :key ^:args
         pat ^:args -> tp: !:key ^!:args -> ()
     ]
-    accessor = eval <| :variants | iter:map (fn (type:MapEntry: :key _) -> type:MapEntry: :key (key-to-accessor :key)) | map:from
+    type:Map :accessor = :variants | iter:map (fn (type:MapEntry: :key _) -> type:MapEntry: :key (key-to-accessor :key)) | map:from
     # Wrap the accessor to add a way to check for `tp` using it.
     :a -> !match :a [index :arg -> accessor::arg,:tp]
 }
@@ -133,6 +133,11 @@ enum = fn (type:String :name) (type:Map :variants) -> {
 ## StringPair _ = :pair
 ## StringPair: {first,second} = :pair
 ## ```
-struct = fn (type:String :name) (type:Map :fields) -> type:new :name <| MapValues :fields
+struct = fn (type:String :name) (type:Map :fields) -> {
+    type:new :name <| :a -> !match :a [
+        fn (MapValues :fields |> :entries) -> :entries
+        pat :tgt -> !:tgt -> ()
+    ]
+}
 
 {optional,required,MapValues,MapOf,ArrayValues,ArrayOf,Or,enum,struct}

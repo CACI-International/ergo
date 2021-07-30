@@ -183,17 +183,18 @@ import = {
     pat :descr -> inner :descr
 }
 
-match-indices = fn :fallback :from -> {
-    matches [
+match-indices = fn :fallback :from -> :a -> !{
+    { result } = plugin:match :a [
         index :i -> !plugin:match from::i [
             plugin:type:Unset -> !plugin:type:Error: (source = :from) <| plugin:string:format "missing index: {}" :i
-            :pass
+            :x -> { result = :x }
         ]
         # We want the binding to occur immediately, but if there is an error we do not want to make
         # `matches` consider it a match error and move on (to improve the overall error reported in
         # this case).
-        :other -> { v = !bind :fallback :other; :v }
+        :other -> { result = !bind :fallback :other }
     ]
+    :result
 }
 
 type-function = {
