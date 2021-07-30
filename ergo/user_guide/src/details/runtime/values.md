@@ -1,27 +1,28 @@
 # Values
 
-All values in the runtime represent a possibly-delayed result. The result can
-either succeed and return some data, or fail with an error. Values are reference
-counted and are only evaluated to a result at most once (so multiple values
-relying on a single value, with any interleaving of evaluation, will result in
-the dependant only evaluating once).
+All values in the runtime represent a possibly-delayed result. Values are
+reference counted and are only evaluated to a result at most once (so multiple
+values `a`, `b`, `c` relying on another single value `d`, with any interleaving
+of evaluation, will result in `d` only evaluating once).
 
 Because of the delayed nature of the data within a value and our desire to be
 able to reason about whether one value would have the same result as another,
-all values have an *identity* which is derived from the dependent data,
-functional operations, and other values which compose the value. If two values
-have the same identity, it indicates that if you were to evaluate them to their
-final results, those would also be the same. This identity is essential to
-speeding up operations of the script with persistent and runtime caching.
+all values have an *identity* which is derived from the literal script syntax
+used to create the value as well as all captured values (such as `:v` get
+expressions or `!a b c` forced expressions). If two values have the same
+identity, it indicates that if you were to evaluate them to their final results,
+those would also be the same. This identity is essential to speeding up
+operations with persistent and runtime caching.
 
-A value may be either dynamically or statically typed. If dynamically typed,
-this means that not only is the result delayed, but the type of the value is
-delayed as well. For instance, `if` expressions produce dynamically-typed values
-because they do not know which branch will be chosen until the value is
-evaluated (as this is when the `if` condition is checked). The type of a value
-specifies how to interpret the specific binary format of its result.
+A value may either by delayed (without a type) or evaluated (with a type).  In
+scripts, checking or matching on a type will always result in the value being
+evaluated (if not already) to determine the type. In this way, you can control
+when dependent values are evaluated.
 
 Values also have arbitrary metadata that can be attached. Just like value types
 define the binary format of their data, individual metadata keys define the
 binary format of their values. Unlike value results, the metadata values are
-immediately available without evaluating a value.
+immediately available without evaluating a value. Examples of value metadata
+include the documentation of a value and the source location of a value. When
+delayed values are evaluated, metadata keys are inherited by the result of
+evaluation if the result does not set them itself.

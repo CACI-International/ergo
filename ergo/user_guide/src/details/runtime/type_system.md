@@ -2,12 +2,11 @@
 
 The script language is dynamically and strongly typed. The type system includes
 the concept of type classes/traits, which define functionality implemented over
-the type. Types and traits may include arbitrary runtime information, including
+a type. Types and traits may include arbitrary runtime information, including
 nested types.
 
-While the language _is_ dynamically typed, most functions check types as soon as
-possible and are applied immediately in scripts, so the runtime behaves
-optimistically as a statically-typed language.
+While the language _is_ dynamically typed, most functions check argument types
+when they are applied, so type errors may occur earlier to be more useful.
 
 ## Script Types
 The following types are most often created directly using script syntax:
@@ -17,8 +16,8 @@ The following types are most often created directly using script syntax:
 ()
 ```
 The unit type, similar to void types in some other languages (but actually
-returned as a value, unline those other languages which have special rules
-around void types).
+returned as a value, unlike in some (non-functional) languages which have
+special rules around void types).
 
 ### String
 ```ergo
@@ -47,22 +46,23 @@ type).
 :a -> :a
 ```
 The unbound type, which may be bound to a value with any expression that
-performs a bind (bind expression, command, pattern command, index, etc).
+performs a bind (bind statement, command, pattern command, index, etc).
 
 ### Args
 ```ergo
-f a b c
+f a b c (k=1)
 ```
 The argument type, which is implicitly created in command expressions to group
-arguments to a command (in the above, `a`, `b`, and `c`).
+arguments to a command (in the above, `a`, `b`, `c`, and the keyed `k=1`
+argument).
 
-### Pattern Args
+### PatternArgs
 ```ergo
-f a b c = 1
+f a b c (k=1) = 1
 ```
 The pattern argument type, which is implicitly created in pattern command
-expressions to group arguments to a pattern command command (in the above, `a`,
-`b`, and `c`).
+expressions to group arguments to a pattern command (in the above, `a`, `b`,
+`c`, and the keyed `k=1`).
 
 ### Index
 ```ergo
@@ -77,10 +77,10 @@ index value (in the above, `b`) to the target.
 ```
 The unset type is used in the script runtime when a value is missing for a
 number of general operations, like when indexing a map without a matching key
-(like above).
+(like above). A builtin value also exists for the type (`:unset`).
 
 ## Other Types
 In addition to the types that can be created using script syntax, there are a
 number of other types (and plugins can add more types) that exist, like `Path`,
-`Bool`, etc. These (as well as script types) can be created and manipulated
-using functions from the standard library.
+`Bool`, `Number`, etc. These (as well as script types) can be created and
+manipulated using functions from the standard library.

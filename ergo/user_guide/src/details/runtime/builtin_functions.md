@@ -5,7 +5,9 @@
 * [workspace](#workspace) - Access the first ancestor workspace.
 * [fn](#fn) - Match `Args` Values
 * [pat](#pat) - Match `PatternArgs` Values
-* [index](#index) - Match `Index` Values
+* [index](#index) - Match `Index` Values or manually index a value
+* [bind](#bind) - Manually bind a value
+* [unset](#unset) - An `Unset`-typed value
 * [doc](#doc) - Document values.
   * [doc:write](#doc-write) - Write documentation for a value to the filesystem.
   * [doc:path](#doc-path) - Get the current documentation path, if any.
@@ -75,7 +77,6 @@ f 1 2 3
 
 </div>
 
-
 <div class="function">
 
 ## `pat`
@@ -97,6 +98,37 @@ The `index` function is used to match the `Index` value when binding.
 ```ergo
 v = index :a -> std:String:format "index={}" :a
 v:my-ind # evaluates to "index=my-ind"
+```
+
+It can also be used to manually index a value (rather than using script syntax).
+This makes the index operation always delayed rather than it possibly being a
+capture expression based on the semantics of the `:` operator.  For example,
+`index :a b` will result in the same value as `a:b`.
+
+</div>
+
+<div class="function">
+
+## `bind`
+The `bind` function is used to bind a value without using script syntax. For
+example, `bind :a :b` is the same as `!:a = :b`. This makes the bind operation
+always delayed rather than executed immediately as normal bind statements are.
+
+```ergo
+bind-single-array-value = pat :a -> [:v] -> bind :a :v
+bind-single-array-value :x = [1]
+```
+
+</div>
+
+<div class="function">
+
+## `unset`
+The `unset` value is an `Unset`-typed value.
+
+```ergo
+x = [1,2,3]
+x = :unset
 ```
 
 </div>
