@@ -1,17 +1,19 @@
 #!/usr/bin/env ergo
 
-std:import {cache, env, exec, fs, script, seq, task, Path, String} = std:
+std:import {cache, env, exec, fs, source, task, Path, String} = std:
 
-# Compile function, taking one argument indicating the file to compile.
+## Compile function, taking one argument indicating the file to compile.
 compile = fn :source-file -> cache <| Path:with-output <| fn :out -> {
-    task (String:format "compiling {}" :source-file) (
-        exec (env = {PATH = env:get PATH}) c++ -o :out -c (fs:track :source-file)
-    ):complete
+    task (String:format "compiling {}" :source-file) {
+        exec (env = {PATH = env:get PATH}) c++ -o :out -c (!fs:track :source-file) |>:complete
+    }
 }
 
-# Executable-linking function, which links all arguments.
+## Executable-linking function, which links all arguments.
 link-exe = fn :name ^:objs -> cache <| Path:with-output <| fn :exe -> {
-    task (String:format "linking executable {}" :name) (exec (env = {PATH = env:get PATH}) c++ -o :exe ^:objs):complete
+    task (String:format "linking executable {}" :name) {
+        exec (env = {PATH = env:get PATH}) c++ -o :exe ^:objs |>:complete
+    }
 }
 
 # Compile main.cpp
@@ -23,4 +25,4 @@ lib = compile lib.cpp
 exe = link-exe forty_two :main :lib
 
 # Copy to a file in the working directory.
-fs:copy :exe (Path:join script:dir: forty_two)
+fs:copy :exe (Path:join (source:dir ()) forty_two)

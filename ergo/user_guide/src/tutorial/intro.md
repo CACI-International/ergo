@@ -12,6 +12,9 @@ Before we begin, let's cover some nomenclature.
 A __script__ is a file conforming to the expected `ergo` syntax, which describes a
 dependency tree of commands.
 
-A __value__ is a _lazily-evaluated_ result in the script runtime. While the
-value itself is lazily-evaluted, it has attached metadata such as type
-information which is immediately available.
+A __value__ is a _lazily-evaluated_ result in the script runtime. Values which
+have been evaluated have an associated type, whereas unevaluated values have no
+type.
+
+A __binding__ is a scoped name/key which can be used to get an associated value
+(much like declaring a variable in other languages).

@@ -5,8 +5,8 @@ Let's look at some more advanced usage. In particular, let's produce both a
 shared library and an executable, and write/run some unit tests for the library.
 
 ## Splitting our application
-Splitting up our application is as simple as you might expect, except we need to
-have a separate link step for the library:
+Splitting up our application to used a shared library is as simple as you might
+expect, except we need to have a separate link step for the library:
 
 ```ergo
 {{#include example/build_split.ergo}}
@@ -26,7 +26,7 @@ As usual, there are a few things to note here:
   are evaluated concurrently.
 
 ## Testing our library
-In the C/C++ space, there's no canonical testing library. We'll use [Catch2][]
+In the C/C++ world, there's no canonical testing library. We'll use [Catch2][]
 to test our library. We will download it from github, build and run its own
 tests with CMake and make, and use the library to make a test program. Note that
 we're only running the Catch2 tests for the sake of demonstration and
@@ -41,9 +41,9 @@ Woah, that was a lot of new stuff we just added. Let's pick these changes apart.
 ### Improved `compile` function
 `compile` has been extended to take optional include directories. We need this
 to use the `Catch2` library. The `default` function from the standard library is
-used to get the `includes` key from the non-positional arguments, defaulting to
-none (an empty array). It then adds a `-I` argument prior to them using `Iter`
-functions.
+used to get the `includes` key from the keyed arguments, defaulting to none (an
+empty array) if not present. It then adds a `-I` argument prior to them using
+`Iter` functions.
 
 ### Getting Catch2
 We've added a whole block to retrieve Catch2 and run its unit tests. The block
@@ -51,8 +51,8 @@ is used to scope the inner variables and keep our environment cleaner. Here, we
 use the standard library `net` module to fetch and unarchive the catch2 source.
 
 After unpacking, we build the tests with `cmake` and `make`, using the `pwd`
-non-positional `exec` argument (as `run-with-path` forwards all arguments to
-`exec`) to set the working directory when running the programs.
+keyed `exec` argument (as `run-with-path` forwards all arguments to `exec`) to
+set the working directory when running the programs.
 
 The final line of the block ensures that the tests have been run before
 returning the Catch2 include path, and caches this completion so that we don't

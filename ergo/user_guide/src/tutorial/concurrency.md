@@ -12,42 +12,40 @@ compilation and linking separately:
 
 Here we've changed a few things to take advantage of a few standard library
 functions:
-* `std:import` is used to specifically import particular indices of a value into
-  the current scope, so for instance here we are taking `cache`, `env`, etc.
-  from the standard library (rather than dumping the entire standard library
-  into the top-level scope).
 * `Path:with-output` is a convenience function that captures the typical use
-  case of creating an output path and having it depend on the command which
-  creates it. So we pass a _function_ (described in more detail in the next
-  section) which takes a single argument and returns the value which writes that
-  argument (which will be a new path). This replaces the `seq ^[out = Path:new:,
-  ..., :out]` pattern in the previous version of our script.
-* `task` is our concurrency primitive; it will return a value which, when
-  evaluated, will evaluate its value argument concurrently.
+  case of returning an output path that is created by a _function_. So we pass a
+  function (described in more detail in the next section) which takes a single
+  argument and returns the value which writes that argument (which will be a new
+  path). This replaces the `{out = Path:new:, ..., :out}` pattern in the
+  previous version of our script.
+* `task` is our concurrency primitive; it will evaluate the argument
+  concurrently.
 
 From what we've covered so far, it should be clear how the rest of the changes
-to our script achieve concurrent compilation. Remember, the `exec` commands (and
-other commands) aren't doing their actions immediately, but rather returning
-values which are only evaluated as a chain of dependencies by the final value of
-the script.
+to our script achieve concurrent compilation. Remember, the script expressions
+aren't evaluated immediately, but rather are unevaluated values which are only
+evaluated if needed when evaluating the value returned by the script (in this
+case, the last line of the script).
 
 However, now we've got a lot of duplication. It'd be nice if we could make the
-compile step a repeatable block. It'd also be nice to use a list of files as our
-input data.
+compile step a repeatable block. It'd also be nice to use a list of files as an
+input.
 
 ## Functions
-`ergo` scripts support creating functions. User functions, like builtin functions,
-are evaluated immediately at the call site, but only have access to the
-environment scope that was present at their definition.
+`ergo` scripts support creating functions. User functions behave just like
+standard library functions (and indeed some standard library functions are
+implemented in scripts).
 
-Functions are introduced with `fn`. Following the keyword should be a
-**pattern** expression, indicating the expected positional and non-positional
-arguments. Such expressions are similar to normal expressions, but for instance
-`:value` indicates the binding to _set_ in the environment rather _get_. Then,
-an arrow `->` followed by the body of the function is expected. Often this body
-will be a map/block (`{...}`), but it can be any expression. When called, the
-function argument pattern will be checked against the arguments and, if it
-matches, the body will be executed with the bindings from the pattern set.
+Functions are created with `fn`. Following the keyword should be a **pattern**
+expression, indicating the expected positional and keyed arguments. Such
+expressions are similar to normal expressions, but with a few exceptional
+parsing differences. For instance `:value` indicates the binding to _set_ in the
+environment rather _get_. An arrow `->` separates this pattern expression (the
+arguments of the function) from the body. Often this body will be a map/block
+(`{...}`), but it can be any expression. When called, the function arguments
+from the pattern expression will be matched against the call site arguments, and
+if no errors occur from this, the body expression is returned (capturing the
+arguments).
 
 Let's make compiling and linking into functions:
 
@@ -58,6 +56,20 @@ Let's make compiling and linking into functions:
 This is looking much more manageable. Note that both functions have a `cache`
 call, and the final value of the block (just that returned by `task`) is what is
 returned when the function is invoked.
+
+> You may have noticed the use of the `^` operator. This is a _merge_ operator.
+> In a pattern expression (like our `link-exe` fn pattern), it indicates that
+> the rest of the value (in this case, the arguments) should be bound to that
+> expression. In a normal expression, it merges the value into the enclosing
+> command, block/map, or array. So here, `^:objs` takes all remaining arguments
+> to the function and then passes them as arguments to `exec`.
+
+We have added comments starting with `##` before the functions. These are a _doc
+comments_. You can add documentation to _any_ value (not just functions), and
+the documentation can be retrieved with the builtin `doc` function (and the
+command-line `-d`/`--doc` argument). Doc comments can also have nested
+expressions that will be evaluated to generate the content, but we won't cover
+that here.
 
 ## Mapping over arrays
 Ideally we'd like to map the `compile` function over an array of the files;
@@ -73,11 +85,3 @@ Let's take advantage of this:
 We've also condensed our final command by nesting commands in it. Note the `^`
 array merge to pass the resulting values in `objects` as individual arguments to
 `link_exe`.
-
-## Command consistency and reproducibility
-
-If you were running the script file as these changes were made, you may have
-noticed that only `fs:copy` was run each time (as it always is when outputs are
-readily available). The three versions of the script on this page are
-functionally identical, so even though they look fairly different, they share
-the same outputs. The value identities are the same throughout.

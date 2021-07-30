@@ -11,7 +11,7 @@ project_root
 ```
 
 A real project would likely have a more organized (and complex) layout, however
-this doesn't make much of a difference for the purposes of this tutorial.
+it doesn't make much of a difference for the purposes of this tutorial.
 
 For the sake of a functional (albeit boring) demo, let's also define our C++ files.
 
@@ -55,7 +55,7 @@ named `forty_two`.
 
 If you run this script, you will see `forty_two` is now in the current
 directory. Right now, this script is barely different than a shell script (both
-in function and in half of the syntax).
+in function and in parts of the syntax).
 
 ### Closer examination
 While our script is currently functionally identical to a shell script, under
@@ -64,17 +64,20 @@ executed in the ergo runtime, it *is not* immediately executing `c++`.
 
 Instead,
 
-1. The runtime loads `exec` from the standard library (where `std` itself is a
-   built-in function to get the standard library).
-2. The `exec` function is applied to the arguments (where `(env = ...)` is
-   setting a non-positional argument that `exec` uses for environment
-   variables). `exec` passes `c++` to the system's `exec` system call, which
-   will look it up in a few fixed places. It then returns a _value_ representing
-   the execution of the `c++` program without actually executing it yet. This
-   omits some detail; the returned value actually contains multiple values
-   representing things like stdout, exit code, etc.
-3. The value returned by the last line of our script is then _evaluated_, which
-   is what invokes the `c++` program with the given arguments.
+1. The entire expression is evaluated, producing a lazily-evaluated value which
+   will later be evaluated. The value captures `std:exec` and `std:env:get` to
+   be used later, which are functions in the standard library.
+2. The value returned by the last line of our script is then _evaluated_, which
+   is what actually invokes `exec`, running the `c++` program with the given
+   arguments.
+3. The `exec` function is applied to the arguments (where `(env = ...)` is
+   setting a keyed argument that `exec` uses for environment variables). `exec`
+   passes `c++` to the system's `exec` system call, which will look it up in a
+   few fixed places. It then returns a value of the result of running the
+   program. This omits some detail; the returned value actually contains
+   multiple values representing things like stdout, exit code, etc, and worth
+   noting is that the program is run asynchronously.
+4. The value returned from `exec` is displayed on the command-line.
 
 Thus, `c++` is run only because the value of the last line of the script will
 run it.
@@ -88,18 +91,21 @@ script `PATH` (though you could also manually specify `PATH=/usr/bin`).
 
 ## Syntax and execution
 We'll see more syntax examples in the coming chapters, but as a quick primer to
-get a grasp of what data is supported, we'll shortly discuss syntax here.
+get a grasp of what is supported, we'll shortly discuss syntax here.
 
-### Strings have priority
+### Most things are strings
 Like shell languages, bare text is interpreted as a string. Strings can contain
 any character except special characters used in the rest of the syntax and
 whitespace. However, you can create strings containing arbitrary characters by
-surrounding them with quotes.
+surrounding them with double quotes (supporting escape sequences) or single
+quotes (for raw strings).
 
 ```ergo
 this_is_a_string
 "this is a quoted {} []: \"string\"\n"
 these are each individual strings
+'this is a raw string'
+''this raw string contains a ' character''
 ```
 
 ### Compound data
@@ -115,10 +121,10 @@ separated by commas, newlines, or semicolons indescriminately.
 { key = value, otherkey = othervalue }
 ```
 
-The syntax for maps is actually the **same** as nested code blocks; they open a
-new environment scope (which can have bindings that shadow outer environments),
-and the block itself evaluates to the map of environment bindings if the final
-expression in the map is a binding:
+The syntax for maps is actually the **same** as sequential code blocks; they
+open a new environment scope (which can have bindings that shadow outer
+environments), and the block itself evaluates to the map of environment bindings
+if the final expression in the map is a binding:
 
 ```ergo
 {
@@ -143,11 +149,10 @@ use earlier ones (unlike basic maps in other languages where the key-value
 bindings are disparate).
 
 ### Commands
-Commands process positional arguments and non-positional arguments (as seen in
-`(env=...)`) and can interpret them in arbitrary ways. For instance, `exec`
-accepts a number of special non-positional arguments (as we saw with `env`) and
-tries to convert positional arguments into strings suitable for passing to an
-external program.
+Commands take positional and keyed arguments as inputs (as seen in `(env=...)`)
+and can interpret them in arbitrary ways. For instance, `exec` accepts a number
+of keyed arguments (as we saw with `env`) and tries to convert positional
+arguments into strings suitable for passing to an external program.
 
 You may nest commands with parentheses:
 ```ergo
@@ -155,17 +160,16 @@ command1 arg1 (command2-giving-arg2 a b c) arg3
 ```
 
 The first value of a command, if it is a string literal, is queried in the
-current environment to resolve to a bound value. Otherwise (if not a string),
-the value is used as-is.
+lexical scope to resolve to a bound value.
 
 Commands are identified by the presence of arguments. To call a command without
 arguments, add a `:` after the value to call (e.g. `command:`).
 
 ### Binding Retrieval
-Querying any value from the environment is done by using a colon. For instance,
-`:something` will retrieve the value bound to `something` in the environment.
-Similarly, indexing into a map or array also uses a colon, except prior to the
-colon the value to index is provided. Like commands, if the value to index is a
-string, it will be queried in the current environment. Thus,
+Getting any value from the binding scope is done by using a colon. For instance,
+`:something` will retrieve the value bound to `something` in the enclosing
+scope. Similarly, indexing into a map or array also uses a colon, except prior
+to the colon the value to index is provided. Like commands, if the value to
+index is a string, it will be retrieved from the current bindings. Thus,
 `my_map:my_key:key2` and `:my_map:my_key:key2` are the same (the leading colon
 is unnecessary).

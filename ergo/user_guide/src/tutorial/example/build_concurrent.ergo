@@ -1,15 +1,15 @@
 #!/usr/bin/env ergo
 
-std:import {cache, env, exec, fs, script, task, Path} = std:
+std:import {cache, env, exec, fs, source, task, Path} = std:
 
 # Compile main.cpp
 main = cache <| Path:with-output <| fn :out -> {
-    task "compiling main.cpp" (exec (env = {PATH = env:get PATH}) c++ -o :out -c (fs:track main.cpp)):complete
+    task "compiling main.cpp" (exec (env = {PATH = env:get PATH}) c++ -o :out -c (!fs:track main.cpp)):complete
 }
 
 # Compile lib.cpp
 lib = cache <| Path:with-output <| fn :out -> {
-    task "compiling lib.cpp" (exec (env = {PATH = env:get PATH}) c++ -o :out -c (fs:track lib.cpp)):complete
+    task "compiling lib.cpp" (exec (env = {PATH = env:get PATH}) c++ -o :out -c (!fs:track lib.cpp)):complete
 }
 
 # Link the object files together
@@ -18,4 +18,4 @@ exe = cache <| Path:with-output <| fn :out -> {
 }
 
 # Copy to a file in the current directory.
-fs:copy :exe <| Path:join script:dir: forty_two
+fs:copy :exe <| Path:join (source:dir ()) forty_two
