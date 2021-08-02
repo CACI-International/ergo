@@ -1,5 +1,9 @@
 # ergo_std changelog
 
+## Unreleased
+### Improvements
+* Improve error return values when using `std:eval`.
+
 ## 1.0.0-rc.0  -- 2021-08-01
 ### New Features
 * Add `std:env:arch` to get the host architecture.
