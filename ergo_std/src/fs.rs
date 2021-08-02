@@ -343,14 +343,23 @@ async fn archive(archive: types::Path, source: types::Path, (format): [types::St
                             .into()
                     }
                     Some(s) => {
-                        // Skip first index in case the filename starts with a `.`, to match the
-                        // behavior of std::path::Path::extension()
                         // We assume the string is not empty (otherwise file_name would have
                         // returned None).
-                        let s = &s[1..];
-                        archive_source.with(match s.split_once('.') {
-                            Some((_, ext)) => ext.into(),
+                        archive_source.with(match s.rfind('.') {
                             None => "dir".into(),
+                            Some(i) => {
+                                // Look for the name ending in one of the supported extensions; splitting
+                                // on `.` is not convenient if the filename contains other `.`s.
+                                let mut ret = None;
+                                let exts = &[".zip", ".tar", ".tar.gz", ".tar.bz2", ".tar.xz"];
+                                for ext in exts {
+                                    if s.ends_with(ext) {
+                                        ret = Some(ext[1..].into());
+                                        break;
+                                    }
+                                }
+                                ret.unwrap_or_else(|| s[(i + 1)..].into())
+                            }
                         })
                     }
                 },
