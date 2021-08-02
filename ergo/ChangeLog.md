@@ -1,6 +1,6 @@
 # ergo changelog
 
-## 1.0.0-rc.0  -- Unreleased
+## 1.0.0-rc.0  -- 2021-08-01
 Most of the changes listed below are breaking changes, so there is no separate
 section for those. They also could all probably be considered as new features or
 improvements, so no such distinction is made.

@@ -1,6 +1,6 @@
 # ergo_std changelog
 
-## 1.0.0-rc.0  -- Unreleased
+## 1.0.0-rc.0  -- 2021-08-01
 ### New Features
 * Add `std:env:arch` to get the host architecture.
 * `std:log` uses the `Display` ergo trait to write values, which is far more
