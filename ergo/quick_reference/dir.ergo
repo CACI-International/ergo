@@ -1,0 +1,13 @@
+tectonic-version = 0.7.1
+texfile = ergo_quick_ref.tex
+
+pwd = std:source:dir ()
+std:String:format "{}.tex" :basename = :texfile
+
+# TODO add cache:single to simplify the use case of caching based on another identity
+# the below is incorrect (if an old cache entry is hit, it will return the file without rebuilding)
+std:cache {
+    std:exec (std:env:path-search cargo) install --version :tectonic-version tectonic |>:complete
+    std:exec (std:env:path-search tectonic) (!std:fs:track (std:Path:join :pwd :texfile)) |>:complete
+    std:Path:join :pwd (std:String:format "{}.pdf" :basename)
+}
