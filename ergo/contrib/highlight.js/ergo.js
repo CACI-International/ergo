@@ -4,7 +4,7 @@ Language: Ergo
 function ergo_lang(hljs) {
     return {
         name: "Ergo",
-        keywords: "ergo pat fn index std workspace doc if",
+        keywords: "ergo pat fn index std workspace doc bind unset",
         contains: [
             hljs.COMMENT(/#/, /$/, {
                 contains: [
@@ -16,7 +16,7 @@ function ergo_lang(hljs) {
             hljs.QUOTE_STRING_MODE,
             {
                 className: 'operator',
-                begin: /(:|\^|!)/
+                begin: /(:|\^|!|->|=)/
             },
             {
                 className: 'keyword',
