@@ -70,10 +70,12 @@ ergo_traits_fn! {
         async fn put(&self, stored_ctx: &traits::StoredContext, item: crate::context::ItemContent) -> crate::RResult<()> {
             async move {
                 let mut ids: Vec<u128> = Vec::new();
+                let mut writes = Vec::new();
                 for v in self.0.iter().cloned() {
                     ids.push(v.id());
-                    stored_ctx.write_to_store(v).await?;
+                    writes.push(stored_ctx.write_to_store(v));
                 }
+                crate::Context::global().task.join_all(writes).await?;
                 Ok(bincode::serialize_into(item, &ids)?)
             }.await.into()
         }
@@ -81,11 +83,10 @@ ergo_traits_fn! {
         async fn get(stored_ctx: &traits::StoredContext, item: crate::context::ItemContent) -> crate::RResult<Erased> {
             async move {
                 let ids: Vec<u128> = bincode::deserialize_from(item)?;
-                let mut vals = RVec::new();
-                for id in ids {
-                    vals.push(Source::imbue(crate::Source::stored(stored_ctx.read_from_store(id).await?)));
-                }
-                Ok(Erased::new(Array(vals)))
+                let values = crate::Context::global().task
+                    .join_all(ids.into_iter().map(|id| stored_ctx.read_from_store(id)))
+                    .await?;
+                Ok(Erased::new(Array(values.into_iter().map(|v| Source::imbue(crate::Source::stored(v))).collect())))
             }.await.into()
         }
     }

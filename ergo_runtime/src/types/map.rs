@@ -82,13 +82,15 @@ ergo_traits_fn! {
         async fn put(&self, stored_ctx: &traits::StoredContext, item: crate::context::ItemContent) -> crate::RResult<()> {
             async move {
                 let mut ids: BTreeMap<u128, u128> = BTreeMap::new();
+                let mut writes = Vec::new();
                 for (k, v) in self.0.iter() {
                     let k = k.clone();
                     let v = v.clone();
                     ids.insert(k.id(), v.id());
-                    stored_ctx.write_to_store(k).await?;
-                    stored_ctx.write_to_store(v).await?;
+                    writes.push(stored_ctx.write_to_store(k));
+                    writes.push(stored_ctx.write_to_store(v));
                 }
+                crate::Context::global().task.join_all(writes).await?;
                 Ok(bincode::serialize_into(item, &ids)?)
             }.await.into()
         }
@@ -97,10 +99,21 @@ ergo_traits_fn! {
             async move {
                 let ids: BTreeMap<u128, u128> = bincode::deserialize_from(item)?;
                 let mut vals = BstMap::new();
-                for (k_id, v_id) in ids {
+                let keys: Vec<_> = ids.iter().map(|i| stored_ctx.read_from_store(*i.0)).collect();
+                let values: Vec<_> = ids.iter().map(|i| stored_ctx.read_from_store(*i.1)).collect();
+
+                let read = crate::Context::global().task.join_all(vec![
+                    crate::Context::global().task.join_all(keys),
+                    crate::Context::global().task.join_all(values)
+                ]).await?;
+                let mut read = read.into_iter();
+                let keys = read.next().unwrap();
+                let values = read.next().unwrap();
+
+                for (k, v) in keys.into_iter().zip(values) {
                     vals.insert(
-                        Source::imbue(crate::Source::stored(stored_ctx.read_from_store(k_id).await?)),
-                        Source::imbue(crate::Source::stored(stored_ctx.read_from_store(v_id).await?)),
+                        Source::imbue(crate::Source::stored(k)),
+                        Source::imbue(crate::Source::stored(v)),
                     );
                 }
                 Ok(Erased::new(Map(vals)))

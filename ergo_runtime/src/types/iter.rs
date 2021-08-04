@@ -248,10 +248,12 @@ ergo_traits_fn! {
             async move {
                 let mut ids: Vec<u128> = Vec::new();
                 let vals: Vec<_> = self.clone().collect().await?;
+                let mut writes = Vec::new();
                 for v in vals {
                     ids.push(v.id());
-                    stored_ctx.write_to_store(v).await?;
+                    writes.push(stored_ctx.write_to_store(v));
                 }
+                crate::Context::global().task.join_all(writes).await?;
                 bincode::serialize_into(item, &ids).map_err(|e| e.into())
             }.await.into()
         }
@@ -259,11 +261,10 @@ ergo_traits_fn! {
         async fn get(stored_ctx: &traits::StoredContext, item: crate::context::ItemContent) -> crate::RResult<Erased> {
             async move {
                 let ids: Vec<u128> = bincode::deserialize_from(item)?;
-                let mut vals = Vec::new();
-                for id in ids {
-                    vals.push(Source::imbue(crate::Source::stored(stored_ctx.read_from_store(id).await?)));
-                }
-                Ok(Erased::new(Iter::from_iter(vals.into_iter())))
+                let values = crate::Context::global().task
+                    .join_all(ids.into_iter().map(|id| stored_ctx.read_from_store(id)))
+                    .await?;
+                Ok(Erased::new(Iter::from_iter(values.into_iter().map(|v| Source::imbue(crate::Source::stored(v))))))
             }.await.into()
         }
     }
