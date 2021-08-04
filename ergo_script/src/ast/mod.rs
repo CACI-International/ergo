@@ -1726,6 +1726,39 @@ mod test {
         );
     }
 
+    // TODO determine what sort of behavior would be most appropriate for this case
+    #[test]
+    #[should_panic]
+    fn set_scope_in_pattern_command() {
+        let mut ctx = keyset::Context::default();
+        let a1 = ctx.key();
+        let f = ctx.key();
+        let a2 = ctx.key();
+        assert_captures(
+            "a = 1; f :a !(a ()) = ()",
+            E::block(vec![
+                BI::Bind(src(E::set_with_capture(s("a"), a1)), s("1")),
+                BI::Bind(
+                    src(E::pat_command(
+                        src(E::capture(f)),
+                        vec![
+                            CI::Expr(src(E::set_with_capture(s("a"), a2))),
+                            CI::Expr(src(E::command(
+                                src(E::capture(a1)),
+                                vec![CI::Expr(src(E::unit()))],
+                            )
+                            .set_captures(vec![a1]))),
+                        ],
+                    )
+                    .set_captures(vec![f, a1])),
+                    src(E::unit()),
+                ),
+            ])
+            .set_captures(vec![f]),
+            vec![(f, E::get(s("f")), vec![])],
+        );
+    }
+
     mod lints {
         use super::*;
 
