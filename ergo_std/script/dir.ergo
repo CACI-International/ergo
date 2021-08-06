@@ -314,8 +314,11 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
     ##
     ## {{type-function:}}
     ##
+    ## # Values
+    ## The constants `true` and `false` are indices in the module.
+    ##
     ## # Functions
-    ## {{mdoc:functions :self from true false}}
+    ## {{mdoc:functions :self from}}
     Bool = match-indices plugin:type:Bool plugin:bool
 
     ## The Error type.
