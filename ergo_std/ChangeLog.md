@@ -3,6 +3,8 @@
 ## Unreleased
 ### Improvements
 * Improve error return values when using `std:eval`.
+* Do not cache `std:net:unarchive` results, to make the standard library purely
+  functional.
 
 ## 1.0.0-rc.0  -- 2021-08-01
 ### New Features
