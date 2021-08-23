@@ -2,6 +2,9 @@
 
 ## Unreleased
 * Parallelize store implementations for Array, Map, and Iter.
+* Improve type errors that involve an Error type.
+  * Previously these would mention the type error and then the error itself, but
+    in practice this is just extra noise and the type error should be ignored.
 
 ## 1.0.0-rc.0  -- 2021-08-01
 Most of the changes listed below are breaking changes, so there is no separate

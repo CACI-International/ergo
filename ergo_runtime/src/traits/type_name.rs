@@ -31,14 +31,14 @@ pub fn type_name(value: &Value) -> String {
 
 /// Create a type error with the value's type mentioned.
 pub fn type_error(v: Value, expected: &str) -> crate::Error {
+    let v = match v.as_type::<crate::types::Error>() {
+        Ok(e) => return e.to_owned(),
+        Err(v) => v,
+    };
     let name = type_name(&v);
-    let e = Source::get(&v)
+    Source::get(&v)
         .with(format!("type error: expected {}, got {}", expected, name))
-        .into_error();
-    match v.as_type::<crate::types::Error>() {
-        Err(_) => e,
-        Ok(err) => e.with_context(err.to_owned().error()),
-    }
+        .into_error()
 }
 
 /// Create a type error with the value's type mentioned.
