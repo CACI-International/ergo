@@ -185,21 +185,21 @@ fn clean_doc_comment(parts: Vec<DocCommentPart>) -> Vec<DocCommentPart> {
     // Use whitespace of first non-empty line of doc comment to
     // determine trimmable whitespace from subsequent lines.
     let mut leading_ws_offset = 0;
-    while let Some(part) = parts.next() {
+    if let Some(part) = parts.next() {
         match part {
             DocCommentPart::String(s) => match s.find(|c: char| !c.is_whitespace()) {
-                None => continue,
+                None => {
+                    leading_ws_offset = s.len();
+                }
                 Some(offset) => {
                     leading_ws_offset = offset;
                     result.push(DocCommentPart::String(
                         unsafe { s.get_unchecked(offset..) }.into(),
                     ));
-                    break;
                 }
             },
             DocCommentPart::ExpressionBlock(_) => {
                 result.push(part);
-                break;
             }
         }
     }
