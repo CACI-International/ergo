@@ -6,6 +6,9 @@
 * Add `std:test` module.
   * Add `std:test:run` as a basic way to nicely run tests and display the
     results.
+* Add `fallback` keyed argument to `std:match`.
+  * This is more ergonomic for cases where the final case may error (but that
+    error should be retained).
 
 ### Improvements
 * Improve error return values when using `std:eval`.
