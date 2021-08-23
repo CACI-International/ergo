@@ -1,4 +1,4 @@
-type-tests = {
+type = {
     enum = {
         MapResult = std:type:enum MapResult {
             Ok = std:Map
@@ -14,7 +14,7 @@ type-tests = {
         MapResult _ = :ok
         MapResult:Ok {} = :ok
         MapResult:Error "oh no" = :err
-        "success"
+        std:Bool:true
     }
 
     struct = {
@@ -25,8 +25,23 @@ type-tests = {
         pair = StringPair: { first = hello, second = world }
         StringPair _ = :pair
         StringPair: {first = hello, second = world} = :pair
-        "success"
+        std:Bool:true
     }
 }
 
-:type-tests
+eval = {
+    function = {
+        std:String hi = std:eval { "hi" }
+        std:Bool:true
+    }
+    pattern = {
+        std:eval hi = { "hi" }
+        std:Bool:true
+    }
+    error = {
+        std:Error _ = std:eval <| std:Error: "oh no"
+        std:Bool:true
+    }
+}
+
+std:test:run { type, eval }

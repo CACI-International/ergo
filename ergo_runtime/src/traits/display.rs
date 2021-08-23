@@ -57,6 +57,18 @@ pub async fn display(mut v: Value, f: &mut Formatter<'_>) -> crate::Result<()> {
     }
 }
 
+/// Display the given value to the Formatter, regardless of whether the value is an Error or not.
+pub async fn display_any(mut v: Value, f: &mut Formatter<'_>) -> crate::Result<()> {
+    drop(Context::eval(&mut v).await);
+    match Context::get_trait::<Display>(&v) {
+        None => {
+            write!(f, "<cannot display values of type {}>", type_name(&v))?;
+            Ok(())
+        }
+        Some(t) => t.fmt(v, f).await.into_result(),
+    }
+}
+
 /// Display a value to a string.
 pub async fn to_string(v: Value) -> crate::Result<String> {
     let mut s = String::new();

@@ -1,0 +1,29 @@
+plugin = ergo plugin
+
+## Run a number of tests and return a string indicating results.
+##
+## Arguments: `Map :tests`
+##
+## `tests` may contain values that either evaluate to a nested `Map` of more tests (namespacing the
+## tests), `Bool:true` to indicate success, `Bool:false` to indicate failure, or `Error` to indicate
+## failure. The keys of the maps are used to name the tests.
+run = {
+    f = fn :self :name :x -> plugin:match :x [
+        plugin:type:Map :m -> plugin:iter:flatten <| plugin:iter:map (fn (plugin:type:MapEntry: :k :v) -> {
+            self :self (plugin:string:format "{}:{}" :name :k) :v
+        }) :m
+        plugin:type:Error :e -> [{ name, result = plugin:string:format "failed with error: {}" <| std:Error:display :e }]
+        plugin:bool:true -> [{ name, result = success }]
+        plugin:bool:false -> [{ name, result = failed }]
+        _ -> plugin:type:Error: (source=:x) "invalid test result"
+    ]
+
+    print-result = fn {name, result} -> plugin:string:format "{}\t\t\t{}" :name :result
+
+    fn (plugin:type:Map :tests) -> {
+        :results = plugin:iter:flatten <| plugin:iter:map (fn :e -> f :f (plugin:string:format "{}" e:key) e:value) :tests
+        plugin:string:join "\n" <| plugin:iter:map :print-result :results
+    }
+}
+
+{ run }

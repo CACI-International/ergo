@@ -1,6 +1,12 @@
 # ergo_std changelog
 
 ## Unreleased
+### New Features
+* Add `std:Error:display` to convert Errors into Strings.
+* Add `std:test` module.
+  * Add `std:test:run` as a basic way to nicely run tests and display the
+    results.
+
 ### Improvements
 * Improve error return values when using `std:eval`.
 * Do not cache `std:net:unarchive` results, to make the standard library purely

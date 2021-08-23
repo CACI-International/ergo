@@ -4,6 +4,7 @@ use ergo_runtime::{plugin_entry, types, Context, Value};
 mod array;
 mod bool;
 mod env;
+mod error;
 mod exec;
 mod fs;
 mod getopt;
@@ -56,6 +57,7 @@ fn entry() -> ergo_runtime::Result<Value> {
         "array" = array::module(),
         "bool" = bool::module(),
         "env" = env::module(),
+        "error" = error::module(),
         "exec" = exec::function(),
         "fs" = fs::module(),
         "getopt" = getopt::function(),

@@ -11,6 +11,7 @@ matches = fn :cases -> :a -> !plugin:match :a :cases
 
 mdoc = ergo doc
 mnet = ergo net
+mtest = ergo test
 mtype = ergo type
 
 ## {{native-doc plugin:value:eval}}
@@ -18,10 +19,10 @@ mtype = ergo type
 ## Pattern Arguments: `:value`
 ##
 ## When used in a pattern, evaluates the bound value before binding to the argument.
-eval = :a -> !(plugin:match :a [
-    fn :x -> { result = !plugin:value:eval :x }
-    pat :out -> { result = :x -> bind :out (!plugin:value:eval :x) }
-]):result
+eval = :a -> !plugin:value:eval <| plugin:match :a [
+    fn :x -> { !plugin:value:eval :x }
+    pat :out -> :x -> bind :out (!plugin:value:eval :x)
+]
 
 ## Load a remote archive.
 ##
@@ -284,7 +285,7 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
 ## {{mdoc:modules :self Any Array Bool Error Function Iter Map MapEntry Number Path String Unit Unset}}
 ##
 ## # Modules
-## {{mdoc:modules :self bind doc dynamic env fs io json log meta net source type}}
+## {{mdoc:modules :self bind doc dynamic env fs io json log meta net source test type}}
 ##
 ## # Functions
 ## {{(mdoc:functions :self by-content cache debug default ergo-remote
@@ -324,7 +325,10 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
     ## The Error type.
     ##
     ## {{type-function "(source) :message"}}
-    Error = plugin:type:Error
+    ##
+    ## # Functions
+    ## {{mdoc:functions :self display}}
+    Error = match-indices plugin:type:Error plugin:error
 
     ## The Function type and related functions.
     ##
@@ -517,6 +521,11 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
         ## Arguments: `(Function :f) :value`
         map = fn :f :v -> plugin:value:source-copy :v (f :v)
     }
+
+    ## Test helper functions.
+    ##
+    ## {{mdoc:functions :self run}}
+    test = :mtest
 
     ## Type creation.
     ##
