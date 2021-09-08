@@ -15,6 +15,11 @@
 * Do not cache `std:net:unarchive` results, to make the standard library purely
   functional.
 
+### Bugfixes
+* Fix the `std:fs:glob` relative directory.
+  * It was mistakenly using the call site script path rather than the parent
+    directory.
+
 ## 1.0.0-rc.0  -- 2021-08-01
 ### New Features
 * Add `std:env:arch` to get the host architecture.

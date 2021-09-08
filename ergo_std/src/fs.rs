@@ -66,6 +66,7 @@ async fn glob_(pattern: _) -> Value {
 
     let mut path = ARGS_SOURCE
         .path()
+        .map(|p| p.parent().unwrap().into())
         .unwrap_or_else(|| std::env::current_dir().unwrap());
     path.push(pattern.as_ref().as_str());
 
