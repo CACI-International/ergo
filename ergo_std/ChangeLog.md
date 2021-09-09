@@ -14,6 +14,7 @@
 * Improve error return values when using `std:eval`.
 * Do not cache `std:net:unarchive` results, to make the standard library purely
   functional.
+* Allow all `std:net:http` arguments to be used with `std:ergo-remote`.
 
 ### Bugfixes
 * Fix the `std:fs:glob` relative directory.

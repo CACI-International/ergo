@@ -28,8 +28,8 @@ eval = :a -> !plugin:value:eval <| plugin:match :a [
 ##
 ## Fetches the archive with `net:unarchive`, and loads the archive from the root directory.
 ##
-## Arguments: `(String :url)`
-ergo-remote = fn :url -> ergo <| mnet:unarchive :url
+## All arguments are forwarded to `std:net:http`.
+ergo-remote = fn ^:args -> ergo <| mnet:unarchive ^:args
 
 ## Return any bound value as-is.
 ##
