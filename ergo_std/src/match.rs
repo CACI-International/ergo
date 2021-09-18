@@ -23,22 +23,11 @@ pub async fn function(mut value: _, bindings: types::Array, (fallback): [_]) -> 
         // Do not propagate errors while trying the bindings
         |ctx| ctx.error_scope = ergo_runtime::context::ErrorScope::new(|_| ()),
         async move {
-            let log = Context::global().log.sublog("match");
-
             drop(Context::eval(&mut value).await);
             for b in bindings {
-                let b_src = Source::get(&b);
                 let result = traits::bind(b, value.clone()).await;
-                match result.as_type::<types::Error>() {
-                    Ok(err) => {
-                        log.debug(
-                            b_src
-                                .with("didn't match because of error when binding")
-                                .into_error()
-                                .with_context(err.to_owned()),
-                        );
-                    }
-                    Err(v) => return Ok(v),
+                if !result.is_type::<types::Error>() {
+                    return Ok(result);
                 }
             }
 
@@ -52,10 +41,13 @@ pub async fn function(mut value: _, bindings: types::Array, (fallback): [_]) -> 
             // If the value is an error and no bindings match, return it directly.
             let err = match value.as_type::<types::Error>() {
                 Ok(e) => e.to_owned(),
-                Err(v) => Source::get(&v)
-                    .with("no bindings matched the value")
-                    .into_error()
-                    .with_context(bindings_source.with("bindings which failed to match")),
+                Err(v) => ergo_runtime::error! {
+                    labels: [
+                        primary(Source::get(&v).with("")),
+                        secondary(bindings_source.with("bindings which failed to match"))
+                    ],
+                    error: "no bindings matched the value"
+                },
             };
             Err(err)
         },

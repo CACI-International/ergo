@@ -52,25 +52,30 @@ impl traits::NestedValues for Map {
 
 ergo_traits_fn! {
     impl traits::Display for Map {
-        async fn fmt(&self, f: &mut traits::Formatter) -> crate::error::RResult<()> {
-            async move {
-                let mut iter = self.0.iter();
-                write!(f, "{{")?;
-                if let Some((k,v)) = iter.next() {
-                    traits::display(k.clone(), f).await?;
-                    write!(f, " = ")?;
-                    traits::display(v.clone(), f).await?;
-                }
+        async fn fmt(&self, f: &mut traits::Formatter) -> crate::RResult<()> {
+            crate::error_info!(
+                labels: [
+                    primary(Source::get(SELF_VALUE).with("while displaying this value"))
+                ],
+                async {
+                    let mut iter = self.0.iter();
+                    write!(f, "{{")?;
+                    if let Some((k,v)) = iter.next() {
+                        traits::display(k.clone(), f).await?;
+                        write!(f, " = ")?;
+                        traits::display(v.clone(), f).await?;
+                    }
 
-                for (k,v) in iter {
-                    write!(f, ", ")?;
-                    traits::display(k.clone(), f).await?;
-                    write!(f, " = ")?;
-                    traits::display(v.clone(), f).await?;
+                    for (k,v) in iter {
+                        write!(f, ", ")?;
+                        traits::display(k.clone(), f).await?;
+                        write!(f, " = ")?;
+                        traits::display(v.clone(), f).await?;
+                    }
+                    write!(f, "}}")?;
+                    crate::Result::Ok(())
                 }
-                write!(f, "}}")?;
-                Ok(())
-            }.await.into()
+            ).into()
         }
     }
 
@@ -80,44 +85,48 @@ ergo_traits_fn! {
 
     impl traits::Stored for Map {
         async fn put(&self, stored_ctx: &traits::StoredContext, item: crate::context::ItemContent) -> crate::RResult<()> {
-            async move {
-                let mut ids: BTreeMap<u128, u128> = BTreeMap::new();
-                let mut writes = Vec::new();
-                for (k, v) in self.0.iter() {
-                    let k = k.clone();
-                    let v = v.clone();
-                    ids.insert(k.id(), v.id());
-                    writes.push(stored_ctx.write_to_store(k));
-                    writes.push(stored_ctx.write_to_store(v));
+            crate::error_info!(
+                labels: [
+                    primary(Source::get(SELF_VALUE).with("while storing this value"))
+                ],
+                async {
+                    let mut ids: BTreeMap<u128, u128> = BTreeMap::new();
+                    let mut writes = Vec::new();
+                    for (k, v) in self.0.iter() {
+                        let k = k.clone();
+                        let v = v.clone();
+                        ids.insert(k.id(), v.id());
+                        writes.push(stored_ctx.write_to_store(k));
+                        writes.push(stored_ctx.write_to_store(v));
+                    }
+                    crate::Context::global().task.join_all(writes).await?;
+                    bincode::serialize_into(item, &ids)
                 }
-                crate::Context::global().task.join_all(writes).await?;
-                Ok(bincode::serialize_into(item, &ids)?)
-            }.await.into()
+            ).into()
         }
 
         async fn get(stored_ctx: &traits::StoredContext, item: crate::context::ItemContent) -> crate::RResult<Erased> {
-            async move {
-                let ids: BTreeMap<u128, u128> = bincode::deserialize_from(item)?;
-                let mut vals = BstMap::new();
-                let keys: Vec<_> = ids.iter().map(|i| stored_ctx.read_from_store(*i.0)).collect();
-                let values: Vec<_> = ids.iter().map(|i| stored_ctx.read_from_store(*i.1)).collect();
+            crate::error_info!(
+                async {
+                    let ids: BTreeMap<u128, u128> = bincode::deserialize_from(item)?;
+                    let mut vals = BstMap::new();
+                    let keys: Vec<_> = ids.iter().map(|i| stored_ctx.read_from_store(*i.0)).collect();
+                    let values: Vec<_> = ids.iter().map(|i| stored_ctx.read_from_store(*i.1)).collect();
 
-                let read = crate::Context::global().task.join_all(vec![
-                    crate::Context::global().task.join_all(keys),
-                    crate::Context::global().task.join_all(values)
-                ]).await?;
-                let mut read = read.into_iter();
-                let keys = read.next().unwrap();
-                let values = read.next().unwrap();
+                    let read = crate::Context::global().task.join_all(vec![
+                        crate::Context::global().task.join_all(keys),
+                        crate::Context::global().task.join_all(values)
+                    ]).await?;
+                    let mut read = read.into_iter();
+                    let keys = read.next().unwrap();
+                    let values = read.next().unwrap();
 
-                for (k, v) in keys.into_iter().zip(values) {
-                    vals.insert(
-                        Source::imbue(crate::Source::stored(k)),
-                        Source::imbue(crate::Source::stored(v)),
-                    );
+                    for (k, v) in keys.into_iter().zip(values) {
+                        vals.insert(k, v);
+                    }
+                    crate::Result::Ok(Erased::new(Map(vals)))
                 }
-                Ok(Erased::new(Map(vals)))
-            }.await.into()
+            ).into()
         }
     }
 

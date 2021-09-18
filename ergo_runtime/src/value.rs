@@ -370,7 +370,7 @@ where
         future::BoxFuture::new(async move {
             let lock_id = self.ref_id();
             if Context::with(|ctx| ctx.evaluating.locking_would_deadlock(lock_id)) {
-                return crate::types::Error::from("deadlock detected").into();
+                return crate::error!(error: "deadlock detected").into();
             }
 
             let mut guard = self.lock().await;

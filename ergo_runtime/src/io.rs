@@ -6,6 +6,7 @@ use crate::abi_stable::{
     std_types::{RBox, RResult, RSliceMut},
     StableAbi,
 };
+use crate::error::DiagnosticInfo;
 use futures::future::{BoxFuture, Future, FutureExt, TryFutureExt};
 pub use futures::io::{AllowStdIo, AsyncRead, AsyncWrite};
 use std::cmp;
@@ -267,7 +268,7 @@ impl<R: AsyncRead + Send> AsyncReadInterface for R {
             &mut ctx,
             buf.as_mut_slice(),
         )
-        .map(|v| v.map_err(|e| e.into()).into())
+        .map(|v| v.into_diagnostic().map_err(|e| e.into()).into())
         .into()
     }
 }

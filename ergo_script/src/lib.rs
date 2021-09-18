@@ -1,6 +1,6 @@
 //! Ergo script loading and execution.
 
-pub use ergo_runtime::source::{FileSource, Source, StringSource};
+pub use ergo_runtime::source::Source;
 use ergo_runtime::{Context, Error, Value};
 use std::collections::BTreeMap;
 
@@ -51,12 +51,7 @@ impl Runtime {
             ("unset", base::unset()),
         ]
         .into_iter()
-        .map(|(k, v)| {
-            (
-                k.into(),
-                ergo_runtime::metadata::Source::imbue(Source::builtin(v)),
-            )
-        })
+        .map(|(k, v)| (k.into(), v))
         .collect();
         let load_data = load_functions.load_data;
         load_data.set_top_level_env(env);
@@ -77,17 +72,38 @@ impl Runtime {
         self.load_data.set_backtrace(backtrace);
     }
 
+    /// Load a script from a string.
+    pub fn load_string(&self, name: &str, script: &str) -> Result<Script, Error> {
+        let source_id = self
+            .ctx
+            .block_on(async { Context::global().diagnostic_sources() })
+            .add_string(name.to_owned(), script.to_owned());
+        self.load(Source::new(source_id))
+    }
+
     /// Load a script from a Source.
     pub fn load(&self, src: Source<()>) -> Result<Script, Error> {
+        let sources = self
+            .ctx
+            .block_on(async { Context::global().diagnostic_sources() });
+        let content = sources.content(src.source_id).ok_or_else(|| ergo_runtime::error! {
+            error: format!("failed to read content for source '{}'", sources.name(src.source_id).unwrap_or("unknown".into()))
+        })?;
         let mut s = {
             let mut guard = self.load_data.ast_context.lock();
-            Script::load(src, &mut *guard, self.load_data.lint_level())?
+            Script::load(src.with(content), &mut *guard, self.load_data.lint_level())?
         };
         s.top_level_env(self.load_data.top_level_env.lock().clone());
         if self.load_data.backtrace() {
             s.enable_backtrace();
         }
         Ok(s)
+    }
+
+    /// Load and evaluate a script from a string.
+    pub fn evaluate_string(&self, name: &str, script: &str) -> Result<Value, Error> {
+        let script = self.load_string(name, script)?;
+        self.block_on(script.evaluate())
     }
 
     /// Load and evaluate a script.
@@ -163,7 +179,7 @@ pub struct Script {
 impl Script {
     /// Load a script from a Source.
     pub(crate) fn load(
-        src: Source<()>,
+        src: Source<&str>,
         ctx: &mut ast::Context,
         lint_level: LintLevel,
     ) -> Result<Self, Error> {
@@ -206,7 +222,18 @@ impl Script {
         if !lint_messages.is_empty() {
             let lint_log = Context::global().log.sublog("lint");
             for m in lint_messages {
-                lint_log.warn(m);
+                use ergo_runtime::error::{
+                    diagnostics_to_string, Diagnostic, DiagnosticInfo, Severity,
+                };
+                let (src, m) = m.take();
+                let diag = Diagnostic::from(m)
+                    .set_severity(Severity::Warning)
+                    .add_primary_label(src.with(""));
+                lint_log.warn(diagnostics_to_string(
+                    &[diag],
+                    Context::global().diagnostic_sources().as_ref(),
+                    false,
+                ));
             }
         }
 
@@ -856,7 +883,7 @@ mod test {
 
     fn script_eval(runtime: &Runtime, s: &str) -> Result<Value, String> {
         runtime
-            .evaluate(Source::new(StringSource::new("<test>", s.to_owned())))
+            .evaluate_string("<test>", s)
             .map_err(|e| format!("{:?}", e))
     }
 }

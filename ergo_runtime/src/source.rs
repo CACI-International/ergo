@@ -1,86 +1,33 @@
 //! Runtime source information.
 
-use crate::abi_stable::{
-    bst::BstMap,
-    erased_types::DynTrait,
-    path::PathBuf,
-    sabi_trait,
-    sabi_trait::prelude::*,
-    std_types::{RArc, RBox, ROption, RResult, RString},
-    StableAbi,
-};
+use crate::abi_stable::{bst::BstMap, StableAbi};
 use crate::{
+    context::SourceId,
     dependency::{AsDependency, Dependency},
-    Error, Value,
+    error::DiagnosticInfo,
+    Error,
 };
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::future::Future;
-use std::io::{BufRead, BufReader, Read};
-
-use ROption::*;
 
 /// A type which adds source location to a value.
-#[derive(Clone, Debug, StableAbi)]
+#[derive(Clone, Copy, Debug, StableAbi, Deserialize, Serialize)]
 #[repr(C)]
 pub struct Source<T> {
     value: T,
+    pub source_id: SourceId,
     pub location: Location,
-    source: SourceFactoryRef,
 }
 
 /// A location in the original (character) input stream.
-#[derive(Clone, Debug, Default, Hash, PartialEq, Eq, StableAbi)]
+#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, StableAbi, Deserialize, Serialize)]
 #[repr(C)]
 pub struct Location {
     /// The start index of the first character.
     pub start: usize,
     /// The number of characters represented by the Location.
     pub length: usize,
-}
-
-#[derive(StableAbi)]
-#[sabi(impl_InterfaceType(IoRead))]
-#[repr(C)]
-pub struct ReadInterface;
-
-/// A factory that provides source names and data.
-pub trait SourceFactory {
-    /// The name of the source.
-    fn name(&self) -> String;
-
-    fn path(&self) -> Option<std::path::PathBuf> {
-        None
-    }
-
-    /// Read from the source.
-    fn read<'a>(&'a self) -> Result<Box<dyn Read + 'a>, String>;
-}
-
-#[sabi_trait]
-trait SourceFactoryAbi: Send + Sync {
-    fn name(&self) -> RString;
-
-    fn path(&self) -> ROption<PathBuf>;
-
-    #[sabi(last_prefix_field)]
-    fn read<'a>(&'a self) -> RResult<DynTrait<'a, RBox<()>, ReadInterface>, RString>;
-}
-
-impl<T: SourceFactory + Sync + Send> SourceFactoryAbi for T {
-    fn name(&self) -> RString {
-        SourceFactory::name(self).into()
-    }
-
-    fn path(&self) -> ROption<PathBuf> {
-        SourceFactory::path(self).map(|v| v.into()).into()
-    }
-
-    fn read<'a>(&'a self) -> RResult<DynTrait<'a, RBox<()>, ReadInterface>, RString> {
-        SourceFactory::read(self)
-            .map(|v| DynTrait::from_borrowing_value(v, ReadInterface))
-            .map_err(|e| e.into())
-            .into()
-    }
 }
 
 /// Types which can be converted into a Source<T>.
@@ -92,29 +39,6 @@ pub trait IntoSource {
     fn into_source(self) -> Source<Self::Output>;
 }
 
-/// A string-based source.
-pub struct StringSource {
-    name: String,
-    src: String,
-}
-
-/// A file-based source.
-pub struct FileSource(pub std::path::PathBuf);
-
-/// A builtin source.
-pub struct Builtin(Option<&'static std::panic::Location<'static>>);
-
-/// A stored source.
-pub struct Stored;
-
-/// A missing source.
-pub struct Missing(Option<&'static std::panic::Location<'static>>);
-
-/// A reference to a SourceFactory.
-#[derive(Clone, Default, StableAbi)]
-#[repr(C)]
-struct SourceFactoryRef(ROption<RArc<SourceFactoryAbi_TO<'static, RBox<()>>>>);
-
 impl Location {
     /// Create a Location with the given fields.
     pub fn new(start: usize, length: usize) -> Self {
@@ -124,6 +48,17 @@ impl Location {
     /// Get the end index of the location.
     pub fn end(&self) -> usize {
         self.start + self.length
+    }
+
+    /// Get a range representing the location.
+    pub fn into_range(self) -> std::ops::Range<usize> {
+        self.start..(self.start + self.length)
+    }
+}
+
+impl From<Location> for std::ops::Range<usize> {
+    fn from(l: Location) -> Self {
+        l.into_range()
     }
 }
 
@@ -168,207 +103,21 @@ impl std::iter::Sum for Location {
     }
 }
 
-impl SourceFactoryRef {
-    pub fn path(&self) -> Option<std::path::PathBuf> {
-        match &self.0 {
-            ROption::RNone => None,
-            ROption::RSome(src) => src.path().map(|v| v.into()).into(),
-        }
-    }
-}
-
-impl fmt::Debug for SourceFactoryRef {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match &self.0 {
-            RNone => write!(f, "no SourceFactory"),
-            RSome(s) => write!(f, "SourceFactory({})", s.name()),
-        }
-    }
-}
-
-impl std::ops::Add for SourceFactoryRef {
-    type Output = Self;
-
-    fn add(self, other: Self) -> Self {
-        match (&self.0, &other.0) {
-            (RSome(ref a), RSome(ref b)) => {
-                if a.as_ref() as *const _ == b.as_ref() as *const _ {
-                    self
-                } else {
-                    SourceFactoryRef(RNone)
-                }
-            }
-            (RSome(_), _) => self,
-            (_, RSome(_)) => other,
-            _ => SourceFactoryRef(RNone),
-        }
-    }
-}
-
-impl std::iter::Sum for SourceFactoryRef {
-    fn sum<I: Iterator<Item = Self>>(mut iter: I) -> Self {
-        iter.next()
-            .map(|first| iter.fold(first, |a, b| a + b))
-            .unwrap_or_default()
-    }
-}
-
-impl PartialEq for SourceFactoryRef {
-    fn eq(&self, other: &Self) -> bool {
-        match (&self.0, &other.0) {
-            (RSome(ref a), RSome(ref b)) => a.as_ref() as *const _ == b.as_ref() as *const _,
-            (RNone, RNone) => true,
-            _ => false,
-        }
-    }
-}
-
-impl std::hash::Hash for SourceFactoryRef {
-    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
-        match &self.0 {
-            RNone => (233498237u128).hash(h),
-            RSome(v) => std::ptr::hash(v.as_ref(), h),
-        }
-    }
-}
-
-impl StringSource {
-    pub fn new<N: Into<String>>(name: N, src: String) -> Self {
-        StringSource {
-            name: name.into(),
-            src,
-        }
-    }
-}
-
-impl SourceFactory for StringSource {
-    fn name(&self) -> String {
-        self.name.clone()
-    }
-
-    fn read<'a>(&'a self) -> Result<Box<dyn Read + 'a>, String> {
-        let r: &'a [u8] = self.src.as_ref();
-        Ok(Box::new(r))
-    }
-}
-
-impl SourceFactory for FileSource {
-    fn name(&self) -> String {
-        format!("{}", self.0.display())
-    }
-
-    fn path(&self) -> Option<std::path::PathBuf> {
-        Some(self.0.clone())
-    }
-
-    fn read<'a>(&'a self) -> Result<Box<dyn Read + 'a>, String> {
-        Ok(Box::new(
-            std::fs::File::open(self.0.clone()).map_err(|e| e.to_string())?,
-        ))
-    }
-}
-
-impl SourceFactory for Builtin {
-    fn name(&self) -> String {
-        match self.0 {
-            None => "builtin".into(),
-            Some(l) => format!("builtin ({})", l),
-        }
-    }
-
-    fn read<'a>(&'a self) -> Result<Box<dyn Read + 'a>, String> {
-        Err("no source".into())
-    }
-}
-
-impl SourceFactory for Stored {
-    fn name(&self) -> String {
-        "stored".into()
-    }
-
-    fn read<'a>(&'a self) -> Result<Box<dyn Read + 'a>, String> {
-        Err("no source".into())
-    }
-}
-
-impl SourceFactory for Missing {
-    fn name(&self) -> String {
-        match self.0 {
-            None => "missing".into(),
-            Some(l) => format!("missing ({})", l),
-        }
-    }
-
-    fn read<'a>(&'a self) -> Result<Box<dyn Read + 'a>, String> {
-        Err("missing source".into())
-    }
-}
-
 impl Source<()> {
-    /// Create a source with the given factory.
-    pub fn new(source: impl SourceFactory + Send + Sync + 'static) -> Self {
+    /// Create a source from the given source id.
+    pub fn new(source_id: SourceId) -> Self {
         Source {
             value: (),
             location: Location::default(),
-            source: SourceFactoryRef(RSome(RArc::new(SourceFactoryAbi_TO::from_value(
-                source, TU_Opaque,
-            )))),
+            source_id,
         }
-    }
-
-    /// Open a source, returning a Source around the iterator over the source's characters.
-    ///
-    /// This should only be called when it is known that the source has a source factory.
-    pub fn open(self) -> std::io::Result<Source<impl IntoIterator<Item = char>>> {
-        let src = self.source.0.clone().expect("no source factory");
-        let mut r = src
-            .read()
-            .into_result()
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.into_string()))?;
-        // TODO: inefficient
-        let mut s = String::new();
-        r.read_to_string(&mut s)?;
-        let s: Vec<_> = s.chars().collect();
-
-        Ok(Source {
-            value: s,
-            location: self.location,
-            source: self.source,
-        })
     }
 }
 
 impl<T> Source<T> {
-    /// Create a value that has internal source.
-    #[cfg_attr(debug_assertions, track_caller)]
-    pub fn builtin(v: T) -> Self {
-        Source::new(Builtin(if cfg!(debug_assertions) {
-            Some(std::panic::Location::caller())
-        } else {
-            None
-        }))
-        .with(v)
-    }
-
-    /// Create a value that has a stored source.
-    pub fn stored(v: T) -> Self {
-        Source::new(Stored).with(v)
-    }
-
     /// Create a value that has a missing source.
-    #[cfg_attr(debug_assertions, track_caller)]
     pub fn missing(v: T) -> Self {
-        Source::new(Missing(if cfg!(debug_assertions) {
-            Some(std::panic::Location::caller())
-        } else {
-            None
-        }))
-        .with(v)
-    }
-
-    /// Get the path of the source, if any.
-    pub fn path(&self) -> Option<std::path::PathBuf> {
-        self.source.path()
+        Source::new(0).with(v)
     }
 
     /// Get the inner value by reference.
@@ -385,8 +134,8 @@ impl<T> Source<T> {
     pub fn source(&self) -> Source<()> {
         Source {
             value: (),
+            source_id: self.source_id.clone(),
             location: self.location.clone(),
-            source: self.source.clone(),
         }
     }
 
@@ -397,8 +146,8 @@ impl<T> Source<T> {
     {
         Source {
             value: f(self.value),
+            source_id: self.source_id,
             location: self.location,
-            source: self.source,
         }
     }
 
@@ -410,8 +159,8 @@ impl<T> Source<T> {
     {
         Source {
             value: f(self.value).await,
+            source_id: self.source_id,
             location: self.location,
-            source: self.source,
         }
     }
 
@@ -425,8 +174,8 @@ impl<T> Source<T> {
         (
             Source {
                 value: (),
+                source_id: self.source_id,
                 location: self.location,
-                source: self.source,
             },
             self.value,
         )
@@ -448,29 +197,6 @@ impl<T> Source<T> {
     /// Convert a Source<T> to a Source<U>.
     pub fn value_into<U: From<T>>(self) -> Source<U> {
         self.map(|v| v.into())
-    }
-}
-
-impl<T: ToString> Source<T> {
-    /// Add extra context to an error.
-    pub fn context_for_error(&self, e: Error) -> Error {
-        e.with_context(self.source().with(self.value.to_string()))
-    }
-
-    /// Add extra context to the error returned by the given value.
-    ///
-    /// The returned value will have this extra information in the error output (if an error occurs
-    /// at all).
-    pub fn imbue_error_context(&self, _v: Value) -> Value {
-        todo!()
-    }
-}
-
-impl<E: Into<Error>> Source<E> {
-    /// Add context to the inner error and return a new error.
-    pub fn inject_context<S: ToString>(self, ctx: S) -> Error {
-        let (src, e) = self.take();
-        src.with(ctx).context_for_error(e.into())
     }
 }
 
@@ -497,18 +223,6 @@ impl<T, E> Source<Result<T, E>> {
     }
 }
 
-impl<T, E: Into<Error>> Source<Result<T, E>> {
-    /// Move the source into the Ok/Err result, and inject the given context into the error result.
-    pub fn transpose_with_context<S: ToString>(self, ctx: S) -> Result<Source<T>, Error> {
-        self.transpose().map_err(move |e| e.inject_context(ctx))
-    }
-
-    /// Move the source into the Err result with the given context.
-    pub fn transpose_err_with_context<S: ToString>(self, ctx: S) -> Result<T, Error> {
-        self.transpose_err().map_err(move |e| e.inject_context(ctx))
-    }
-}
-
 impl<T> Source<Option<T>> {
     /// Move the source into the Some value.
     pub fn transpose(self) -> Option<Source<T>> {
@@ -522,17 +236,20 @@ impl<T> Source<Option<T>> {
 
 impl<T: PartialEq> Source<T> {
     pub fn total_eq(this: &Self, other: &Self) -> bool {
-        this.value == other.value && this.location == other.location && this.source == other.source
+        this.value == other.value
+            && this.location == other.location
+            && this.source_id == other.source_id
     }
 }
 
 impl<E> Source<E>
 where
-    E: Into<Error>,
+    E: Into<crate::error::Diagnostic>,
 {
     /// Convert a sourced error into a crate::Error.
     pub fn into_error(self) -> Error {
-        self.map(|v| v.into().error()).into()
+        let (src, e) = self.take();
+        Error::new(e.into().add_primary_label(src.with("")))
     }
 }
 
@@ -541,6 +258,12 @@ impl<T: Eq> Eq for Source<T> {}
 impl<T: PartialEq> PartialEq for Source<T> {
     fn eq(&self, other: &Self) -> bool {
         self.value == other.value
+    }
+}
+
+impl<T: PartialEq> PartialEq<T> for Source<T> {
+    fn eq(&self, other: &T) -> bool {
+        &self.value == other
     }
 }
 
@@ -600,15 +323,6 @@ impl<T> AsMut<T> for Source<T> {
     }
 }
 
-impl<T> std::error::Error for Source<T>
-where
-    T: std::error::Error + 'static,
-{
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&self.value)
-    }
-}
-
 impl<T: AsDependency> AsDependency for Source<T> {
     fn as_dependency(&self) -> Dependency {
         self.as_ref().unwrap().as_dependency()
@@ -652,6 +366,36 @@ impl<T: IntoSource, U: IntoSource> IntoSource for (T, U) {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct SingleId(SourceId);
+
+impl std::ops::Add for SingleId {
+    type Output = SourceId;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        if self != rhs {
+            panic!("inconsistent sources");
+        }
+        self.0
+    }
+}
+
+impl std::iter::Sum<SingleId> for SourceId {
+    fn sum<I: Iterator<Item = SingleId>>(mut iter: I) -> Self {
+        if let Some(i) = iter.next() {
+            let id = i;
+            while let Some(i) = iter.next() {
+                if i != id {
+                    panic!("inconsistent sources");
+                }
+            }
+            id.0
+        } else {
+            0
+        }
+    }
+}
+
 fn into_source_iter<R, T, I>(v: T) -> Source<R>
 where
     T: IntoIterator<Item = I>,
@@ -662,20 +406,20 @@ where
         .into_iter()
         .map(|t| {
             let s = t.into_source();
-            let source = s.source.0.clone();
+            let source = s.source_id;
             let loc = s.location.clone();
-            (s, (loc, SourceFactoryRef(source)))
+            (s, (loc, SingleId(source)))
         })
         .unzip();
 
     let (locs, srcs): (Vec<_>, Vec<_>) = rest.into_iter().unzip();
     let location = locs.into_iter().sum();
-    let source = srcs.into_iter().sum();
+    let source_id = srcs.into_iter().sum();
 
     Source {
         value,
         location,
-        source,
+        source_id,
     }
 }
 
@@ -721,22 +465,18 @@ where
                 let k = k.into_source();
                 let v = v.into_source();
                 let loc = &k.location + &v.location;
-                let ksource = k.source.0.clone();
-                let vsource = v.source.0.clone();
-                (
-                    (k, v),
-                    (loc, SourceFactoryRef(ksource) + SourceFactoryRef(vsource)),
-                )
+                let source = SingleId(k.source_id) + SingleId(v.source_id);
+                ((k, v), (loc, SingleId(source)))
             })
             .unzip();
         let (locs, srcs): (Vec<_>, Vec<_>) = rest.into_iter().unzip();
         let location = locs.into_iter().sum();
-        let source = srcs.into_iter().sum();
+        let source_id = srcs.into_iter().sum();
 
         Source {
             value: value.into_iter().collect(),
             location,
-            source,
+            source_id,
         }
     }
 }
@@ -756,22 +496,18 @@ where
                 let k = k.into_source();
                 let v = v.into_source();
                 let loc = &k.location + &v.location;
-                let ksource = k.source.0.clone();
-                let vsource = v.source.0.clone();
-                (
-                    (k, v),
-                    (loc, SourceFactoryRef(ksource) + SourceFactoryRef(vsource)),
-                )
+                let source = SingleId(k.source_id) + SingleId(v.source_id);
+                ((k, v), (loc, SingleId(source)))
             })
             .unzip();
         let (locs, srcs): (Vec<_>, Vec<_>) = rest.into_iter().unzip();
         let location = locs.into_iter().sum();
-        let source = srcs.into_iter().sum();
+        let source_id = srcs.into_iter().sum();
 
         Source {
             value: value.into_iter().collect(),
             location,
-            source,
+            source_id,
         }
     }
 }
@@ -783,17 +519,17 @@ impl<T: IntoSource> IntoSource for Option<T> {
         match self {
             None => Source {
                 value: None,
+                source_id: Default::default(),
                 location: Default::default(),
-                source: Default::default(),
             },
             Some(s) => {
                 let s = s.into_source();
                 let location = s.location.clone();
-                let source = s.source.clone();
+                let source_id = s.source_id.clone();
                 Source {
                     value: Some(s),
+                    source_id,
                     location,
-                    source,
                 }
             }
         }
@@ -807,17 +543,17 @@ where
     fn from_iter<I: IntoIterator<Item = Source<U>>>(iter: I) -> Source<T> {
         let (vals, rest): (Vec<_>, Vec<_>) = iter
             .into_iter()
-            .map(|s| (s.value, (s.location, s.source)))
+            .map(|s| (s.value, (s.location, SingleId(s.source_id))))
             .unzip();
         let (locs, srcs): (Vec<_>, Vec<_>) = rest.into_iter().unzip();
         let value = vals.into_iter().collect();
         let location = locs.into_iter().sum();
-        let source = srcs.into_iter().sum();
+        let source_id = srcs.into_iter().sum();
 
         Source {
             value,
+            source_id,
             location,
-            source,
         }
     }
 }
@@ -825,207 +561,11 @@ where
 impl<T, U> From<(Source<T>, Source<U>)> for Source<(Source<T>, Source<U>)> {
     fn from((t, u): (Source<T>, Source<U>)) -> Self {
         let location = t.location.clone() + u.location.clone();
-        let source = t.source.clone() + u.source.clone();
+        let source_id = SingleId(t.source_id) + SingleId(u.source_id);
         Source {
             value: (t, u),
             location,
-            source,
-        }
-    }
-}
-
-const TAB_WIDTH: usize = 4;
-
-struct DisplayInfoDetail {
-    pub start: (usize, usize),
-    pub end: (usize, usize),
-    pub startline: String,
-}
-
-struct DisplayInfo {
-    pub name: Option<String>,
-    pub detail: Result<DisplayInfoDetail, String>,
-}
-
-impl<T> Source<T> {
-    fn display_info(&self) -> DisplayInfo {
-        if let RSome(source) = &self.source.0 {
-            let mut start = None;
-            let mut end = None;
-            let mut startline = None;
-
-            let detail = match source.read() {
-                RResult::ROk(reader) => {
-                    let mut src = BufReader::new(reader);
-
-                    let mut remaining = self.location.start;
-                    let mut linecount = 1;
-                    let error = loop {
-                        let mut line = String::new();
-                        let read = match src.read_line(&mut line) {
-                            Ok(s) => s,
-                            Err(e) => break Some(e.to_string()),
-                        };
-                        if read == 0 {
-                            break Some("invalid location".to_string());
-                        }
-
-                        let chars = line.chars().count();
-                        if remaining < chars {
-                            if start.is_none() {
-                                start = Some((linecount, remaining + 1));
-                                startline = Some(line.trim_end().to_owned());
-                                remaining += self.location.length - 1;
-                                if remaining <= chars {
-                                    end = Some((linecount, remaining + 1));
-                                    break None;
-                                }
-                            } else {
-                                end = Some((linecount, remaining + 1));
-                                break None;
-                            }
-                        }
-                        remaining -= chars;
-                        linecount += 1;
-                    };
-
-                    match error {
-                        Some(e) => Err(e),
-                        None => {
-                            let start = start.unwrap();
-                            let end = end.unwrap();
-                            let startline = startline.unwrap();
-
-                            Ok(DisplayInfoDetail {
-                                start,
-                                end,
-                                startline,
-                            })
-                        }
-                    }
-                }
-                RResult::RErr(e) => Err(e.into()),
-            };
-
-            DisplayInfo {
-                name: Some(source.name().into()),
-                detail,
-            }
-        } else {
-            DisplayInfo {
-                name: None,
-                detail: Err("no source".into()),
-            }
-        }
-    }
-}
-
-impl DisplayInfoDetail {
-    fn underline(&self) -> String {
-        let mut linechars = self.startline.chars();
-        let mut underline = String::new();
-        let mut put_underline = |c, alt_c| {
-            if let Some('\t') = linechars.next() {
-                underline.push(c);
-                for _ in 1..TAB_WIDTH {
-                    underline.push(alt_c);
-                }
-            } else {
-                underline.push(c);
-            }
-        };
-        for _ in 1..self.start.1 {
-            put_underline(' ', ' ');
-        }
-        put_underline('^', '-');
-        let endchar = if self.start.0 == self.end.0 {
-            self.end.1
-        } else {
-            self.startline.chars().count()
-        };
-        for _ in self.start.1..endchar {
-            put_underline('-', '-');
-        }
-
-        underline
-    }
-
-    fn startline(&self) -> String {
-        let mut display_startline = String::new();
-        for c in self.startline.chars() {
-            if c == '\t' {
-                display_startline.extend(" ".repeat(TAB_WIDTH).chars());
-            } else {
-                display_startline.push(c);
-            }
-        }
-        display_startline
-    }
-
-    fn loc(&self) -> String {
-        if self.start.0 == self.end.0 {
-            if self.start.1 == self.end.1 {
-                format!("{}:{}", self.start.0, self.start.1)
-            } else {
-                format!("{}:{}-{}", self.start.0, self.start.1, self.end.1)
-            }
-        } else {
-            format!(
-                "{}:{}-{}:{}",
-                self.start.0, self.start.1, self.end.0, self.end.1,
-            )
-        }
-    }
-}
-
-impl<T: fmt::Display> fmt::Display for Source<T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let info = self.display_info();
-        match info.name {
-            Some(n) => {
-                write!(f, "{}", n)?;
-                match info.detail {
-                    Err(e) => write!(f, ": {}\n[source error: {}]", &self.value, e),
-                    Ok(detail) => write!(
-                        f,
-                        " ({}): {}\n{}\n{}",
-                        detail.loc(),
-                        &self.value,
-                        detail.startline(),
-                        detail.underline()
-                    ),
-                }
-            }
-            None => write!(f, "[no source]: {}", &self.value),
-        }
-    }
-}
-
-impl<T: PartialEq> PartialEq<T> for Source<T> {
-    fn eq(&self, other: &T) -> bool {
-        &self.value == other
-    }
-}
-
-impl<T> Source<T> {
-    /// Display a source inline.
-    ///
-    /// This only displays related line numbers, you should ensure that the value's source name is
-    /// displayed by other means.
-    pub fn display_inline(&self) -> Inline<'_, T> {
-        Inline(self)
-    }
-}
-
-/// Displays a source inline (only displaying line numbers).
-pub struct Inline<'a, T>(&'a Source<T>);
-
-impl<'a, T: fmt::Display> fmt::Display for Inline<'a, T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let info = self.0.display_info();
-        match info.detail {
-            Err(e) => write!(f, "{} [source error: {}]", &self.0.value, e),
-            Ok(detail) => write!(f, "{} at {}", &self.0.value, detail.loc()),
+            source_id,
         }
     }
 }

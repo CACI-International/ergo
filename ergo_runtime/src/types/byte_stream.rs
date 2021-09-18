@@ -12,6 +12,7 @@ use crate::abi_stable::{
 use crate::{
     context::ItemContent,
     io::{self, AsyncReadExt, BoxAsyncRead},
+    metadata::Source,
     traits,
     type_system::{ergo_traits_fn, ErgoType},
     Error, Value,
@@ -86,7 +87,12 @@ ergo_traits_fn! {
         async fn into_typed(self) -> Value {
             let mut bytes = Vec::new();
             if let Err(e) = self.as_ref().read().read_to_end(&mut bytes).await {
-                return Error::from(e).into();
+                return crate::error!{
+                    labels: [
+                        secondary(Source::get(&self).with("while converting this ByteStream into a String"))
+                    ],
+                    error: e
+                }.into();
             }
             super::String::from(match String::from_utf8(bytes) {
                 Ok(s) => s,
@@ -108,7 +114,12 @@ ergo_traits_fn! {
             let mut h = HashFn::default();
             loop {
                 let size = match reader.read(&mut buf).await {
-                    Err(e) => return Error::from(e).into(),
+                    Err(e) => return crate::error!{
+                        labels: [
+                            secondary(Source::get(&self).with("while reading this ByteStream"))
+                        ],
+                        error: e
+                    }.into(),
                     Ok(v) => v
                 };
                 if size == 0 {
@@ -128,7 +139,14 @@ ergo_traits_fn! {
 
     impl traits::Stored for ByteStream {
         async fn put(&self, _stored_ctx: &traits::StoredContext, item: ItemContent) -> crate::RResult<()> {
-            io::copy(&mut self.read(), &mut io::Blocking::new(item)).await.map(|_| ()).map_err(|e| e.into()).into()
+            crate::error_info!(
+                labels: [
+                    primary(Source::get(SELF_VALUE).with("while storing this value"))
+                ],
+                async {
+                    io::copy(&mut self.read(), &mut io::Blocking::new(item)).await.map(|_| ())
+                }
+            ).into()
         }
 
         async fn get(_stored_ctx: &traits::StoredContext, item: ItemContent) -> crate::RResult<Erased> {
@@ -138,59 +156,64 @@ ergo_traits_fn! {
 
     impl traits::Display for ByteStream {
         async fn fmt(&self, f: &mut traits::Formatter) -> crate::RResult<()> {
-            async move {
-                let mut reader = self.read();
-                let mut buf: [u8; BYTE_STREAM_BLOCK_LIMIT] =
-                    unsafe { std::mem::MaybeUninit::uninit().assume_init() };
-                let mut overflow: [u8; 4] =
-                    unsafe { std::mem::MaybeUninit::uninit().assume_init() };
-                let mut overflow_size = 0;
-                loop {
-                    let end = reader.read(&mut buf).await?;
-                    if end == 0 {
-                        break
-                    } else {
-                        let mut start = 0;
-                        while start < end {
-                            if overflow_size > 0 {
-                                overflow[overflow_size] = buf[start];
-                                start += 1;
-                                overflow_size += 1;
-                                if let Ok(s) = std::str::from_utf8(&overflow[..overflow_size]) {
-                                    f.write_str(s)?;
-                                    overflow_size = 0;
+            crate::error_info!(
+                labels: [
+                    primary(Source::get(SELF_VALUE).with("while displaying this value"))
+                ],
+                async {
+                    let mut reader = self.read();
+                    let mut buf: [u8; BYTE_STREAM_BLOCK_LIMIT] =
+                        unsafe { std::mem::MaybeUninit::uninit().assume_init() };
+                    let mut overflow: [u8; 4] =
+                        unsafe { std::mem::MaybeUninit::uninit().assume_init() };
+                    let mut overflow_size = 0;
+                    loop {
+                        let end = reader.read(&mut buf).await?;
+                        if end == 0 {
+                            break
+                        } else {
+                            let mut start = 0;
+                            while start < end {
+                                if overflow_size > 0 {
+                                    overflow[overflow_size] = buf[start];
+                                    start += 1;
+                                    overflow_size += 1;
+                                    if let Ok(s) = std::str::from_utf8(&overflow[..overflow_size]) {
+                                        f.write_str(s)?;
+                                        overflow_size = 0;
+                                    }
+                                    continue;
                                 }
-                                continue;
-                            }
 
-                            match std::str::from_utf8(&buf[start..end]) {
-                                Ok(s) => {
-                                    f.write_str(s)?;
-                                    break;
-                                }
-                                Err(e) => {
-                                    let ind = e.valid_up_to();
-                                    f.write_str(std::str::from_utf8(&buf[start..ind]).unwrap())?;
-                                    start = ind;
-                                    match e.error_len() {
-                                        None => {
-                                            assert!(end - ind < 4);
-                                            overflow_size = end - ind;
-                                            overflow[..overflow_size].copy_from_slice(&buf[ind..end]);
-                                            break;
-                                        }
-                                        Some(n) => {
-                                            start += n;
-                                            f.write_str(std::char::REPLACEMENT_CHARACTER.encode_utf8(&mut overflow))?;
+                                match std::str::from_utf8(&buf[start..end]) {
+                                    Ok(s) => {
+                                        f.write_str(s)?;
+                                        break;
+                                    }
+                                    Err(e) => {
+                                        let ind = e.valid_up_to();
+                                        f.write_str(std::str::from_utf8(&buf[start..ind]).unwrap())?;
+                                        start = ind;
+                                        match e.error_len() {
+                                            None => {
+                                                assert!(end - ind < 4);
+                                                overflow_size = end - ind;
+                                                overflow[..overflow_size].copy_from_slice(&buf[ind..end]);
+                                                break;
+                                            }
+                                            Some(n) => {
+                                                start += n;
+                                                f.write_str(std::char::REPLACEMENT_CHARACTER.encode_utf8(&mut overflow))?;
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
                     }
+                    crate::Result::Ok(())
                 }
-                Ok(())
-            }.await.into()
+            ).into()
         }
     }
 }
@@ -359,7 +382,7 @@ impl ByteStreamSource for ByteStreamSourceImpl {
                                     Ok(v) => v,
                                     Err(e) => {
                                         return crate::abi_stable::future::Poll::Ready(
-                                            RResult::RErr(e.into()),
+                                            RResult::RErr(crate::error! { error: e }),
                                         )
                                     }
                                 }

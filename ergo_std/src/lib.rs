@@ -43,7 +43,7 @@ macro_rules! make_string_map {
         }
     };
     ( $( $s:literal = $v:expr ),* ) => {
-        $crate::make_string_map! { source ergo_runtime::Source::builtin(()), $( $s = $v ),* }
+        $crate::make_string_map! { source ergo_runtime::Source::missing(()), $( $s = $v ),* }
     };
 }
 

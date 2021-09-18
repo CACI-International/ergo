@@ -3,8 +3,13 @@
 use crate::constants::{DIR_NAME, EXTENSION, PLUGIN_ENTRY, WORKSPACE_NAME};
 use ergo_runtime::abi_stable::external_types::RMutex;
 use ergo_runtime::{
-    depends, error::RResult, metadata, nsid, source::FileSource, traits, try_result,
-    type_system::ErgoType, types, value::match_value, Context, Source, Value,
+    depends,
+    error::{DiagnosticInfo, RResult},
+    metadata, nsid, traits, try_result,
+    type_system::ErgoType,
+    types,
+    value::match_value,
+    Context, Source, Value,
 };
 use futures::future::FutureExt;
 use libloading as dl;
@@ -92,22 +97,37 @@ impl LoadData {
         debug_assert!(path.is_file());
         let path = path.canonicalize().unwrap(); // unwrap because is_file() should guarantee that canonicalize will succeed.
 
-        let source = Source::new(FileSource(path.clone()));
-
         let mut loaded = self
             .load_cache
             .lock()
             .entry(path.clone())
             .or_insert_with(|| {
                 let me = self.clone();
-                let source = source.clone();
                 let deps = depends![nsid!(load), path];
                 Value::dyn_new(
                     move || async move {
+                        let sources = Context::global().diagnostic_sources();
+
                         if !is_plugin(&path) {
+                            let source = Source::new(try_result!(sources
+                                .add_file(path.clone())
+                                .map_err(|e| {
+                                    ergo_runtime::error! {
+                                        notes: [
+                                            format!("while trying to load {}", path.display())
+                                        ],
+                                        error: e
+                                    }
+                                })));
                             let script_result = {
                                 let mut guard = me.ast_context.lock();
-                                crate::Script::load(source, &mut *guard, me.lint_level())
+                                // unwrap because the content must be available for a file source.
+                                let content = sources.content(source.source_id).unwrap();
+                                crate::Script::load(
+                                    source.with(content),
+                                    &mut *guard,
+                                    me.lint_level(),
+                                )
                             };
                             match script_result {
                                 Err(e) => Err(e),
@@ -120,9 +140,13 @@ impl LoadData {
                                 }
                             }
                         } else {
-                            dl::Library::new(&path)
-                                .map_err(|e| e.into())
-                                .and_then(|lib| {
+                            let source = Source::new(sources.add_binary_file(path.clone()));
+                            ergo_runtime::error_info!(
+                                notes:
+                                    [format!("while trying to load plugin {}", path.display())],
+                                {
+                                    let lib = dl::Library::new(&path)?;
+
                                     // Leak loaded libraries rather than storing them and dropping them in
                                     // the context, as this can cause issues if the thread pool hasn't shut
                                     // down.
@@ -136,8 +160,10 @@ impl LoadData {
                                         )
                                             -> RResult<Value>,
                                     > = unsafe { l.get(PLUGIN_ENTRY.as_bytes()) }?;
-                                    f(ergo_runtime::plugin::Context::get()).into()
-                                })
+                                    f(ergo_runtime::plugin::Context::get()).into_result()
+                                }
+                            )
+                            .map(|v: Value| metadata::Source::imbue(source.with(v)))
                         }
                         .into()
                     },
@@ -146,9 +172,9 @@ impl LoadData {
             })
             .clone();
 
+        // Evaluate the cached value to get the result of loading.
         loaded.eval_once().await;
-
-        metadata::Source::imbue(source.with(loaded))
+        loaded
     }
 }
 
@@ -191,22 +217,22 @@ impl LoadFunctions {
             /// provided, the resulting value is called with them.
             #[cloning(ld)]
             async fn load(mut path: _, ...) -> Value {
-                ergo_runtime::try_result!(Context::eval(&mut path).await);
+                Context::eval(&mut path).await?;
                 let target_source = metadata::Source::get(&path);
                 let target = match_value!{path,
                     types::String(s) => s.as_str().into(),
                     types::Path(p) => p.into_pathbuf(),
-                    v => return traits::type_error(v, "String or Path").into()
+                    v => Err(traits::type_error(v, "String or Path"))?
                 };
 
-                let working_dir = ARGS_SOURCE.path();
+                let working_dir = Context::source_path(&ARGS_SOURCE);
                 let working_dir = working_dir.as_ref().and_then(|p| p.parent());
 
                 // Try to find target in the load path.
                 let target = match ld.resolve_script_path(working_dir, &target) {
                     Some(path) => path,
                     None => {
-                        return target_source.with(format!("could not resolve script path: {}", target.display())).into_error().into();
+                        Err(target_source.with(format!("could not resolve script path: {}", target.display())).into_error())?
                     }
                 };
 
@@ -229,7 +255,7 @@ impl LoadFunctions {
                 let ld = ld.clone();
                 async move {
                     let src = metadata::Source::get(&v);
-                    let working_dir = src.path();
+                    let working_dir = Context::source_path(&src);
                     let working_dir = working_dir.as_ref().and_then(|p| p.parent());
 
                     let path = match ld.resolve_script_path(working_dir, "std".as_ref()) {
@@ -268,7 +294,7 @@ impl LoadFunctions {
                     let src = metadata::Source::get(&v);
 
                     // If the current file is a workspace, allow it to load from parent workspaces.
-                    let (path_basis, check_for_workspace) = match src.path() {
+                    let (path_basis, check_for_workspace) = match Context::source_path(&src) {
                         Some(p) => (p, true),
                         None => (std::env::current_dir().expect("couldn't get current directory"), false)
                     };
@@ -301,7 +327,10 @@ impl LoadFunctions {
                                 result
                             }
                         }
-                    }.ok_or("no ancestor workspace found"));
+                    }
+                    .set_message("no ancestor workspace found")
+                    .add_primary_label(src.with(""))
+                    );
 
                     let lib = ld.load_script(&path).await;
 

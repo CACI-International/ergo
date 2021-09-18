@@ -1,5 +1,6 @@
 //! The runtime context.
 
+use crate as ergo_runtime;
 use crate::abi_stable::{std_types::RArc, StableAbi};
 use crate::{
     type_system::{ErgoTrait, ErgoType, Type},
@@ -7,6 +8,7 @@ use crate::{
 };
 use std::fmt;
 
+mod diagnostic_sources;
 mod dynamic_scope;
 mod error_scope;
 mod evaluating;
@@ -27,6 +29,7 @@ pub use self::log::{
     logger_ref, Log, LogEntry, LogLevel, LogTarget, LogTask, LogTaskKey, Logger, LoggerRef,
     RecordingWork, Work,
 };
+pub use diagnostic_sources::{SourceId, Sources};
 pub use dynamic_scope::{DynamicScope, DynamicScopeKey, DynamicScopeRef};
 pub use error_scope::ErrorScope;
 pub use evaluating::Evaluating;
@@ -49,6 +52,19 @@ pub struct GlobalContext {
     pub task: TaskManager,
     /// The type traits interface.
     pub traits: Traits,
+}
+
+impl GlobalContext {
+    /// Get the shared set of diagnostic sources loaded in the runtime.
+    pub fn diagnostic_sources(&self) -> shared_state::SharedStateRef<Sources> {
+        self.shared_state
+            .get::<Sources, _>(|| {
+                Ok(Sources::new(
+                    self.store.item(item_name!("diagnostic_sources")),
+                ))
+            })
+            .unwrap()
+    }
 }
 
 /// Runtime context.
@@ -211,10 +227,12 @@ impl Context {
             let mut set = std::collections::HashSet::<u128>::default();
             while !value.is_evaluated() {
                 if !set.insert(value.id()) {
-                    *value = crate::metadata::Source::get(&value)
-                        .with("circular evaluation detected")
-                        .into_error()
-                        .into();
+                    *value = crate::error! {
+                        labels: [
+                            primary(crate::metadata::Source::get(&value).with("while evaluating this value"))
+                        ],
+                        error: "circular evaluation detected"
+                    }.into();
                     break;
                 }
                 value.eval_once().await;
@@ -253,6 +271,17 @@ impl Context {
         Self::with(|ctx| ctx.global.clone())
     }
 
+    /// Get the source path of a source, if any.
+    pub fn source_path<T>(src: &crate::source::Source<T>) -> Option<std::path::PathBuf> {
+        Self::global()
+            .diagnostic_sources()
+            .name(src.source_id)
+            .and_then(|name| match name {
+                diagnostic_sources::SourceName::Path(p) => Some(p.clone().into()),
+                _ => None,
+            })
+    }
+
     /// Evaluate a value once.
     pub async fn eval_once(value: &mut Value) {
         value.eval_once().await
@@ -276,7 +305,7 @@ impl Context {
         Self::eval(&mut value).await?;
         match value.as_type::<T>() {
             Ok(v) => Ok(v),
-            Err(e) => Err(crate::traits::type_error_for::<T>(e)),
+            Err(e) => Err(crate::traits::type_error_for::<T>(e).into()),
         }
     }
 
@@ -338,7 +367,6 @@ impl Context {
 }
 
 impl Fork for Context {
-    /// Create a fork of a value.
     fn fork(&self) -> Self {
         Context {
             global: self.global.fork(),
@@ -348,7 +376,6 @@ impl Fork for Context {
         }
     }
 
-    /// Join with a forked value.
     fn join(&self, forked: Self) {
         self.global.join(forked.global);
         self.dynamic_scope.join(forked.dynamic_scope);

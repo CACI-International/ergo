@@ -2,7 +2,7 @@
 
 use crate as ergo_runtime;
 use crate::type_system::{ergo_traits_fn, ErgoType};
-use crate::{depends, traits, Dependencies, TypedValue};
+use crate::{depends, metadata::Source, traits, Dependencies, TypedValue};
 
 /// Script error type.
 pub use crate::Error;
@@ -73,14 +73,24 @@ where
 
 ergo_traits_fn! {
     impl traits::Stored for Error {
-        async fn put(&self, _stored_ctx: &traits::StoredContext, _item: crate::context::ItemContent) -> crate::RResult<()> {
-            // XXX for now, don't store anything but silently succeed (we will always fail in
-            // `get`). In the future we will support storing Errors.
-            Ok(()).into()
+        async fn put(&self, _stored_ctx: &traits::StoredContext, item: crate::context::ItemContent) -> crate::RResult<()> {
+            // Never store aborted errors.
+            if self.is_aborted() {
+                return crate::RResult::ROk(());
+            }
+
+            crate::error_info!(
+                labels: [
+                    primary(Source::get(SELF_VALUE).with("while storing this value"))
+                ],
+                { bincode::serialize_into(item, self) }
+            ).into()
         }
 
-        async fn get(_stored_ctx: &traits::StoredContext, _item: crate::context::ItemContent) -> crate::RResult<crate::abi_stable::type_erase::Erased> {
-            Err("support for persisting errors not yet implemented".into()).into()
+        async fn get(_stored_ctx: &traits::StoredContext, item: crate::context::ItemContent) -> crate::RResult<crate::abi_stable::type_erase::Erased> {
+            crate::error_info!({
+                bincode::deserialize_from(item).map(|e: Error| crate::abi_stable::type_erase::Erased::new(e))
+            }).into()
         }
     }
 

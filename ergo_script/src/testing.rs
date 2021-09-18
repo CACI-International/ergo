@@ -1,7 +1,6 @@
 //! Testing helpers.
 
-use crate::StringSource;
-use ergo_runtime::{traits, type_system::ErgoType, Context, RResult, Result, Source, Value};
+use ergo_runtime::{traits, type_system::ErgoType, Context, RResult, Result, Value};
 use std::collections::BTreeMap;
 
 pub struct Test {
@@ -30,8 +29,7 @@ impl Test {
     }
 
     pub fn eval(&self, script: &str) -> Result<Value> {
-        let source = Source::new(StringSource::new("<test>", script.to_owned()));
-        let mut script = self.runtime.load(source)?;
+        let mut script = self.runtime.load_string("test", script)?;
         script.extend_top_level_env(self.env.clone());
         dbg!(self.block_on(script.evaluate()))
     }

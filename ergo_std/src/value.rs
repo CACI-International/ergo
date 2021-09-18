@@ -111,10 +111,7 @@ async fn cache(value: _, (no_persist): [_]) -> Value {
                         id, err
                     ));
                     if let Err(e) = traits::write_to_store(&store, value.clone()).await {
-                        log.warn(
-                            Source::get(&value)
-                                .with(format!("failed to cache value for {}: {}", id, e)),
-                        );
+                        log.warn(format!("failed to cache value for {}: {}", id, e));
                     } else {
                         log.debug(format!("wrote cache value for {}", id));
                     }
@@ -257,7 +254,7 @@ async fn meta_set(metadata_key: _, metadata_value: _, mut value: _) -> Value {
 /// Returns the Path of the script file from which the value originates, or Unset if no path is
 /// available.
 async fn source_path(value: _) -> Value {
-    match Source::get_option(&value).and_then(|s| s.path()) {
+    match Source::get_option(&value).and_then(|s| Context::source_path(&s)) {
         None => types::Unset.into(),
         Some(p) => types::Path::from(p).into(),
     }

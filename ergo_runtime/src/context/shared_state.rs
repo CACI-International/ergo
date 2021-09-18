@@ -15,6 +15,8 @@ pub struct SharedState {
     keyed_lifetime: RArc<RMutex<RHashMap<Type, RArc<Erased>>>>,
 }
 
+pub type SharedStateRef<T> = Ref<T, RArc<Erased>>;
+
 impl std::fmt::Debug for SharedState {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         f.debug_struct("SharedState")
@@ -33,7 +35,7 @@ impl SharedState {
     /// Load or create and load a value in the runtime.
     ///
     /// The passed closure is called when the value has not yet been created.
-    pub fn get<T: Eraseable + ErgoType, F>(&self, missing: F) -> Result<Ref<T, RArc<Erased>>>
+    pub fn get<T: Eraseable + ErgoType, F>(&self, missing: F) -> Result<SharedStateRef<T>>
     where
         F: FnOnce() -> Result<T>,
     {

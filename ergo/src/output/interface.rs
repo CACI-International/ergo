@@ -35,6 +35,103 @@ pub fn stderr(format: crate::options::OutputFormat) -> Option<Box<term::StderrTe
     }
 }
 
+/// Implement `termcolor::WriteColor` for a `term::Terminal` type.
+pub struct TermToTermcolor<T: ?Sized>(pub Box<T>);
+
+fn convert_color(c: &ergo_runtime::error::termcolor::Color, intense: bool) -> term::color::Color {
+    use ergo_runtime::error::termcolor::Color;
+
+    if intense {
+        match c {
+            Color::Black => term::color::BRIGHT_BLACK,
+            Color::Blue => term::color::BRIGHT_BLUE,
+            Color::Green => term::color::BRIGHT_GREEN,
+            Color::Red => term::color::BRIGHT_RED,
+            Color::Cyan => term::color::BRIGHT_CYAN,
+            Color::Magenta => term::color::BRIGHT_MAGENTA,
+            Color::Yellow => term::color::BRIGHT_YELLOW,
+            Color::White => term::color::BRIGHT_WHITE,
+            _ => term::color::BRIGHT_WHITE,
+        }
+    } else {
+        match c {
+            Color::Black => term::color::BLACK,
+            Color::Blue => term::color::BLUE,
+            Color::Green => term::color::GREEN,
+            Color::Red => term::color::RED,
+            Color::Cyan => term::color::CYAN,
+            Color::Magenta => term::color::MAGENTA,
+            Color::Yellow => term::color::YELLOW,
+            Color::White => term::color::WHITE,
+            _ => term::color::WHITE,
+        }
+    }
+}
+
+fn convert_result(result: term::Result<()>) -> std::io::Result<()> {
+    match result {
+        Ok(()) => Ok(()),
+        Err(e) => match e {
+            term::Error::Io(e) => Err(e),
+            _ => Ok(()),
+        },
+    }
+}
+
+impl<T> std::io::Write for TermToTermcolor<T>
+where
+    T: std::io::Write + ?Sized,
+{
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.flush()
+    }
+}
+
+impl<T> ergo_runtime::error::termcolor::WriteColor for TermToTermcolor<T>
+where
+    T: Terminal + ?Sized,
+{
+    fn supports_color(&self) -> bool {
+        self.0.supports_color()
+    }
+
+    fn set_color(
+        &mut self,
+        spec: &ergo_runtime::error::termcolor::ColorSpec,
+    ) -> std::io::Result<()> {
+        if spec.reset() {
+            convert_result(self.0.reset())?;
+        }
+        if let Some(c) = spec.fg() {
+            convert_result(self.0.fg(convert_color(c, spec.intense())))?;
+        }
+        if let Some(c) = spec.bg() {
+            convert_result(self.0.bg(convert_color(c, spec.intense())))?;
+        }
+        if spec.bold() {
+            convert_result(self.0.attr(term::Attr::Bold))?;
+        }
+        if spec.dimmed() {
+            convert_result(self.0.attr(term::Attr::Dim))?;
+        }
+        if spec.italic() {
+            convert_result(self.0.attr(term::Attr::Italic(true)))?;
+        }
+        if spec.underline() {
+            convert_result(self.0.attr(term::Attr::Underline(true)))?;
+        }
+        Ok(())
+    }
+
+    fn reset(&mut self) -> std::io::Result<()> {
+        convert_result(self.0.reset())
+    }
+}
+
 pub struct TextTerm<T>(T);
 
 impl<T: Write> Write for TextTerm<T> {

@@ -3,9 +3,10 @@
 use ergo_runtime::{
     context::item_name,
     depends,
-    io::{self, AddContext},
+    error::{Diagnostic, DiagnosticInfo},
+    io,
     metadata::Source,
-    traits, try_result,
+    traits,
     type_system::ErgoType,
     types,
     value::match_value,
@@ -61,11 +62,10 @@ pub fn module() -> Value {
 /// The pattern is checked relative to the calling script directory, however specifying any path as
 /// part of the pattern (paths can contain glob patterns) will result in a search using that path.
 async fn glob_(pattern: _) -> Value {
-    let pattern = try_result!(traits::into::<types::String>(pattern).await);
+    let pattern = traits::into::<types::String>(pattern).await?;
     let pattern_source = Source::get(&pattern);
 
-    let mut path = ARGS_SOURCE
-        .path()
+    let mut path = Context::source_path(&ARGS_SOURCE)
         .map(|p| p.parent().unwrap().into())
         .unwrap_or_else(|| std::env::current_dir().unwrap());
     path.push(pattern.as_ref().as_str());
@@ -74,7 +74,13 @@ async fn glob_(pattern: _) -> Value {
         Err(e) => pattern_source.with(e).into_error().into(),
         Ok(paths) => {
             let paths: Result<Vec<std::path::PathBuf>, glob::GlobError> = paths.collect();
-            let paths: Vec<Value> = try_result!(paths.map_err(|e| pattern_source.with(e)))
+            let paths: Vec<Value> = paths
+                .map_err(|e| {
+                    ergo_runtime::error! {
+                        labels: [ primary(pattern_source.with("while evaluating this glob")) ],
+                        error: e
+                    }
+                })?
                 .into_iter()
                 .map(|v| Source::imbue(ARGS_SOURCE.clone().with(types::Path::from(v).into())))
                 .collect();
@@ -128,84 +134,74 @@ fn recursive_link<F: AsRef<Path>, T: AsRef<Path>>(
     from: F,
     to: T,
     mode: &LinkMode,
-) -> std::io::Result<()> {
-    if to.as_ref().is_dir() {
-        let mut to = to.as_ref().to_owned();
-        to.push(from.as_ref().file_name().expect("path ends in .."));
+) -> Result<(), ergo_runtime::error::Diagnostic> {
+    let to = to.as_ref();
+    let from = from.as_ref();
+    if to.is_dir() {
+        let mut to = to.to_owned();
+        to.push(from.file_name().set_message("'from' path ends in ..")?);
         return recursive_link(from, &to, mode);
     }
 
-    if to.as_ref().is_file() {
-        std::fs::remove_file(to.as_ref()).add_context_str(to.as_ref().display())?;
+    if to.is_file() {
+        std::fs::remove_file(to).add_note(format_args!("path was {}", to.display()))?;
     }
 
-    let meta = std::fs::metadata(from.as_ref()).add_context_str(from.as_ref().display())?;
+    let meta = std::fs::metadata(from).add_note(format_args!("path was {}", from.display()))?;
     if meta.is_dir() {
         if mode == &LinkMode::Symbolic {
-            symlink_dir(from.as_ref(), to.as_ref()).add_context_with(|| {
-                format!(
-                    "while symlinking {} to {}",
-                    from.as_ref().display(),
-                    to.as_ref().display()
-                )
-            })?;
+            symlink_dir(from, to).add_note(format_args!(
+                "while creating symbolic link pointing to {} at {}",
+                from.display(),
+                to.display()
+            ))?;
         } else {
-            std::fs::create_dir_all(to.as_ref()).add_context_str(to.as_ref().display())?;
+            std::fs::create_dir_all(to).add_note(format_args!("directory was {}", to.display()))?;
             for d in from
-                .as_ref()
                 .read_dir()
-                .add_context_str(from.as_ref().display())?
+                .add_note(format_args!("path was {}", from.display()))?
             {
-                let d = d.add_context_str(from.as_ref().display())?;
+                let d = d.add_note(format_args!("path was {}", from.display()))?;
                 let name = d.file_name();
-                let mut to = to.as_ref().to_owned();
+                let mut to = to.to_owned();
                 to.push(name);
                 recursive_link(d.path(), &to, mode)?;
             }
         }
         Ok(())
     } else {
-        if let Some(parent) = to.as_ref().parent() {
-            std::fs::create_dir_all(parent).add_context_str(parent.display())?;
+        if let Some(parent) = to.parent() {
+            std::fs::create_dir_all(parent)
+                .add_note(format_args!("directory was {}", parent.display()))?;
         }
 
-        fn do_copy<P: AsRef<Path>, Q: AsRef<Path>>(
-            from: P,
-            to: Q,
+        fn do_copy(
+            from: &Path,
+            to: &Path,
             mode: &LinkMode,
-        ) -> std::io::Result<()> {
+        ) -> Result<(), ergo_runtime::error::Diagnostic> {
             match mode {
-                LinkMode::Copy => std::fs::copy(from.as_ref(), to.as_ref())
-                    .add_context_with(|| {
-                        format!(
-                            "while copying {} to {}",
-                            from.as_ref().display(),
-                            to.as_ref().display()
-                        )
-                    })
+                LinkMode::Copy => std::fs::copy(from, to)
+                    .add_note(format_args!(
+                        "while copying {} to {}",
+                        from.display(),
+                        to.display()
+                    ))
                     .map(|_| ()),
-                LinkMode::Hard => {
-                    std::fs::hard_link(from.as_ref(), to.as_ref()).add_context_with(|| {
-                        format!(
-                            "while hardlinking {} to {}",
-                            from.as_ref().display(),
-                            to.as_ref().display()
-                        )
-                    })
-                }
-                LinkMode::Symbolic => {
-                    symlink_file(from.as_ref(), to.as_ref()).add_context_with(|| {
-                        format!(
-                            "while symlinking {} to {}",
-                            from.as_ref().display(),
-                            to.as_ref().display()
-                        )
-                    })
-                }
+                LinkMode::Hard => std::fs::hard_link(from, to).add_note(format_args!(
+                    "while creating a hard link of {} at {}",
+                    from.display(),
+                    to.display()
+                )),
+                LinkMode::Symbolic => symlink_file(from, to).add_note(format_args!(
+                    "while creating symbolic link pointing to {} at {}",
+                    from.display(),
+                    to.display()
+                )),
                 LinkMode::Fallback(modes) => {
                     let mut last_result = Ok(());
                     for m in modes {
-                        last_result = do_copy(from.as_ref(), to.as_ref(), m);
+                        last_result = do_copy(from, to, m);
                         if last_result.is_ok() {
                             return Ok(());
                         }
@@ -247,34 +243,31 @@ async fn copy(from: types::Path, to: types::Path, (shallow): [_]) -> Value {
     let link_mode = match shallow {
         None => LinkMode::Copy,
         Some(mut v) => {
-            try_result!(Context::eval(&mut v).await);
+            Context::eval(&mut v).await?;
             let source = Source::get(&v);
             match_value! { v,
                 types::Unit => LinkMode::Fallback(vec![LinkMode::Hard, LinkMode::Symbolic]),
-                types::String(s) => try_result!(s.parse::<LinkMode>().map_err(|e| source.with(e).into_error())),
+                types::String(s) => s.parse::<LinkMode>().map_err(|e| source.with(e).into_error())?,
                 types::Array(arr) => {
                     if arr.is_empty() {
-                        return source.with("no shallow mode(s) specified").into_error().into();
+                        Err(source.with("no shallow mode(s) specified").into_error())?;
                     }
                     let mut ret = Vec::new();
                     for v in arr {
-                        let v = try_result!(Context::eval_as::<types::String>(v).await);
+                        let v = Context::eval_as::<types::String>(v).await?;
                         let src = Source::get(&v);
                         let types::String(s) = v.as_ref();
-                        ret.push(try_result!(s.parse::<LinkMode>().map_err(|e| src.with(e).into_error())));
+                        ret.push(s.parse::<LinkMode>().map_err(|e| src.with(e).into_error())?);
                     }
                     LinkMode::Fallback(ret)
                 }
-                o => return traits::type_error(o, "String, Array, or Unit").into()
+                o => Err(traits::type_error(o, "String, Array, or Unit"))?
             }
         }
     };
 
-    try_result!(recursive_link(
-        from.as_ref().0.as_ref(),
-        to.as_ref().0.as_ref(),
-        &link_mode
-    ));
+    recursive_link(from.as_ref().0.as_ref(), to.as_ref().0.as_ref(), &link_mode)
+        .add_primary_label(ARGS_SOURCE.with(""))?;
     types::Unit.into()
 }
 
@@ -295,8 +288,8 @@ async fn exists(path: types::Path) -> Value {
 ///
 /// Returns a `Unit` value that creates the directory and ancestors if they do not exist.
 async fn create_dir(path: types::Path) -> Value {
-    try_result!(std::fs::create_dir_all(path.as_ref().0.as_ref())
-        .add_context_str(path.as_ref().0.as_ref().display()));
+    std::fs::create_dir_all(path.as_ref().0.as_ref())
+        .add_note(format_args!("directory was {}", path.as_ref().0.display()))?;
     types::Unit.into()
 }
 
@@ -330,19 +323,11 @@ async fn archive(archive: types::Path, source: types::Path, (format): [types::St
         None => {
             let path = archive.as_ref().as_ref();
             match path.file_name() {
-                None => {
-                    return archive_source
-                        .with("invalid archive path")
-                        .into_error()
-                        .into()
-                }
+                None => Err(archive_source.with("invalid archive path").into_error())?,
                 Some(f) => match f.to_str() {
-                    None => {
-                        return archive_source
-                            .with("invalid unicode in filename")
-                            .into_error()
-                            .into()
-                    }
+                    None => Err(archive_source
+                        .with("invalid unicode in filename")
+                        .into_error())?,
                     Some(s) => {
                         // We assume the string is not empty (otherwise file_name would have
                         // returned None).
@@ -378,23 +363,18 @@ async fn archive(archive: types::Path, source: types::Path, (format): [types::St
         builder.into_inner()
     }
 
-    match ext.as_str() {
-        "dir" => try_result!(recursive_link(
+    let result = match ext.as_str() {
+        "dir" => recursive_link(
             source.as_ref().as_ref(),
             archive.as_ref().as_ref(),
             &LinkMode::Copy,
-        )),
+        ),
         "zip" => {
-            let path = source.as_ref().as_ref();
-            let f = try_result!(std::fs::File::create(archive.as_ref().as_ref())
-                .add_context_str(archive.as_ref().as_ref().display())
-                .map_err(|e| ARGS_SOURCE.with(e).into_error()));
-
             fn add_dir_entries<W: std::io::Write + std::io::Seek>(
                 dir: &Path,
                 prefix: &Path,
                 zip: &mut zip::ZipWriter<W>,
-            ) -> ergo_runtime::Result<()> {
+            ) -> Result<(), ergo_runtime::error::Diagnostic> {
                 for entry in dir.read_dir()? {
                     let entry = entry?;
                     let name = entry.file_name();
@@ -411,64 +391,77 @@ async fn archive(archive: types::Path, source: types::Path, (format): [types::St
                             Default::default(),
                         )?;
                         let p = dir.join(name);
-                        let mut f = std::fs::File::open(&p).add_context_str(p.display())?;
+                        let mut f = std::fs::File::open(&p)
+                            .add_note(format_args!("path was {}", p.display()))?;
                         std::io::copy(&mut f, zip)?;
                     }
                 }
                 Ok(())
             }
 
-            let mut writer = zip::ZipWriter::new(f);
-            try_result!(add_dir_entries(
-                &path,
-                &std::path::PathBuf::default(),
-                &mut writer
-            ));
-            try_result!(writer.finish());
+            let path = source.as_ref().as_ref();
+            std::fs::File::create(archive.as_ref().as_ref())
+                .into_diagnostic()
+                .and_then(|f| {
+                    let mut writer = zip::ZipWriter::new(f);
+                    add_dir_entries(&path, &std::path::PathBuf::default(), &mut writer)?;
+                    writer.finish().map(|_| ()).into_diagnostic()
+                })
         }
-        "tar" => {
-            try_result!(std::fs::File::create(archive.as_ref().as_ref())
-                .add_context_str(archive.as_ref().as_ref().display())
-                .and_then(|p| tar_to(p, &source.as_ref().as_ref()))
-                .map_err(|e| ARGS_SOURCE.with(e).into_error()));
-        }
+        "tar" => std::fs::File::create(archive.as_ref().as_ref())
+            .and_then(|p| tar_to(p, &source.as_ref().as_ref()))
+            .map(|_| ())
+            .into_diagnostic(),
         "tar.gz" => {
             use flate2::write::GzEncoder;
-            try_result!(std::fs::File::create(archive.as_ref().as_ref())
-                .add_context_str(archive.as_ref().as_ref().display())
-                .and_then(|p| tar_to(
-                    GzEncoder::new(p, Default::default()),
-                    &source.as_ref().as_ref()
-                ))
-                .map_err(|e| ARGS_SOURCE.with(e).into_error()));
+            std::fs::File::create(archive.as_ref().as_ref())
+                .and_then(|p| {
+                    tar_to(
+                        GzEncoder::new(p, Default::default()),
+                        &source.as_ref().as_ref(),
+                    )
+                })
+                .map(|_| ())
+                .into_diagnostic()
         }
         "tar.bz2" => {
             use bzip2::write::BzEncoder;
-            try_result!(std::fs::File::create(archive.as_ref().as_ref())
-                .add_context_str(archive.as_ref().as_ref().display())
-                .and_then(|p| tar_to(
-                    BzEncoder::new(p, Default::default()),
-                    &source.as_ref().as_ref()
-                ))
-                .map_err(|e| ARGS_SOURCE.with(e).into_error()));
+            std::fs::File::create(archive.as_ref().as_ref())
+                .and_then(|p| {
+                    tar_to(
+                        BzEncoder::new(p, Default::default()),
+                        &source.as_ref().as_ref(),
+                    )
+                })
+                .map(|_| ())
+                .into_diagnostic()
         }
         "tar.xz" => {
             use xz::write::XzEncoder;
-            try_result!(std::fs::File::create(archive.as_ref().as_ref())
-                .add_context_str(archive.as_ref().as_ref().display())
-                .and_then(|p| tar_to(
-                    XzEncoder::new(p, Default::default()),
-                    &source.as_ref().as_ref()
-                ))
-                .map_err(|e| ARGS_SOURCE.with(e).into_error()));
+            std::fs::File::create(archive.as_ref().as_ref())
+                .and_then(|p| {
+                    tar_to(
+                        XzEncoder::new(p, Default::default()),
+                        &source.as_ref().as_ref(),
+                    )
+                })
+                .map(|_| ())
+                .into_diagnostic()
         }
-        o => {
-            return ext_source
-                .with(format!("unsupported format: {}", o))
-                .into_error()
-                .into()
-        }
-    }
+        o => Err(Diagnostic::from(format!("unsupported format: {}", o))
+            .add_primary_label(ext_source.with("")))?,
+    };
+
+    result
+        .add_primary_label(ARGS_SOURCE.with("while creating this archive"))
+        .add_note(format_args!(
+            "archive path was {}",
+            archive.as_ref().display()
+        ))
+        .add_note(format_args!(
+            "source path was {}",
+            source.as_ref().display()
+        ))?;
 
     types::Unit.into()
 }
@@ -484,7 +477,7 @@ async fn archive(archive: types::Path, source: types::Path, (format): [types::St
 async fn unarchive(destination: types::Path, mut archive: _) -> Value {
     let to_path = destination.as_ref().as_ref();
 
-    try_result!(Context::eval(&mut archive).await);
+    Context::eval(&mut archive).await?;
     let archive_source = Source::get(&archive);
 
     use std::io::{Read, Seek};
@@ -492,7 +485,7 @@ async fn unarchive(destination: types::Path, mut archive: _) -> Value {
     fn extract_to<T: Read + Seek, P: AsRef<Path>>(
         mut archive: T,
         to_path: P,
-    ) -> ergo_runtime::Result<()> {
+    ) -> Result<(), ergo_runtime::error::Diagnostic> {
         let to_path = to_path.as_ref();
         let mut magic = [0; 6];
         let bytes = archive.read(&mut magic)?;
@@ -507,12 +500,15 @@ async fn unarchive(destination: types::Path, mut archive: _) -> Value {
                 let mut file = archive.by_index(i)?;
                 if file.is_dir() {
                     let p = to_path.join(file.name());
-                    std::fs::create_dir_all(&p).add_context_str(p.display())?;
+                    std::fs::create_dir_all(&p)
+                        .add_note(format_args!("directory was {}", p.display()))?;
                 } else if file.is_file() {
                     let p = to_path.join(file.name());
                     let parent = p.parent().expect("no parent path in zip output");
-                    std::fs::create_dir_all(&parent).add_context_str(parent.display())?;
-                    let mut to_file = std::fs::File::create(&p).add_context_str(p.display())?;
+                    std::fs::create_dir_all(&parent)
+                        .add_note(format_args!("directory was {}", parent.display()))?;
+                    let mut to_file = std::fs::File::create(&p)
+                        .add_note(format_args!("path was {}", p.display()))?;
                     std::io::copy(&mut file, &mut to_file)?;
                     let mut permissions = to_file.metadata()?.permissions();
                     if let Some(mode) = file.unix_mode() {
@@ -552,25 +548,33 @@ async fn unarchive(destination: types::Path, mut archive: _) -> Value {
         types::Path(p) => {
             let path = p.as_ref();
             if path.is_dir() {
-                try_result!(recursive_link(path, to_path, &LinkMode::Copy));
+                recursive_link(&path, &to_path, &LinkMode::Copy)
+                    .add_primary_label(ARGS_SOURCE.with("while copying directory"))
+                    .add_note(format_args!("source path was {}", path.display()))
+                    .add_note(format_args!("target path was {}", to_path.display()))?;
             } else if path.is_file() {
-                try_result!(extract_to(try_result!(std::fs::File::open(&path).add_context_str(path.display())), to_path).map_err(|e| ARGS_SOURCE.with(e.error())));
+                extract_to(std::fs::File::open(&path)
+                            .add_note(format_args!("archive path was {}", path.display()))
+                            .add_primary_label(archive_source.with("while opening this archive"))?, &to_path)
+                    .add_note(format_args!("archive path was {}", path.display()))
+                    .add_note(format_args!("target path was {}", to_path.display()))
+                    .add_primary_label(archive_source.with("while extracting this archive"))?;
             }
             else {
-                return archive_source
-                    .with("path is not a file nor directory")
-                    .into_error()
-                    .into();
+                Err(Diagnostic::from("path is not a file nor directory").add_primary_label(archive_source.with("")))?;
             }
         }
         bs@types::ByteStream {..} => {
             // Read the entire byte stream into memory (no AsyncRead support in decoders)
             let mut data = Vec::new();
             use futures::io::AsyncReadExt;
-            try_result!(bs.read().read_to_end(&mut data).await);
-            try_result!(extract_to(std::io::Cursor::new(data), to_path));
+            bs.read().read_to_end(&mut data).await
+                .add_primary_label(archive_source.with("while reading this byte stream"))?;
+            extract_to(std::io::Cursor::new(data), &to_path)
+                .add_note(format_args!("target path was {}", to_path.display()))
+                .add_primary_label(archive_source.with("while extracting this archive"))?;
         }
-        v => return traits::type_error(v, "Path or ByteStream").into()
+        v => Err(traits::type_error(v, "Path or ByteStream"))?,
     }
 
     types::Unit.into()
@@ -583,10 +587,11 @@ async fn unarchive(destination: types::Path, mut archive: _) -> Value {
 ///
 /// Returns a boolean indicating whether `sum` is the sha1 sum of the contents of `file`.
 async fn sha1(file: types::Path, sum: types::String) -> Value {
-    let mut f = try_result!(std::fs::File::open(file.as_ref().as_ref())
-        .add_context_str(file.as_ref().as_ref().display()));
+    let mut f = std::fs::File::open(file.as_ref().as_ref())
+        .add_note(format_args!("path was {}", file.as_ref().display()))?;
     let mut digest = Sha1::default();
-    try_result!(std::io::copy(&mut f, &mut digest));
+    std::io::copy(&mut f, &mut digest)
+        .add_note(format_args!("path was {}", file.as_ref().display()))?;
     use sha::utils::DigestExt;
     types::Bool(digest.to_hex().eq_ignore_ascii_case(sum.as_ref().as_str())).into()
 }
@@ -604,18 +609,18 @@ async fn sha1(file: types::Path, sum: types::String) -> Value {
 /// Returns a `Path` that is identified by the contents of the file to which the argument refers.
 /// `file` must exist and refer to a file.
 async fn track(mut file: _, (force_check): [_]) -> Value {
-    try_result!(Context::eval(&mut file).await);
+    Context::eval(&mut file).await?;
     let file = match_value! {file,
         types::String(s) => s.as_str().into(),
         types::Path(p) => p.into_pathbuf(),
-        v => return traits::type_error(v, "String or Path").into()
+        v => Err(traits::type_error(v, "String or Path"))?,
     };
     let force_check = force_check.is_some();
 
-    let loaded_info = try_result!(Context::global().shared_state.get(|| {
+    let loaded_info = Context::global().shared_state.get(|| {
         let store = Context::global().store.item(item_name!("track"));
         LoadedTrackInfo::new(store)
-    }));
+    })?;
 
     let hash = {
         let file_entry = loaded_info.info.get(file.clone());
@@ -623,33 +628,32 @@ async fn track(mut file: _, (force_check): [_]) -> Value {
         match &mut *guard {
             Some((_, Some(v))) if !force_check => *v,
             other => {
-                let meta = try_result!(std::fs::metadata(&file).add_context_str(file.display()));
-                let modification_time =
-                    try_result!(meta.modified().add_context_str(file.display()));
+                ergo_runtime::error_info!(notes: [format_args!("path was {}", file.display())], {
+                    let meta = std::fs::metadata(&file)?;
+                    let modification_time = meta.modified()?;
 
-                let calc_hash = other
-                    .as_ref()
-                    .map(|(data, _)| data.modification_time < modification_time)
-                    .unwrap_or(true);
+                    let calc_hash = other
+                        .as_ref()
+                        .map(|(data, _)| data.modification_time < modification_time)
+                        .unwrap_or(true);
 
-                if calc_hash {
-                    let f = try_result!(std::fs::File::open(&file).add_context_str(file.display()));
-                    let content_hash = try_result!(
-                        ergo_runtime::hash::hash_read(f).add_context_str(file.display())
-                    );
-                    *other = Some((
-                        FileData {
-                            modification_time,
-                            content_hash,
-                        },
-                        Some(content_hash),
-                    ));
-                    content_hash
-                } else {
-                    let inner = other.as_mut().unwrap();
-                    inner.1 = Some(inner.0.content_hash);
-                    inner.0.content_hash
-                }
+                    ergo_runtime::Result::Ok(if calc_hash {
+                        let f = std::fs::File::open(&file)?;
+                        let content_hash = ergo_runtime::hash::hash_read(f)?;
+                        *other = Some((
+                            FileData {
+                                modification_time,
+                                content_hash,
+                            },
+                            Some(content_hash),
+                        ));
+                        content_hash
+                    } else {
+                        let inner = other.as_mut().unwrap();
+                        inner.1 = Some(inner.0.content_hash);
+                        inner.0.content_hash
+                    })
+                })?
             }
         }
     };
@@ -720,9 +724,9 @@ struct LoadedTrackInfo {
 impl LoadedTrackInfo {
     pub fn new(item: ergo_runtime::context::Item) -> ergo_runtime::Result<Self> {
         let info = if item.exists() {
-            let content = item.read()?;
+            let content = item.read().into_diagnostic()?;
             let stored: Vec<(std::path::PathBuf, FileData)> =
-                bincode::deserialize_from(content).map_err(|e| e.to_string())?;
+                bincode::deserialize_from(content).into_diagnostic()?;
             stored
                 .into_iter()
                 .map(|(k, v)| (k, futures::lock::Mutex::new(Some((v, None)))))
@@ -762,11 +766,14 @@ impl std::ops::Drop for LoadedTrackInfo {
 /// If the path does not exist, nothing happens.
 async fn remove(path: types::Path) -> Value {
     let path = path.as_ref().as_ref();
-    if path.is_file() {
-        try_result!(std::fs::remove_file(&path).add_context_str(path.display()));
-    } else if path.is_dir() {
-        try_result!(std::fs::remove_dir_all(&path).add_context_str(path.display()));
-    }
+    ergo_runtime::error_info!(notes: [format_args!("path was {}", path.display())], {
+        if path.is_file() {
+            std::fs::remove_file(&path)?;
+        } else if path.is_dir() {
+            std::fs::remove_dir_all(&path)?;
+        }
+        ergo_runtime::Result::Ok(())
+    })?;
     types::Unit.into()
 }
 
@@ -779,15 +786,13 @@ async fn remove(path: types::Path) -> Value {
 async fn read(file: types::Path) -> Value {
     let path = file.as_ref().as_ref();
     // TODO don't hash here, leave that to the script writer?
-    let hash = try_result!(ergo_runtime::hash::hash_read(try_result!(
-        std::fs::File::open(&path).add_context_str(path.display())
-    )));
-    Value::constant_deps(
-        types::ByteStream::new(io::Blocking::new(try_result!(
-            std::fs::File::open(&path).add_context_str(path.display())
-        ))),
-        depends![hash],
-    )
+    ergo_runtime::error_info!(notes: [format_args!("path was {}", path.display())], {
+        let hash = ergo_runtime::hash::hash_read(std::fs::File::open(&path)?)?;
+        ergo_runtime::Result::Ok(Value::constant_deps(
+            types::ByteStream::new(io::Blocking::new(std::fs::File::open(&path)?)),
+            depends![hash],
+        ))
+    })?
 }
 
 #[types::ergo_fn]
@@ -797,11 +802,16 @@ async fn read(file: types::Path) -> Value {
 ///
 /// Creates or overwrites the file with the bytes from the ByteStream.
 async fn write(file: types::Path, bytes: _) -> Value {
-    let bytes = try_result!(traits::into::<types::ByteStream>(bytes).await);
+    let bytes = traits::into::<types::ByteStream>(bytes).await?;
+    let path = file.as_ref().as_ref();
 
-    let mut f = io::Blocking::new(try_result!(std::fs::File::create(file.as_ref().as_ref())
-        .add_context_str(file.as_ref().as_ref().display())));
-    try_result!(ergo_runtime::io::copy(&mut bytes.as_ref().read(), &mut f).await);
+    ergo_runtime::error_info!(
+        notes: [format_args!("target path was {}", path.display())],
+        async {
+            let mut f = io::Blocking::new(std::fs::File::create(&path)?);
+            ergo_runtime::io::copy(&mut bytes.as_ref().read(), &mut f).await
+        }
+    )?;
     types::Unit.into()
 }
 
@@ -811,13 +821,21 @@ async fn write(file: types::Path, bytes: _) -> Value {
 /// Arguments: `(Path :file) (Into<ByteStream> :bytes)`
 /// Creates or appends the file with the bytes from the ByteStream.
 async fn append(file: types::Path, bytes: _) -> Value {
-    let bytes = try_result!(traits::into::<types::ByteStream>(bytes).await);
+    let bytes = traits::into::<types::ByteStream>(bytes).await?;
+    let path = file.as_ref().as_ref();
 
-    let mut f = io::Blocking::new(try_result!(std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(file.as_ref().as_ref())
-        .add_context_str(file.as_ref().as_ref().display())));
-    try_result!(ergo_runtime::io::copy(&mut bytes.as_ref().read(), &mut f).await);
+    ergo_runtime::error_info!(
+        notes: [format_args!("target path was {}", path.display())],
+        async {
+            let mut f = io::Blocking::new(
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&path)?,
+            );
+            ergo_runtime::io::copy(&mut bytes.as_ref().read(), &mut f).await?;
+            ergo_runtime::Result::Ok(())
+        }
+    )?;
     types::Unit.into()
 }

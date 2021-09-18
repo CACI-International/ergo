@@ -1,8 +1,7 @@
 use ergo_runtime::abi_stable::std_types::{RDuration, ROption, RSlice, RString};
 use ergo_runtime::{
     context::{LogEntry, LogTarget, LogTaskKey},
-    source::StringSource,
-    try_value, Error, Source,
+    try_value, Error,
 };
 use ergo_script::constants::{PROGRAM_NAME, WORKSPACE_NAME};
 use ergo_script::Runtime;
@@ -23,7 +22,7 @@ mod constants {
 }
 
 use options::*;
-use output::{error as error_output, output, Output};
+use output::{error as error_output, output, Output, TermToTermcolor};
 
 trait AppErr {
     type Output;
@@ -324,8 +323,7 @@ fn run(opts: Opts) -> Result<String, String> {
         );
     }
 
-    let source = Source::new(StringSource::new("<command line>", to_eval));
-    let loaded = runtime.evaluate(source);
+    let loaded = runtime.evaluate_string("<command line>", &to_eval);
 
     let value_to_execute = loaded.and_then(|script_output| {
         let v = runtime.block_on(Runtime::apply_unbound(script_output));
@@ -355,6 +353,8 @@ fn run(opts: Opts) -> Result<String, String> {
     ergo_runtime::plugin::Context::reset();
 
     drop(signal_handler_task);
+
+    let sources = runtime.block_on(async { ergo_runtime::Context::global().diagnostic_sources() });
     drop(runtime);
 
     // Drop the logger prior to the context dropping, so that any stored state (like errors) can
@@ -379,62 +379,18 @@ fn run(opts: Opts) -> Result<String, String> {
     match ret {
         Ok(v) => Ok(v),
         Err(e) => {
-            use ergo_runtime::error::{self, BoxErgoError, ErrorContext};
+            use ergo_runtime::error::{emit_diagnostics, Diagnostics};
 
-            // For each error root, display a certain number of backtrace contexts.
-            fn display_errors<'a>(
-                e: &'a BoxErgoError,
-                out: &mut Box<term::StderrTerminal>,
-                contexts: &mut Vec<&'a error::Context>,
-                limit: &Option<usize>,
-            ) {
-                let had_context = if let Some(ctx) = e.downcast_ref::<ErrorContext>() {
-                    contexts.push(ctx.context());
-                    true
-                } else {
-                    false
-                };
-                let inner = e.source();
-                if inner.is_empty() {
-                    // Root error
-                    out.fg(term::color::RED)
-                        .expect("failed to set output color");
-                    write!(out, "error:").expect("failed to write to stderr");
-                    out.reset().expect("failed to reset output");
-                    writeln!(out, " {}", e).expect("failed to write to stderr");
-                    let write_context = |ctx: &&error::Context| {
-                        out.fg(term::color::BRIGHT_WHITE)
-                            .expect("failed to set output color");
-                        write!(out, "note:").expect("failed to write to stderr");
-                        out.reset().expect("failed to reset output");
-                        writeln!(out, " {}", ctx).expect("failed to write to stderr");
-                    };
-                    match limit.as_ref() {
-                        None => contexts.iter().rev().for_each(write_context),
-                        Some(&limit) => {
-                            contexts.iter().rev().take(limit).for_each(write_context);
-                            if limit < contexts.len() {
-                                writeln!(out, "...omitting {} frame(s)", contexts.len() - limit)
-                                    .expect("failed to write to stderr");
-                            }
-                        }
-                    }
-                } else {
-                    for e in inner {
-                        display_errors(e, out, contexts, limit);
-                    }
-                }
-                if had_context {
-                    contexts.pop();
-                }
-            }
-
-            let mut err = error_output(opts.format)
+            let err = error_output(opts.format)
                 .app_err("could not create error output from requested format");
 
-            let mut contexts = Vec::new();
-            display_errors(&e.error(), &mut err, &mut contexts, &opts.error_limit);
-            Err("one or more errors occurred".into())
+            emit_diagnostics(
+                &Diagnostics::from(&e),
+                sources.as_ref(),
+                &mut TermToTermcolor(err),
+            )
+            .map_err(|e| e.to_string())
+            .and_then(|()| Err("one or more errors occurred".into()))
         }
     }
 }

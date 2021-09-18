@@ -3,6 +3,7 @@
 use ergo_runtime::{
     dependency::{AsDependency, Dependency},
     depends,
+    error::DiagnosticInfo,
     metadata::Source,
     nsid, traits, try_result, types,
     value::match_value,
@@ -144,9 +145,10 @@ fn format() -> Value {
 
     types::Unbound::new(|arg| {
         async move {
+            let source = Source::get(&arg);
             match_value!{ arg,
                 types::Args { mut args } => {
-                    let format_string = try_result!(args.next().ok_or("missing format string"));
+                    let format_string = try_result!(args.next_or_error("format string", source));
                     let format_string = try_result!(Context::eval_as::<types::String>(format_string).await);
 
                     let pos_args: Vec<_> = args.by_ref().collect();
@@ -161,7 +163,7 @@ fn format() -> Value {
                                                                     .transpose().map_err(|e| e.into_error())).take();
                     for part in parts {
                         match part {
-                            FormatPart::String(s) => try_result!(formatter.write_str(&s)),
+                            FormatPart::String(s) => try_result!(formatter.write_str(&s).into_diagnostic()),
                             other => {
                                 let (val, disp) = match other {
                                     FormatPart::Positional(p) => (pos_args.get(p), p.to_string()),
@@ -181,7 +183,7 @@ fn format() -> Value {
                     types::String::from(result).into()
                 }
                 types::PatternArgs { mut args } => {
-                    let format_string = try_result!(args.next().ok_or("missing format string"));
+                    let format_string = try_result!(args.next_or_error("format string", source));
                     let format_string = try_result!(Context::eval_as::<types::String>(format_string).await);
 
                     let pos_args: Vec<_> = args.by_ref().collect();
@@ -328,7 +330,7 @@ Substring matches are determined by non-greedily matching string portions of the
 ///
 /// Arguments: `:value`
 async fn from(value: _) -> Value {
-    ergo_runtime::try_result!(traits::into::<types::String>(value).await).into()
+    traits::into::<types::String>(value).await?.into()
 }
 
 #[types::ergo_fn]
@@ -354,18 +356,16 @@ async fn split(pattern: types::String, s: types::String) -> Value {
 ///
 /// Returns a `String` representing the strings in `iter` separated by `separator`.
 async fn join(separator: types::String, iter: _) -> Value {
-    let iter = try_result!(traits::into::<types::Iter>(iter).await);
+    let iter = traits::into::<types::Iter>(iter).await?;
 
-    let vals: Vec<_> = try_result!(iter.to_owned().collect().await);
-    let strs = try_result!(
-        Context::global()
-            .task
-            .join_all(
-                vals.into_iter()
-                    .map(|v| Context::eval_as::<types::String>(v))
-            )
-            .await
-    );
+    let vals: Vec<_> = iter.to_owned().collect().await?;
+    let strs = Context::global()
+        .task
+        .join_all(
+            vals.into_iter()
+                .map(|v| Context::eval_as::<types::String>(v)),
+        )
+        .await?;
     let strs = strs.iter().map(|v| v.as_ref().as_str()).collect::<Vec<_>>();
     types::String::from(strs.join(separator.as_ref().as_str())).into()
 }

@@ -50,7 +50,10 @@ pub async fn display(mut v: Value, f: &mut Formatter<'_>) -> crate::Result<()> {
     Context::eval(&mut v).await?;
     match Context::get_trait::<Display>(&v) {
         None => {
-            write!(f, "<cannot display values of type {}>", type_name(&v))?;
+            crate::error_info!(
+                labels: [primary(crate::metadata::Source::get(&v).with("while displaying this value"))],
+                {write!(f, "<cannot display values of type {}>", type_name(&v))}
+            )?;
             Ok(())
         }
         Some(t) => t.fmt(v, f).await.into_result(),
@@ -62,7 +65,10 @@ pub async fn display_any(mut v: Value, f: &mut Formatter<'_>) -> crate::Result<(
     drop(Context::eval(&mut v).await);
     match Context::get_trait::<Display>(&v) {
         None => {
-            write!(f, "<cannot display values of type {}>", type_name(&v))?;
+            crate::error_info!(
+                labels: [primary(crate::metadata::Source::get(&v).with("while displaying this value"))],
+                {write!(f, "<cannot display values of type {}>", type_name(&v))}
+            )?;
             Ok(())
         }
         Some(t) => t.fmt(v, f).await.into_result(),
@@ -83,7 +89,9 @@ macro_rules! ergo_display_basic {
             $crate::type_system::ergo_trait_impl! {
                 impl $crate::traits::Display for $t {
                     async fn fmt(&self, f: &mut $crate::traits::Formatter) -> $crate::RResult<()> {
-                        write!(f, "{}", self).map_err(|e| e.into()).into()
+                        $crate::error_info!({
+                            write!(f, "{}", self)
+                        }).into()
                     }
                 }
             },

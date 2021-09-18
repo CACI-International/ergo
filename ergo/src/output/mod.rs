@@ -6,6 +6,8 @@ mod interface;
 mod plain;
 mod terminal;
 
+pub use interface::TermToTermcolor;
+
 pub trait Output: LogTarget {
     fn set_log_level(&mut self, log_level: LogLevel);
     fn new_error(&mut self, err: Error);

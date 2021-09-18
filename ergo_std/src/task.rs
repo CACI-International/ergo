@@ -6,7 +6,7 @@ use ergo_runtime::abi_stable::{
     StableAbi,
 };
 use ergo_runtime::context::{DynamicScopeKey, Log, LogTask, RecordingWork, TaskPermit, Work};
-use ergo_runtime::{metadata::Source, nsid, traits, try_result, types, Context, Value};
+use ergo_runtime::{error::DiagnosticInfo, metadata::Source, nsid, traits, types, Context, Value};
 
 pub const SCRIPT_TASK_PRIORITY_OFFSET: u32 = 1000;
 
@@ -41,11 +41,10 @@ pub async fn function(
 ) -> Value {
     let count = match count {
         Some(v) => {
-            let n = try_result!(traits::into::<types::Number>(v).await);
-            try_result!(Source::extract(n)
-                .map(|n| n.as_ref().to_u32().ok_or("expected unsigned integer"))
-                .transpose_err()
-                .map_err(|e| e.into_error()))
+            let n = traits::into::<types::Number>(v).await?;
+            n.as_ref().to_u32().add_primary_label(
+                Source::get(&n).with("expected this to be an unsigned integer"),
+            )?
         }
         None => 0,
     };
@@ -54,17 +53,17 @@ pub async fn function(
         Some(v) => {
             let src = Source::get(&v);
             let priority = {
-                let n = try_result!(traits::into::<types::Number>(v).await);
-                try_result!(Source::extract(n)
-                    .map(|n| n.as_ref().to_u32().ok_or("expected unsigned integer"))
-                    .transpose_err()
-                    .map_err(|e| e.into_error()))
+                let n = traits::into::<types::Number>(v).await?;
+                n.as_ref().to_u32().add_primary_label(
+                    Source::get(&n).with("expected this to be an unsigned integer"),
+                )?
             };
             if priority < 1 || priority > 1000 {
-                return src
-                    .with("priority must fall in [1,1000]")
-                    .into_error()
-                    .into();
+                Err(
+                    ergo_runtime::error::Diagnostic::from("priority must fall in [1,1000]")
+                        .add_primary_label(src.with(""))
+                        .add_note(format_args!("priority was {}", priority)),
+                )?;
             }
             priority
         }
@@ -115,11 +114,10 @@ pub async fn function(
         .await
     };
 
-    let res = match Context::with(|ctx| ctx.dynamic_scope.get(&ParentTaskKey)) {
+    match Context::with(|ctx| ctx.dynamic_scope.get(&ParentTaskKey)) {
         Some(p) => p.suspend(fut).await,
         None => fut.await,
-    };
-    try_result!(res)
+    }?
 }
 
 pub struct ParentTaskKey;

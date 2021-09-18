@@ -8,6 +8,7 @@ use crate::abi_stable::{
     StableAbi,
 };
 use crate::context::{Context, Item, ItemContent};
+use crate::metadata::Source;
 use crate::type_system::{ergo_trait, Type};
 use crate::{Result, Value};
 
@@ -43,16 +44,23 @@ impl StoredContext {
 
 /// Read a Value from the store by id.
 pub async fn read_from_store(store_item: &Item, id: u128) -> Result<Value> {
-    let item = store_item.value_id(id);
-    let mut content = item.read_existing()?;
-    let tp: Type = ErasedTrivial::deserialize(&mut content)?.into();
-    if let Some(s) = Context::get_trait_for_type::<Stored>(&tp) {
-        let stored_ctx = StoredContext::new(store_item.clone());
-        let data = s.get(&stored_ctx, content).await.into_result()?;
-        // TODO revisit metadata
-        Ok(unsafe { Value::with_id(RArc::new(tp), RArc::new(data), id) })
-    } else {
-        Err(format!("no stored trait for {}", type_name_for(&tp)).into())
+    crate::error_info! {
+        notes: [
+            format!("reading value id {}", id)
+        ],
+        async {
+            let item = store_item.value_id(id);
+            let mut content = item.read_existing()?;
+            let tp: Type = ErasedTrivial::deserialize(&mut content)?.into();
+            if let Some(s) = Context::get_trait_for_type::<Stored>(&tp) {
+                let stored_ctx = StoredContext::new(store_item.clone());
+                let data = s.get(&stored_ctx, content).await.into_result()?;
+                // TODO revisit metadata
+                Ok(unsafe { Value::with_id(RArc::new(tp), RArc::new(data), id) })
+            } else {
+                Err(format!("no stored trait for {}", type_name_for(&tp)))
+            }
+        }
     }
 }
 
@@ -63,17 +71,25 @@ pub fn present_in_store(store_item: &Item, id: u128) -> bool {
 
 /// Write a value to the store.
 pub async fn write_to_store(store_item: &Item, mut v: Value) -> Result<()> {
-    let item = store_item.value(&v);
-    // TODO should this not eval (relying on the caller to eval)?
-    drop(Context::eval(&mut v).await);
-    let t = Context::get_trait::<Stored>(&v)
-        .ok_or_else(|| format!("no stored trait for {}", type_name(&v)))?;
+    let source = Source::get(&v);
+    crate::error_info! {
+        labels: [
+            primary(source.with("while writing this value"))
+        ],
+        async {
+            let item = store_item.value(&v);
+            // TODO should this not eval (relying on the caller to eval)?
+            drop(Context::eval(&mut v).await);
+            let t = Context::get_trait::<Stored>(&v)
+                .ok_or_else(|| format!("no stored trait for {}", type_name(&v)))?;
 
-    let mut content = item.write()?;
+            let mut content = item.write()?;
 
-    let tp: ErasedTrivial = v.ergo_type().unwrap().clone().into();
-    tp.serialize(&mut content)?;
+            let tp: ErasedTrivial = v.ergo_type().unwrap().clone().into();
+            tp.serialize(&mut content)?;
 
-    let stored_ctx = StoredContext::new(store_item.clone());
-    t.put(v, &stored_ctx, content).await.into_result()
+            let stored_ctx = StoredContext::new(store_item.clone());
+            t.put(v, &stored_ctx, content).await.into_result()
+        }
+    }
 }

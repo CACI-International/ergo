@@ -26,21 +26,22 @@ pub async fn pat_args_to_pat_args(...) -> Value {
 pub fn index() -> Value {
     types::Unbound::new(
         move |v| async move {
+            let source = Source::get(&v);
             match_value! {v,
                 types::Args { mut args } => {
-                    let v = try_result!(args.next().ok_or("no value to index"));
-                    let i = try_result!(args.next().ok_or("no index"));
+                    let v = try_result!(args.next_or_error("indexed value", source));
+                    let i = try_result!(args.next_or_error("index", source));
                     try_result!(args.unused_arguments());
 
                     traits::bind(v, Source::imbue(Source::get(&i).with(types::Index(i).into()))).await
                 }
                 types::PatternArgs { mut args } => {
-                    let i = try_result!(args.next().ok_or("no index binding"));
+                    let i = try_result!(args.next_or_error("binding", source));
                     try_result!(args.unused_arguments());
 
                     types::Index(i).into()
                 }
-                v => traits::type_error(v, "function call or pattern function call").into()
+                v => traits::type_error(v, "function call or pattern function call").into_error().into()
             }
         },
         depends![nsid!(ergo::index)],

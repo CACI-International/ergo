@@ -2,7 +2,7 @@
 
 use crate as ergo_runtime;
 use crate::abi_stable::{std_types::RVec, type_erase::Erased, StableAbi};
-use crate::metadata::Doc;
+use crate::metadata::{Doc, Source};
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
 use crate::{depends, Dependencies, TypedValue};
@@ -222,7 +222,11 @@ ergo_traits_fn! {
 
     impl traits::IntoTyped<Number> for super::String {
         async fn into_typed(self) -> crate::Value {
-            self.as_ref().0.as_str().parse::<Number>().into()
+            self.as_ref().0.as_str().parse::<Number>().map_err(|e| crate::error! {
+                labels: [ primary(Source::get(&self).with("while converting this String into a Number")) ],
+                notes: [ "valid numbers include rational (`22/7`), integral (`-3`), and floating-point (`3.14`)" ],
+                error: e
+            }).into()
         }
     }
 
@@ -230,11 +234,16 @@ ergo_traits_fn! {
 
     impl traits::Stored for Number {
         async fn put(&self, _stored_ctx: &traits::StoredContext, item: crate::context::ItemContent) -> crate::RResult<()> {
-            bincode::serialize_into(item, &self.num()).map_err(|e| e.into()).into()
+            crate::error_info!(
+                labels: [ primary(Source::get(SELF_VALUE).with("while storing this value")) ],
+                { bincode::serialize_into(item, &self.num()) }
+            ).into()
         }
 
         async fn get(_stored_ctx: &traits::StoredContext, item: crate::context::ItemContent) -> crate::RResult<Erased> {
-            bincode::deserialize_from(item).map(|n: BigRational| Erased::new(Number::from(n))).map_err(|e| e.into()).into()
+            crate::error_info!(
+                { bincode::deserialize_from(item).map(|n: BigRational| Erased::new(Number::from(n))) }
+            ).into()
         }
     }
 

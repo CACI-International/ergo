@@ -72,17 +72,31 @@ pub async fn into<T: ErgoType + StableAbi + Eraseable>(
     let result: crate::Result<_> = async {
         Context::eval(&mut v).await?;
         src = Source::get(&v); // Update source in case it changed
+        let from_t = type_name(&v);
         let t = Context::get_trait::<IntoTyped<T>>(&v).ok_or_else(|| {
-            let from_t = type_name(&v);
             let to_t = type_name_for(&T::ergo_type());
-            format!("cannot convert {} into {}", from_t, to_t)
+            crate::error! {
+                labels: [
+                    primary(src.with(format!("value has type {}", from_t)))
+                ],
+                error: format!("cannot convert value into {}", to_t)
+            }
         })?;
         crate::try_value!(t.into_typed(v).await)
             .as_type::<T>()
             .map_err(|v| {
                 let actual_t = type_name(&v);
                 let into_t = type_name_for(&T::ergo_type());
-                format!("bad IntoTyped<{}> implementation, got {}", into_t, actual_t).into()
+                crate::error! {
+                    labels: [
+                        primary(src.with(format!("value has type {}", from_t)))
+                    ],
+                    notes: [
+                        format!("expected {}", into_t),
+                        format!("got {}", actual_t)
+                    ],
+                    error: format!("bad IntoTyped<{}> implementation", into_t)
+                }
             })
     }
     .await;
@@ -91,7 +105,6 @@ pub async fn into<T: ErgoType + StableAbi + Eraseable>(
             Source::set_if_missing(&mut t, src);
             Ok(t)
         }
-        // TODO add source if missing
         Err(e) => Err(e),
     }
 }

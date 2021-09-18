@@ -14,8 +14,6 @@ pub fn module() -> Value {
 /// Arguments: `Error :value`
 async fn display(value: _) -> Value {
     let mut s = String::new();
-    ergo_runtime::try_result!(
-        traits::display_any(value, &mut traits::Formatter::new(&mut s)).await
-    );
+    traits::display_any(value, &mut traits::Formatter::new(&mut s)).await?;
     types::String::from(s).into()
 }

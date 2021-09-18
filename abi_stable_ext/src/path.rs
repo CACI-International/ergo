@@ -12,6 +12,15 @@ pub struct PathBuf {
     path: OsString,
 }
 
+#[derive(Debug)]
+pub struct Display<'a>(&'a PathBuf);
+
+impl<'a> std::fmt::Display for Display<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        self.0.as_ref().display().fmt(f)
+    }
+}
+
 impl PathBuf {
     pub fn into_pathbuf(self) -> std::path::PathBuf {
         self.into()
@@ -22,6 +31,10 @@ impl PathBuf {
             Cow::Borrowed(b) => Cow::Borrowed(std::path::Path::new(b)),
             Cow::Owned(o) => Cow::Owned(o.into()),
         }
+    }
+
+    pub fn display(&self) -> Display {
+        Display(self)
     }
 }
 

@@ -185,7 +185,7 @@ impl Parser for ErgoFnLike {
                 None => quote! { v },
                 Some(ref ty) => quote! {
                     ergo_runtime::try_result!(ergo_runtime::Context::eval_as::<#ty>(v).await)
-                }
+                },
             };
             let typed_val = if optional {
                 quote! {
@@ -198,9 +198,10 @@ impl Parser for ErgoFnLike {
                 quote! {
                     match #get_arg {
                         Some(v) => #v_as_type,
-                        None => ergo_runtime::try_result!(Err(
-                                std::concat!("not enough arguments, expected ", std::stringify!(#ty), " ", std::stringify!(#bind))
-                        ))
+                        None => ergo_runtime::try_result!(Err(ergo_runtime::error!{
+                            labels: [ primary(ARGS_SOURCE.with("in this function call")) ],
+                            error: std::concat!("missing argument: ", std::stringify!(#bind))
+                        }))
                     }
                 }
             };
@@ -240,7 +241,14 @@ impl Parser for ErgoFnLike {
                         let mut __ergo_fn_args = __ergo_fn_args.to_owned().args;
                         #(#args)*
                         #rest_or_check
-                        #inner_block
+                        ergo_runtime::error_info!(
+                            labels: [
+                                secondary(ARGS_SOURCE.with("in this call"))
+                            ],
+                            async {
+                                ergo_runtime::Result::<Value>::Ok(#inner_block)
+                            }
+                        ).into()
                     })
                 },
                 ergo_runtime::depends![fn_id],

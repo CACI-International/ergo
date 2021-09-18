@@ -3,7 +3,7 @@
 use super::interface::{render::*, TerminalOutput};
 use ergo_runtime::abi_stable::std_types::{RDuration, ROption, RSlice, RString, RVec};
 use ergo_runtime::context::{LogEntry, LogLevel, LogTarget, LogTaskKey};
-use ergo_runtime::{error::UniqueErrorSources, Error};
+use ergo_runtime::{error::Diagnostics, Error};
 use log::warn;
 use slab::Slab;
 use std::collections::HashMap;
@@ -31,7 +31,7 @@ struct Progress {
 }
 
 struct Errors {
-    errors: UniqueErrorSources,
+    errors: Diagnostics,
     prompt_abort: bool,
     interrupts: u8,
 }
@@ -225,7 +225,7 @@ impl Errors {
     }
 
     pub fn update(&mut self, err: Error) {
-        self.errors.insert(err);
+        self.errors.insert(&err);
     }
 }
 

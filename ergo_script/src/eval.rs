@@ -556,41 +556,46 @@ impl Evaluator {
                 let doc_deps = depends![^DocCommentPart::dependencies(&parts), ^&captures, self_val];
                 let mut doc = Value::dyn_new(move || async move {
                         Context::spawn(EVAL_TASK_PRIORITY, |_| {}, async move {
-                            captures.resolve(self_key, self_val);
-                            captures.evaluate_ready(self).await;
-                            let mut doc = std::string::String::new();
-                            let mut formatter = traits::Formatter::new(&mut doc);
-                            let mut local_env = LocalEnv::new();
-                            for p in parts {
-                                match p {
-                                    DocCommentPart::String(s) => formatter.write_str(&s)?,
-                                    DocCommentPart::ExpressionBlock(es) => {
-                                        // Evaluate as a block, displaying the final value and
-                                        // merging the scope into the doc comment scope.
-                                        let sets = Sets::new();
-                                        let (mut vals, _) = self.evaluate_block_items(es, captures.clone(), BlockItemMode::DocBlock, &sets).await?;
-                                        debug_assert!(vals.len() < 2);
+                            ergo_runtime::error_info! {
+                                labels: [ primary(source.with("while evaluating this doc comment")) ],
+                                async {
+                                    captures.resolve(self_key, self_val);
+                                    captures.evaluate_ready(self).await;
+                                    let mut doc = std::string::String::new();
+                                    let mut formatter = traits::Formatter::new(&mut doc);
+                                    let mut local_env = LocalEnv::new();
+                                    for p in parts {
+                                        match p {
+                                            DocCommentPart::String(s) => formatter.write_str(&s)?,
+                                            DocCommentPart::ExpressionBlock(es) => {
+                                                // Evaluate as a block, displaying the final value and
+                                                // merging the scope into the doc comment scope.
+                                                let sets = Sets::new();
+                                                let (mut vals, _) = self.evaluate_block_items(es, captures.clone(), BlockItemMode::DocBlock, &sets).await?;
+                                                debug_assert!(vals.len() < 2);
 
-                                        for (cap, k, v) in sets.into_inner() {
-                                            if let Some(cap) = cap {
-                                                captures.resolve(cap, v.clone());
+                                                for (cap, k, v) in sets.into_inner() {
+                                                    if let Some(cap) = cap {
+                                                        captures.resolve(cap, v.clone());
+                                                    }
+                                                    local_env.insert(k, v);
+                                                }
+                                                captures.evaluate_ready(self).await;
+
+                                                // Only add to string if the last value wasn't a bind
+                                                // expression (to support using a block to only add
+                                                // bindings).
+                                                if let Some(mut last) = vals.pop() {
+                                                    Context::eval(&mut last).await?;
+                                                    traits::display(last, &mut formatter).await?;
+                                                }
                                             }
-                                            local_env.insert(k, v);
-                                        }
-                                        captures.evaluate_ready(self).await;
-
-                                        // Only add to string if the last value wasn't a bind
-                                        // expression (to support using a block to only add
-                                        // bindings).
-                                        if let Some(mut last) = vals.pop() {
-                                            Context::eval(&mut last).await?;
-                                            traits::display(last, &mut formatter).await?;
                                         }
                                     }
+                                    drop(formatter);
+                                    Result::Ok(Value::from(types::String::from(doc)))
                                 }
                             }
-                            drop(formatter);
-                            Ok(Value::from(types::String::from(doc)))
                         }).await.into()
                     }, doc_deps);
                 Source::set(&mut doc, source.clone());
@@ -600,7 +605,10 @@ impl Evaluator {
             Capture => |capture| match captures.get(capture.0) {
                 None => {
                     if cfg!(debug_assertions) {
-                        panic!("{}", source.clone().with(format!("internal capture error: {:?}", capture.0)));
+                        use ergo_runtime::error::{Diagnostic, DiagnosticInfo, diagnostics_to_string};
+                        let d = Diagnostic::from(format!("internal capture error: {:?}", capture.0))
+                            .add_primary_label(source.clone().with(""));
+                        panic!("{}", diagnostics_to_string(&[d], Context::global().diagnostic_sources().as_ref(), false));
                     } else {
                         types::Unset.into()
                     }
@@ -704,16 +712,14 @@ impl Evaluator {
         local_env: Option<&LocalEnv>,
         sets: &Sets,
     ) -> Value {
-        let src = e.source();
+        let _src = e.source();
         let v = self
             .evaluate_now_with_env_impl(e, captures, local_env, sets)
             .await;
         if self.backtrace {
             match v.as_type::<types::Error>() {
-                Ok(err) => err
-                    .to_owned()
-                    .with_context(src.with("while evaluating"))
-                    .into(),
+                // FIXME reimplement backtrace in a different way
+                Ok(err) => err.into(),
                 Err(v) => v,
             }
         } else {

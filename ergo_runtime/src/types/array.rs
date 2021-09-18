@@ -45,20 +45,25 @@ impl traits::NestedValues for Array {
 
 ergo_traits_fn! {
     impl traits::Display for Array {
-        async fn fmt(&self, f: &mut traits::Formatter) -> crate::error::RResult<()> {
-            async move {
-                let mut iter = self.0.iter();
-                write!(f, "[")?;
-                if let Some(v) = iter.next() {
-                    traits::display(v.clone(), f).await?;
+        async fn fmt(&self, f: &mut traits::Formatter) -> crate::RResult<()> {
+            crate::error_info!(
+                labels: [
+                    primary(Source::get(SELF_VALUE).with("while displaying this value"))
+                ],
+                async {
+                    let mut iter = self.0.iter();
+                    write!(f, "[")?;
+                    if let Some(v) = iter.next() {
+                        traits::display(v.clone(), f).await?;
+                    }
+                    for v in iter {
+                        write!(f, ", ")?;
+                        traits::display(v.clone(), f).await?;
+                    }
+                    write!(f, "]")?;
+                    crate::Result::Ok(())
                 }
-                for v in iter {
-                    write!(f, ", ")?;
-                    traits::display(v.clone(), f).await?;
-                }
-                write!(f, "]")?;
-                Ok(())
-            }.await.into()
+            ).into()
         }
     }
 
@@ -68,26 +73,33 @@ ergo_traits_fn! {
 
     impl traits::Stored for Array {
         async fn put(&self, stored_ctx: &traits::StoredContext, item: crate::context::ItemContent) -> crate::RResult<()> {
-            async move {
-                let mut ids: Vec<u128> = Vec::new();
-                let mut writes = Vec::new();
-                for v in self.0.iter().cloned() {
-                    ids.push(v.id());
-                    writes.push(stored_ctx.write_to_store(v));
+            crate::error_info!(
+                labels: [
+                    primary(Source::get(SELF_VALUE).with("while storing this value"))
+                ],
+                async {
+                    let mut ids: Vec<u128> = Vec::new();
+                    let mut writes = Vec::new();
+                    for v in self.0.iter().cloned() {
+                        ids.push(v.id());
+                        writes.push(stored_ctx.write_to_store(v));
+                    }
+                    crate::Context::global().task.join_all(writes).await?;
+                    bincode::serialize_into(item, &ids)
                 }
-                crate::Context::global().task.join_all(writes).await?;
-                Ok(bincode::serialize_into(item, &ids)?)
-            }.await.into()
+            ).into()
         }
 
         async fn get(stored_ctx: &traits::StoredContext, item: crate::context::ItemContent) -> crate::RResult<Erased> {
-            async move {
-                let ids: Vec<u128> = bincode::deserialize_from(item)?;
-                let values = crate::Context::global().task
-                    .join_all(ids.into_iter().map(|id| stored_ctx.read_from_store(id)))
-                    .await?;
-                Ok(Erased::new(Array(values.into_iter().map(|v| Source::imbue(crate::Source::stored(v))).collect())))
-            }.await.into()
+            crate::error_info!(
+                async {
+                    let ids: Vec<u128> = bincode::deserialize_from(item)?;
+                    let values = crate::Context::global().task
+                        .join_all(ids.into_iter().map(|id| stored_ctx.read_from_store(id)))
+                        .await?;
+                    crate::Result::Ok(Erased::new(Array(values.into())))
+                }
+            ).into()
         }
     }
 
@@ -101,8 +113,15 @@ ergo_traits_fn! {
                 super::Index(ind) => {
                     // Return value at index
                     let ind = crate::try_result!(traits::into::<super::Number>(ind).await);
-                    source.with(match ind.as_ref().to_isize() {
-                        None => return Source::get(&ind).with("non-integer index").into_error().into(),
+                    let indsrc = Source::get(&ind);
+                    match ind.as_ref().to_isize() {
+                        None => Err(crate::error! {
+                            labels: [
+                                primary(indsrc.with("")),
+                                secondary(source.with("while indexing this array"))
+                            ],
+                            error: "non-integer index"
+                        }),
                         Some(mut ind) => {
                             // Negative indices are relative to the end.
                             if ind < 0 {
@@ -114,10 +133,18 @@ ergo_traits_fn! {
                             }
                             let ind = ind as usize;
                             self.0.get(ind).map(|v| v.clone())
-                                .ok_or_else(|| format!("array has length {}", self.0.len()))
+                                .ok_or_else(|| crate::error! {
+                                    labels: [
+                                        primary(indsrc.with("")),
+                                        secondary(source.with("while indexing this array"))
+                                    ],
+                                    notes: [
+                                        format!("array has length {}", self.0.len())
+                                    ],
+                                    error: "index out of bounds"
+                                })
                         }
-                    })
-                    .transpose_err_with_context("while indexing array").into()
+                    }.into()
                 },
                 Array(arr) => {
                     crate::try_result!(traits::bind_array(

@@ -2,8 +2,14 @@
 
 use ergo_runtime::abi_stable::{bst::BstMap, type_erase::Erased, StableAbi};
 use ergo_runtime::{
-    context::ItemContent, depends, io, metadata::Source, nsid, traits, try_result,
-    type_system::ErgoType, types, Context, Dependencies, Error, Value,
+    context::ItemContent,
+    depends,
+    error::{Diagnostic, DiagnosticInfo},
+    io,
+    metadata::Source,
+    nsid, traits, try_result,
+    type_system::ErgoType,
+    types, Context, Dependencies, Value,
 };
 use reqwest::{
     blocking::Client,
@@ -64,12 +70,8 @@ async fn http(
             "connect" => Method::CONNECT,
             "patch" => Method::PATCH,
             "trace" => Method::TRACE,
-            s => {
-                return Source::get(&m)
-                    .with(format!("invalid method: {}", s))
-                    .into_error()
-                    .into()
-            }
+            s => Err(Diagnostic::from(format!("invalid method: {}", s))
+                .add_primary_label(Source::get(&m).with("")))?,
         },
     };
 
@@ -95,14 +97,11 @@ async fn http(
     }
 
     if let Some(to) = timeout {
-        let to = try_result!(traits::into::<types::Number>(to).await);
+        let to = traits::into::<types::Number>(to).await?;
         let secs = match to.as_ref().to_f64() {
-            None => {
-                return Source::get(&to)
-                    .with("invalid numeric timeout")
-                    .into_error()
-                    .into()
-            }
+            None => Err(Diagnostic::from("invalid timeout").add_primary_label(
+                Source::get(&to).with("could not convert this to a floating point value"),
+            ))?,
             Some(f) => f,
         };
         request = request.timeout(std::time::Duration::from_secs_f64(secs));
@@ -113,15 +112,15 @@ async fn http(
         if let Some(headers) = headers {
             drop(traits::eval_nested(headers.clone().into()).await); // Eval in parallel
             for (k, v) in headers.to_owned().0.into_iter() {
-                let k = try_result!(Context::eval_as::<types::String>(k).await);
-                let v = try_result!(Context::eval_as::<types::String>(v).await);
+                let k = Context::eval_as::<types::String>(k).await?;
+                let v = Context::eval_as::<types::String>(v).await?;
 
-                let k = try_result!(Source::extract(k)
-                    .map(|k| HeaderName::try_from(k.as_ref().as_str()))
-                    .transpose_err());
-                let v = try_result!(Source::extract(v)
-                    .map(|v| HeaderValue::try_from(v.as_ref().as_str()))
-                    .transpose_err());
+                let k = HeaderName::try_from(k.as_ref().as_str()).add_primary_label(
+                    Source::get(&k).with("while converting this value to a header name"),
+                )?;
+                let v = HeaderValue::try_from(v.as_ref().as_str()).add_primary_label(
+                    Source::get(&v).with("while converting this value to a header value"),
+                )?;
                 http_headers.insert(k, v);
             }
         }
@@ -129,10 +128,10 @@ async fn http(
     }
 
     if let Some(body) = body {
-        let body = try_result!(traits::into::<types::ByteStream>(body).await).to_owned();
+        let body = traits::into::<types::ByteStream>(body).await?.to_owned();
         let mut body_vec = vec![];
         // TODO support streaming body
-        try_result!(io::copy(&mut body.read(), &mut io::AllowStdIo::new(&mut body_vec)).await);
+        io::copy(&mut body.read(), &mut io::AllowStdIo::new(&mut body_vec)).await?;
         request = request.body(body_vec);
     }
 
@@ -141,11 +140,16 @@ async fn http(
     // Wrap the request in a mutex because RequestBuilder is not Sync and cannot be captured in
     // `spawn_blocking`, but `Mutex` will be Sync.
     let req = std::sync::Mutex::new(request);
-    let response = try_result!(Context::global()
+    let response = Context::global()
         .task
-        .spawn_blocking(move || req.into_inner().unwrap().send().map_err(Error::from))
+        .spawn_blocking(move || {
+            req.into_inner()
+                .unwrap()
+                .send()
+                .map_err(|e| ergo_runtime::error! { error: e })
+        })
         .await
-        .and_then(|v| v));
+        .and_then(|v| v)?;
 
     log.debug(format!("got http response: {:?}", response));
 
@@ -262,13 +266,17 @@ ergo_runtime::type_system::ergo_traits_fn! {
 
     impl traits::Stored for HttpStatus {
         async fn put(&self, _ctx: &traits::StoredContext, mut into: ItemContent) -> ergo_runtime::RResult<()> {
-            bincode::serialize_into(&mut into, &self.0).map_err(|e| e.into()).into()
+            bincode::serialize_into(&mut into, &self.0)
+                .add_primary_label(Source::get(SELF_VALUE).with("while storing this value"))
+                .map_err(|e| e.into())
+                .into()
         }
 
         async fn get(_ctx: &traits::StoredContext, mut from: ItemContent) -> ergo_runtime::RResult<Erased>
         {
             bincode::deserialize_from(&mut from)
                 .map(|status| Erased::new(HttpStatus(status)))
+                .into_diagnostic()
                 .map_err(|e| e.into())
                 .into()
         }

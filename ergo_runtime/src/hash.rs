@@ -40,6 +40,11 @@ impl Default for Fnv1a {
 }
 
 impl Fnv1a {
+    /// Get a 64-bit hash digest.
+    pub fn finish(&self) -> u64 {
+        self.state as u64
+    }
+
     /// Get a 128-bit hash digest.
     pub fn finish_ext(&self) -> u128 {
         self.state

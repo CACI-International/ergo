@@ -1,6 +1,6 @@
 //! The getopt function.
 
-use ergo_runtime::{metadata::Source, try_result, types, Context, Value};
+use ergo_runtime::{metadata::Source, types, Context, Value};
 use std::collections::BTreeMap;
 
 #[types::ergo_fn]
@@ -32,7 +32,7 @@ pub async fn function(args: types::Array, (consecutive): [_]) -> Value {
     let mut force_positional = false;
 
     for a in args {
-        let s = try_result!(Context::eval_as::<types::String>(a).await);
+        let s = Context::eval_as::<types::String>(a).await?;
         if force_positional {
             positional.push(s.into());
             continue;

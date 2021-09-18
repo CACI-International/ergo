@@ -2,6 +2,7 @@
 
 use crate as ergo_runtime;
 use crate::abi_stable::std_types::RString;
+use crate::error::{Diagnostic, DiagnosticInfo, ErrorOrDiagnostic};
 use crate::metadata::Source;
 use crate::type_system::{ergo_trait, ErgoType, Type};
 use crate::Value;
@@ -30,24 +31,25 @@ pub fn type_name(value: &Value) -> String {
 }
 
 /// Create a type error with the value's type mentioned.
-pub fn type_error(v: Value, expected: &str) -> crate::Error {
+pub fn type_error(v: Value, expected: &str) -> ErrorOrDiagnostic {
     let v = match v.as_type::<crate::types::Error>() {
-        Ok(e) => return e.to_owned(),
+        Ok(e) => return ErrorOrDiagnostic::Error(e.to_owned()),
         Err(v) => v,
     };
     let name = type_name(&v);
-    Source::get(&v)
-        .with(format!("type error: expected {}, got {}", expected, name))
-        .into_error()
+    ErrorOrDiagnostic::Diagnostic(
+        Diagnostic::from(format!("type error: expected {}, got {}", expected, name))
+            .add_primary_label(Source::get(&v).with("")),
+    )
 }
 
 /// Create a type error with the value's type mentioned.
-pub fn type_error_for<T: ErgoType>(v: Value) -> crate::Error {
+pub fn type_error_for<T: ErgoType>(v: Value) -> ErrorOrDiagnostic {
     type_error_for_t(v, &T::ergo_type())
 }
 
 /// Create a type error with the value's type mentioned.
-pub fn type_error_for_t(v: Value, tp: &Type) -> crate::Error {
+pub fn type_error_for_t(v: Value, tp: &Type) -> ErrorOrDiagnostic {
     type_error(v, type_name_for(tp).as_str())
 }
 

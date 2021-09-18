@@ -111,7 +111,7 @@ pub fn item_name(ts: TokenStream) -> TokenStream {
         }
     } else {
         quote! {
-            unsafe { &*(#s as *const str as *const ::ergo_runtime::context::ItemName) }
+            unsafe { &*(#s as *const str as *const ergo_runtime::context::ItemName) }
         }
     }
     .into()

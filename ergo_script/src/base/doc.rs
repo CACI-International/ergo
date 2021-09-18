@@ -3,7 +3,7 @@
 use ergo_runtime::{
     context::{DynamicScopeKey, DynamicScopeRef},
     depends,
-    io::AddContext,
+    error::DiagnosticInfo,
     metadata::{self, Doc},
     nsid, traits, try_result, types,
     value::match_value,
@@ -80,28 +80,32 @@ pub fn doc() -> Value {
         ///
         /// Returns the `Path` to the written documentation.
         async fn write(mut path: _, value: _) -> Value {
-            try_result!(Context::eval(&mut path).await);
+            Context::eval(&mut path).await?;
             let path_source = metadata::Source::get(&path);
             let mut doc_path = match_value!{path,
                 types::String(s) => s.as_str().into(),
                 types::Path(p) => p.into_pathbuf(),
-                v => return traits::type_error(v, "String or Path").into()
+                v => Err(traits::type_error(v, "String or Path"))?
             };
 
             if let Some(parent) = doc_path.parent() {
-                try_result!(std::fs::create_dir_all(&parent).add_context_str(parent.display()));
+                std::fs::create_dir_all(&parent)
+                    .add_primary_label(path_source.with("while creating directory from this value"))
+                    .add_note(format_args!("directory was {}", parent.display()))?;
             }
-            let doc = try_result!(Context::fork(
+            let doc = Context::fork(
                     |ctx| DocPath::new(path_source.with(doc_path.clone())).context(ctx, ARGS_SOURCE),
                     async move { Doc::get(&value).await }
-                ).await);
+                ).await?;
 
             if doc_path.is_dir() {
                 doc_path.push("index.md");
             } else {
                 doc_path.set_extension("md");
             }
-            try_result!(std::fs::write(&doc_path, doc.as_bytes()).add_context_str(doc_path.display()));
+            std::fs::write(&doc_path, doc.as_bytes())
+                .add_primary_label(path_source.with("while writing to path from this value"))
+                .add_note(format_args!("path was {}", doc_path.display()))?;
             types::Path::from(doc_path).into()
         }
     };
@@ -114,12 +118,12 @@ pub fn doc() -> Value {
         /// Returns the `Path` to the written documentation. If no documentation path is set, returns `path`
         /// (without writing anything).
         async fn child(mut path: _, value: _) -> Value {
-            try_result!(Context::eval(&mut path).await);
+            Context::eval(&mut path).await?;
             let path_source = metadata::Source::get(&path);
             let path = match_value!{path,
                 types::String(s) => s.as_str().into(),
                 types::Path(p) => p.into_pathbuf(),
-                v => return traits::type_error(v, "String or Path").into()
+                v => Err(traits::type_error(v, "String or Path"))?
             };
 
             match DocPath::owned() {
@@ -129,7 +133,10 @@ pub fn doc() -> Value {
                     for component in path.components() {
                         use std::path::Component::*;
                         match component {
-                            Prefix(_) | RootDir | ParentDir => return path_source.with("invalid components specified (may only be relative descendant paths)").into_error().into(),
+                            Prefix(_) | RootDir | ParentDir => Err(ergo_runtime::error! {
+                                labels: [ primary(path_source.with("in this path")) ],
+                                error: "invalid components specified (may only be relative descendant paths)"
+                            })?,
                             CurDir => (),
                             Normal(c) => rel_path.push(c),
                         }
@@ -138,12 +145,14 @@ pub fn doc() -> Value {
                     doc_path.join(path_source.with(&rel_path));
                     let new_path = doc_path.current();
                     if let Some(parent) = new_path.parent() {
-                        try_result!(std::fs::create_dir_all(&parent).add_context_str(parent.display()));
+                        std::fs::create_dir_all(&parent)
+                            .add_primary_label(path_source.with("while creating directory from this value"))
+                            .add_note(format_args!("directory was {}", parent.display()))?;
                     }
-                    let doc = try_result!(Context::fork(
+                    let doc = Context::fork(
                             move |ctx| doc_path.context(ctx, ARGS_SOURCE),
                             async move { Doc::get(&value).await }
-                        ).await);
+                        ).await?;
 
                     if new_path.is_dir() {
                         rel_path.push("index.md");
@@ -151,7 +160,9 @@ pub fn doc() -> Value {
                         rel_path.set_extension("md");
                     }
                     let output_file = old_doc_path.join(&rel_path);
-                    try_result!(std::fs::write(&output_file, doc.as_bytes()).add_context_str(output_file.display()));
+                    std::fs::write(&output_file, doc.as_bytes())
+                        .add_primary_label(path_source.with("while writing to path from this value"))
+                        .add_note(format_args!("path was {}", output_file.display()))?;
                     types::Path::from(rel_path).into()
                 }
             }
@@ -163,10 +174,11 @@ pub fn doc() -> Value {
             let path = path.clone();
             let write = write.clone();
             let child = child.clone();
+            let source = metadata::Source::get(&v);
             async move {
                 match_value! {v,
                     types::Args { mut args } => {
-                        let to_doc = try_result!(args.next().ok_or("no value to document"));
+                        let to_doc = try_result!(args.next_or_error("value to document", source));
                         try_result!(args.unused_arguments());
 
                         types::String::from(try_result!(Doc::get(&to_doc).await)).into()
@@ -184,7 +196,7 @@ pub fn doc() -> Value {
                             metadata::Source::get(&ind).with("unknown index").into_error().into()
                         }
                     },
-                    v => traits::type_error(v, "function call or index").into()
+                    v => traits::type_error(v, "function call or index").into_error().into()
                 }
             }
             .boxed()

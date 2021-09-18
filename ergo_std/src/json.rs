@@ -1,7 +1,7 @@
 //! JSON functions.
 
 use ergo_runtime::{
-    metadata::Source, traits, try_result, types, value::match_value, Context, Value,
+    error::DiagnosticInfo, metadata::Source, traits, types, value::match_value, Context, Value,
 };
 use futures::future::{BoxFuture, FutureExt};
 use json::{parse as json_parse, stringify as json_stringify, JsonValue};
@@ -18,10 +18,8 @@ pub fn module() -> Value {
 ///
 /// Arguments: `String :json`
 async fn parse(json: types::String) -> Value {
-    let json_val = match json_parse(json.as_ref().0.as_str()) {
-        Err(e) => return Source::get(&json).with(e).into_error().into(),
-        Ok(val) => val,
-    };
+    let json_val = json_parse(json.as_ref().0.as_str())
+        .add_primary_label(Source::get(&json).with("while parsing JSON from this value"))?;
 
     fn json_to_val(src: &ergo_runtime::Source<()>, json: JsonValue) -> Value {
         match json {
@@ -99,13 +97,13 @@ async fn stringify(value: _) -> Value {
                     }
                     Ok(JsonValue::Array(entries.into_iter().collect::<Result<Vec<_>, _>>()?))
                 }
-                o => Err(traits::type_error(o, "json-compatible type"))
+                o => Err(traits::type_error(o, "json-compatible type").into())
             }
         }
         .boxed()
     }
 
-    let val = try_result!(val_to_json(value).await);
+    let val = val_to_json(value).await?;
     types::String::from(json_stringify(val)).into()
 }
 

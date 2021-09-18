@@ -71,16 +71,10 @@ pub enum Error<TokError> {
 impl<E: fmt::Display> fmt::Display for Error<E> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Error::Tokenization(t) => write!(f, "{}", t),
+            Error::Tokenization(t) => t.fmt(f),
             Error::UnexpectedExpressionSeparator => write!(f, "unexpected expression separator"),
             Error::UnmatchedOpeningToken(t) => write!(f, "unmatched {}", t),
-            Error::UnmatchedClosingToken(t, expected) => {
-                write!(f, "unmatched {}", t)?;
-                if let Some(s) = expected {
-                    write!(f, " (expected match for {})", s.display_inline())?;
-                }
-                Ok(())
-            }
+            Error::UnmatchedClosingToken(t, _) => write!(f, "unmatched {}", t),
         }
     }
 }
@@ -90,6 +84,22 @@ impl<E: std::error::Error + 'static> std::error::Error for Error<E> {
         match self {
             Error::Tokenization(t) => Some(t),
             _ => None,
+        }
+    }
+}
+
+impl<E: super::ToDiagnostic + fmt::Display> super::ToDiagnostic for Error<E> {
+    fn additional_info(&self, diagnostic: &mut ergo_runtime::error::Diagnostic) {
+        match self {
+            Error::Tokenization(e) => e.additional_info(diagnostic),
+            Error::UnmatchedClosingToken(_, Some(close)) => {
+                diagnostic
+                    .labels
+                    .push(ergo_runtime::error::Label::secondary(
+                        close.clone().map(|t| format!("expected match for {}", t)),
+                    ));
+            }
+            _ => (),
         }
     }
 }
@@ -228,7 +238,6 @@ where
 mod test {
     use super::*;
     use crate::ast::tokenize::Tokens;
-    use ergo_runtime::source::StringSource;
 
     use PairedToken::*;
     use SymbolicToken::*;
@@ -394,27 +403,19 @@ mod test {
     }
 
     fn assert_tokens(s: &str, expected: &[TreeToken]) {
-        let toks: Vec<_> = TreeTokens::from(Tokens::from(
-            Source::new(StringSource::new("<string>", s.to_owned()))
-                .open()
-                .unwrap(),
-        ))
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap()
-        .into_iter()
-        .map(|t| t.unwrap())
-        .collect();
+        let toks: Vec<_> = TreeTokens::from(Tokens::from(Source::missing(s.chars())))
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+            .into_iter()
+            .map(|t| t.unwrap())
+            .collect();
         dbg!(&toks);
         assert!(toks == expected);
     }
 
     fn assert_fail(s: &str) {
-        TreeTokens::from(Tokens::from(
-            Source::new(StringSource::new("<string>", s.to_owned()))
-                .open()
-                .unwrap(),
-        ))
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap_err();
+        TreeTokens::from(Tokens::from(Source::missing(s.chars())))
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap_err();
     }
 }

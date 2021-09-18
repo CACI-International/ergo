@@ -13,6 +13,7 @@ use crate::abi_stable::{
     type_erase::{Eraseable, Erased},
     DynTrait, StableAbi,
 };
+use crate::error::DiagnosticInfo;
 use crate::Error;
 use futures::future::{abortable, try_join_all, AbortHandle, Aborted, Future, FutureExt};
 use std::cell::Cell;
@@ -388,7 +389,7 @@ impl ThreadPoolInterface for std::sync::Arc<TokioThreadPool> {
         BoxFuture::new(
             self.pool
                 .spawn_blocking(move || f.call())
-                .map(|r| r.map_err(|e| e.into()).into()),
+                .map(|r| r.into_diagnostic().map_err(|e| e.into()).into()),
         )
     }
 

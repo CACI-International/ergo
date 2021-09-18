@@ -14,7 +14,7 @@ pub struct Parser<TreeIter> {
 
 impl<T, E> From<T> for Parser<T::IntoIter>
 where
-    T: IntoIterator<Item = Result<Source<Tree>, Source<E>>>,
+    T: IntoIterator<Item = Result<Source<Tree>, Vec<Source<E>>>>,
 {
     fn from(iter: T) -> Self {
         Parser {
@@ -26,9 +26,9 @@ where
 
 impl<I, E> Iterator for Parser<I>
 where
-    I: Iterator<Item = Result<Source<Tree>, Source<E>>>,
+    I: Iterator<Item = Result<Source<Tree>, Vec<Source<E>>>>,
 {
-    type Item = Result<BlockItem, Source<Error<E>>>;
+    type Item = Result<BlockItem, Vec<Source<Error<E>>>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         to_doc_block_item(self.ctx, &mut self.trees)
@@ -71,6 +71,15 @@ impl<E: std::error::Error + 'static> std::error::Error for Error<E> {
     }
 }
 
+impl<E: super::ToDiagnostic + fmt::Display> super::ToDiagnostic for Error<E> {
+    fn additional_info(&self, diagnostic: &mut ergo_runtime::error::Diagnostic) {
+        match self {
+            Error::TreeParse(e) => e.additional_info(diagnostic),
+            _ => (),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 enum StringImplies {
     Get,
@@ -106,17 +115,17 @@ impl ParseContext {
     }
 }
 
-fn documented<I: Iterator<Item = Result<Source<Tree>, Source<E>>>, E, Item, R>(
+fn documented<I: Iterator<Item = Result<Source<Tree>, Vec<Source<E>>>>, E, Item, R>(
     ctx: ParseContext,
     iter: &mut I,
     item: Item,
-) -> Option<Result<R, Source<Error<E>>>>
+) -> Option<Result<R, Vec<Source<Error<E>>>>>
 where
     Item: FnOnce(
         ParseContext,
         Option<Source<Vec<DocCommentPart>>>,
         Source<Tree>,
-    ) -> Result<R, Source<Error<E>>>,
+    ) -> Result<R, Vec<Source<Error<E>>>>,
 {
     struct Comment {
         pub parts: Vec<DocCommentPart>,
@@ -142,9 +151,16 @@ where
         match iter.next() {
             None => match doc_comment {
                 None => break None,
-                Some(Comment { source, .. }) => break Some(Err(source.with(Error::BadDocComment))),
+                Some(Comment { source, .. }) => {
+                    break Some(Err(vec![source.with(Error::BadDocComment)]))
+                }
             },
-            Some(Err(e)) => break Some(Err(e.map(Error::TreeParse))),
+            Some(Err(errs)) => {
+                break Some(Err(errs
+                    .into_iter()
+                    .map(|e| e.map(Error::TreeParse))
+                    .collect()))
+            }
             Some(Ok(t)) => {
                 let (source, t) = t.take();
                 match t {
@@ -156,7 +172,7 @@ where
                         let exprs = std::iter::from_fn(move || to_doc_block_item(ctx, &mut inner))
                             .collect::<Result<Vec<_>, _>>();
                         let exprs = match exprs {
-                            Err(e) => break Some(Err(e)),
+                            Err(errs) => break Some(Err(errs)),
                             Ok(v) => v,
                         };
                         merge_part(
@@ -233,7 +249,10 @@ fn clean_doc_comment(parts: Vec<DocCommentPart>) -> Vec<DocCommentPart> {
     result
 }
 
-fn to_block_item<E>(ctx: ParseContext, t: Source<Tree>) -> Result<BlockItem, Source<Error<E>>> {
+fn to_block_item<E>(
+    ctx: ParseContext,
+    t: Source<Tree>,
+) -> Result<BlockItem, Vec<Source<Error<E>>>> {
     let (source, t) = t.take();
 
     match t {
@@ -250,27 +269,30 @@ fn to_block_item<E>(ctx: ParseContext, t: Source<Tree>) -> Result<BlockItem, Sou
     }
 }
 
-fn to_doc_block_item<I: Iterator<Item = Result<Source<Tree>, Source<E>>>, E>(
+fn to_doc_block_item<I: Iterator<Item = Result<Source<Tree>, Vec<Source<E>>>>, E>(
     ctx: ParseContext,
     iter: &mut I,
-) -> Option<Result<BlockItem, Source<Error<E>>>> {
+) -> Option<Result<BlockItem, Vec<Source<Error<E>>>>> {
     documented(ctx, iter, |ctx, doc_comment, tree| {
         let mut i = to_block_item(ctx, tree)?;
         match doc_comment {
             None => Ok(i),
             Some(c) => match &mut i {
                 BlockItem::Expr(e) | BlockItem::Bind(_, e) => {
-                    let old_e = std::mem::replace(e, Source::builtin(Expression::unit()));
+                    let old_e = std::mem::replace(e, Source::missing(Expression::unit()));
                     *e = c.map(|parts| Expression::doc_comment(parts, old_e));
                     Ok(i)
                 }
-                BlockItem::Merge(_) => Err(c.with(Error::BadDocComment)),
+                BlockItem::Merge(_) => Err(vec![c.with(Error::BadDocComment)]),
             },
         }
     })
 }
 
-fn to_array_item<E>(ctx: ParseContext, t: Source<Tree>) -> Result<ArrayItem, Source<Error<E>>> {
+fn to_array_item<E>(
+    ctx: ParseContext,
+    t: Source<Tree>,
+) -> Result<ArrayItem, Vec<Source<Error<E>>>> {
     let (source, t) = t.take();
 
     match t {
@@ -283,21 +305,21 @@ fn to_array_item<E>(ctx: ParseContext, t: Source<Tree>) -> Result<ArrayItem, Sou
     }
 }
 
-fn to_doc_array_item<I: Iterator<Item = Result<Source<Tree>, Source<E>>>, E>(
+fn to_doc_array_item<I: Iterator<Item = Result<Source<Tree>, Vec<Source<E>>>>, E>(
     ctx: ParseContext,
     iter: &mut I,
-) -> Option<Result<ArrayItem, Source<Error<E>>>> {
+) -> Option<Result<ArrayItem, Vec<Source<Error<E>>>>> {
     documented(ctx, iter, |ctx, doc_comment, tree| {
         let mut i = to_array_item(ctx, tree)?;
         match doc_comment {
             None => Ok(i),
             Some(c) => match &mut i {
                 ArrayItem::Expr(e) => {
-                    let old_e = std::mem::replace(e, Source::builtin(Expression::unit()));
+                    let old_e = std::mem::replace(e, Source::missing(Expression::unit()));
                     *e = c.map(|parts| Expression::doc_comment(parts, old_e));
                     Ok(i)
                 }
-                ArrayItem::Merge(_) => Err(c.with(Error::BadDocComment)),
+                ArrayItem::Merge(_) => Err(vec![c.with(Error::BadDocComment)]),
             },
         }
     })
@@ -306,7 +328,7 @@ fn to_doc_array_item<I: Iterator<Item = Result<Source<Tree>, Source<E>>>, E>(
 fn to_expression<E>(
     mut ctx: ParseContext,
     t: Source<Tree>,
-) -> Result<Source<Expression>, Source<Error<E>>> {
+) -> Result<Source<Expression>, Vec<Source<Error<E>>>> {
     let (source, t) = t.take();
     // string_implies should only affect direct descendants
     let string_implies = ctx.string_implies;
@@ -334,7 +356,7 @@ fn to_expression<E>(
         }
         Tree::Caret(_) => {
             // Caret not allowed in expressions
-            Err(source.with(Error::BadCaret))
+            Err(vec![source.with(Error::BadCaret)])
         }
         Tree::ColonPrefix(t) => {
             if ctx.pattern {
@@ -347,7 +369,7 @@ fn to_expression<E>(
             to_expression(ctx.string_implies(StringImplies::Get), *a)?,
             to_expression(ctx, *b)?,
         ))),
-        Tree::Equal(_, _) => Err(source.with(Error::BadEqual)),
+        Tree::Equal(_, _) => Err(vec![source.with(Error::BadEqual)]),
         Tree::Arrow(a, b) => Ok(source.with(Expression::function(
             to_expression(ctx.pattern(true), *a)?,
             to_expression(ctx.pattern(false), *b)?,
@@ -396,7 +418,7 @@ fn to_expression<E>(
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(source.with(Expression::array(exprs)))
         }
-        Tree::DocString(_) | Tree::DocCurly(_) => Err(source.with(Error::BadDocComment)),
+        Tree::DocString(_) | Tree::DocCurly(_) => Err(vec![source.with(Error::BadDocComment)]),
     }
 }
 
@@ -406,7 +428,6 @@ mod test {
     use crate::ast::parse_tree::Parser as TreeParser;
     use crate::ast::tokenize::Tokens;
     use crate::ast::tokenize_tree::TreeTokens;
-    use ergo_runtime::source::StringSource;
 
     type E = Expression;
     type AI = ArrayItem;
@@ -416,7 +437,7 @@ mod test {
     where
         R: From<Source<T>>,
     {
-        Source::builtin(t).into()
+        Source::missing(t).into()
     }
 
     fn s<R>(s: &str) -> R
@@ -855,9 +876,7 @@ mod test {
 
     fn block_item(s: &str) -> BI {
         Parser::from(TreeParser::from(TreeTokens::from(Tokens::from(
-            Source::new(StringSource::new("<string>", s.to_owned()))
-                .open()
-                .unwrap(),
+            Source::missing(s.chars()),
         ))))
         .next()
         .unwrap()
@@ -866,9 +885,7 @@ mod test {
 
     fn assert_fail(s: &str) {
         Parser::from(TreeParser::from(TreeTokens::from(Tokens::from(
-            Source::new(StringSource::new("<string>", s.to_owned()))
-                .open()
-                .unwrap(),
+            Source::missing(s.chars()),
         ))))
         .next()
         .unwrap()

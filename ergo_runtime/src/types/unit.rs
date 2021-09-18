@@ -2,7 +2,7 @@
 
 use crate as ergo_runtime;
 use crate::abi_stable::{type_erase::Erased, StableAbi};
-use crate::metadata::Doc;
+use crate::metadata::{Doc, Source};
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
 use crate::{depends, Dependencies, TypedValue};
@@ -36,11 +36,16 @@ ergo_traits_fn! {
 
     impl traits::Stored for Unit {
         async fn put(&self, _stored_ctx: &traits::StoredContext, item: crate::context::ItemContent) -> crate::RResult<()> {
-            bincode::serialize_into(item, &()).map_err(|e| e.into()).into()
+            crate::error_info!(
+                labels: [ primary(Source::get(SELF_VALUE).with("while storing this value")) ],
+                { bincode::serialize_into(item, &()) }
+            ).into()
         }
 
         async fn get(_stored_ctx: &traits::StoredContext, item: crate::context::ItemContent) -> crate::RResult<Erased> {
-            bincode::deserialize_from(item).map(|()| Erased::new(Unit)).map_err(|e| e.into()).into()
+            crate::error_info!(
+                { bincode::deserialize_from(item).map(|()| Erased::new(Unit)) }
+            ).into()
         }
     }
 

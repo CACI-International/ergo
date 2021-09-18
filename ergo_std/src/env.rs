@@ -2,7 +2,7 @@
 
 use ergo_runtime::{
     metadata::{Doc, Source},
-    traits, try_result, types,
+    traits, types,
     value::match_value,
     Context, Value,
 };
@@ -31,19 +31,22 @@ pub fn module() -> Value {
 async fn get(name: types::String) -> Value {
     match std::env::var_os(name.as_ref().0.as_str()) {
         None => types::Unset.into(),
-        Some(v) => {
-            types::String::from(try_result!(v.into_string().map_err(|_| Source::get(&name)
+        Some(v) => types::String::from(v.into_string().map_err(|_| {
+            Source::get(&name)
                 .with("environment variable value is not valid unicode")
-                .into_error())))
-            .into()
-        }
+                .into_error()
+        })?)
+        .into(),
     }
 }
 
 fn current_dir() -> Value {
     let mut v = match std::env::current_dir().ok() {
         Some(path) => types::Path::from(path).into(),
-        None => types::Error::from("the current working directory could not be retrieved").into(),
+        None => ergo_runtime::error! {
+            error: "the current working directory couldn't be retrieved"
+        }
+        .into(),
     };
     Doc::set_string(
         &mut v,
@@ -56,7 +59,10 @@ fn user_cache() -> Value {
     let path = directories::ProjectDirs::from("", "", "ergo").map(|d| d.cache_dir().to_owned());
     let mut v = match path {
         Some(path) => types::Path::from(path).into(),
-        None => types::Error::from("the user cache directory could not be retrieved").into(),
+        None => ergo_runtime::error! {
+            error: "the user cache directory could not be retrieved"
+        }
+        .into(),
     };
     Doc::set_string(&mut v, "A user-level cache directory path.");
     v
@@ -87,7 +93,10 @@ fn system_cache() -> Value {
 
     let mut v = match path {
         Some(path) => types::Path::from(path).into(),
-        None => types::Error::from("the system cache directory could not be retrieved").into(),
+        None => ergo_runtime::error! {
+            error: "the system cache directory could not be retrieved"
+        }
+        .into(),
     };
     Doc::set_string(&mut v, "A system-level cache directory path.");
     v
@@ -97,7 +106,10 @@ fn home() -> Value {
     let path = directories::BaseDirs::new().map(|d| d.home_dir().to_owned());
     let mut v = match path {
         Some(path) => types::Path::from(path).into(),
-        None => types::Error::from("the home path could not be retrieved").into(),
+        None => ergo_runtime::error! {
+            error: "the home path could not be retrieved"
+        }
+        .into(),
     };
     Doc::set_string(&mut v, "The current user's home directory path.");
     v.into()
@@ -112,7 +124,7 @@ fn home() -> Value {
 /// for the string in PATH. If not found, Unset is returned. Otherwise the Path of the resolved
 /// file is returned.
 async fn path_search(mut string_or_path: _) -> Value {
-    try_result!(Context::eval(&mut string_or_path).await);
+    Context::eval(&mut string_or_path).await?;
     match_value! { string_or_path,
         p@types::Path(_) => p.into(),
         types::String(name) => {
@@ -123,13 +135,13 @@ async fn path_search(mut string_or_path: _) -> Value {
             for p in paths {
                 let path = p.join(name.as_str());
                 if path.is_file() {
-                    return types::Path::from(path).into();
+                    return Ok(types::Path::from(path).into());
                 }
             }
 
             types::Unset.into()
         }
-        other => traits::type_error(other, "String or Path").into()
+        other => Err(traits::type_error(other, "String or Path"))?
     }
 }
 

@@ -2,7 +2,7 @@
 
 use crate as ergo_runtime;
 use crate::abi_stable::StableAbi;
-use crate::metadata::Doc;
+use crate::metadata::{Doc, Source};
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
 use crate::{depends, Dependencies, TypedValue};
@@ -35,7 +35,10 @@ impl From<Unset> for super::Bool {
 ergo_traits_fn! {
     impl traits::Display for Unset {
         async fn fmt(&self, f: &mut traits::Formatter) -> crate::RResult<()> {
-            write!(f, "<unset>").map_err(|e| e.into()).into()
+            write!(f, "<unset>").map_err(|e| crate::error!{
+                labels: [ primary(Source::get(SELF_VALUE).with("while displaying this value")) ],
+                error: e
+            }).into()
         }
     }
 

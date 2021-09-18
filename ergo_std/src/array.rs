@@ -13,7 +13,7 @@ pub fn module() -> Value {
 ///
 /// Arguments: `:value`
 async fn from(value: _) -> Value {
-    ergo_runtime::try_result!(traits::into::<types::Array>(value).await).into()
+    traits::into::<types::Array>(value).await?.into()
 }
 
 #[cfg(test)]

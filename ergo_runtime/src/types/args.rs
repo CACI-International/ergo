@@ -79,6 +79,21 @@ impl UncheckedArguments {
         self.keyed.remove(key)
     }
 
+    pub fn next_or_error(
+        &mut self,
+        argument_name: &str,
+        call_site: Src<()>,
+    ) -> crate::Result<Value> {
+        self.next().ok_or_else(|| {
+            crate::error! {
+                labels: [
+                    primary(call_site.with("in this function call"))
+                ],
+                error: format!("missing argument: {}", argument_name)
+            }
+        })
+    }
+
     pub fn peek(&mut self) -> Option<&Value> {
         self.positional.last()
     }
@@ -95,10 +110,13 @@ impl UncheckedArguments {
         if kw.is_empty() {
             Ok(())
         } else {
-            Err(Error::aggregate(kw.into_iter().map(|(k, v)| {
-                crate::source::IntoSource::into_source((Source::get(&k), Source::get(&v)))
-                    .with(UnexpectedNonPositionalArgument)
-                    .into()
+            Err(Error::aggregate(kw.into_iter().map(|(k, _v)| {
+                crate::error! {
+                    labels: [
+                        primary(Source::get(&k).with("argument key"))
+                    ],
+                    error: "unexpected keyed argument"
+                }
             })))
         }
     }
@@ -111,7 +129,12 @@ impl UncheckedArguments {
         } else {
             let mut vec: Vec<Error> = Vec::new();
             while let Some(v) = self.next() {
-                vec.push(Source::get(&v).with(UnexpectedPositionalArguments).into());
+                vec.push(crate::error! {
+                    labels: [
+                        primary(Source::get(&v).with("argument"))
+                    ],
+                    error: "unexpected positional argument"
+                });
             }
             Err(Error::aggregate(vec))
         }
@@ -171,30 +194,6 @@ impl From<&UncheckedArguments> for Dependencies {
         )
     }
 }
-
-/// The error returned when a function does not accept a specific non-positional argument.
-#[derive(Debug)]
-pub struct UnexpectedNonPositionalArgument;
-
-impl std::fmt::Display for UnexpectedNonPositionalArgument {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "extraneous non-positional argument")
-    }
-}
-
-impl std::error::Error for UnexpectedNonPositionalArgument {}
-
-/// The error returned when a function does not accept one or more positional arguments.
-#[derive(Debug)]
-pub struct UnexpectedPositionalArguments;
-
-impl std::fmt::Display for UnexpectedPositionalArguments {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "extraneous positional arguments")
-    }
-}
-
-impl std::error::Error for UnexpectedPositionalArguments {}
 
 /// Command arguments.
 ///

@@ -354,6 +354,10 @@ impl fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
+impl super::ToDiagnostic for Error {
+    fn additional_info(&self, _diagnostic: &mut ergo_runtime::error::Diagnostic) {}
+}
+
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 enum DocCommentMode {
     String,
@@ -751,7 +755,6 @@ impl<I: Iterator<Item = char>> Iterator for Tokens<I> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use ergo_runtime::source::StringSource;
 
     #[test]
     fn symbols() -> Result<(), Source<Error>> {
@@ -993,15 +996,11 @@ mod test {
     }
 
     fn assert_tokens(s: &str, expected: &[Token]) -> Result<(), Source<Error>> {
-        let toks: Vec<_> = Tokens::from(
-            Source::new(StringSource::new("<string>", s.to_owned()))
-                .open()
-                .unwrap(),
-        )
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
-        .map(|t| t.unwrap())
-        .collect();
+        let toks: Vec<_> = Tokens::from(Source::missing(s.chars()))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .map(|t| t.unwrap())
+            .collect();
         dbg!(&toks);
         assert!(toks == expected);
         Ok(())

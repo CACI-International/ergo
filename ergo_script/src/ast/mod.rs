@@ -841,12 +841,26 @@ impl DocCommentPart {
     }
 }
 
-/// Load an AST from the given character stream.
+trait ToDiagnostic: ToString {
+    fn to_diagnostic(self) -> ergo_runtime::error::Diagnostic
+    where
+        Self: Sized,
+    {
+        let mut diag = ergo_runtime::error::Diagnostic::from("");
+        self.additional_info(&mut diag);
+        diag.message = self.to_string().into();
+        diag
+    }
+
+    fn additional_info(&self, diagnostic: &mut ergo_runtime::error::Diagnostic);
+}
+
+/// Load an AST from the given string.
 ///
 /// The same context must be passed among all loads of expressions that may interact with
 /// eachother.
 pub fn load(
-    src: Source<()>,
+    source: Source<&str>,
     ctx: &mut Context,
     lint: LintLevel,
 ) -> Result<
@@ -857,13 +871,21 @@ pub fn load(
     ),
     Error,
 > {
-    let toks = tokenize::Tokens::from(src.open()?);
+    let toks = tokenize::Tokens::from(source.map(|s| s.chars()));
     let tree_toks = tokenize_tree::TreeTokens::from(toks);
     let tree_parser = parse_tree::Parser::from(tree_toks);
     let parser = parse::Parser::from(tree_parser);
 
     let mut expr = parser
-        .map(|v| v.map_err(|e| Error::from(e)))
+        .map(|v| {
+            v.map_err(|errs| {
+                Error::aggregate(errs.into_iter().map(|e| {
+                    use ergo_runtime::error::DiagnosticInfo;
+                    let (src, e) = e.take();
+                    Error::new(e.to_diagnostic().add_primary_label(src.with("")))
+                }))
+            })
+        })
         .collect_result::<Vec<_>>()
         .map(|vec| {
             vec.into_source()
@@ -1340,7 +1362,7 @@ impl<'a> ExpressionCompiler<'a> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use ergo_runtime::source::{Source, StringSource};
+    use ergo_runtime::source::Source;
     type E = Expression;
 
     type AI = ArrayItem;
@@ -1351,7 +1373,7 @@ mod test {
     where
         R: From<Source<T>>,
     {
-        Source::builtin(t).into()
+        Source::missing(t).into()
     }
 
     fn s<R>(s: &str) -> R
@@ -1788,24 +1810,16 @@ mod test {
 
         fn assert_lint_message(s: &str) {
             let mut ctx = super::super::Context::default();
-            let (_, _, lints) = super::super::load(
-                Source::new(StringSource::new("<string>", s.to_owned())),
-                &mut ctx,
-                LintLevel::Aggressive,
-            )
-            .unwrap();
+            let (_, _, lints) =
+                super::super::load(Source::missing(s), &mut ctx, LintLevel::Aggressive).unwrap();
             dbg!(&lints);
             assert!(!lints.is_empty());
         }
 
         fn assert_no_lint_message(s: &str) {
             let mut ctx = super::super::Context::default();
-            let (_, _, lints) = super::super::load(
-                Source::new(StringSource::new("<string>", s.to_owned())),
-                &mut ctx,
-                LintLevel::Aggressive,
-            )
-            .unwrap();
+            let (_, _, lints) =
+                super::super::load(Source::missing(s), &mut ctx, LintLevel::Aggressive).unwrap();
             dbg!(&lints);
             assert!(lints.is_empty());
         }
@@ -1836,11 +1850,7 @@ mod test {
 
     fn load(s: &str) -> Result<(Expr, HashMap<CaptureKey, (Expression, CaptureSet)>), Error> {
         let mut ctx = super::Context::default();
-        let (e, m, _) = super::load(
-            Source::new(StringSource::new("<string>", s.to_owned())),
-            &mut ctx,
-            LintLevel::Off,
-        )?;
+        let (e, m, _) = super::load(Source::missing(s), &mut ctx, LintLevel::Off)?;
         Ok((
             e,
             m.into_iter()

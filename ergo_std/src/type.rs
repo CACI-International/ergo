@@ -7,6 +7,7 @@ use ergo_runtime::abi_stable::{
 };
 use ergo_runtime::{
     depends,
+    error::DiagnosticInfo,
     metadata::{Doc, Source},
     nsid, traits, try_result,
     type_system::{ergo_trait_impl, ErgoType, Type},
@@ -109,7 +110,7 @@ struct ScriptTypeData {
 /// my-type:a
 /// ```
 async fn new(id: types::String, interface: _, (bind): [_]) -> Value {
-    let interface_doc = try_result!(Doc::get(&interface).await);
+    let interface_doc = Doc::get(&interface).await?;
 
     let mut tp = Type::named(id.as_ref().as_str().as_bytes());
     let id = id.to_owned().0;
@@ -175,7 +176,7 @@ async fn new(id: types::String, interface: _, (bind): [_]) -> Value {
                         async move {
                             try_result!(Context::eval(&mut arg).await);
                             if arg.ergo_type().unwrap() != &tp {
-                                return traits::type_error_for_t(arg, &tp).into();
+                                return traits::type_error_for_t(arg, &tp).into_error().into();
                             }
                             let data = arg.data().unwrap();
                             let data = unsafe { (*data).as_ref::<ScriptTypeData>() };
@@ -204,14 +205,15 @@ fn match_any() -> Value {
     types::Unbound::new(
         |arg| {
             async move {
+                let source = Source::get(&arg);
                 match_value! {arg,
                     types::Args { mut args } => {
-                        let v = try_result!(args.next().ok_or("no value"));
+                        let v = try_result!(args.next_or_error("value", source));
                         try_result!(args.unused_arguments());
                         v
                     },
                     types::PatternArgs { mut args } => {
-                        let v = try_result!(args.next().ok_or("no value"));
+                        let v = try_result!(args.next_or_error("value pattern", source));
                         try_result!(args.unused_arguments());
                         let deps = depends![v];
                         types::Unbound::new_no_doc(move |arg| {
@@ -234,7 +236,7 @@ fn match_any() -> Value {
 
 fn make_match_fn<S: Into<String>>(
     tp: Type,
-    constructor: ergo_runtime::Result<Value>,
+    constructor: Result<Value, ergo_runtime::error::Diagnostic>,
     doc: S,
 ) -> Value {
     let deps = depends![nsid!(type), tp];
@@ -243,16 +245,17 @@ fn make_match_fn<S: Into<String>>(
             let tp = tp.clone();
             let constructor = constructor.clone();
             async move {
+                let source = Source::get(&arg);
                 match_value! {arg,
                     types::Args { mut args } => {
                         let arg = args.next();
                         try_result!(args.unused_arguments());
                         match arg {
-                            None => try_result!(constructor),
+                            None => try_result!(constructor.add_primary_label(source.with(""))),
                             Some(mut v) => {
                                 drop(Context::eval(&mut v).await);
                                 if v.ergo_type().unwrap() != &tp {
-                                    return traits::type_error_for_t(v, &tp).into();
+                                    return traits::type_error_for_t(v, &tp).into_error().into();
                                 }
                                 v
                             }
@@ -262,7 +265,7 @@ fn make_match_fn<S: Into<String>>(
                         let arg = args.next();
                         try_result!(args.unused_arguments());
                         match arg {
-                            None => try_result!(constructor),
+                            None => try_result!(constructor.add_primary_label(source.with(""))),
                             Some(v) => {
                                 let deps = depends![v];
                                 types::Unbound::new_no_doc(move |mut arg| {
@@ -271,7 +274,7 @@ fn make_match_fn<S: Into<String>>(
                                     async move {
                                         drop(Context::eval(&mut arg).await);
                                         if arg.ergo_type().unwrap() != &tp {
-                                            return traits::type_error_for_t(arg, &tp).into();
+                                            return traits::type_error_for_t(arg, &tp).into_error().into();
                                         }
                                         traits::bind(v, arg).await
                                     }.boxed()
@@ -343,16 +346,17 @@ fn match_map_entry() -> Value {
         types::Unbound::new_no_doc(
             |arg| {
                 async move {
+                    let source = Source::get(&arg);
                     match_value!{ arg,
                         types::Args { mut args } => {
-                            let key = try_result!(args.next().ok_or("no key"));
-                            let value = try_result!(args.next().ok_or("no value"));
+                            let key = try_result!(args.next_or_error("key", source));
+                            let value = try_result!(args.next_or_error("value", source));
                             try_result!(args.unused_arguments());
                             types::MapEntry { key, value }.into()
                         },
                         types::PatternArgs { mut args } => {
-                            let key = try_result!(args.next().ok_or("no key pattern"));
-                            let value = try_result!(args.next().ok_or("no value pattern"));
+                            let key = try_result!(args.next_or_error("key pattern", source));
+                            let value = try_result!(args.next_or_error("value pattern", source));
                             try_result!(args.unused_arguments());
                             let deps = depends![key, value];
                             types::Unbound::new_no_doc(move |arg| {
@@ -420,13 +424,22 @@ fn match_number() -> Value {
     let construct: Value = types::Unbound::new_no_doc(
             |arg| {
                 async move {
+                    let source = Source::get(&arg);
                     match_value!{ arg,
                         types::Args { mut args } => {
-                            let s = try_result!(args.next().ok_or("no argument"));
+                            let s = try_result!(args.next_or_error("number", source));
                             try_result!(args.unused_arguments());
 
                             let s = try_result!(Context::eval_as::<types::String>(s).await);
-                            s.as_ref().0.as_str().parse::<types::Number>().map_err(|e| Source::get(&s).with(e)).into()
+                            s.as_ref().0.as_str().parse::<types::Number>().map_err(|e| ergo_runtime::error! {
+                                labels: [
+                                    primary(Source::get(&s).with("while parsing this value as a number"))
+                                ],
+                                notes: [
+                                    format_args!("value was '{}'", s.as_ref().0.as_str())
+                                ],
+                                error: e
+                            }).into()
                         },
                         v => traits::bind_error(v).into()
                     }
@@ -451,9 +464,10 @@ fn match_error() -> Value {
     let construct: Value = types::Unbound::new_no_doc(
         |arg| {
             async move {
+                let source = Source::get(&arg);
                 match_value! { arg,
                     types::Args { mut args } => {
-                        let message = try_result!(args.next().ok_or("no message"));
+                        let message = try_result!(args.next_or_error("message", source));
                         let source = args.kw("source");
                         try_result!(args.unused_arguments());
 

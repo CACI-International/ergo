@@ -42,7 +42,7 @@ fn logger(log: Log) -> Value {
                             let mut s = String::new();
                             {
                                 let mut formatter = traits::Formatter::new(&mut s);
-                                try_result!(traits::display(value, &mut formatter).await);
+                                traits::display(value, &mut formatter).await?;
                             }
                             log.debug(s);
                             types::Unit.into()
@@ -58,7 +58,7 @@ fn logger(log: Log) -> Value {
                             let mut s = String::new();
                             {
                                 let mut formatter = traits::Formatter::new(&mut s);
-                                try_result!(traits::display(value, &mut formatter).await);
+                                traits::display(value, &mut formatter).await?;
                             }
                             log.info(s);
                             types::Unit.into()
@@ -74,7 +74,7 @@ fn logger(log: Log) -> Value {
                             let mut s = String::new();
                             {
                                 let mut formatter = traits::Formatter::new(&mut s);
-                                try_result!(traits::display(value, &mut formatter).await);
+                                traits::display(value, &mut formatter).await?;
                             }
                             log.warn(s);
                             types::Unit.into()
@@ -90,7 +90,7 @@ fn logger(log: Log) -> Value {
                             let mut s = String::new();
                             {
                                 let mut formatter = traits::Formatter::new(&mut s);
-                                try_result!(traits::display(value, &mut formatter).await);
+                                traits::display(value, &mut formatter).await?;
                             }
                             log.error(s);
                             types::Unit.into()

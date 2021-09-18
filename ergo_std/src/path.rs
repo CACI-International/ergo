@@ -2,8 +2,9 @@
 
 use ergo_runtime::{
     context::{item_name, ItemName},
+    error::{Diagnostic, DiagnosticInfo},
     metadata::Source,
-    traits, try_result, types,
+    traits, types,
     value::match_value,
     Context, Value,
 };
@@ -52,11 +53,11 @@ async fn join(...) -> Value {
     let mut path = std::path::PathBuf::new();
 
     while let Some(mut v) = REST.next() {
-        try_result!(Context::eval(&mut v).await);
+        Context::eval(&mut v).await?;
         match_value! {v,
             types::String(s) => path.push(s.as_str()),
             types::Path(p) => path.push(p.as_ref()),
-            v => return traits::type_error(v, "String or Path").into()
+            v => Err(traits::type_error(v, "String or Path"))?
         }
     }
 
@@ -72,19 +73,17 @@ async fn join(...) -> Value {
 /// specific) component of the argument.
 async fn split(path: types::Path) -> Value {
     let mut vals: Vec<Value> = Vec::new();
-    for c in path.to_owned().into_pathbuf().iter() {
+    for c in path.clone().to_owned().into_pathbuf().iter() {
         match c.to_str() {
             Some(s) => vals.push(Source::imbue(
                 ARGS_SOURCE
                     .clone()
                     .with(types::String::from(s.to_owned()).into()),
             )),
-            None => {
-                return ARGS_SOURCE
-                    .with("could not convert to path components (due to invalid component unicode)")
-                    .into_error()
-                    .into()
-            }
+            None => Err(Diagnostic::from(
+                "could not convert to path components (due to invalid component unicode)",
+            )
+            .add_primary_label(Source::get(&path).with("")))?,
         }
     }
     types::Array(vals.into()).into()
@@ -132,13 +131,13 @@ async fn name(path: types::Path) -> Value {
 /// Returns a Path that is composed of the largest component suffix of `child` that are not
 /// components of `base`.
 async fn relative(base: types::Path, child: types::Path) -> Value {
-    child
-        .as_ref()
-        .as_ref()
-        .strip_prefix(base.as_ref().as_ref())
-        .map(|p| types::Path::from(p))
-        .map_err(|e| ARGS_SOURCE.with(e).into_error())
-        .into()
+    types::Path::from(
+        child
+            .as_ref()
+            .as_ref()
+            .strip_prefix(base.as_ref().as_ref())?,
+    )
+    .into()
 }
 
 #[cfg(test)]

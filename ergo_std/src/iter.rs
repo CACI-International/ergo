@@ -1,7 +1,8 @@
 //! Iterator functions.
 
 use ergo_runtime::{
-    depends, metadata::Source, nsid, traits, try_result, types, value::match_value, Context, Value,
+    depends, error::DiagnosticInfo, metadata::Source, nsid, traits, try_result, types,
+    value::match_value, Context, Value,
 };
 use futures::{
     future::{ready, FutureExt},
@@ -32,7 +33,7 @@ pub fn module() -> Value {
 ///
 /// Arguments: `:value`
 async fn from(value: _) -> Value {
-    try_result!(traits::into::<types::Iter>(value).await).into()
+    traits::into::<types::Iter>(value).await?.into()
 }
 
 #[types::ergo_fn]
@@ -42,9 +43,9 @@ async fn from(value: _) -> Value {
 ///
 /// Returns either the original Iter, or an aggregate Error if the iterator contained any errors.
 async fn no_errors(iter: _) -> Value {
-    let iter = try_result!(traits::into::<types::Iter>(iter).await);
+    let iter = traits::into::<types::Iter>(iter).await?;
 
-    let vals = try_result!(iter.clone().to_owned().collect::<Vec<_>>().await);
+    let vals = iter.clone().to_owned().collect::<Vec<_>>().await?;
 
     let mut errs = Vec::new();
     for v in vals {
@@ -74,12 +75,12 @@ async fn no_errors(iter: _) -> Value {
 /// next call. Returns the last `accumulator`, which may be the original if there are no values in
 /// the iterator.
 async fn fold(func: _, acc: _, iter: _) -> Value {
-    let iter = try_result!(traits::into::<types::Iter>(iter).await);
+    let iter = traits::into::<types::Iter>(iter).await?;
 
     // FIXME early exit on error?
 
     let mut acc = acc;
-    let vals = try_result!(iter.to_owned().collect::<Vec<_>>().await);
+    let vals = iter.to_owned().collect::<Vec<_>>().await?;
     for v in vals {
         acc = traits::bind(
             func.clone(),
@@ -106,7 +107,7 @@ async fn fold(func: _, acc: _, iter: _) -> Value {
 /// Returns a new iterator containing only the unique values of `iter` (where the first unique value is
 /// retained).
 async fn unique(iter: _) -> Value {
-    let iter = try_result!(traits::into::<types::Iter>(iter).await);
+    let iter = traits::into::<types::Iter>(iter).await?;
 
     let deps = depends![nsid!(std::iter::unique), iter];
 
@@ -145,7 +146,7 @@ async fn unique(iter: _) -> Value {
 /// Returns a new iterator containing only the values from `iter` for which `func` returned a value
 /// which was `true` when converted to Bool.
 async fn filter(func: _, iter: _) -> Value {
-    let iter = try_result!(traits::into::<types::Iter>(iter).await);
+    let iter = traits::into::<types::Iter>(iter).await?;
 
     let deps = depends![nsid!(std::iter::filter), func, iter];
 
@@ -308,7 +309,7 @@ iterator.").into()
 /// Returns a new iterator containing only the values from `iter` following (and including) the first
 /// value for which `func` returned a value which was `false` when converted to Bool.
 async fn skip_while(func: _, iter: _) -> Value {
-    let iter = try_result!(traits::into::<types::Iter>(iter).await);
+    let iter = traits::into::<types::Iter>(iter).await?;
 
     let deps = depends![nsid!(std::iter::skip_while), func, iter];
 
@@ -369,14 +370,14 @@ async fn skip_while(func: _, iter: _) -> Value {
 ///
 /// Returns a new iterator containing only the values from `iter` after the first `n`.
 async fn skip(n: _, iter: _) -> Value {
-    let n = try_result!(traits::into::<types::Number>(n).await);
-    let iter = try_result!(traits::into::<types::Iter>(iter).await);
+    let n = traits::into::<types::Number>(n).await?;
+    let iter = traits::into::<types::Iter>(iter).await?;
     let deps = depends![nsid!(std::iter::skip), n, iter];
 
-    let n = try_result!(Source::extract(n)
-        .map(|n| n.as_ref().to_usize().ok_or("expected unsigned integer"))
-        .transpose_err()
-        .map_err(|e| e.into_error()));
+    let n = n
+        .as_ref()
+        .to_usize()
+        .add_primary_label(Source::get(&n).with("expected this to be unsigned integer"))?;
 
     #[derive(Clone)]
     struct Skip {
@@ -406,7 +407,7 @@ async fn skip(n: _, iter: _) -> Value {
 /// Returns a new iterator containing only the values from `iter` preceding the first
 /// value for which `func` returned a value which was `false` when converted to Bool.
 async fn take_while(func: _, iter: _) -> Value {
-    let iter = try_result!(traits::into::<types::Iter>(iter).await);
+    let iter = traits::into::<types::Iter>(iter).await?;
 
     let deps = depends![nsid!(std::iter::take_while), func, iter];
 
@@ -463,15 +464,15 @@ async fn take_while(func: _, iter: _) -> Value {
 ///
 /// Returns a new iterator containing only the first `n` values from `iter`.
 async fn take(n: _, iter: _) -> Value {
-    let n = try_result!(traits::into::<types::Number>(n).await);
-    let iter = try_result!(traits::into::<types::Iter>(iter).await);
+    let n = traits::into::<types::Number>(n).await?;
+    let iter = traits::into::<types::Iter>(iter).await?;
 
     let deps = depends![nsid!(std::iter::take), n, iter];
 
-    let n = try_result!(Source::extract(n)
-        .map(|n| n.as_ref().to_usize().ok_or("expected unsigned integer"))
-        .transpose_err()
-        .map_err(|e| e.into_error()));
+    let n = n
+        .as_ref()
+        .to_usize()
+        .add_primary_label(Source::get(&n).with("expected this to be an unsigned integer"))?;
 
     #[derive(Clone)]
     struct Take {
@@ -500,7 +501,7 @@ async fn take(n: _, iter: _) -> Value {
 /// Returns a new iterator with each subsequent nested value in the values of `iter`. The values of
 /// `iter` must be `Into<Iter>` themselves.
 async fn flatten(iter: _) -> Value {
-    let iter = try_result!(traits::into::<types::Iter>(iter).await);
+    let iter = traits::into::<types::Iter>(iter).await?;
 
     let deps = depends![nsid!(std::iter::flatten), iter];
 
@@ -550,9 +551,9 @@ async fn flatten(iter: _) -> Value {
 ///
 /// Returns a new iterator where each element is the result of applying `func` on each value in `iter`.
 async fn map(func: _, iter: _) -> Value {
-    let iter = try_result!(traits::into::<types::Iter>(iter).await);
+    let iter = traits::into::<types::Iter>(iter).await?;
 
-    let vals: Vec<_> = try_result!(iter.to_owned().collect().await);
+    let vals: Vec<_> = iter.to_owned().collect().await?;
     let new_iter = Context::global()
         .task
         .join_all(vals.into_iter().map(|d| {
@@ -586,7 +587,7 @@ async fn map(func: _, iter: _) -> Value {
 ///
 /// Returns a new iterator where each element is the result of applying `func` on each value in `iter`.
 async fn map_lazy(func: _, iter: _) -> Value {
-    let iter = try_result!(traits::into::<types::Iter>(iter).await);
+    let iter = traits::into::<types::Iter>(iter).await?;
 
     let deps = depends![nsid!(std::iter::map_lazy), func, iter];
 

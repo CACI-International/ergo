@@ -143,7 +143,7 @@ impl Iter {
                 self.next = iter.next;
                 Ok(Some(value))
             }
-            o => Err(traits::type_error(o, "Next or Unset"))
+            o => Err(traits::type_error(o, "Next or Unset").into())
         }
     }
 
@@ -165,21 +165,26 @@ impl Iter {
 
 ergo_traits_fn! {
     impl traits::Display for Iter {
-        async fn fmt(&self, f: &mut traits::Formatter) -> crate::error::RResult<()> {
-            async move {
-                let items: Vec<_> = self.clone().collect().await?;
-                let mut iter = items.into_iter();
-                write!(f, "[")?;
-                if let Some(v) = iter.next() {
-                    traits::display(v, f).await?;
+        async fn fmt(&self, f: &mut traits::Formatter) -> crate::RResult<()> {
+            crate::error_info!(
+                labels: [
+                    primary(Source::get(SELF_VALUE).with("while displaying this value"))
+                ],
+                async {
+                    let items: Vec<_> = self.clone().collect().await?;
+                    let mut iter = items.into_iter();
+                    write!(f, "[")?;
+                    if let Some(v) = iter.next() {
+                        traits::display(v, f).await?;
+                    }
+                    for v in iter {
+                        write!(f, ", ")?;
+                        traits::display(v, f).await?;
+                    }
+                    write!(f, "]")?;
+                    crate::Result::Ok(())
                 }
-                for v in iter {
-                    write!(f, ", ")?;
-                    traits::display(v, f).await?;
-                }
-                write!(f, "]")?;
-                Ok(())
-            }.await.into()
+            ).into()
         }
     }
 
@@ -231,7 +236,7 @@ ergo_traits_fn! {
                         errs.push(e);
                     }
                     other => {
-                        errs.push(traits::type_error_for::<super::MapEntry>(other));
+                        errs.push(traits::type_error_for::<super::MapEntry>(other).into());
                     }
                 }
             }
@@ -245,27 +250,34 @@ ergo_traits_fn! {
 
     impl traits::Stored for Iter {
         async fn put(&self, stored_ctx: &traits::StoredContext, item: crate::context::ItemContent) -> crate::RResult<()> {
-            async move {
-                let mut ids: Vec<u128> = Vec::new();
-                let vals: Vec<_> = self.clone().collect().await?;
-                let mut writes = Vec::new();
-                for v in vals {
-                    ids.push(v.id());
-                    writes.push(stored_ctx.write_to_store(v));
+            crate::error_info!(
+                labels: [
+                    primary(Source::get(SELF_VALUE).with("while storing this value"))
+                ],
+                async {
+                    let mut ids: Vec<u128> = Vec::new();
+                    let vals: Vec<_> = self.clone().collect().await?;
+                    let mut writes = Vec::new();
+                    for v in vals {
+                        ids.push(v.id());
+                        writes.push(stored_ctx.write_to_store(v));
+                    }
+                    crate::Context::global().task.join_all(writes).await?;
+                    bincode::serialize_into(item, &ids)
                 }
-                crate::Context::global().task.join_all(writes).await?;
-                bincode::serialize_into(item, &ids).map_err(|e| e.into())
-            }.await.into()
+            ).into()
         }
 
         async fn get(stored_ctx: &traits::StoredContext, item: crate::context::ItemContent) -> crate::RResult<Erased> {
-            async move {
-                let ids: Vec<u128> = bincode::deserialize_from(item)?;
-                let values = crate::Context::global().task
-                    .join_all(ids.into_iter().map(|id| stored_ctx.read_from_store(id)))
-                    .await?;
-                Ok(Erased::new(Iter::from_iter(values.into_iter().map(|v| Source::imbue(crate::Source::stored(v))))))
-            }.await.into()
+            crate::error_info!(
+                async {
+                    let ids: Vec<u128> = bincode::deserialize_from(item)?;
+                    let values = crate::Context::global().task
+                        .join_all(ids.into_iter().map(|id| stored_ctx.read_from_store(id)))
+                        .await?;
+                    crate::Result::Ok(Erased::new(Iter::from_iter(values.into_iter())))
+                }
+            ).into()
         }
     }
 

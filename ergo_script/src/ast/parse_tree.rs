@@ -45,7 +45,6 @@ pub enum Error<TokError> {
     BinaryMissingPrevious,
     /// A binary operator is missing its next argument.
     BinaryMissingNext,
-    Multiple(Vec<Source<Error<TokError>>>),
 }
 
 impl<E: fmt::Display> fmt::Display for Error<E> {
@@ -56,16 +55,6 @@ impl<E: fmt::Display> fmt::Display for Error<E> {
             Error::UnaryMissingSuffix => write!(f, "expected an argument after the operator"),
             Error::BinaryMissingPrevious => write!(f, "expected an argument before the operator"),
             Error::BinaryMissingNext => write!(f, "expected an argument after the operator"),
-            Error::Multiple(es) => {
-                let mut es = es.into_iter();
-                if let Some(e) = es.next() {
-                    write!(f, "{}", e)?;
-                }
-                for e in es {
-                    write!(f, "\n{}", e)?;
-                }
-                Ok(())
-            }
         }
     }
 }
@@ -76,6 +65,23 @@ impl<E: std::error::Error + 'static> std::error::Error for Error<E> {
             Error::Tokenization(t) => Some(t),
             _ => None,
         }
+    }
+}
+
+impl<E: super::ToDiagnostic + fmt::Display> super::ToDiagnostic for Error<E> {
+    fn additional_info(&self, diagnostic: &mut ergo_runtime::error::Diagnostic) {
+        match self {
+            Error::Tokenization(e) => e.additional_info(diagnostic),
+            _ => (),
+        }
+    }
+}
+
+struct Errors<TokError>(Vec<Source<Error<TokError>>>);
+
+impl<E> From<Source<Error<E>>> for Errors<E> {
+    fn from(e: Source<Error<E>>) -> Self {
+        Errors(vec![e])
     }
 }
 
@@ -148,7 +154,7 @@ impl<I, E: fmt::Debug> Iterator for Parser<I>
 where
     I: Iterator<Item = Result<Source<TreeToken>, Source<E>>>,
 {
-    type Item = Result<Source<Tree>, Source<Error<E>>>;
+    type Item = Result<Source<Tree>, Vec<Source<Error<E>>>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.tokens.peek().is_none() {
@@ -157,7 +163,7 @@ where
             match self.group_as_tree() {
                 Ok(Some(v)) => Some(Ok(v)),
                 Ok(None) => None,
-                Err(e) => Some(Err(e)),
+                Err(errs) => Some(Err(errs.0)),
             }
         }
     }
@@ -175,7 +181,7 @@ where
         }
     }
 
-    fn tree_or_symbol(&mut self) -> Result<Option<Source<TreeOrSymbol>>, Source<Error<E>>> {
+    fn tree_or_symbol(&mut self) -> Result<Option<Source<TreeOrSymbol>>, Errors<E>> {
         match self.next_tok()? {
             None => Ok(None),
             Some(t) => {
@@ -247,7 +253,7 @@ where
         }
     }
 
-    fn group(&mut self) -> Result<TreeVec, Source<Error<E>>> {
+    fn group(&mut self) -> Result<TreeVec, Errors<E>> {
         let mut parts: Vec<Source<TreeOrSymbol>> = Default::default();
 
         // Consume extra NextChild without any content
@@ -672,10 +678,12 @@ where
             prefixed_initial(toks, &SymbolicToken::Caret, eq, Tree::Caret)
         }
 
-        caret_prefix(&mut parts).map(|v| v.into())
+        caret_prefix(&mut parts)
+            .map(|v| v.into())
+            .map_err(|e| e.into())
     }
 
-    fn group_as_tree(&mut self) -> Result<Option<Source<Tree>>, Source<Error<E>>> {
+    fn group_as_tree(&mut self) -> Result<Option<Source<Tree>>, Errors<E>> {
         let tv = self.group()?;
         if tv.len() == 0 {
             Ok(None)
@@ -686,7 +694,7 @@ where
         }
     }
 
-    fn groups(&mut self) -> Result<TreeVec, Source<Error<E>>> {
+    fn groups(&mut self) -> Result<TreeVec, Errors<E>> {
         let mut result = Vec::new();
         let mut errors = Vec::new();
 
@@ -703,18 +711,14 @@ where
             match self.group_as_tree() {
                 Ok(Some(v)) => result.push(v),
                 Ok(None) => (),
-                Err(e) => errors.push(e),
+                Err(errs) => errors.extend(errs.0),
             }
         }
 
         if errors.is_empty() {
             Ok(result)
         } else {
-            Err(if errors.len() == 1 {
-                errors.into_iter().next().unwrap()
-            } else {
-                result.into_source().with(Error::Multiple(errors))
-            })
+            Err(Errors(errors))
         }
     }
 }
@@ -724,7 +728,6 @@ mod test {
     use super::*;
     use crate::ast::tokenize::Tokens;
     use crate::ast::tokenize_tree::TreeTokens;
-    use ergo_runtime::source::StringSource;
 
     use Tree::*;
 
@@ -732,7 +735,7 @@ mod test {
     where
         R: From<Source<T>>,
     {
-        Source::builtin(e).into()
+        Source::missing(e).into()
     }
 
     fn s<R>(s: &str) -> R
@@ -937,26 +940,18 @@ mod test {
     }
 
     fn single(s: &str) -> Tree {
-        Parser::from(TreeTokens::from(Tokens::from(
-            Source::new(StringSource::new("<string>", s.to_owned()))
-                .open()
-                .unwrap(),
-        )))
-        .next()
-        .unwrap()
-        .unwrap()
-        .unwrap()
+        Parser::from(TreeTokens::from(Tokens::from(Source::missing(s.chars()))))
+            .next()
+            .unwrap()
+            .unwrap()
+            .unwrap()
     }
 
     fn assert_fail(s: &str) {
-        Parser::from(TreeTokens::from(Tokens::from(
-            Source::new(StringSource::new("<string>", s.to_owned()))
-                .open()
-                .unwrap(),
-        )))
-        .next()
-        .unwrap()
-        .unwrap_err();
+        Parser::from(TreeTokens::from(Tokens::from(Source::missing(s.chars()))))
+            .next()
+            .unwrap()
+            .unwrap_err();
     }
 
     fn assert_same(a: &str, b: &str) {

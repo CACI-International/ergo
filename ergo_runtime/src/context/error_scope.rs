@@ -33,7 +33,7 @@ trait ErrorScopeInnerInterface: Send + Sync {
 }
 
 struct ErrorScopeInner<F> {
-    seen: crate::error::UniqueErrorSources,
+    seen: crate::error::Diagnostics,
     on_error: F,
 }
 
@@ -55,10 +55,8 @@ where
     }
 
     fn error(&mut self, e: &Error) {
-        for err in e.root_errors() {
-            if self.seen.insert(err.clone()) {
-                (self.on_error)(err);
-            }
+        if self.seen.insert(e) {
+            (self.on_error)(e.clone())
         }
     }
 }

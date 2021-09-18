@@ -4,7 +4,9 @@ use ergo_runtime::abi_stable::{ffi::OsString, std_types::ROption, type_erase::Er
 use ergo_runtime::{
     context::ItemContent,
     depends,
+    error::DiagnosticInfo,
     io::{self, Blocking},
+    metadata::Source,
     nsid, traits, try_result,
     type_system::ErgoType,
     types, Context, Dependencies, Error, Value,
@@ -126,25 +128,25 @@ pub async fn function(
         args.push(traits::into::<CommandString>(arg));
     }
 
-    let args: Vec<_> = try_result!(Context::global().task.join_all(args).await);
+    let args: Vec<_> = Context::global().task.join_all(args).await?;
 
     let pwd = match pwd {
-        Some(v) => Some(try_result!(traits::into::<types::Path>(v).await)),
+        Some(v) => Some(traits::into::<types::Path>(v).await?),
         // TODO set dir if not specified?
         None => None,
     };
 
     let stdin = match stdin {
-        Some(v) => Some(try_result!(traits::into::<types::ByteStream>(v).await)),
+        Some(v) => Some(traits::into::<types::ByteStream>(v).await?),
         None => None,
     };
 
     let retain_terminal = match retain_terminal {
-        Some(v) => try_result!(traits::into::<types::Bool>(v).await).as_ref().0,
+        Some(v) => traits::into::<types::Bool>(v).await?.as_ref().0,
         None => false,
     };
 
-    try_result!(REST.unused_arguments());
+    REST.unused_arguments()?;
 
     let log = Context::global().log.sublog("exec");
 
@@ -157,10 +159,11 @@ pub async fn function(
     if let Some(v) = env {
         let types::Map(env) = v.to_owned();
         for (k, v) in env {
-            let k = try_result!(Context::eval_as::<types::String>(k).await)
+            let k = Context::eval_as::<types::String>(k)
+                .await?
                 .to_owned()
                 .into_string();
-            let v = try_result!(traits::into::<CommandString>(v).await);
+            let v = traits::into::<CommandString>(v).await?;
             command.env(k, v.as_ref().0.as_ref());
         }
     }
@@ -184,10 +187,12 @@ pub async fn function(
     let (send_stderr, rcv_stderr) = channel();
     let (send_status, rcv_status) = channel();
 
+    let args_source = ARGS_SOURCE.clone();
     let run_command = async move {
         log.debug(format!("spawning child process: {:?}", command));
 
-        let mut child = command.spawn()?;
+        let mut child = command.spawn()
+            .add_primary_label(args_source.with("while spawning this process"))?;
 
         // Handle stdin
         let stdin = stdin.map(|v| v.as_ref().read());
@@ -221,21 +226,45 @@ pub async fn function(
         };
 
         // Handle running the child and getting the exit status
-        let exit_status = Context::global()
-            .task
-            .spawn_blocking(move || child.wait().map_err(Error::from))
-            .map(|r| r.and_then(|v| v));
+        let exit_status =
+            Context::global()
+                .task
+                .spawn_blocking(move || {
+                    child.wait().map_err(|e| ergo_runtime::error! {
+                        labels: [ primary(ARGS_SOURCE.with("while waiting for process to exit")) ],
+                        error: e
+                    })
+                })
+                .map(|r| r.and_then(|v| v));
 
         // Only run stdin while waiting for exit status
-        let exit_status = BoundTo::new(exit_status, input.map_err(|e| e.into()));
+        let exit_status = BoundTo::new(
+            exit_status,
+            input.map_err(|e| {
+                ergo_runtime::error! {
+                        labels: [ primary(ARGS_SOURCE.with("while copying stdin to this process")) ],
+                        error: e
+                }
+            }),
+        );
 
         // Finally await everything
         let exit_status = {
             // TODO let _guard = super::task::ParentTask::remain_active();
             futures::future::try_join3(
                 exit_status,
-                output.map_err(|e| e.into()),
-                error.map_err(|e| e.into()),
+                output.map_err(|e| {
+                    ergo_runtime::error! {
+                        labels: [ primary(ARGS_SOURCE.with("while copying stdout from this process")) ],
+                        error: e
+                    }
+                }),
+                error.map_err(|e| {
+                    ergo_runtime::error! {
+                        labels: [ primary(ARGS_SOURCE.with("while copying stderr from this process")) ],
+                        error: e
+                    }
+                }),
             )
             .await?
             .0
@@ -258,7 +287,7 @@ pub async fn function(
                             use futures::io::AsyncReadExt;
                             if recv_pipe.read_to_string(&mut s).await.is_ok() {
                                 if !s.is_empty() {
-                                    Some(format!("\n{}:\n{}", $name, s))
+                                    Some(format!("{}: {}", $name, s))
                                 } else {
                                     None
                                 }
@@ -273,9 +302,15 @@ pub async fn function(
                 }
                 let stdout = fetch_named!(out_pipe_recv, "stdout");
                 let stderr = fetch_named!(err_pipe_recv, "stderr");
-                return Err(
-                    format!("command returned failure exit status{}{}", stdout, stderr).into(),
-                );
+                let mut diag = ergo_runtime::error::Diagnostic::from("command returned failure exit status")
+                    .add_primary_label(ARGS_SOURCE.with(""));
+                if !stdout.is_empty() {
+                    diag = diag.add_note(stdout);
+                }
+                if !stderr.is_empty() {
+                    diag = diag.add_note(stderr);
+                }
+                return Err(diag.into());
             }
         } else {
             drop(send_status.send(exit_status));
@@ -315,9 +350,12 @@ pub async fn function(
 
     let rcv_status = rcv_status.shared();
     let exit_status = Value::dyn_new(
-        || async move {
+        move || async move {
             try_result!(run_command.await);
-            ExitStatus::from(try_result!(rcv_status.await)).into()
+            ExitStatus::from(try_result!(rcv_status.await.add_primary_label(
+                args_source.with("while retrieving exit status of this process")
+            )))
+            .into()
         },
         depends![^CALL_DEPENDS, nsid!(exec::exit_status)],
     );
@@ -361,13 +399,17 @@ ergo_runtime::type_system::ergo_traits_fn! {
 
     impl traits::Stored for ExitStatus {
         async fn put(&self, _ctx: &traits::StoredContext, mut into: ItemContent) -> ergo_runtime::RResult<()> {
-            bincode::serialize_into(&mut into, &self.0.clone().into_option()).map_err(|e| e.into()).into()
+            bincode::serialize_into(&mut into, &self.0.clone().into_option())
+                .add_primary_label(Source::get(SELF_VALUE).with("while storing this value"))
+                .map_err(|e| e.into())
+                .into()
         }
 
         async fn get(_ctx: &traits::StoredContext, mut from: ItemContent) -> ergo_runtime::RResult<Erased>
         {
             bincode::deserialize_from(&mut from)
                 .map(|status: Option<i32>| Erased::new(ExitStatus(status.into())))
+                .into_diagnostic()
                 .map_err(|e| e.into())
                 .into()
         }
