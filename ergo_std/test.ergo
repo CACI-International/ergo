@@ -44,4 +44,15 @@ eval = {
     }
 }
 
-std:test:run { type, eval }
+required = {
+    exists = {
+        std:required _ = hi
+        std:Bool:true
+    }
+    missing = std:match { std:required _ = :unset } [
+        std:Error _ -> std:Bool:true
+        _ -> std:Bool:false
+    ]
+}
+
+std:test:run { type, eval, required }

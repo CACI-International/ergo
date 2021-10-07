@@ -174,7 +174,7 @@ import = {
     inner = recursive <| fn :self :descr -> :v -> {
         plugin:match :descr [
             plugin:type:Map :m -> {
-                plugin:iter:map (fn (plugin:type:MapEntry: :key :value) -> { fn (mtype:required !(self :self :value)) -> () |> v::key }) :m
+                plugin:iter:map (fn (plugin:type:MapEntry: :key :value) -> { fn (mtype:required (source=!:key) !(self :self :value)) -> () |> v::key }) :m
                 ()
             }
             :other -> bind :other :v
@@ -529,9 +529,9 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
 
     ## Type creation.
     ##
-    ## {{mdoc:functions :self new enum struct Or}}
+    ## {{mdoc:functions :self new enum struct}}
     type = {
-        import {new,Or} = plugin:type
+        import {new} = plugin:type
         import {enum,struct} = :mtype
     }
 

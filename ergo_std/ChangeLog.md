@@ -20,6 +20,8 @@
 * Fix the `std:fs:glob` relative directory.
   * It was mistakenly using the call site script path rather than the parent
     directory.
+* Fix the behavior of `std:require` when a value is Unset, and ensure that
+  documentation is carried over through `std:import` uses.
 
 ## 1.0.0-rc.0  -- 2021-08-01
 ### New Features

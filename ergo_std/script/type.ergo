@@ -53,7 +53,7 @@ ArrayOf = fn (type:Function :tp) -> {
 ## Pattern Arguments: `:target`
 optional = pat :out -> :v -> !match :v [
     type:Unset -> ()
-    :other -> bind :out :other
+    _ -> bind :out :v
 ]
 
 ## Match a value disallowing `Unset` values.
@@ -61,9 +61,9 @@ optional = pat :out -> :v -> !match :v [
 ## This is only useful if the binding argument would normally accept an `Unset` value.
 ##
 ## Pattern Arguments: `:target`
-required = pat :out -> :v -> !match :v [
-    type:Unset -> !type:Error: (source=:out) "required value missing"
-    :other -> bind :out :other
+required = pat :out ^{source} -> :v -> !match :v [
+    type:Unset -> type:Error: (source=!match :source [type:Unset -> :v, _ -> :source]) "required value missing"
+    _ -> bind :out :v
 ]
 
 ## Match one of a number of types.
