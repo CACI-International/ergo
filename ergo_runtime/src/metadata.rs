@@ -1,7 +1,7 @@
 //! Common value metadata keys.
 
 use crate as ergo_runtime;
-use crate::abi_stable::uuid::Uuid;
+use crate::abi_stable::{rvec, std_types::RVec, uuid::Uuid};
 use crate::value::{match_value, MetadataKey, Value};
 
 /// Documentation metadata key.
@@ -60,7 +60,7 @@ impl Doc {
 pub struct Source;
 
 impl MetadataKey for Source {
-    type Value = crate::Source<()>;
+    type Value = RVec<crate::Source<()>>;
 
     fn id(&self) -> u128 {
         crate::nsid!(meta::source).as_u128()
@@ -70,7 +70,9 @@ impl MetadataKey for Source {
 impl Source {
     /// Get the source of the given value, if any.
     pub fn get_option(value: &Value) -> Option<crate::Source<()>> {
-        value.get_metadata(&Source).map(|v| v.owned())
+        value
+            .get_metadata(&Source)
+            .map(|v| v.last().unwrap().clone())
     }
 
     /// Get some source for the given value.
@@ -81,6 +83,24 @@ impl Source {
         match Self::get_option(value) {
             Some(v) => v,
             None => crate::Source::missing(()),
+        }
+    }
+
+    /// Get the origin source for the given value.
+    ///
+    /// This is the oldest source available for the value.
+    pub fn get_origin(value: &Value) -> crate::Source<()> {
+        match value.get_metadata(&Source) {
+            None => crate::Source::missing(()),
+            Some(v) => v.first().unwrap().clone(),
+        }
+    }
+
+    /// Get the source immediately prior to the last source for the given value, if any.
+    pub fn get_prior(value: &Value) -> crate::Source<()> {
+        match value.get_metadata(&Source) {
+            None => crate::Source::missing(()),
+            Some(v) => v.iter().nth_back(1).or_else(|| v.last()).unwrap().clone(),
         }
     }
 
@@ -95,7 +115,17 @@ impl Source {
 
     /// Set the source for the given value.
     pub fn set(v: &mut Value, src: crate::Source<()>) {
-        v.set_metadata(&Source, src);
+        v.set_metadata(&Source, rvec![src]);
+    }
+
+    /// Add the latest source for the given value.
+    pub fn update(v: &mut Value, src: crate::Source<()>) {
+        let mut sources = match v.get_metadata(&Source) {
+            None => rvec![],
+            Some(v) => v.owned(),
+        };
+        sources.push(src);
+        v.set_metadata(&Source, sources);
     }
 
     /// Set the source for the given value if no other source is set.

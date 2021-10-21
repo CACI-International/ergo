@@ -52,7 +52,12 @@ impl Location {
 
     /// Get a range representing the location.
     pub fn into_range(self) -> std::ops::Range<usize> {
-        self.start..(self.start + self.length)
+        self.start..self.end()
+    }
+
+    /// Check whether this location contains another location.
+    pub fn contains(&self, other: &Self) -> bool {
+        self.start <= other.start && self.end() >= other.end()
     }
 }
 
@@ -197,6 +202,11 @@ impl<T> Source<T> {
     /// Convert a Source<T> to a Source<U>.
     pub fn value_into<U: From<T>>(self) -> Source<U> {
         self.map(|v| v.into())
+    }
+
+    /// Check whether a source contains another source.
+    pub fn contains<U>(&self, other: &Source<U>) -> bool {
+        self.source_id == other.source_id && self.location.contains(&other.location)
     }
 }
 

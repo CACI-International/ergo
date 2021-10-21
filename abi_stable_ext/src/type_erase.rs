@@ -487,7 +487,6 @@ impl ErasedTrivial {
     ///
     /// This will always work if the value was written with `serialize`.
     pub fn deserialize<R: std::io::Read>(r: &mut R) -> std::io::Result<Self> {
-        use std::convert::TryInto;
         let mut align_size = [0; 5];
         r.read_exact(&mut align_size)?;
         let align = align_size[0] as usize;

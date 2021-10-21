@@ -53,8 +53,8 @@ pub enum Severity {
 #[derive(Clone, Debug, StableAbi, Serialize, Deserialize)]
 #[repr(C)]
 pub struct Label {
-    label: crate::Source<RString>,
-    secondary: bool,
+    pub label: crate::Source<RString>,
+    pub secondary: bool,
 }
 
 impl Label {

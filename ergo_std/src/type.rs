@@ -473,7 +473,7 @@ fn match_error() -> Value {
 
                         let source = match source {
                             None => Source::get(&message),
-                            Some(v) => Source::get(&v)
+                            Some(v) => Source::get_origin(&v)
                         };
 
                         let message = try_result!(traits::to_string(message).await);

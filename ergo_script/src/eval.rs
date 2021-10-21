@@ -701,7 +701,7 @@ impl Evaluator {
             }
         );
 
-        Source::set_if_missing(&mut val, source);
+        Source::update(&mut val, source);
         val
     }
 
