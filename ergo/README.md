@@ -93,3 +93,21 @@ scripts reside.
 * Strongly control the lifetime of the thread pool using weak references in the
   runtime.
   * This will allow loaded plugins to be properly dropped rather than leaked.
+
+* Add cache slots.
+* Rework match error behavior.
+* Improve sources of capture bindings.
+* Debugger and profiler.
+* Script mutexes?
+* Improve progress reporting smoothness in the UI.
+* Allow `fs:copy` to copy symlinks without following.
+* `Iter:sort`/`Iter:order`, `Iter:count`, and numeric comparison functions
+* Automatically cache dynamic value access.
+* Tree comments.
+* Change how the default primitive value documentation is applied (either remove
+  it entirely or do not set it as metadata and just change the documentation
+  lookup function).
+* Set custom panic hook to log the panic without displaying it to the user.
+* Improve error behavior of reqwest::blocking::Client::new().
+* Improve `std:Path:or-source` behavior when a non-Path is passed.
+* Add deep merging.
