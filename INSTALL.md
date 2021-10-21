@@ -16,3 +16,12 @@ the XDG program local data directory:
 One may install ergo for the system by copying the ergo binary into a `bin`
 folder (the folder must have the name `bin`), and copying the ergo `share/ergo`
 folder into a `share` folder that is a sibling of the `bin` folder.
+
+# MacOS-specific directions
+On Mac, you may find that the ergo standard library is quarantined if you
+downloaded it from the internet and have GateKeeper and quarantining enabled.
+This will cause ergo to be killed when it tries to load the library. You can
+remove the quarantine with
+```
+xattr -dr com.apple.quarantine path/to/ergo/share/folder
+```
