@@ -458,19 +458,19 @@ mod test {
             vec![$(array_items!(@item $($out)+)),*]
         };
         ( @go [$($out:tt)*] []) => {
-            array_items!(@go [$($out)*]);
+            array_items!(@go [$($out)*])
         };
         ( @go [$($out:tt)*] [$($pending:tt)+]) => {
-            array_items!(@go [$($out)* ($($pending)+)]);
+            array_items!(@go [$($out)* ($($pending)+)])
         };
         ( @go [$($out:tt)*] [$($pending:tt)+] , $($rest:tt)+ ) => {
-            array_items!(@go [$($out)* ($($pending)+)] [] $($rest)+);
+            array_items!(@go [$($out)* ($($pending)+)] [] $($rest)+)
         };
         ( @go [$($out:tt)*] [$($pending:tt)*] $in:tt $($rest:tt)* ) => {
-            array_items!(@go [$($out)*] [$($pending)* $in] $($rest)*);
+            array_items!(@go [$($out)*] [$($pending)* $in] $($rest)*)
         };
         ( $($in:tt)* ) => {
-            array_items!(@go [] [] $($in)*);
+            array_items!(@go [] [] $($in)*)
         }
     }
 
@@ -488,25 +488,25 @@ mod test {
             vec![$(block_items!(@item $($out)+)),*]
         };
         ( @go [$($out:tt)*] []) => {
-            block_items!(@go [$($out)*]);
+            block_items!(@go [$($out)*])
         };
         ( @go [$($out:tt)*] [$($pending:tt)+]) => {
-            block_items!(@go [$($out)* ($($pending)+)]);
+            block_items!(@go [$($out)* ($($pending)+)])
         };
         ( @go [$($out:tt)*] [$($pending:tt)+] , $($rest:tt)+ ) => {
-            block_items!(@go [$($out)* ($($pending)+)] [] $($rest)+);
+            block_items!(@go [$($out)* ($($pending)+)] [] $($rest)+)
         };
         ( @go [$($out:tt)*] [$($pending:tt)*] $in:tt $($rest:tt)* ) => {
-            block_items!(@go [$($out)*] [$($pending)* $in] $($rest)*);
+            block_items!(@go [$($out)*] [$($pending)* $in] $($rest)*)
         };
         ( $($in:tt)* ) => {
-            block_items!(@go [] [] $($in)*);
+            block_items!(@go [] [] $($in)*)
         }
     }
 
     macro_rules! command_items {
         ( $($in:tt)* ) => {
-            block_items!($($in)*);
+            block_items!($($in)*)
         }
     }
 
