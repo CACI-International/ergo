@@ -134,20 +134,26 @@ fn recursive_link<F: AsRef<Path>, T: AsRef<Path>>(
     from: F,
     to: T,
     mode: &LinkMode,
+    follow_symlinks: bool,
 ) -> Result<(), ergo_runtime::error::Diagnostic> {
     let to = to.as_ref();
     let from = from.as_ref();
     if to.is_dir() {
         let mut to = to.to_owned();
         to.push(from.file_name().set_message("'from' path ends in ..")?);
-        return recursive_link(from, &to, mode);
+        return recursive_link(from, &to, mode, follow_symlinks);
     }
 
     if to.is_file() {
         std::fs::remove_file(to).add_note(format_args!("path was {}", to.display()))?;
     }
 
-    let meta = std::fs::metadata(from).add_note(format_args!("path was {}", from.display()))?;
+    let meta = if follow_symlinks {
+        std::fs::metadata(from)
+    } else {
+        std::fs::symlink_metadata(from)
+    }
+    .add_note(format_args!("path was {}", from.display()))?;
     if meta.is_dir() {
         if mode == &LinkMode::Symbolic {
             symlink_dir(from, to).add_note(format_args!(
@@ -165,7 +171,7 @@ fn recursive_link<F: AsRef<Path>, T: AsRef<Path>>(
                 let name = d.file_name();
                 let mut to = to.to_owned();
                 to.push(name);
-                recursive_link(d.path(), &to, mode)?;
+                recursive_link(d.path(), &to, mode, follow_symlinks)?;
             }
         }
         Ok(())
@@ -174,20 +180,28 @@ fn recursive_link<F: AsRef<Path>, T: AsRef<Path>>(
             std::fs::create_dir_all(parent)
                 .add_note(format_args!("directory was {}", parent.display()))?;
         }
+        let is_symlink = meta.file_type().is_symlink() && !follow_symlinks;
 
         fn do_copy(
             from: &Path,
             to: &Path,
             mode: &LinkMode,
+            from_is_symlink: bool,
         ) -> Result<(), ergo_runtime::error::Diagnostic> {
             match mode {
-                LinkMode::Copy => std::fs::copy(from, to)
-                    .add_note(format_args!(
-                        "while copying {} to {}",
-                        from.display(),
-                        to.display()
-                    ))
-                    .map(|_| ()),
+                LinkMode::Copy => if from_is_symlink {
+                    let is_dir = from.is_dir();
+                    std::fs::read_link(from).and_then(
+                        |original| if is_dir { symlink_dir } else { symlink_file }(original, to),
+                    )
+                } else {
+                    std::fs::copy(from, to).map(|_| ())
+                }
+                .add_note(format_args!(
+                    "while copying {} to {}",
+                    from.display(),
+                    to.display()
+                )),
                 LinkMode::Hard => std::fs::hard_link(from, to).add_note(format_args!(
                     "while creating a hard link of {} at {}",
                     from.display(),
@@ -201,7 +215,7 @@ fn recursive_link<F: AsRef<Path>, T: AsRef<Path>>(
                 LinkMode::Fallback(modes) => {
                     let mut last_result = Ok(());
                     for m in modes {
-                        last_result = do_copy(from, to, m);
+                        last_result = do_copy(from, to, m, from_is_symlink);
                         if last_result.is_ok() {
                             return Ok(());
                         }
@@ -211,7 +225,7 @@ fn recursive_link<F: AsRef<Path>, T: AsRef<Path>>(
             }
         }
 
-        do_copy(from, to, mode)
+        do_copy(from, to, mode, is_symlink)
     }
 }
 
@@ -227,11 +241,13 @@ fn recursive_link<F: AsRef<Path>, T: AsRef<Path>>(
 ///   * `none` - do not make a shallow copy
 ///   * `Array :modes` - an array of the above, trying the next option on failure
 ///   * `()` (by using `^shallow`, for instance) - the same as `[hard,symbolic]`
+/// * `:follow-symlinks` - If present, follow symlinks when copying files and directories.
 ///
-/// If the destination is an existing directory, `from` is copied with the same basename into that directory.
+/// If the destination is an existing directory, `from` is copied with the same basename into that
+/// directory.
 /// All destination directories are automatically created.
 /// If `from` is a directory, it is recursively copied.
-async fn copy(from: types::Path, to: types::Path, (shallow): [_]) -> Value {
+async fn copy(from: types::Path, to: types::Path, (shallow): [_], (follow_symlinks): [_]) -> Value {
     let log = Context::global().log.sublog("fs::copy");
 
     log.debug(format!(
@@ -239,6 +255,8 @@ async fn copy(from: types::Path, to: types::Path, (shallow): [_]) -> Value {
         from.as_ref().0.as_ref().display(),
         to.as_ref().0.as_ref().display()
     ));
+
+    let follow_symlinks = follow_symlinks.is_some();
 
     let link_mode = match shallow {
         None => LinkMode::Copy,
@@ -266,8 +284,13 @@ async fn copy(from: types::Path, to: types::Path, (shallow): [_]) -> Value {
         }
     };
 
-    recursive_link(from.as_ref().0.as_ref(), to.as_ref().0.as_ref(), &link_mode)
-        .add_primary_label(ARGS_SOURCE.with(""))?;
+    recursive_link(
+        from.as_ref().0.as_ref(),
+        to.as_ref().0.as_ref(),
+        &link_mode,
+        follow_symlinks,
+    )
+    .add_primary_label(ARGS_SOURCE.with(""))?;
     types::Unit.into()
 }
 
@@ -368,6 +391,7 @@ async fn archive(archive: types::Path, source: types::Path, (format): [types::St
             source.as_ref().as_ref(),
             archive.as_ref().as_ref(),
             &LinkMode::Copy,
+            false,
         ),
         "zip" => {
             fn add_dir_entries<W: std::io::Write + std::io::Seek>(
@@ -548,7 +572,7 @@ async fn unarchive(destination: types::Path, mut archive: _) -> Value {
         types::Path(p) => {
             let path = p.as_ref();
             if path.is_dir() {
-                recursive_link(&path, &to_path, &LinkMode::Copy)
+                recursive_link(&path, &to_path, &LinkMode::Copy, false)
                     .add_primary_label(ARGS_SOURCE.with("while copying directory"))
                     .add_note(format_args!("source path was {}", path.display()))
                     .add_note(format_args!("target path was {}", to_path.display()))?;

@@ -100,7 +100,6 @@ scripts reside.
 * Debugger and profiler.
 * Script mutexes?
 * Improve progress reporting smoothness in the UI.
-* Allow `fs:copy` to copy symlinks without following.
 * `Iter:sort`/`Iter:order`, `Iter:count`, and numeric comparison functions
 * Automatically cache dynamic value access.
 * Tree comments.
@@ -111,3 +110,5 @@ scripts reside.
 * Improve error behavior of reqwest::blocking::Client::new().
 * Improve `std:Path:or-source` behavior when a non-Path is passed.
 * Add deep merging.
+* Add script-specified network cache locations (for local vendoring).
+* Add hostname-based(?) request parameters.

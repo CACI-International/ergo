@@ -15,6 +15,8 @@
 * Do not cache `std:net:unarchive` results, to make the standard library purely
   functional.
 * Allow all `std:net:http` arguments to be used with `std:ergo-remote`.
+* Allow `std:fs:copy` to copy symlinks rather than follow them by default.
+  * Add a `follow-symlinks` keyed argument to change this behavior.
 
 ### Bugfixes
 * Fix the `std:fs:glob` relative directory.
