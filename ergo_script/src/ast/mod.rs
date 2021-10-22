@@ -489,7 +489,7 @@ impl Expression {
 
 #[macro_export]
 macro_rules! match_expression {
-    ( $v:expr , $( $t:ident => |$e:pat| $body:expr , )* $( _ => $else:expr )? ) => {
+    ( $v:expr , $( $t:ident ( $e:pat ) => $body:expr , )* $( _ => $else:expr )? ) => {
         match $v.expr_type() {
             $( $crate::ast::ExpressionType::$t => {
                 let $e = unsafe { $v.as_ref_unchecked::<$crate::ast::$t>() };
@@ -501,7 +501,7 @@ macro_rules! match_expression {
 }
 
 macro_rules! match_expression_mut {
-    ( $v:expr , $( $t:ident => |$e:pat| $body:expr , )* $( _ => $else:expr )? ) => {
+    ( $v:expr , $( $t:ident ( $e:pat ) => $body:expr , )* $( _ => $else:expr )? ) => {
         match $v.expr_type() {
             $( $crate::ast::ExpressionType::$t => {
                 let $e = unsafe { $v.as_mut_unchecked::<$crate::ast::$t>() };
@@ -513,47 +513,47 @@ macro_rules! match_expression_mut {
 }
 
 macro_rules! match_all {
-    ( $v:expr => |$e:pat| $body:expr ) => {
+    ( $v:expr, $e:pat => $body:expr ) => {
         match_expression!($v,
-            Unit => |$e| $body,
-            BindAny => |$e| $body,
-            String => |$e| $body,
-            Array => |$e| $body,
-            Block => |$e| $body,
-            Function => |$e| $body,
-            Get => |$e| $body,
-            Set => |$e| $body,
-            Index => |$e| $body,
-            Command => |$e| $body,
-            PatternCommand => |$e| $body,
-            Force => |$e| $body,
-            Capture => |$e| $body,
-            DocComment => |$e| $body,
+            Unit($e) => $body,
+            BindAny($e) => $body,
+            String($e) => $body,
+            Array($e) => $body,
+            Block($e) => $body,
+            Function($e) => $body,
+            Get($e) => $body,
+            Set($e) => $body,
+            Index($e) => $body,
+            Command($e) => $body,
+            PatternCommand($e) => $body,
+            Force($e) => $body,
+            Capture($e) => $body,
+            DocComment($e) => $body,
         )
     };
-    ( mut $v:expr => |$e:pat| $body:expr ) => {
+    ( mut $v:expr, $e:pat => $body:expr ) => {
         match_expression_mut!($v,
-            Unit => |$e| $body,
-            BindAny => |$e| $body,
-            String => |$e| $body,
-            Array => |$e| $body,
-            Block => |$e| $body,
-            Function => |$e| $body,
-            Get => |$e| $body,
-            Set => |$e| $body,
-            Index => |$e| $body,
-            Command => |$e| $body,
-            PatternCommand => |$e| $body,
-            Force => |$e| $body,
-            Capture => |$e| $body,
-            DocComment => |$e| $body,
+            Unit($e) => $body,
+            BindAny($e) => $body,
+            String($e) => $body,
+            Array($e) => $body,
+            Block($e) => $body,
+            Function($e) => $body,
+            Get($e) => $body,
+            Set($e) => $body,
+            Index($e) => $body,
+            Command($e) => $body,
+            PatternCommand($e) => $body,
+            Force($e) => $body,
+            Capture($e) => $body,
+            DocComment($e) => $body,
         )
     };
 }
 
 impl std::fmt::Debug for Expression {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match_all!(self => |v| write!(f, "Expression({})::{:?}", &format!("{:x}", self.id())[0..8], v))
+        match_all!(self, v => write!(f, "Expression({})::{:?}", &format!("{:x}", self.id())[0..8], v))
     }
 }
 
@@ -680,16 +680,16 @@ impl Expression {
     /// Return the set of captures in this expression, if any.
     pub fn captures(&self) -> Option<&CaptureSet> {
         match_expression!(self,
-            Array => |v| Some(&v.captures),
-            Block => |v| Some(&v.captures),
-            Function => |v| Some(&v.captures),
-            Get => |v| Some(&v.captures),
-            Set => |v| Some(&v.captures),
-            Index => |v| Some(&v.captures),
-            Command => |v| Some(&v.captures),
-            PatternCommand => |v| Some(&v.captures),
-            Force => |v| Some(&v.captures),
-            DocComment => |v| Some(&v.captures),
+            Array(v) => Some(&v.captures),
+            Block(v) => Some(&v.captures),
+            Function(v) => Some(&v.captures),
+            Get(v) => Some(&v.captures),
+            Set(v) => Some(&v.captures),
+            Index(v) => Some(&v.captures),
+            Command(v) => Some(&v.captures),
+            PatternCommand(v) => Some(&v.captures),
+            Force(v) => Some(&v.captures),
+            DocComment(v) => Some(&v.captures),
             _ => None
         )
     }
@@ -722,14 +722,14 @@ impl Subexpressions for Expression {
     where
         F: FnMut(SubExpr),
     {
-        match_all!(self => |v| v.subexpressions(f));
+        match_all!(self, v => v.subexpressions(f));
     }
 
     fn subexpressions_mut<F>(&mut self, f: F)
     where
         F: FnMut(&mut Expr),
     {
-        match_all!(mut self => |v| v.subexpressions_mut(f))
+        match_all!(mut self, v => v.subexpressions_mut(f))
     }
 }
 
@@ -744,20 +744,20 @@ impl Expression {
             false
         } else {
             match_expression!(self,
-                Unit => |v| v == unsafe { other.as_ref_unchecked::<Unit>() },
-                BindAny => |v| v == unsafe { other.as_ref_unchecked::<BindAny>() },
-                String => |v| v == unsafe { other.as_ref_unchecked::<String>() },
-                Array => |v| v == unsafe { other.as_ref_unchecked::<Array>() },
-                Block => |v| v == unsafe { other.as_ref_unchecked::<Block>() },
-                Function => |v| v == unsafe { other.as_ref_unchecked::<Function>() },
-                Get => |v| v == unsafe { other.as_ref_unchecked::<Get>() },
-                Set => |v| v == unsafe { other.as_ref_unchecked::<Set>() },
-                Index => |v| v == unsafe { other.as_ref_unchecked::<Index>() },
-                Command => |v| v == unsafe { other.as_ref_unchecked::<Command>() },
-                PatternCommand => |v| v == unsafe { other.as_ref_unchecked::<PatternCommand>() },
-                Force => |v| v == unsafe { other.as_ref_unchecked::<Force>() },
-                DocComment => |v| v == unsafe { other.as_ref_unchecked::<DocComment>() },
-                Capture => |v| v == unsafe { other.as_ref_unchecked::<Capture>() },
+                Unit(v) => v == unsafe { other.as_ref_unchecked::<Unit>() },
+                BindAny(v) => v == unsafe { other.as_ref_unchecked::<BindAny>() },
+                String(v) => v == unsafe { other.as_ref_unchecked::<String>() },
+                Array(v) => v == unsafe { other.as_ref_unchecked::<Array>() },
+                Block(v) => v == unsafe { other.as_ref_unchecked::<Block>() },
+                Function(v) => v == unsafe { other.as_ref_unchecked::<Function>() },
+                Get(v) => v == unsafe { other.as_ref_unchecked::<Get>() },
+                Set(v) => v == unsafe { other.as_ref_unchecked::<Set>() },
+                Index(v) => v == unsafe { other.as_ref_unchecked::<Index>() },
+                Command(v) => v == unsafe { other.as_ref_unchecked::<Command>() },
+                PatternCommand(v) => v == unsafe { other.as_ref_unchecked::<PatternCommand>() },
+                Force(v) => v == unsafe { other.as_ref_unchecked::<Force>() },
+                DocComment(v) => v == unsafe { other.as_ref_unchecked::<DocComment>() },
+                Capture(v) => v == unsafe { other.as_ref_unchecked::<Capture>() },
             )
         }
     }
@@ -777,16 +777,16 @@ impl Expression {
         }
         let p = &mut self;
         match_expression_mut!(p,
-            Array => |v| v.captures = captures,
-            Block => |v| v.captures = captures,
-            Function => |v| v.captures = captures,
-            Get => |v| v.captures = captures,
-            Set => |v| v.captures = captures,
-            Index => |v| v.captures = captures,
-            Command => |v| v.captures = captures,
-            PatternCommand => |v| v.captures = captures,
-            Force => |v| v.captures = captures,
-            DocComment => |v| v.captures = captures,
+            Array(v) => v.captures = captures,
+            Block(v) => v.captures = captures,
+            Function(v) => v.captures = captures,
+            Get(v) => v.captures = captures,
+            Set(v) => v.captures = captures,
+            Index(v) => v.captures = captures,
+            Command(v) => v.captures = captures,
+            PatternCommand(v) => v.captures = captures,
+            Force(v) => v.captures = captures,
+            DocComment(v) => v.captures = captures,
             _ => ()
         );
         self
@@ -1139,16 +1139,16 @@ impl<'a> ExpressionCompiler<'a> {
         let src = e.source();
         let e = &mut **e;
         match_expression_mut!(e,
-            Unit => |_| (),
-            BindAny => |_| (),
-            String => |_| (),
-            Array => |v| {
+            Unit(_) => (),
+            BindAny(_) => (),
+            String(_) => (),
+            Array(v) => {
                 let mut e_caps = Captures::default();
                 v.subexpressions_mut(|e| self.compile_captures(e, &mut e_caps));
                 caps |= &e_caps;
                 v.captures = e_caps.direct;
             },
-            Block => |v| {
+            Block(v) => {
                 self.capture_mapping.down();
                 let mut e_caps = Captures::default();
                 // Only warn about unused sets in bindings if the last value is an expression. This
@@ -1185,7 +1185,7 @@ impl<'a> ExpressionCompiler<'a> {
                 caps |= &e_caps;
                 v.captures = e_caps.direct;
             },
-            Function => |v| {
+            Function(v) => {
                 self.capture_mapping.down();
                 let old_scope = self.capture_mapping.current_as_set_scope();
                 let mut e_caps = Captures::default();
@@ -1206,7 +1206,7 @@ impl<'a> ExpressionCompiler<'a> {
                 caps |= &e_caps;
                 v.captures = e_caps.direct;
             },
-            Set => |v| {
+            Set(v) => {
                 if v.value.expr_type() == ExpressionType::String {
                     let key = self.capture_context.key();
                     self.capture_mapping.insert(v.value.id(), key);
@@ -1219,7 +1219,7 @@ impl<'a> ExpressionCompiler<'a> {
                     v.captures = e_caps.direct;
                 }
             },
-            Get => |v| {
+            Get(v) => {
                 // Any gets of a string constant are considered forced.
                 if v.value.expr_type() == ExpressionType::String {
                     // If the id is in the capture environment, use it directly
@@ -1243,7 +1243,7 @@ impl<'a> ExpressionCompiler<'a> {
                     v.captures = e_caps.direct;
                 }
             },
-            Index => |v| {
+            Index(v) => {
                 let mut e_caps = Captures::default();
                 self.compile_captures(&mut v.value, &mut e_caps);
                 self.ignore_string_binding_conflict().compile_captures(&mut v.index, &mut e_caps);
@@ -1254,7 +1254,7 @@ impl<'a> ExpressionCompiler<'a> {
                 }
                 caps |= &e_caps;
             },
-            Command => |v| {
+            Command(v) => {
                 let mut e_caps = Captures::default();
                 self.compile_captures(&mut v.function, &mut e_caps);
                 for i in &mut v.args {
@@ -1273,7 +1273,7 @@ impl<'a> ExpressionCompiler<'a> {
                 caps |= &e_caps;
                 v.captures = e_caps.direct;
             },
-            PatternCommand => |v| {
+            PatternCommand(v) => {
                 let mut e_caps = Captures::default();
                 self.compile_captures(&mut v.function, &mut e_caps);
                 for i in &mut v.args {
@@ -1292,7 +1292,7 @@ impl<'a> ExpressionCompiler<'a> {
                 caps |= &e_caps;
                 v.captures = e_caps.direct;
             },
-            Force => |v| {
+            Force(v) => {
                 let mut e_caps = Captures::default();
                 self.compile_captures(&mut v.value, &mut e_caps);
                 if v.value.expr_type() != ExpressionType::Capture {
@@ -1306,8 +1306,8 @@ impl<'a> ExpressionCompiler<'a> {
                 // placeholder; it will be dropped when `*e` is set).
                 *e = std::mem::replace(&mut *v.value, Expression::unit());
             },
-            Capture => |_| panic!("unexpected capture"),
-            DocComment => |v| {
+            Capture(_) => panic!("unexpected capture"),
+            DocComment(v) => {
                 let mut e_caps = Captures::default();
                 v.subexpressions_mut(|e| self.compile_captures(e, &mut e_caps));
 

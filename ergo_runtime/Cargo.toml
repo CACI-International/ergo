@@ -2,7 +2,7 @@
 name = "ergo_runtime"
 version = "1.0.0-rc.0"
 authors = ["Alex Franchuk <afranchuk@caci.com>"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 abi_stable = "0.9" # needed only for StableAbi derive macros to work (they reference ::abi_stable)

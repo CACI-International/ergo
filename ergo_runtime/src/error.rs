@@ -413,7 +413,7 @@ macro_rules! error {
 /// type.
 #[macro_export]
 macro_rules! error_info {
-    ( $(severity : $severity:ident ,)? $(message : |$old_message:pat| $message:expr ,)?
+    ( $(severity : $severity:ident ,)? $(message : ($old_message:pat) $message:expr ,)?
       $(labels : [$($labelfn:ident ( $($labelarg:expr),* )),+] ,)?
       $(notes : [$($note:expr),+] ,)? { $($es:tt)+ } ) => {
         {
@@ -430,7 +430,7 @@ macro_rules! error_info {
             })
         }
     };
-    ( $(severity : $severity:ident ,)? $(message : |$old_message:pat| $message:expr ,)?
+    ( $(severity : $severity:ident ,)? $(message : ($old_message:pat) $message:expr ,)?
       $(labels : [$($labelfn:ident ( $($labelarg:expr),* )),+] ,)?
       $(notes : [$($note:expr),+] ,)? async { $($es:tt)+ } ) => {
         {

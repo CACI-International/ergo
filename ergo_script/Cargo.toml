@@ -2,7 +2,7 @@
 name = "ergo_script"
 version = "1.0.0-rc.0"
 authors = ["Alex Franchuk <afranchuk@caci.com>"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 ergo_runtime = { path = "../ergo_runtime" }

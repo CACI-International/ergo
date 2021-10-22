@@ -536,17 +536,17 @@ impl Evaluator {
         let (source, e) = e.take();
 
         let mut val = crate::match_expression!(e,
-            Unit => |_| types::Unit.into(),
-            BindAny => |_| types::Unbound::new_no_doc(
+            Unit(_) => types::Unit.into(),
+            BindAny(_) => types::Unbound::new_no_doc(
                             |_| async { types::Unit.into() }.boxed(),
                             depends![nsid!(expr::any)],
                         )
                         .into(),
-            String => |s| types::String::from(s.0.clone()).into(),
-            Force => |_| {
+            String(s) => types::String::from(s.0.clone()).into(),
+            Force(_) => {
                 panic!("unexpected force expression");
             },
-            DocComment => |doc| {
+            DocComment(doc) => {
                 let mut captures = captures.subset(&doc.captures);
                 let mut val = self.evaluate_with_env(doc.value.clone(), &captures, local_env, sets);
                 let parts = doc.parts.clone();
@@ -602,7 +602,7 @@ impl Evaluator {
                 metadata::Doc::set(&mut val, doc);
                 val
             },
-            Capture => |capture| match captures.get(capture.0) {
+            Capture(capture) => match captures.get(capture.0) {
                 None => {
                     if cfg!(debug_assertions) {
                         use ergo_runtime::error::{Diagnostic, DiagnosticInfo, diagnostics_to_string};
@@ -615,7 +615,7 @@ impl Evaluator {
                 }
                 Some(v) => v.clone()
             },
-            Function => |func| {
+            Function(func) => {
                 let captures = captures.subset(&func.captures);
                 let deps = depends![e, ^&captures];
                 let bind = func.bind.clone();
@@ -650,14 +650,14 @@ impl Evaluator {
                     }.boxed()
                 }, deps).into()
             },
-            Get => |get| {
+            Get(get) => {
                 let k = self.evaluate_with_env(get.value.clone(), captures, local_env, sets);
                 match local_env.and_then(|env| env.get(&k)) {
                     None => Source::get(&k).with("missing binding").into_error().into(),
                     Some(v) => v.clone()
                 }
             },
-            Set => |set| {
+            Set(set) => {
                 let k = self.evaluate_with_env(set.value.clone(), captures, local_env, sets);
                 let (send_result, receive_result) = futures::channel::oneshot::channel::<Value>();
 
@@ -741,18 +741,18 @@ impl Evaluator {
             let source_c = source.clone();
 
             crate::match_expression!(e,
-                Unit => |_| self.eval_with_env(source.with(e), captures, local_env, sets).await,
-                BindAny => |_| self.eval_with_env(source.with(e), captures, local_env, sets).await,
-                String => |_| self.eval_with_env(source.with(e), captures, local_env, sets).await,
-                Force => |_| self.eval_with_env(source.with(e), captures, local_env, sets).await,
-                DocComment => |_| self.eval_with_env(source.with(e), captures, local_env, sets).await,
-                Capture => |_| self.eval_with_env(source.with(e), captures, local_env, sets).await,
-                Function => |_| self.eval_with_env(source.with(e), captures, local_env, sets).await,
-                Get => |_| self.eval_with_env(source.with(e), captures, local_env, sets).await,
-                Set => |_| self.eval_with_env(source.with(e), captures, local_env, sets).await,
+                Unit(_) => self.eval_with_env(source.with(e), captures, local_env, sets).await,
+                BindAny(_) => self.eval_with_env(source.with(e), captures, local_env, sets).await,
+                String(_) => self.eval_with_env(source.with(e), captures, local_env, sets).await,
+                Force(_) => self.eval_with_env(source.with(e), captures, local_env, sets).await,
+                DocComment(_) => self.eval_with_env(source.with(e), captures, local_env, sets).await,
+                Capture(_) => self.eval_with_env(source.with(e), captures, local_env, sets).await,
+                Function(_) => self.eval_with_env(source.with(e), captures, local_env, sets).await,
+                Get(_) => self.eval_with_env(source.with(e), captures, local_env, sets).await,
+                Set(_) => self.eval_with_env(source.with(e), captures, local_env, sets).await,
                 _ => {
                     let mut val = crate::match_expression!(e,
-                        Array => |arr| {
+                        Array(arr) => {
                             let mut results = Vec::new();
                             let mut has_errors = false;
                             let mut errs = Vec::new();
@@ -789,7 +789,7 @@ impl Evaluator {
                                 types::Array(results.into()).into()
                             }
                         },
-                        Block => |block| {
+                        Block(block) => {
                             match self.evaluate_block_items(block.items.clone(), captures.clone(), BlockItemMode::Block, sets).await {
                                 Err(e) => e.into(),
                                 Ok((mut vals, env)) => {
@@ -804,7 +804,7 @@ impl Evaluator {
                                 }
                             }
                         },
-                        Index => |ind| {
+                        Index(ind) => {
                             let mut value = self.eval_with_env(ind.value.clone(), &captures, None, sets).await;
                             let index = self.eval_with_env(ind.index.clone(), &captures, None, sets).await;
                             if let Err(e) = Context::eval(&mut value).await {
@@ -814,7 +814,7 @@ impl Evaluator {
                             }
                             traits::bind(value, Source::imbue(source_c.with(types::Index(index).into()))).await
                         },
-                        Command => |cmd| {
+                        Command(cmd) => {
                             let src = cmd.function.source();
                             let mut function = self.eval_with_env(cmd.function.clone(), &captures, None, sets).await;
                             match self
@@ -833,7 +833,7 @@ impl Evaluator {
                                 }
                             }
                         },
-                        PatternCommand => |cmd| {
+                        PatternCommand(cmd) => {
                             let src = cmd.function.source();
                             let mut function = self.eval_with_env(cmd.function.clone(), &captures, None, sets).await;
                             match self

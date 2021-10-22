@@ -2,7 +2,7 @@
 name = "ergo_std"
 version = "1.0.0-rc.0"
 authors = ["Alex Franchuk <afranchuk@caci.com>"]
-edition = "2018"
+edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
