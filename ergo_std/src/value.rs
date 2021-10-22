@@ -254,7 +254,7 @@ async fn meta_set(metadata_key: _, metadata_value: _, mut value: _) -> Value {
 /// Returns the Path of the script file from which the value originates, or Unset if no path is
 /// available.
 async fn source_path(value: _) -> Value {
-    match Source::get_option(&value).and_then(|s| Context::source_path(&s)) {
+    match Source::get_origin_option(&value).and_then(|s| Context::source_path(&s)) {
         None => types::Unset.into(),
         Some(p) => types::Path::from(p).into(),
     }
@@ -267,7 +267,7 @@ async fn source_path(value: _) -> Value {
 ///
 /// Returns `to` with its source set to that of `from`.
 async fn source_copy(from: _, mut to: _) -> Value {
-    if let Some(src) = Source::get_option(&from) {
+    if let Some(src) = Source::get_origin_option(&from) {
         Source::set(&mut to, src);
     } else {
         to.clear_metadata(&Source);

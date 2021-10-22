@@ -75,6 +75,13 @@ impl Source {
             .map(|v| v.last().unwrap().clone())
     }
 
+    /// Get the origin source of the given value, if any.
+    pub fn get_origin_option(value: &Value) -> Option<crate::Source<()>> {
+        value
+            .get_metadata(&Source)
+            .map(|v| v.first().unwrap().clone())
+    }
+
     /// Get some source for the given value.
     ///
     /// Returns a missing source if no source is available.
@@ -90,9 +97,9 @@ impl Source {
     ///
     /// This is the oldest source available for the value.
     pub fn get_origin(value: &Value) -> crate::Source<()> {
-        match value.get_metadata(&Source) {
+        match Self::get_origin_option(value) {
+            Some(v) => v,
             None => crate::Source::missing(()),
-            Some(v) => v.first().unwrap().clone(),
         }
     }
 
