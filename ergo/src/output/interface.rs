@@ -324,13 +324,15 @@ impl TerminalOutput {
         Renderer::new(self)
     }
 
-    pub fn renderer_after<T: std::fmt::Display>(&mut self, to_write: T) -> Renderer {
+    pub fn renderer_after<T: std::fmt::Display, I: IntoIterator<Item = T>>(&mut self, to_write: I) -> Renderer {
         self.term.reset().expect("failed to reset terminal");
         // Move cursor to beginning of previously-rendered output.
         for _ in 0..self.last_rendered_lines {
             self.term.cursor_up().expect("failed to write to terminal");
         }
-        writeln!(self, "{}", to_write).expect("failed to write");
+        for v in to_write.into_iter() {
+            writeln!(self, "{}", v).expect("failed to write");
+        }
         Renderer::new(self)
     }
 

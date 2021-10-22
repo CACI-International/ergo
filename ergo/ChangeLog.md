@@ -7,6 +7,7 @@
     in practice this is just extra noise and the type error should be ignored.
 * Fix a minor bug in doc comment leading whitespace removal.
 * Improve error message printing and information.
+* Improve terminal UI rendering behavior.
 
 ## 1.0.0-rc.0  -- 2021-08-01
 Most of the changes listed below are breaking changes, so there is no separate

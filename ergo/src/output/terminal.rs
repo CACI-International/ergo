@@ -16,7 +16,9 @@ pub struct Output {
     tasks: TaskStatus,
     progress: Progress,
     errors: Errors,
-    paused: Option<Vec<u8>>,
+    pending_logs: Vec<LogEntry>,
+    paused: bool,
+    need_update: bool,
 }
 
 #[derive(Clone)]
@@ -44,32 +46,10 @@ impl Output {
             tasks: TaskStatus::new(),
             progress: Default::default(),
             errors: Errors::new(keep_going),
-            paused: None,
+            pending_logs: Default::default(),
+            paused: false,
+            need_update: true,
         }
-    }
-
-    fn update(&mut self) {
-        if self.paused.is_some() {
-            return;
-        }
-
-        let mut renderer = self.out.renderer();
-
-        renderer += &self.tasks;
-        renderer += &self.progress;
-        renderer += &self.errors;
-    }
-
-    fn update_log(&mut self, entry: LogEntry) {
-        if self.paused.is_some() {
-            return;
-        }
-
-        let mut renderer = self.out.renderer_after(entry);
-
-        renderer += &self.tasks;
-        renderer += &self.progress;
-        renderer += &self.errors;
     }
 }
 
@@ -80,66 +60,73 @@ impl super::Output for Output {
 
     fn new_error(&mut self, err: Error) {
         self.errors.update(err);
-        self.update();
+        self.need_update = true;
     }
 
     fn interrupt(&mut self) {
         self.errors.interrupts += 1;
-        self.update();
+        self.need_update = true;
+    }
+
+    fn update(&mut self) {
+        if self.paused || !self.need_update {
+            return;
+        }
+
+        let mut renderer = self
+            .out
+            .renderer_after(std::mem::take(&mut self.pending_logs));
+
+        renderer += &self.tasks;
+        renderer += &self.progress;
+        renderer += &self.errors;
+
+        self.need_update = false;
     }
 }
 
 impl LogTarget for Output {
     fn log(&mut self, entry: LogEntry) {
         if entry.level >= self.log_level {
-            if let Some(v) = &mut self.paused {
-                writeln!(v, "{}", entry).expect("failed to write to output");
-            } else {
-                self.update_log(entry);
-            }
+            self.pending_logs.push(entry);
         }
     }
 
     fn task_running(&mut self, description: RString) -> LogTaskKey {
         let key = self.tasks.insert(description);
-        self.update();
+        self.need_update = true;
         LogTaskKey::new(key)
     }
 
     fn task_suspend(&mut self, key: LogTaskKey) {
         if let Ok(key) = key.into::<usize>() {
             self.tasks.remove(key);
-            self.update();
+            self.need_update = true;
         }
     }
 
     fn timer_pending(&mut self, id: RSlice<RString>) {
         self.progress.pending(id);
-        self.update();
+        self.need_update = true;
     }
 
     fn timer_complete(&mut self, id: RSlice<RString>, duration: ROption<RDuration>) {
         self.progress
             .complete(id, duration.map(|v| v.into()).into());
-        self.update();
+        self.need_update = true;
     }
 
     fn pause_logging(&mut self) {
-        self.paused = Some(Default::default());
+        self.paused = true;
         self.out.enable_stdin();
         // Clear previous rendered content.
         self.out.renderer();
     }
 
     fn resume_logging(&mut self) {
-        if let Some(bytes) = self.paused.take() {
-            self.out
-                .write_all(&bytes)
-                .expect("failed to write to output");
-            self.out.flush().expect("failed to flush output");
-        }
+        self.paused = false;
         self.out.disable_stdin();
-        self.update();
+        self.need_update = true;
     }
 }
 

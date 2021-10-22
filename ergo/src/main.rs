@@ -325,37 +325,55 @@ fn run(opts: Opts) -> Result<String, String> {
 
     let loaded = runtime.evaluate_string("<command line>", &to_eval);
 
-    let value_to_execute = loaded.and_then(|script_output| {
-        let v = runtime.block_on(Runtime::apply_unbound(script_output));
-        Ok(try_value!(v))
+    let complete = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let complete_ref = complete.clone();
+
+    let exec_thread = std::thread::spawn(move || {
+        let value_to_execute = loaded.and_then(|script_output| {
+            let v = runtime.block_on(Runtime::apply_unbound(script_output));
+            Ok(try_value!(v))
+        });
+
+        // Clear load cache, so that lifetimes are optimistically dropped. It's not very likely that
+        // stuff will be loaded while executing the final value, but if so it'll just take the hit of
+        // reloading the scripts.
+        runtime.clear_load_cache();
+
+        let result = value_to_execute.and_then(|value| {
+            runtime.block_on(async {
+                use ergo_runtime::traits::{display, eval_nested, Formatter};
+                eval_nested(value.clone()).await?;
+                let mut s = String::new();
+                {
+                    let mut formatter = Formatter::new(&mut s);
+                    display(value, &mut formatter).await?;
+                }
+                Ok(s)
+            })
+        });
+
+        // Before the context is destroyed (unloading plugins), clear the thread-local storage in case
+        // there are values which were allocated in the plugins.
+        ergo_runtime::plugin::Context::reset();
+
+        drop(signal_handler_task);
+
+        let sources =
+            runtime.block_on(async { ergo_runtime::Context::global().diagnostic_sources() });
+        drop(runtime);
+
+        complete_ref.store(true, std::sync::atomic::Ordering::Relaxed);
+        (result, sources)
     });
 
-    // Clear load cache, so that lifetimes are optimistically dropped. It's not very likely that
-    // stuff will be loaded while executing the final value, but if so it'll just take the hit of
-    // reloading the scripts.
-    runtime.clear_load_cache();
+    while !complete.load(std::sync::atomic::Ordering::Relaxed) {
+        if let Ok(mut g) = logger.lock() {
+            g.update();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
 
-    let ret = value_to_execute.and_then(|value| {
-        runtime.block_on(async {
-            use ergo_runtime::traits::{display, eval_nested, Formatter};
-            eval_nested(value.clone()).await?;
-            let mut s = String::new();
-            {
-                let mut formatter = Formatter::new(&mut s);
-                display(value, &mut formatter).await?;
-            }
-            Ok(s)
-        })
-    });
-
-    // Before the context is destroyed (unloading plugins), clear the thread-local storage in case
-    // there are values which were allocated in the plugins.
-    ergo_runtime::plugin::Context::reset();
-
-    drop(signal_handler_task);
-
-    let sources = runtime.block_on(async { ergo_runtime::Context::global().diagnostic_sources() });
-    drop(runtime);
+    let (result, sources) = exec_thread.join().unwrap();
 
     // Drop the logger prior to the context dropping, so that any stored state (like errors) can
     // free with the plugins still loaded.
@@ -376,7 +394,7 @@ fn run(opts: Opts) -> Result<String, String> {
 
     // Write error output to stderr.
     // TODO get error(s) from error scope rather than return value?
-    match ret {
+    match result {
         Ok(v) => Ok(v),
         Err(e) => {
             use ergo_runtime::error::{emit_diagnostics, Diagnostics};

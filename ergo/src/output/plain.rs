@@ -26,6 +26,8 @@ impl super::Output for Output {
     fn new_error(&mut self, _err: Error) {}
 
     fn interrupt(&mut self) {}
+
+    fn update(&mut self) {}
 }
 
 impl LogTarget for Output {

@@ -12,6 +12,7 @@ pub trait Output: LogTarget {
     fn set_log_level(&mut self, log_level: LogLevel);
     fn new_error(&mut self, err: Error);
     fn interrupt(&mut self);
+    fn update(&mut self);
 }
 
 pub fn output(format: crate::options::OutputFormat, keep_going: bool) -> Option<OutputInstance> {
@@ -54,6 +55,10 @@ impl Output for OutputInstance {
 
     fn interrupt(&mut self) {
         self.inner.interrupt()
+    }
+
+    fn update(&mut self) {
+        self.inner.update()
     }
 }
 

@@ -99,7 +99,10 @@ scripts reside.
 * Improve sources of capture bindings.
 * Debugger and profiler.
 * Script mutexes?
-* Improve progress reporting smoothness in the UI.
+* Improve UI error behavior.
+  * Display error logs immediately when new errors are encountered.
+  * Display the aggregated errors at the end of execution (rather than the
+    returned error value).
 * `Iter:sort`/`Iter:order`, `Iter:count`, and numeric comparison functions
 * Automatically cache dynamic value access.
 * Tree comments.
