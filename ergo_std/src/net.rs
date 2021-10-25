@@ -77,7 +77,7 @@ async fn http(
 
     let log = Context::global().log.sublog("net:http");
 
-    let client = Client::new();
+    let client = Client::builder().build()?;
     let mut request = client.request(method, url.as_ref().as_str());
 
     if let Some(auth) = basic_auth {
