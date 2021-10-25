@@ -108,7 +108,6 @@ scripts reside.
 * Change how the default primitive value documentation is applied (either remove
   it entirely or do not set it as metadata and just change the documentation
   lookup function).
-* Set custom panic hook to log the panic without displaying it to the user.
 * Improve error behavior of reqwest::blocking::Client::new().
 * Improve `std:Path:or-source` behavior when a non-Path is passed.
 * Add deep merging.

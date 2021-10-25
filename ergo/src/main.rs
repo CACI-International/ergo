@@ -12,6 +12,7 @@ use std::str::FromStr;
 mod options;
 mod output;
 mod sync;
+mod terminal_state;
 
 /// Constant values shared throughout the program.
 mod constants {
@@ -41,7 +42,8 @@ trait AppErr {
 }
 
 fn err_exit(s: &str) -> ! {
-    writeln!(std::io::stderr(), "{}", s).unwrap();
+    unsafe { terminal_state::restore() };
+    eprintln!("{}", s);
     std::io::stderr().flush().unwrap();
     std::process::exit(1);
 }
@@ -419,20 +421,20 @@ fn main() {
     // We write all logs to the configured (by env variable) file, falling back to the data local
     // dir or temp directory, and read from the {PROGRAM_NAME}_LOG environment variable to set the
     // application log level (which defaults to warn).
-    {
-        let log_file = {
-            if let Some(f) = std::env::var_os(format!("{}_LOG_FILE", PROGRAM_NAME.to_uppercase())) {
-                f.into()
+    let log_file = {
+        if let Some(f) = std::env::var_os(format!("{}_LOG_FILE", PROGRAM_NAME.to_uppercase())) {
+            f.into()
+        } else {
+            let mut f = if let Some(proj_dirs) = constants::app_dirs() {
+                proj_dirs.data_local_dir().to_owned()
             } else {
-                let mut f = if let Some(proj_dirs) = constants::app_dirs() {
-                    proj_dirs.data_local_dir().to_owned()
-                } else {
-                    std::env::temp_dir()
-                };
-                f.push(format!("{}.log", PROGRAM_NAME));
-                f
-            }
-        };
+                std::env::temp_dir()
+            };
+            f.push(format!("{}.log", PROGRAM_NAME));
+            f
+        }
+    };
+    {
         std::fs::create_dir_all(log_file.parent().expect("log file is a root directory"))
             .expect("failed to create log output directory");
         WriteLogger::init(
@@ -440,9 +442,25 @@ fn main() {
                 .map(|v| simplelog::LevelFilter::from_str(&v).expect("invalid program log level"))
                 .unwrap_or(simplelog::LevelFilter::Warn),
             simplelog::Config::default(),
-            std::fs::File::create(log_file).expect("failed to open log file for writing"),
+            std::fs::File::create(log_file.clone()).expect("failed to open log file for writing"),
         )
         .unwrap();
+    }
+
+    // Store the terminal state for future use.
+    unsafe { terminal_state::store() };
+
+    // Install a panic handler that will clean up the terminal and write the panic to the log.
+    {
+        std::panic::set_hook(Box::new(move |info| {
+            log::error!("{}", info);
+            unsafe { terminal_state::restore() };
+            eprintln!(
+                "A fatal error occurred in ergo. Please send the program log file ({}) and any other details to the development team.",
+                log_file.display()
+            );
+            std::io::stderr().flush().unwrap();
+        }));
     }
 
     // Parse arguments
@@ -468,8 +486,10 @@ fn main() {
         .setup();
     }
 
+    unsafe { terminal_state::restore() };
+
     match result {
-        Ok(s) => writeln!(std::io::stdout(), "{}", s).expect("writing output failed"),
+        Ok(s) => println!("{}", s),
         Err(e) => err_exit(&e),
     }
 }
