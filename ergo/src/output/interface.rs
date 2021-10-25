@@ -293,11 +293,7 @@ pub enum OutputType {
 
 impl OutputType {
     fn term(term: Box<term::StdoutTerminal>) -> Self {
-        OutputType::Term(TerminalOutput {
-            term,
-            last_rendered_lines: 0,
-            input_settings: TerminalInput::new(),
-        })
+        OutputType::Term(TerminalOutput::new(term))
     }
 }
 
@@ -315,6 +311,16 @@ impl<'a> Renderer<'a> {
 }
 
 impl TerminalOutput {
+    pub fn new(term: Box<term::StdoutTerminal>) -> Self {
+        let mut v = TerminalOutput {
+            term,
+            last_rendered_lines: 0,
+            input_settings: TerminalInput::new(),
+        };
+        v.show_cursor(false);
+        v
+    }
+
     pub fn renderer(&mut self) -> Renderer {
         self.term.reset().expect("failed to reset terminal");
         // Move cursor to beginning of previously-rendered output.
@@ -324,7 +330,10 @@ impl TerminalOutput {
         Renderer::new(self)
     }
 
-    pub fn renderer_after<T: std::fmt::Display, I: IntoIterator<Item = T>>(&mut self, to_write: I) -> Renderer {
+    pub fn renderer_after<T: std::fmt::Display, I: IntoIterator<Item = T>>(
+        &mut self,
+        to_write: I,
+    ) -> Renderer {
         self.term.reset().expect("failed to reset terminal");
         // Move cursor to beginning of previously-rendered output.
         for _ in 0..self.last_rendered_lines {
@@ -336,16 +345,31 @@ impl TerminalOutput {
         Renderer::new(self)
     }
 
+    pub fn show_cursor(&mut self, show: bool) {
+        // Very rough approximation of supporting ansi escape sequences.
+        if !self.term.supports_color() {
+            return;
+        }
+
+        if show {
+            drop(self.term.write(b"\x1b[?25h"));
+        } else {
+            drop(self.term.write(b"\x1b[?25l"));
+        }
+    }
+
     pub fn enable_stdin(&mut self) {
         if let Some(i) = &mut self.input_settings {
             i.enable();
         }
+        self.show_cursor(true);
     }
 
     pub fn disable_stdin(&mut self) {
         if let Some(i) = &mut self.input_settings {
             i.disable();
         }
+        self.show_cursor(false);
     }
 
     /// Write the given bytes, clearing lines of any previous characters.
@@ -385,6 +409,7 @@ impl Drop for TerminalOutput {
     fn drop(&mut self) {
         // Render nothing to clear the previous rendered content.
         self.renderer();
+        self.show_cursor(true);
     }
 }
 

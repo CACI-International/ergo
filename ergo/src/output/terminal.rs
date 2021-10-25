@@ -3,7 +3,10 @@
 use super::interface::{render::*, TerminalOutput};
 use ergo_runtime::abi_stable::std_types::{RDuration, ROption, RSlice, RString, RVec};
 use ergo_runtime::context::{LogEntry, LogLevel, LogTarget, LogTaskKey};
-use ergo_runtime::{error::Diagnostics, Error};
+use ergo_runtime::{
+    error::{Diagnostic, Diagnostics},
+    Error,
+};
 use log::warn;
 use slab::Slab;
 use std::collections::HashMap;
@@ -59,7 +62,21 @@ impl super::Output for Output {
     }
 
     fn new_error(&mut self, err: Error) {
-        self.errors.update(err);
+        self.errors.update(err, |d| {
+            use ergo_runtime::error::Severity::*;
+            let level = match d.severity {
+                Error => LogLevel::Error,
+                Warning => LogLevel::Warn,
+                Note => LogLevel::Info,
+                Help => LogLevel::Debug,
+                Bug => LogLevel::Error,
+            };
+            self.pending_logs.push(LogEntry {
+                level,
+                context: Default::default(),
+                args: d.message.clone(),
+            });
+        });
         self.need_update = true;
     }
 
@@ -194,7 +211,7 @@ impl Render for Progress {
 
         let t = chrono::naive::NaiveTime::from_hms(0, 0, 0)
             + chrono::Duration::from_std(duration_remaining).unwrap();
-        write!(to, "Progress: {} remaining", count_remaining)?;
+        write!(to, "Progress: {} remaining", count_remaining + 1)?;
         if duration_remaining != std::time::Duration::default() {
             write!(to, " ({})", t)?;
         }
@@ -211,8 +228,11 @@ impl Errors {
         }
     }
 
-    pub fn update(&mut self, err: Error) {
-        self.errors.insert(&err);
+    pub fn update<F>(&mut self, err: Error, new: F)
+    where
+        F: FnMut(&Diagnostic),
+    {
+        self.errors.insert_new(&err, new);
     }
 }
 

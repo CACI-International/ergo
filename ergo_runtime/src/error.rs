@@ -664,6 +664,31 @@ pub mod diagnostics {
             added
         }
 
+        /// Insert all diagnostics from the given error into the set.
+        ///
+        /// Calls the `new` function on each diagnostic that hasn't yet been seen.
+        ///
+        /// Returns whether any new diagnostics were inserted.
+        pub fn insert_new<F>(&mut self, err: &Error, mut new: F) -> bool
+        where
+            F: FnMut(&Diagnostic),
+        {
+            let mut added = false;
+            match &err.inner {
+                InnerError::Errors(diagnostics) => {
+                    for d in diagnostics {
+                        let is_new = self.0.insert(HashByRef(d.clone()));
+                        if is_new {
+                            new(d.as_ref());
+                        }
+                        added |= is_new;
+                    }
+                }
+                _ => (),
+            }
+            added
+        }
+
         /// Extend this set with the contents of another set.
         pub fn extend(&mut self, other: Self) {
             self.0.extend(other.0);

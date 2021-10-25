@@ -100,7 +100,6 @@ scripts reside.
 * Debugger and profiler.
 * Script mutexes?
 * Improve UI error behavior.
-  * Display error logs immediately when new errors are encountered.
   * Display the aggregated errors at the end of execution (rather than the
     returned error value).
 * `Iter:sort`/`Iter:order`, `Iter:count`, and numeric comparison functions
