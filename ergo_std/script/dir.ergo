@@ -285,7 +285,7 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
 ## {{mdoc:modules :self Any Array Bool Error Function Iter Map MapEntry Number Path String Unit Unset}}
 ##
 ## # Modules
-## {{mdoc:modules :self bind doc dynamic env fs io json log meta net source test type}}
+## {{mdoc:modules :self bind doc dynamic env fs io json log meta net source sync test type}}
 ##
 ## # Functions
 ## {{(mdoc:functions :self by-content cache debug default ergo-remote
@@ -521,6 +521,11 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
         ## Arguments: `(Function :f) :value`
         map = fn :f :v -> plugin:value:source-copy :v (f :v)
     }
+
+    ## Synchronization functions.
+    ##
+    ## {{mdoc:functions :self resource consume}}
+    sync = plugin:sync
 
     ## Test helper functions.
     ##

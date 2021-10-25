@@ -19,6 +19,7 @@ mod net;
 mod number;
 mod path;
 mod string;
+mod sync;
 pub mod task;
 #[path = "type.rs"]
 mod type_;
@@ -50,8 +51,12 @@ macro_rules! make_string_map {
 #[plugin_entry]
 fn entry() -> ergo_runtime::Result<Value> {
     // Add trait implementations
-    exec::ergo_traits(&Context::global().traits);
-    net::ergo_traits(&Context::global().traits);
+    {
+        let traits = &Context::global().traits;
+        exec::ergo_traits(traits);
+        net::ergo_traits(traits);
+        sync::ergo_traits(traits);
+    }
 
     Ok(make_string_map! {
         "array" = array::module(),
@@ -71,6 +76,7 @@ fn entry() -> ergo_runtime::Result<Value> {
         "number" = number::module(),
         "path" = path::module(),
         "string" = string::module(),
+        "sync" = sync::module(),
         "task" = task::function(),
         "type" = type_::module(),
         "value" = value::module()

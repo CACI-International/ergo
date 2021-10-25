@@ -80,7 +80,7 @@ const INTERNAL_RAW_WAKER_VTABLE: RawWakerVTable = RawWakerVTable {
 
 #[derive(Debug, StableAbi)]
 #[repr(C)]
-struct RawWaker {
+pub struct RawWaker {
     data: *const (),
     vtable: &'static RawWakerVTable,
 }
@@ -91,9 +91,19 @@ impl From<RawWaker> for task::RawWaker {
     }
 }
 
+impl RawWaker {
+    pub fn into_waker(self) -> task::Waker {
+        unsafe { task::Waker::from_raw(self.into()) }
+    }
+}
+
+// RawWaker is Send and Sync because the Waker from which it is created is Send and Sync.
+unsafe impl Send for RawWaker {}
+unsafe impl Sync for RawWaker {}
+
 #[derive(Debug, StableAbi)]
 #[repr(C)]
-pub struct Context(RawWaker);
+pub struct Context(pub RawWaker);
 
 impl Context {
     pub fn new(cx: &mut task::Context<'_>) -> Self {
@@ -105,7 +115,7 @@ impl Context {
     }
 
     pub fn into_waker(self) -> task::Waker {
-        unsafe { task::Waker::from_raw(self.into_raw_waker()) }
+        self.0.into_waker()
     }
 }
 
