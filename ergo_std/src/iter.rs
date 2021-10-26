@@ -12,10 +12,11 @@ use std::collections::BTreeSet;
 
 pub fn module() -> Value {
     crate::make_string_map! {
-        "from" = from(),
-        "fold" = fold(),
+        "count" = count(),
         "filter" = filter(),
         "flatten" = flatten(),
+        "fold" = fold(),
+        "from" = from(),
         "map" = map(),
         "map-lazy" = map_lazy(),
         "no-errors" = no_errors(),
@@ -630,9 +631,27 @@ async fn map_lazy(func: _, iter: _) -> Value {
     .into()
 }
 
+#[types::ergo_fn]
+/// Count the number of items in an iterator.
+///
+/// Arguments: `(Into<Iter> :iter)`
+///
+/// Returns the number of items in the iterator as a Number.
+async fn count(iter: _) -> Value {
+    let iter = traits::into::<types::Iter>(iter).await?;
+
+    let vals: Vec<_> = iter.to_owned().collect().await?;
+    types::Number::from_usize(vals.len()).into()
+}
+
 #[cfg(test)]
 mod test {
     ergo_script::tests! {
+        fn count(t) {
+            t.assert_content_eq("self:iter:count [a,b,1,2]", "self:number:from 4");
+            t.assert_content_eq("self:iter:count []", "self:number:from 0");
+        }
+
         fn fold(t) {
             t.assert_content_eq("self:iter:fold (fn :r :a -> [:a,^:r]) [init] [a,b,c]", "[c,b,a,init]");
         }

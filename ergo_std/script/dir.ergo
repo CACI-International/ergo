@@ -349,7 +349,7 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
     ##
     ## # Functions
     ## {{
-    ##   (mdoc:functions :self from fold filter flatten map map-lazy no-errors skip skip-while
+    ##   (mdoc:functions :self count from fold filter flatten map map-lazy no-errors skip skip-while
     ##    split take take-while unique zip)
     ## }}
     Iter = match-indices plugin:type:Iter {^plugin:iter, split = :iter-split}

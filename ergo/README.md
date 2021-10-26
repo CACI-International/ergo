@@ -95,7 +95,7 @@ scripts reside.
   * This will allow loaded plugins to be properly dropped rather than leaked.
 * Reference count (non-root) cache values?
 
-* `Iter:sort`/`Iter:order`, `Iter:count`, and numeric comparison functions
+* `Iter:sort`/`Iter:order` and numeric comparison functions
 * Tree comments.
 * Improve `std:Path:or-source` behavior when a non-Path is passed.
 * Automatically cache dynamic value access.

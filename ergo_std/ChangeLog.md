@@ -10,6 +10,7 @@
   * This is more ergonomic for cases where the final case may error (but that
     error should be retained).
 * Add the `std:sync` module for synchronizing concurrent evaluation.
+* Add `std:Iter:count`.
 
 ### Improvements
 * Improve error return values when using `std:eval`.
