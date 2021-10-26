@@ -1,6 +1,7 @@
 //! Parsing of tree tokens.
 //!
 //! Pipe operators are desugared and the syntax tree is formed.
+//! Commented trees are removed.
 
 use super::tokenize_tree::{PairedToken, SymbolicToken, TreeToken};
 use ergo_runtime::{source::IntoSource, Source};
@@ -89,6 +90,7 @@ impl<E> From<Source<Error<E>>> for Errors<E> {
 enum TreeOrSymbol {
     Tree(Tree),
     Symbol(SymbolicToken),
+    Comment,
     ColonPriorFree,
     ColonPostFree,
     Used,
@@ -194,6 +196,7 @@ where
                         SymbolicToken::DocString(s) => Tree::DocString(s).into(),
                         o => o.into(),
                     }),
+                    TreeToken::Comment => source.with(TreeOrSymbol::Comment),
                     TreeToken::ColonPriorFree => source.with(TreeOrSymbol::ColonPriorFree),
                     TreeToken::ColonPostFree => source.with(TreeOrSymbol::ColonPostFree),
                     TreeToken::StartNested(p) => {
@@ -311,6 +314,7 @@ where
         //   Colon (Left assoc)
         //   Colon Suffix
         //   Bang/Caret Prefix
+        //   Comment Prefix
         //   Bang Expression Prefix
         //   Arrow (Right assoc)
         //   Pipe/PipeRight (Left assoc macro)
@@ -444,7 +448,7 @@ where
         where
             Pred: Fn(&TreeOrSymbol) -> bool,
             Part: Fn(&mut Toks) -> TResult<E>,
-            Join: Fn(TreeOrSymbol, Source<Tree>) -> Tree + Clone,
+            Join: Fn(TreeOrSymbol, Source<Tree>) -> Option<Tree> + Clone,
         {
             let split = toks.iter().position(|p| syms(&*p));
             if let Some(pos) = split {
@@ -460,9 +464,12 @@ where
                 let mut td = prefix_op(b, syms, part, join.clone())?;
                 let new_t = (t, td.pop_front().unwrap())
                     .into_source()
-                    .map(|(t, v)| join(t.unwrap(), v));
+                    .map(|(t, v)| join(t.unwrap(), v))
+                    .transpose();
                 let mut ret = a;
-                ret.push_back(new_t);
+                if let Some(v) = new_t {
+                    ret.push_back(v);
+                }
                 ret.extend(td);
                 Ok(ret)
             } else {
@@ -516,7 +523,7 @@ where
                 toks,
                 |t| t.is_front_colon(),
                 to_treedeque,
-                |_, t| Tree::ColonPrefix(t.into()),
+                |_, t| Some(Tree::ColonPrefix(t.into())),
             )
         }
 
@@ -553,16 +560,27 @@ where
                 toks,
                 |t| t.is_symbol(&SymbolicToken::Bang) || t.is_symbol(&SymbolicToken::Caret),
                 colon_suffix,
-                |s, t| match s {
-                    TreeOrSymbol::Symbol(SymbolicToken::Bang) => Tree::Bang(t.into()),
-                    TreeOrSymbol::Symbol(SymbolicToken::Caret) => Tree::Caret(t.into()),
-                    _ => panic!("unexpected symbol"),
+                |s, t| {
+                    Some(match s {
+                        TreeOrSymbol::Symbol(SymbolicToken::Bang) => Tree::Bang(t.into()),
+                        TreeOrSymbol::Symbol(SymbolicToken::Caret) => Tree::Caret(t.into()),
+                        _ => panic!("unexpected symbol"),
+                    })
                 },
             )
         }
 
+        fn comment_prefix<E>(toks: &mut Toks) -> TResult<E> {
+            prefix_op(
+                toks,
+                |t| t == &TreeOrSymbol::Comment,
+                bang_caret_prefixes,
+                |_, _| None,
+            )
+        }
+
         fn bang_prefix_group<E>(toks: &mut Toks) -> TResult<E> {
-            prefixed_initial(toks, &SymbolicToken::Bang, bang_caret_prefixes, Tree::Bang)
+            prefixed_initial(toks, &SymbolicToken::Bang, comment_prefix, Tree::Bang)
         }
 
         fn arrow<E>(toks: &mut Toks) -> TResult<E> {
@@ -757,6 +775,19 @@ mod test {
             "# some comment\n##doc comment\n",
             DocString("doc comment".into()),
         );
+    }
+
+    #[test]
+    fn tree_comment() {
+        assert_single("a #(b c) d", Parens(vec![s("a"), s("d")]));
+        assert_single("a #b d", Parens(vec![s("a"), s("d")]));
+        assert_single("a #!b d", Parens(vec![s("a"), s("d")]));
+        assert_single("a #^b d", Parens(vec![s("a"), s("d")]));
+        assert_single("a #[b (e f)] d", Parens(vec![s("a"), s("d")]));
+        assert_single("a #{b; ([e f])} d", Parens(vec![s("a"), s("d")]));
+        assert_single("#a b d", Parens(vec![s("b"), s("d")]));
+        assert_fail("a ^#b d");
+        assert_fail("a #(b c d");
     }
 
     #[test]

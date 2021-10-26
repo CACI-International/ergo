@@ -19,6 +19,8 @@ use std::fmt;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TreeToken {
     Symbol(SymbolicToken),
+    /// A comment applying to the following tree.
+    Comment,
     /// A colon preceded by a non-value.
     ColonPriorFree,
     /// A colon succeeded by a non-value.
@@ -210,6 +212,7 @@ where
                         self.doc_comment = DocComment::Present;
                         self.next()
                     }
+                    Token::TreeComment => Some(Ok(source.with(TreeToken::Comment))),
                     Token::Comma | Token::Semicolon => Some({
                         if self.has_children() {
                             Ok(source.with(TreeToken::NextChild))
@@ -385,6 +388,24 @@ mod test {
     #[test]
     fn doc_comment_expression_mismatch() {
         assert_fail("## {{\nhello");
+    }
+
+    #[test]
+    fn tree_comment() {
+        assert_tokens(
+            "#{ a, b, #c }",
+            &[
+                Comment,
+                StartNested(Curly),
+                s("a"),
+                NextChild,
+                s("b"),
+                NextChild,
+                Comment,
+                s("c"),
+                EndNested,
+            ],
+        );
     }
 
     #[test]

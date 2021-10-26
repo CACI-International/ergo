@@ -99,6 +99,7 @@ pub enum Token {
         open: bool,
     },
     DocComment,
+    TreeComment,
     Comma,
     Semicolon,
     Newline,
@@ -302,6 +303,7 @@ impl fmt::Display for Token {
                 }
             }
             Token::DocComment => write!(f, "##"),
+            Token::TreeComment => write!(f, "#"),
             Token::Comma => write!(f, ","),
             Token::Semicolon => write!(f, ";"),
             Token::Newline => write!(f, "\n"),
@@ -511,13 +513,15 @@ impl<I: Iterator<Item = char>> Tokens<I> {
 
         self.next_source().and_then(|c| {
             if c == '#' {
+                let next = self.iter.peek();
                 // Doc comment (only when we are not in a doc comment expression)
-                if self.iter.peek_match(&['#']) && !self.doc_comment.active {
+                if next == Some(&'#') && !self.doc_comment.active {
                     self.next_source();
 
                     self.doc_comment.active = true;
                     Some(Ok(self.source.clone().with(Token::DocComment)))
-                } else {
+                } else if next.map(|c| c.is_whitespace()).unwrap_or(true) || (next == Some(&'#') && self.doc_comment.active) {
+                    // Line comment
                     while let Some(c) = self.iter.peek() {
                         if *c != '\n' {
                             self.next_source();
@@ -526,6 +530,9 @@ impl<I: Iterator<Item = char>> Tokens<I> {
                         }
                     }
                     self.next()
+                } else {
+                    // Tree comment
+                    Some(Ok(self.source.clone().with(Token::TreeComment)))
                 }
             } else {
                 // The remaining parsing will always result in some token based on the consumed
@@ -918,9 +925,9 @@ mod test {
     }
 
     #[test]
-    fn comments() -> Result<(), Source<Error>> {
+    fn line_comments() -> Result<(), Source<Error>> {
         assert_tokens(
-            "# This is a comment\n: #This is also a comment\n#One last comment",
+            "# This is a comment\n: # This is also a comment\n# One last comment",
             &[
                 Token::Newline,
                 Token::colon(),
@@ -928,6 +935,31 @@ mod test {
                 Token::Newline,
             ],
         )
+    }
+
+    #[test]
+    fn tree_comments() -> Result<(), Source<Error>> {
+        assert_tokens(
+            "#hello world",
+            &[
+                Token::TreeComment,
+                Token::string("hello", false),
+                Token::Whitespace,
+                Token::string("world", false),
+            ],
+        )?;
+        assert_tokens(
+            "#[hello world]",
+            &[
+                Token::TreeComment,
+                Token::open_bracket(),
+                Token::string("hello", false),
+                Token::Whitespace,
+                Token::string("world", false),
+                Token::close_bracket(),
+            ],
+        )?;
+        Ok(())
     }
 
     #[test]
