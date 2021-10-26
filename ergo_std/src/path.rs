@@ -11,6 +11,7 @@ use ergo_runtime::{
 
 pub fn module() -> Value {
     crate::make_string_map! {
+        "from" = from(),
         "join" = join(),
         "name" = name(),
         "new" = new(),
@@ -41,6 +42,14 @@ async fn new() -> Value {
     let s = format!("{:x}", random::<u64>());
     let name: &ItemName = s.as_str().try_into().unwrap();
     types::Path::from(store.item(name).path()).into()
+}
+
+#[types::ergo_fn]
+/// Convert a value into a Path.
+///
+/// Arguments: `:value`
+async fn from(value: _) -> Value {
+    traits::into::<types::Path>(value).await?.into()
 }
 
 #[types::ergo_fn]
@@ -146,6 +155,10 @@ mod test {
         fn join(t) {
             let p = std::path::PathBuf::from("a");
             t.assert_value_eq("self:path:join a b c", &super::types::Path::from(p.join("b").join("c")));
+        }
+
+        fn from(t) {
+            t.assert_value_eq("self:path:from a/b/c", &super::types::Path::from(std::path::PathBuf::from("a").join("b").join("c")));
         }
 
         fn parent(t) {

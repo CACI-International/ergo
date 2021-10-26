@@ -400,7 +400,7 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
     ## {{type-function:}}
     ##
     ## # Functions
-    ## {{mdoc:functions :self new join split name or-source parent relative with-output}}
+    ## {{mdoc:functions :self new from join split name or-source parent relative with-output}}
     Path = match-indices plugin:type:Path {^plugin:path, with-output = :with-output-path, or-source = :path-or-source}
 
     ## The String type and related functions.

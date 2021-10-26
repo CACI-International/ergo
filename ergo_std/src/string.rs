@@ -327,7 +327,7 @@ Substring matches are determined by non-greedily matching string portions of the
 }
 
 #[types::ergo_fn]
-/// Convert a value into a string.
+/// Convert a value into a String.
 ///
 /// Arguments: `:value`
 async fn from(value: _) -> Value {

@@ -16,6 +16,7 @@
   * `std:Number:compare` - compare numbers
   * `std:String:compare` - compare strings
   * `std:Iter:order` - order an iterator according to an ordering function
+* Add `std:Path:from`, and allow Strings to be converted to Paths.
 
 ### Improvements
 * Improve error return values when using `std:eval`.

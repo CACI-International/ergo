@@ -75,6 +75,12 @@ impl From<Path> for super::String {
     }
 }
 
+impl From<super::String> for Path {
+    fn from(s: super::String) -> Self {
+        Path(std::path::PathBuf::from(s.0.into_string()).into())
+    }
+}
+
 ergo_traits_fn! {
     crate::ergo_display_basic!(traits, Path);
 
@@ -94,6 +100,7 @@ ergo_traits_fn! {
     }
 
     traits::IntoTyped::<super::String>::add_impl::<Path>(traits);
+    traits::IntoTyped::<Path>::add_impl::<super::String>(traits);
     crate::ergo_type_name!(traits, Path);
     traits::ValueByContent::add_impl::<Path>(traits);
 }
