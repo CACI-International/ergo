@@ -476,6 +476,9 @@ fn main() {
 
     let result = run(opts);
 
+    // Restore terminal state prior to the pager being used.
+    unsafe { terminal_state::restore() };
+
     if paging_enabled {
         pager::Pager::with_default_pager(if cfg!(target_os = "macos") {
             // macos less is old and buggy, not working correctly with `-F`
@@ -486,10 +489,13 @@ fn main() {
         .setup();
     }
 
-    unsafe { terminal_state::restore() };
-
     match result {
         Ok(s) => println!("{}", s),
-        Err(e) => err_exit(&e),
+        Err(e) => {
+            // Don't use err_exit as that restores terminal state, which may mess with a pager.
+            eprintln!("{}", e);
+            std::io::stderr().flush().unwrap();
+            std::process::exit(1);
+        }
     }
 }
