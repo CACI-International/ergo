@@ -11,6 +11,11 @@
     error should be retained).
 * Add the `std:sync` module for synchronizing concurrent evaluation.
 * Add `std:Iter:count`.
+* Add ordering utilities:
+  * `std:Order` - ordering constants
+  * `std:Number:compare` - compare numbers
+  * `std:String:compare` - compare strings
+  * `std:Iter:order` - order an iterator according to an ordering function
 
 ### Improvements
 * Improve error return values when using `std:eval`.

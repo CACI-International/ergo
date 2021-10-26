@@ -282,10 +282,11 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
 ## instance with `^ergo std`.
 ##
 ## # Types
-## {{mdoc:modules :self Any Array Bool Error Function Iter Map MapEntry Number Path String Unit Unset}}
+## {{(mdoc:modules :self Any Array Bool Error Function Iter Map MapEntry Number Order Path String
+##    Unit Unset)}}
 ##
 ## # Modules
-## {{mdoc:modules :self bind doc dynamic env fs io json log meta net source sync test type}}
+## {{mdoc:modules :self bind cmp doc dynamic env fs io json log meta net source sync test type}}
 ##
 ## # Functions
 ## {{(mdoc:functions :self by-content cache debug default ergo-remote
@@ -349,8 +350,8 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
     ##
     ## # Functions
     ## {{
-    ##   (mdoc:functions :self count from fold filter flatten map map-lazy no-errors skip skip-while
-    ##    split take take-while unique zip)
+    ##   (mdoc:functions :self count from fold filter flatten map map-lazy no-errors order skip
+    ##    skip-while split take take-while unique zip)
     ## }}
     Iter = match-indices plugin:type:Iter {^plugin:iter, split = :iter-split}
 
@@ -383,8 +384,16 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
     ## {{type-function ":number"}}
     ##
     ## # Functions
-    ## {{mdoc:functions :self from}}
+    ## {{mdoc:functions :self from compare}}
     Number = match-indices plugin:type:Number plugin:number
+
+    ## The Order type and related constants.
+    ##
+    ## {{type-function:}}
+    ##
+    ## # Values
+    ## The constants `less`, `equal`, and `greater` are indices in the type.
+    Order = match-indices plugin:type:Order plugin:cmp
 
     ## The Path type and related functions.
     ##
@@ -399,7 +408,7 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
     ## {{type-function:}}
     ##
     ## # Functions
-    ## {{mdoc:functions :self chars format from join split trim}}
+    ## {{mdoc:functions :self chars compare format from join split trim}}
     String = match-indices plugin:type:String plugin:string
 
     ## The Unit type.

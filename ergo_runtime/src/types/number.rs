@@ -216,6 +216,18 @@ impl From<Number> for super::String {
     }
 }
 
+impl PartialOrd for Number {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Number {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.num().cmp(&other.num())
+    }
+}
+
 ergo_traits_fn! {
     crate::ergo_display_basic!(traits, Number);
     crate::ergo_type_name!(traits, Number);

@@ -20,6 +20,7 @@ pub fn module() -> Value {
         "map" = map(),
         "map-lazy" = map_lazy(),
         "no-errors" = no_errors(),
+        "order" = order(),
         "skip" = skip(),
         "skip-while" = skip_while(),
         "take" = take(),
@@ -644,6 +645,83 @@ async fn count(iter: _) -> Value {
     types::Number::from_usize(vals.len()).into()
 }
 
+async fn compare(
+    cmp: &ergo_runtime::Source<Value>,
+    a: &Value,
+    b: &Value,
+) -> ergo_runtime::Result<std::cmp::Ordering> {
+    let result = traits::bind(
+        cmp.value().clone(),
+        Source::imbue(
+            cmp.source().with(
+                types::Args {
+                    args: types::args::Arguments::positional(vec![a.clone(), b.clone()])
+                        .unchecked(),
+                }
+                .into(),
+            ),
+        ),
+    )
+    .await;
+
+    Context::eval_as::<super::cmp::Order>(result)
+        .await
+        .map(|v| v.to_owned().into())
+}
+
+async fn partition(
+    v: &mut [Value],
+    cmp: &ergo_runtime::Source<Value>,
+) -> ergo_runtime::Result<usize> {
+    let pivot = v.len() / 2;
+    let end = v.len() - 1;
+    v.swap(pivot, end);
+
+    let mut part = 0;
+    for i in 0..end {
+        if compare(cmp, &v[i], &v[end]).await? == std::cmp::Ordering::Less {
+            v.swap(i, part);
+            part += 1;
+        }
+    }
+    v.swap(part, end);
+    Ok(part)
+}
+
+fn quicksort<'a>(
+    v: &'a mut [Value],
+    cmp: &'a ergo_runtime::Source<Value>,
+) -> futures::future::BoxFuture<'a, ergo_runtime::Result<()>> {
+    futures::future::FutureExt::boxed(async move {
+        if v.len() >= 2 {
+            let p = partition(v, cmp).await?;
+            quicksort(&mut v[..p], cmp).await?;
+            quicksort(&mut v[p + 1..], cmp).await?;
+        }
+        Ok(())
+    })
+}
+
+#[types::ergo_fn]
+/// Order the items in an iterator.
+///
+/// Arguments: `(Function :f) (Into<Iter> :iter)`
+///
+/// Uses `f` to order the items in `iter`. `f` is applied to two items at a time, and should return
+/// a `std:Order`.
+///
+/// Returns an iterator with items from `iter` ordered according to `f`.
+async fn order(func: _, iter: _) -> Value {
+    let iter = traits::into::<types::Iter>(iter).await?;
+
+    let mut vals: Vec<_> = iter.to_owned().collect().await?;
+
+    quicksort(&mut vals, &ARGS_SOURCE.with(func)).await?;
+
+    let deps = depends![^@vals];
+    types::Iter::new_iter(vals.into_iter(), deps).into()
+}
+
 #[cfg(test)]
 mod test {
     ergo_script::tests! {
@@ -670,6 +748,12 @@ mod test {
 
         fn map_lazy(t) {
             t.assert_content_eq("self:iter:map-lazy (fn :a -> { mapped = :a }) [2,3]", "self:iter:from [{mapped = 2},{mapped = 3}]");
+        }
+
+        fn order(t) {
+            t.assert_content_eq("self:iter:order self:string:compare [b,c,w,d,g,a]", "self:iter:from [a,b,c,d,g,w]");
+            t.assert_content_eq("self:iter:order self:string:compare [b,a,a,b,c]", "self:iter:from [a,a,b,b,c]");
+            t.assert_content_eq("self:iter:order self:string:compare []", "self:iter:from []");
         }
 
         fn skip(t) {

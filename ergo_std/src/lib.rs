@@ -3,6 +3,7 @@ use ergo_runtime::{plugin_entry, types, Context, Value};
 
 mod array;
 mod bool;
+mod cmp;
 mod env;
 mod error;
 mod exec;
@@ -36,7 +37,7 @@ macro_rules! make_string_map {
     ( source $src:expr, $( $s:literal = $v:expr ),* ) => {
         {
             let src = $src;
-            use ergo_runtime::{Value};
+            use ergo_runtime::{Value, types};
             use ergo_runtime::metadata::Source;
             let mut m: ergo_runtime::abi_stable::bst::BstMap<Value,Value> = Default::default();
             $( m.insert(Source::imbue(src.clone().with(crate::make_string($s))), Source::imbue(src.clone().with($v))); )*
@@ -53,6 +54,7 @@ fn entry() -> ergo_runtime::Result<Value> {
     // Add trait implementations
     {
         let traits = &Context::global().traits;
+        cmp::ergo_traits(traits);
         exec::ergo_traits(traits);
         net::ergo_traits(traits);
         sync::ergo_traits(traits);
@@ -61,6 +63,7 @@ fn entry() -> ergo_runtime::Result<Value> {
     Ok(make_string_map! {
         "array" = array::module(),
         "bool" = bool::module(),
+        "cmp" = cmp::module(),
         "env" = env::module(),
         "error" = error::module(),
         "exec" = exec::function(),

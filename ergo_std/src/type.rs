@@ -32,6 +32,7 @@ pub fn module() -> Value {
         "Function" = match_function(),
         "Iter" = match_iter(),
         "Number" = match_number(),
+        "Order" = match_order(),
         "Error" = match_error()
     }
 }
@@ -457,6 +458,14 @@ fn match_number() -> Value {
 If called with no arguments, returns a number constructor which takes a numeric string argument.
 The string may be an integer, decimal, or ratio of integers (e.g. `1/2`) with any number of digits.
 The function can only be used in calls: you cannot destructure Numbers in pattern calls.",
+    )
+}
+
+fn match_order() -> Value {
+    make_match_fn(
+        super::cmp::Order::ergo_type(),
+        Err("cannot compose; use indices".into()),
+        "Matches an Order value.",
     )
 }
 

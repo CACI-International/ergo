@@ -14,6 +14,7 @@ use futures::future::FutureExt;
 pub fn module() -> Value {
     crate::make_string_map! {
         "chars" = chars(),
+        "compare" = compare(),
         "format" = format(),
         "from" = from(),
         "join" = join(),
@@ -380,6 +381,16 @@ async fn trim(s: types::String) -> Value {
     types::String::from(s.as_ref().as_str().trim()).into()
 }
 
+#[types::ergo_fn]
+/// Compare two strings lexicographically.
+///
+/// Arguments: `(String :a) (String :b)`
+///
+/// Returns a `std:Order` indicating the comparison of `a` to `b`.
+async fn compare(a: types::String, b: types::String) -> Value {
+    super::cmp::Order::from(a.as_ref().0.cmp(&b.as_ref().0)).into()
+}
+
 #[cfg(test)]
 mod test {
     use ergo_runtime::types::String;
@@ -387,6 +398,13 @@ mod test {
     ergo_script::tests! {
         fn chars(t) {
             t.assert_content_eq("self:array:from <| self:string:chars hello", "[h,e,l,l,o]");
+        }
+
+        fn compare(t) {
+            t.assert_content_eq("self:string:compare a b", "self:cmp:less");
+            t.assert_content_eq("self:string:compare world hello", "self:cmp:greater");
+            t.assert_content_eq("self:string:compare all allow", "self:cmp:less");
+            t.assert_content_eq("self:string:compare hi hi", "self:cmp:equal");
         }
 
         fn format_create(t) {
