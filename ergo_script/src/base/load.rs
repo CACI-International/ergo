@@ -194,7 +194,7 @@ impl LoadFunctions {
         let load = types::ergo_fn_value! {
             /// Load a script, with optional additional arguments with which to call the result.
             ///
-            /// Arguments: `(StringOrPath :to-load) ^:call-args`
+            /// Arguments: `(Into<Path> :to-load) ^:call-args`
             ///
             /// ## Script resolution
             /// When loading a script, the following resolution process occurs for the first argument (if present):
@@ -219,11 +219,7 @@ impl LoadFunctions {
             async fn load(mut path: _, ...) -> Value {
                 Context::eval(&mut path).await?;
                 let target_source = metadata::Source::get(&path);
-                let target = match_value!{path,
-                    types::String(s) => s.as_str().into(),
-                    types::Path(p) => p.into_pathbuf(),
-                    v => Err(traits::type_error(v, "String or Path"))?
-                };
+                let target = traits::into::<types::Path>(path).await?.to_owned().into_pathbuf();
 
                 let working_dir = Context::source_path(&ARGS_SOURCE);
                 let working_dir = working_dir.as_ref().and_then(|p| p.parent());

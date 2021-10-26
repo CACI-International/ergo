@@ -623,7 +623,7 @@ async fn sha1(file: types::Path, sum: types::String) -> Value {
 #[types::ergo_fn]
 /// Make a Path depend on the contents of the file to which it refers.
 ///
-/// Arguments: `(StringOrPath :file)`
+/// Arguments: `(Into<Path> :file)`
 ///
 /// Keyed Arguments:
 /// * `:force-check` - if set, always check the given file for a change, ignoring any cached
@@ -632,13 +632,11 @@ async fn sha1(file: types::Path, sum: types::String) -> Value {
 ///
 /// Returns a `Path` that is identified by the contents of the file to which the argument refers.
 /// `file` must exist and refer to a file.
-async fn track(mut file: _, (force_check): [_]) -> Value {
-    Context::eval(&mut file).await?;
-    let file = match_value! {file,
-        types::String(s) => s.as_str().into(),
-        types::Path(p) => p.into_pathbuf(),
-        v => Err(traits::type_error(v, "String or Path"))?,
-    };
+async fn track(file: _, (force_check): [_]) -> Value {
+    let file = traits::into::<types::Path>(file)
+        .await?
+        .to_owned()
+        .into_pathbuf();
     let force_check = force_check.is_some();
 
     let loaded_info = Context::global().shared_state.get(|| {

@@ -76,17 +76,12 @@ pub fn doc() -> Value {
     let write: Value = types::ergo_fn_value! {
         /// Write documentation to the given path.
         ///
-        /// Arguments: `(StringOrPath :path) :doc-value`
+        /// Arguments: `(Into<Path> :path) :doc-value`
         ///
         /// Returns the `Path` to the written documentation.
-        async fn write(mut path: _, value: _) -> Value {
-            Context::eval(&mut path).await?;
+        async fn write(path: _, value: _) -> Value {
             let path_source = metadata::Source::get(&path);
-            let mut doc_path = match_value!{path,
-                types::String(s) => s.as_str().into(),
-                types::Path(p) => p.into_pathbuf(),
-                v => Err(traits::type_error(v, "String or Path"))?
-            };
+            let mut doc_path = traits::into::<types::Path>(path).await?.to_owned().into_pathbuf();
 
             if let Some(parent) = doc_path.parent() {
                 std::fs::create_dir_all(&parent)
@@ -113,18 +108,13 @@ pub fn doc() -> Value {
     let child: Value = types::ergo_fn_value! {
         /// Write child documentation relative to the current documentation path.
         ///
-        /// Arguments: `(StringOrPath :path) :doc-value`
+        /// Arguments: `(Into<Path> :path) :doc-value`
         ///
         /// Returns the `Path` to the written documentation. If no documentation path is set, returns `path`
         /// (without writing anything).
-        async fn child(mut path: _, value: _) -> Value {
-            Context::eval(&mut path).await?;
+        async fn child(path: _, value: _) -> Value {
             let path_source = metadata::Source::get(&path);
-            let path = match_value!{path,
-                types::String(s) => s.as_str().into(),
-                types::Path(p) => p.into_pathbuf(),
-                v => Err(traits::type_error(v, "String or Path"))?
-            };
+            let path = traits::into::<types::Path>(path).await?.to_owned().into_pathbuf();
 
             match DocPath::owned() {
                 None => types::Path::from(path).into(),

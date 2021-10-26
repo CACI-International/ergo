@@ -4,9 +4,7 @@ use ergo_runtime::{
     context::{item_name, ItemName},
     error::{Diagnostic, DiagnosticInfo},
     metadata::Source,
-    traits, types,
-    value::match_value,
-    Context, Value,
+    traits, types, Context, Value,
 };
 
 pub fn module() -> Value {
@@ -55,19 +53,14 @@ async fn from(value: _) -> Value {
 #[types::ergo_fn]
 /// Join components into a Path.
 ///
-/// Arguments: `^((Array:Of :StringOrPath) :components)`
+/// Arguments: `^((Array:Of Into<Path>) :components)`
 ///
 /// Return a `Path` that is the result of joining the individual path components together.
 async fn join(...) -> Value {
     let mut path = std::path::PathBuf::new();
 
-    while let Some(mut v) = REST.next() {
-        Context::eval(&mut v).await?;
-        match_value! {v,
-            types::String(s) => path.push(s.as_str()),
-            types::Path(p) => path.push(p.as_ref()),
-            v => Err(traits::type_error(v, "String or Path"))?
-        }
+    while let Some(v) = REST.next() {
+        path.push(traits::into::<types::Path>(v).await?.as_ref().as_ref());
     }
 
     types::Path::from(path).into()
