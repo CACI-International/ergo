@@ -111,7 +111,7 @@ with-output-path = fn :f -> {
 ## allow them to be overriden.
 path-or-source = pat ^{parent,no-source = default :no-source as plugin:env:current-dir} :x -> matches [
     plugin:type:Path :p -> bind :x :p
-    :other -> bind :x <| plugin:match (plugin:value:source-path :other) [
+    plugin:type:Unset :u -> bind :x <| plugin:match (plugin:value:source-path :u) [
         plugin:type:Path :p -> plugin:match :parent [plugin:type:Unset -> :p, _ -> plugin:path:parent :p]
         plugin:type:Unset -> :no-source
     ]

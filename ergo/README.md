@@ -95,7 +95,6 @@ scripts reside.
   * This will allow loaded plugins to be properly dropped rather than leaked.
 * Reference count (non-root) cache values?
 
-* Improve `std:Path:or-source` behavior when a non-Path is passed.
 * Automatically cache dynamic value access.
 * Change how the default primitive value documentation is applied (either remove
   it entirely or do not set it as metadata and just change the documentation

@@ -25,6 +25,7 @@
 * Allow all `std:net:http` arguments to be used with `std:ergo-remote`.
 * Allow `std:fs:copy` to copy symlinks rather than follow them by default.
   * Add a `follow-symlinks` keyed argument to change this behavior.
+* Improve `std:Path:or-source` to error when non-Path values are passed.
 
 ### Bugfixes
 * Fix the `std:fs:glob` relative directory.
