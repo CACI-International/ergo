@@ -54,7 +54,7 @@ type StoredData = Vec<(std::path::PathBuf, SourceId, Option<std::time::Duration>
 
 impl std::ops::Drop for Sources {
     fn drop(&mut self) {
-        let content = match self.item.write() {
+        let content = match unsafe { self.item.write_unguarded() } {
             Err(e) => {
                 log::error!("could not open diagnostic source info for writing: {}", e);
                 return;
@@ -115,8 +115,7 @@ fn binary_file_id<P: AsRef<std::path::Path>>(path: P) -> SourceId {
 impl Sources {
     pub fn new(item: super::Item) -> Self {
         let stored: StoredData = if item.exists() {
-            let result = item
-                .read()
+            let result = unsafe { item.read_unguarded() }
                 .map_err(|e| e.to_string())
                 .and_then(|content| bincode::deserialize_from(content).map_err(|e| e.to_string()));
             match result {

@@ -746,7 +746,7 @@ struct LoadedTrackInfo {
 impl LoadedTrackInfo {
     pub fn new(item: ergo_runtime::context::Item) -> ergo_runtime::Result<Self> {
         let info = if item.exists() {
-            let content = item.read().into_diagnostic()?;
+            let content = unsafe { item.read_unguarded() }.into_diagnostic()?;
             let stored: Vec<(std::path::PathBuf, FileData)> =
                 bincode::deserialize_from(content).into_diagnostic()?;
             stored
@@ -762,7 +762,7 @@ impl LoadedTrackInfo {
 
 impl std::ops::Drop for LoadedTrackInfo {
     fn drop(&mut self) {
-        let content = match self.item.write() {
+        let content = match unsafe { self.item.write_unguarded() } {
             Err(e) => {
                 eprintln!("could not open fs::track info for writing: {}", e);
                 return;

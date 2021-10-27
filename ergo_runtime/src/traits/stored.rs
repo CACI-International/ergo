@@ -50,7 +50,7 @@ pub async fn read_from_store(store_item: &Item, id: u128) -> Result<Value> {
         ],
         async {
             let item = store_item.value_id(id);
-            let mut content = item.read_existing()?;
+            let mut content = item.read_existing().await?;
             let tp: Type = ErasedTrivial::deserialize(&mut content)?.into();
             if let Some(s) = Context::get_trait_for_type::<Stored>(&tp) {
                 let stored_ctx = StoredContext::new(store_item.clone());
@@ -83,7 +83,7 @@ pub async fn write_to_store(store_item: &Item, mut v: Value) -> Result<()> {
             let t = Context::get_trait::<Stored>(&v)
                 .ok_or_else(|| format!("no stored trait for {}", type_name(&v)))?;
 
-            let mut content = item.write()?;
+            let mut content = item.write().await?;
 
             let tp: ErasedTrivial = v.ergo_type().unwrap().clone().into();
             tp.serialize(&mut content)?;
