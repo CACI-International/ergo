@@ -129,6 +129,10 @@ impl DynamicScopeKey for ParentTaskKey {
         nsid!(std::task::key).as_u128()
     }
 
+    fn value_id(_: &ParentTask) -> u128 {
+        0
+    }
+
     fn affects_identity(&self) -> bool {
         false
     }

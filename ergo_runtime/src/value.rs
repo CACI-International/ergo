@@ -105,10 +105,10 @@ impl Value {
         Fut: std::future::Future<Output = Value> + Send,
     {
         let next = DynamicNext_TO::from_value(
-            std::sync::Arc::new(futures::lock::Mutex::new(DynamicNextState::NeedContext {
-                known_context_dependent: false,
+            std::sync::Arc::new(futures::lock::Mutex::new(DynamicNextState::Pending(
                 func,
-            })),
+                Default::default(),
+            ))),
             TU_Opaque,
         );
         Value {
@@ -375,48 +375,79 @@ where
 
             let mut guard = self.lock().await;
             match &mut *guard {
-                DynamicNextState::NeedContext {
-                    known_context_dependent: true,
-                    func,
-                } => {
-                    let func = func.clone();
-                    drop(guard);
-                    func().await
-                }
-                DynamicNextState::Done(val) => val.clone(),
-                DynamicNextState::NeedContext {
-                    known_context_dependent,
-                    func,
-                } => {
+                DynamicNextState::Pending(func, complete) => {
+                    if !complete.is_empty() {
+                        let ids = Context::with(|ctx| ctx.dynamic_scope.ids());
+                        if let Some(v) = complete.get(&ids) {
+                            return v.clone();
+                        }
+                    }
                     Context::with(|ctx| ctx.evaluating.locked(lock_id));
-                    debug_assert!(!*known_context_dependent);
-                    let func = func.clone();
+                    let func_inner = func.clone();
                     let (val, accessed) =
                         Context::fork(|ctx| ctx.evaluating.push(lock_id), async move {
-                            let val = func().await;
+                            let val = func_inner().await;
                             let accessed = Context::with(|ctx| ctx.dynamic_scope.accessed());
                             (val, accessed)
                         })
                         .await;
-                    if accessed {
-                        *known_context_dependent = true;
-                    } else {
+                    if accessed.len() == 0 {
+                        debug_assert!(complete.is_empty());
                         *guard = DynamicNextState::Done(val.clone());
+                    } else {
+                        complete.insert(&accessed, val.clone());
                     }
                     drop(guard);
                     Context::with(|ctx| ctx.evaluating.unlocked(lock_id));
                     val
                 }
+                DynamicNextState::Done(val) => val.clone(),
             }
         })
     }
 }
 
+#[derive(Default)]
+struct DynamicComplete {
+    // The completed values and the number of entries they have in ids.
+    values: Vec<(Value, usize)>,
+    // HashMap of (keyid, valueid) -> index in values
+    ids: std::collections::HashMap<(u128, u128), Vec<usize>>,
+}
+
+impl DynamicComplete {
+    pub fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+
+    pub fn insert(&mut self, entries: &[(u128, u128)], value: Value) {
+        debug_assert!(!entries.is_empty());
+        let index = self.values.len();
+        self.values.push((value, entries.len()));
+        for e in entries {
+            self.ids.entry(*e).or_default().push(index);
+        }
+    }
+
+    pub fn get(&self, entries: &[(u128, u128)]) -> Option<&Value> {
+        let mut counts: Vec<_> = self.values.iter().map(|(v, s)| (v, *s)).collect();
+        for e in entries {
+            if let Some(indices) = self.ids.get(e) {
+                for i in indices {
+                    let c = &mut counts[*i];
+                    c.1 -= 1;
+                    if c.1 == 0 {
+                        return Some(&c.0);
+                    }
+                }
+            }
+        }
+        None
+    }
+}
+
 enum DynamicNextState<F> {
-    NeedContext {
-        known_context_dependent: bool,
-        func: F,
-    },
+    Pending(F, DynamicComplete),
     Done(Value),
 }
 

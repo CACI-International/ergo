@@ -12,6 +12,11 @@
   * If a comment token (`#`) is followed by whitespace it is a line comment,
     otherwise it is a tree comment. A tree comment will comment out the
     following syntax tree.
+* Automatically cache results of values that access dynamic bindings based on
+  the binding value identities.
+  * Previously, values simply checked whether they access _any_ dynamic bindings
+    and, if so, would always re-evaluate. This caching is more efficient and is
+    more in line with how values which don't access dynamic bindings are cached.
 
 ## 1.0.0-rc.0  -- 2021-08-01
 Most of the changes listed below are breaking changes, so there is no separate

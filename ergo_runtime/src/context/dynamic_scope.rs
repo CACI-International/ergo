@@ -18,6 +18,11 @@ pub trait DynamicScopeKey {
     /// Get the scope entry identifier for this key.
     fn id(&self) -> u128;
 
+    /// Get an identifier for the stored value of this key.
+    ///
+    /// This is only required if `affects_identity` returns true (the default).
+    fn value_id(value: &Self::Value) -> u128;
+
     /// Return whether the scoped value affects consumer identity.
     fn affects_identity(&self) -> bool {
         true
@@ -29,6 +34,10 @@ impl DynamicScopeKey for Value {
 
     fn id(&self) -> u128 {
         self.id()
+    }
+
+    fn value_id(value: &Self::Value) -> u128 {
+        value.id()
     }
 }
 
@@ -44,6 +53,7 @@ pub struct DynamicScope {
 struct DynamicValue {
     key_source: Source<()>,
     value: Erased,
+    id: U128,
 }
 
 /// A pointer to a dynamic scope entry.
@@ -73,11 +83,12 @@ impl std::ops::Deref for EntryPointer {
 pub type DynamicScopeRef<T> = Ref<T, EntryPointer>;
 
 impl Entry {
-    fn new(source: Source<()>, value: Erased) -> Self {
+    fn new(source: Source<()>, value: Erased, id: U128) -> Self {
         Entry {
             value: RArc::new(DynamicValue {
                 key_source: source,
                 value,
+                id,
             }),
             accessed: AtomicBool::new(false),
         }
@@ -105,8 +116,11 @@ impl DynamicScope {
     /// Set a value in the dynamic scope.
     pub fn set<T: DynamicScopeKey>(&mut self, key: &Source<T>, value: T::Value) {
         let (src, k) = key.as_ref().map(|k| k.id()).take();
-        self.scope
-            .insert(k.into(), Entry::new(src, Erased::new(value)));
+        let entry_id = T::value_id(&value);
+        self.scope.insert(
+            k.into(),
+            Entry::new(src, Erased::new(value), entry_id.into()),
+        );
     }
 
     /// Remove a value in the dynamic scope with the given key.
@@ -114,11 +128,26 @@ impl DynamicScope {
         self.scope.remove(&key.id());
     }
 
-    /// Return whether any value in the dynamic scope was accessed.
-    pub fn accessed(&self) -> bool {
+    /// Return the keys in the dynamic scope that were accessed, and their value ids.
+    pub fn accessed(&self) -> Vec<(u128, u128)> {
         self.scope
             .iter()
-            .any(|(_, v)| v.accessed.load(Ordering::Relaxed))
+            .filter_map(|(k, v)| {
+                if v.accessed.load(Ordering::Relaxed) {
+                    Some((k.value(), v.value.id.value()))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Return the keys in the dynamic scope and their value ids.
+    pub fn ids(&self) -> Vec<(u128, u128)> {
+        self.scope
+            .iter()
+            .map(|(k, v)| (k.value(), v.value.id.value()))
+            .collect()
     }
 }
 
