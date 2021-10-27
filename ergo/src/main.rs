@@ -327,8 +327,7 @@ fn run(opts: Opts) -> Result<String, String> {
 
     let loaded = runtime.evaluate_string("<command line>", &to_eval);
 
-    let complete = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let complete_ref = complete.clone();
+    let (complete_send, complete) = std::sync::mpsc::channel();
 
     let exec_thread = std::thread::spawn(move || {
         let value_to_execute = loaded.and_then(|script_output| {
@@ -364,15 +363,18 @@ fn run(opts: Opts) -> Result<String, String> {
             runtime.block_on(async { ergo_runtime::Context::global().diagnostic_sources() });
         drop(runtime);
 
-        complete_ref.store(true, std::sync::atomic::Ordering::Relaxed);
+        drop(complete_send.send(()));
         (result, sources)
     });
 
-    while !complete.load(std::sync::atomic::Ordering::Relaxed) {
+    loop {
         if let Ok(mut g) = logger.lock() {
             g.update();
         }
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        match complete.recv_timeout(std::time::Duration::from_millis(50)) {
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+            _ => break,
+        }
     }
 
     let (result, sources) = exec_thread.join().unwrap();
