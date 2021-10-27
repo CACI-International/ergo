@@ -102,10 +102,18 @@ impl super::Output for Output {
     }
 }
 
+impl Drop for Output {
+    fn drop(&mut self) {
+        use super::Output;
+        self.update();
+    }
+}
+
 impl LogTarget for Output {
     fn log(&mut self, entry: LogEntry) {
         if entry.level >= self.log_level {
             self.pending_logs.push(entry);
+            self.need_update = true;
         }
     }
 
