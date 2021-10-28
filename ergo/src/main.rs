@@ -401,6 +401,9 @@ fn run(opts: Opts) -> Result<String, String> {
     match result {
         Ok(v) => Ok(v),
         Err(e) => {
+            if e.is_aborted() {
+                return Err("interrupted".into());
+            }
             use ergo_runtime::error::{emit_diagnostics, Diagnostics};
 
             let err = error_output(opts.format)
