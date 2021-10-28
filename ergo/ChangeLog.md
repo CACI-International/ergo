@@ -17,6 +17,9 @@
   * Previously, values simply checked whether they access _any_ dynamic bindings
     and, if so, would always re-evaluate. This caching is more efficient and is
     more in line with how values which don't access dynamic bindings are cached.
+* Remove default doc metadata (which was present for most of the script
+  primitive types).
+  * Now the only doc metadata is that explicitly introduced by users.
 
 ## 1.0.0-rc.0  -- 2021-08-01
 Most of the changes listed below are breaking changes, so there is no separate

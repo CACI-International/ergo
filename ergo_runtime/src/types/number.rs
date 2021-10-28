@@ -2,7 +2,7 @@
 
 use crate as ergo_runtime;
 use crate::abi_stable::{std_types::RVec, type_erase::Erased, StableAbi};
-use crate::metadata::{Doc, Source};
+use crate::metadata::Source;
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
 use crate::{depends, Dependencies, TypedValue};
@@ -197,10 +197,7 @@ impl std::str::FromStr for Number {
 
 impl From<Number> for TypedValue<Number> {
     fn from(v: Number) -> Self {
-        let doc = v.to_string();
-        let mut v = Self::constant(v);
-        Doc::set_string(&mut v, doc);
-        v
+        Self::constant(v)
     }
 }
 

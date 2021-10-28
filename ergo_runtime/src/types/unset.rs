@@ -2,7 +2,7 @@
 
 use crate as ergo_runtime;
 use crate::abi_stable::StableAbi;
-use crate::metadata::{Doc, Source};
+use crate::metadata::Source;
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
 use crate::{depends, Dependencies, TypedValue};
@@ -20,9 +20,7 @@ impl From<&'_ Unset> for Dependencies {
 
 impl From<Unset> for TypedValue<Unset> {
     fn from(v: Unset) -> Self {
-        let mut v = Self::constant(v);
-        Doc::set_string(&mut v, "<unset>");
-        v
+        Self::constant(v)
     }
 }
 

@@ -2,7 +2,7 @@
 
 use crate as ergo_runtime;
 use crate::abi_stable::{path::PathBuf, type_erase::Erased, StableAbi};
-use crate::metadata::{Doc, Source};
+use crate::metadata::Source;
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
 use crate::{depends, Dependencies, TypedValue};
@@ -49,10 +49,7 @@ impl std::ops::DerefMut for Path {
 
 impl From<Path> for TypedValue<Path> {
     fn from(v: Path) -> Self {
-        let doc = v.to_string();
-        let mut v = Self::constant(v);
-        Doc::set_string(&mut v, doc);
-        v
+        Self::constant(v)
     }
 }
 

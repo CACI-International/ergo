@@ -2,7 +2,7 @@
 
 use crate as ergo_runtime;
 use crate::abi_stable::{std_types::RVec, type_erase::Erased, StableAbi};
-use crate::metadata::{Doc, Source};
+use crate::metadata::Source;
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
 use crate::{depends, Dependencies, TypedValue, Value};
@@ -21,10 +21,7 @@ impl From<&'_ Array> for Dependencies {
 
 impl From<Array> for TypedValue<Array> {
     fn from(v: Array) -> Self {
-        let doc = format!("array with {} elements", v.0.len());
-        let mut v = Self::constant(v);
-        Doc::set_string(&mut v, doc);
-        v
+        Self::constant(v)
     }
 }
 

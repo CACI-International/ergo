@@ -2,7 +2,7 @@
 
 use crate as ergo_runtime;
 use crate::abi_stable::{type_erase::Erased, StableAbi};
-use crate::metadata::{Doc, Source};
+use crate::metadata::Source;
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
 use crate::{depends, Dependencies, TypedValue};
@@ -21,9 +21,7 @@ impl From<&'_ Unit> for Dependencies {
 
 impl From<Unit> for TypedValue<Unit> {
     fn from(v: Unit) -> Self {
-        let mut v = Self::constant(v);
-        Doc::set_string(&mut v, "()");
-        v
+        Self::constant(v)
     }
 }
 

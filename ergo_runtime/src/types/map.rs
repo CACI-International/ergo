@@ -2,7 +2,7 @@
 
 use crate as ergo_runtime;
 use crate::abi_stable::{bst::BstMap, type_erase::Erased, StableAbi};
-use crate::metadata::{Doc, Source};
+use crate::metadata::Source;
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
 use crate::{depends, Dependencies, TypedValue, Value};
@@ -22,10 +22,7 @@ impl From<&'_ Map> for Dependencies {
 
 impl From<Map> for TypedValue<Map> {
     fn from(m: Map) -> Self {
-        let doc = format!("map with {} entries", m.0.len());
-        let mut v = Self::constant(m);
-        Doc::set_string(&mut v, doc);
-        v
+        Self::constant(m)
     }
 }
 

@@ -95,13 +95,12 @@ scripts reside.
   * This will allow loaded plugins to be properly dropped rather than leaked.
 * Reference count (non-root) cache values?
 
-* Change how the default primitive value documentation is applied (either remove
-  it entirely or do not set it as metadata and just change the documentation
-  lookup function).
 * Add deep merging.
 * Add script-specified network cache locations (for local vendoring).
 * Add hostname-based(?) request parameters.
 * HTML doc generation.
+* Equality function.
+* Math.
 * Rework match error behavior.
 * Improve sources of capture bindings.
 * Debugger and profiler.
