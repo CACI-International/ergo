@@ -97,7 +97,6 @@ scripts reside.
 * Add script-specified network cache locations (for local vendoring).
 * Add hostname-based(?) request parameters.
 * HTML doc generation.
-* Equality function.
 * Rework match error behavior.
 * Improve sources of capture bindings.
 * Debugger and profiler.

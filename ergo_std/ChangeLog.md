@@ -19,6 +19,11 @@
 * Add `std:Path:from`, and allow Strings to be converted to Paths.
 * Add `std:merge` to deeply merge maps and arrays.
 * Add basic math operators (`+`, `-`, `*`, `/`, and `%`) to `std:Number`.
+* Add `std:equal` to compare two values by identity.
+* Add `std:Bool` functions:
+  * `not` for complements
+  * `and` for conjunction
+  * `or` for disjunction
 
 ### Improvements
 * Improve error return values when using `std:eval`.

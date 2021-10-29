@@ -22,6 +22,7 @@ pub fn module() -> Value {
             "get" = dynamic_binding_get(),
             "eval" = dynamic_binding_set()
         },
+        "equal" = equal(),
         "eval" = eval(),
         "identity" = identity(),
         "merge" = merge(),
@@ -379,6 +380,27 @@ async fn merge(a: _, b: _, (array_merge): [_]) -> Value {
     Merger { array_merge }.merge(a, b).await
 }
 
+#[types::ergo_fn]
+/// Check whether two values are equal.
+///
+/// Arguments: `:a :b`
+///
+/// Keyed Arguments:
+/// * `:exact` - If present, do not evaluate `a` nor `b` prior to comparison.
+///
+/// Equality is based on value identity.
+///
+/// Returns a Bool indicating whether `a` is equal to `b`.
+async fn equal(mut a: _, mut b: _, (exact): [_]) -> Value {
+    let exact = exact.is_some();
+
+    if !exact {
+        drop(Context::eval(&mut a).await);
+        drop(Context::eval(&mut b).await);
+    }
+    types::Bool(a.id() == b.id()).into()
+}
+
 #[cfg(test)]
 mod test {
     ergo_script::tests! {
@@ -415,6 +437,15 @@ mod test {
                 "{a = [1,2,3,4], b = { x = 42, y = 2, z = 3 }, c = hi}");
             t.assert_content_eq("self:value:merge ^array-merge {a = [{z=1},2,3], b = [1]} {a = [{y=4}], b = [4,5,6]}",
                 "{a = [{y=4,z=1},2,3], b = [4,5,6]}");
+        }
+
+        fn equal(t) {
+            t.assert_eq("self:value:equal a a", "self:bool:true");
+            t.assert_eq("self:value:equal (self:string:format '{}{}' abc def) (self:string:format '{}{}' a bcdef)", "self:bool:true");
+            t.assert_eq("self:value:equal a b", "self:bool:false");
+            t.assert_eq("self:value:equal a {'a'}", "self:bool:true");
+            t.assert_eq("self:value:equal ^exact a {'a'}", "self:bool:false");
+            t.assert_eq("self:value:equal ^exact {'a'} {'a'}", "self:bool:true");
         }
     }
 }

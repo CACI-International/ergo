@@ -55,4 +55,4 @@ required = {
     ]
 }
 
-std:test:run { type, eval, required }
+std:test:run { type, equal, eval, required }

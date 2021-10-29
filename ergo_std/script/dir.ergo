@@ -289,8 +289,8 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
 ## {{mdoc:modules :self bind cmp doc dynamic env fs io json log meta net source sync test type}}
 ##
 ## # Functions
-## {{(mdoc:functions :self by-content cache debug default ergo-remote eval exec getopt identity if
-##    import match merge optional required task variable)}}
+## {{(mdoc:functions :self by-content cache debug default equal ergo-remote eval exec getopt
+##    identity if import match merge optional required task variable)}}
 {
     ## The Any type.
     ##
@@ -319,7 +319,7 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
     ## The constants `true` and `false` are indices in the module.
     ##
     ## # Functions
-    ## {{mdoc:functions :self from}}
+    ## {{mdoc:functions :self from and or not}}
     Bool = match-indices plugin:type:Bool plugin:bool
 
     ## The Error type.
@@ -549,7 +549,7 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
     }
 
     # Functions
-    import {by-content,cache,debug,identity,merge,variable} = plugin:value
+    import {by-content,cache,debug,equal,identity,merge,variable} = plugin:value
     import {optional,required} = :mtype
     default
     ergo-remote
