@@ -17,6 +17,7 @@
   * `std:String:compare` - compare strings
   * `std:Iter:order` - order an iterator according to an ordering function
 * Add `std:Path:from`, and allow Strings to be converted to Paths.
+* Add `std:merge` to deeply merge maps and arrays.
 
 ### Improvements
 * Improve error return values when using `std:eval`.

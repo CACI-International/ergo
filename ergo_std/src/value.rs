@@ -9,6 +9,7 @@ use ergo_runtime::{
     type_system::ErgoType,
     types, Context, Value,
 };
+use futures::future::{BoxFuture, FutureExt};
 use std::collections::HashMap as CacheMap;
 use std::sync::Arc;
 
@@ -23,6 +24,7 @@ pub fn module() -> Value {
         },
         "eval" = eval(),
         "identity" = identity(),
+        "merge" = merge(),
         "meta" = crate::make_string_map! {
             "get" = meta_get(),
             "set" = meta_set()
@@ -309,6 +311,74 @@ async fn dynamic_binding_set(bindings: types::Map, mut eval: _) -> Value {
     .await
 }
 
+#[types::ergo_fn]
+/// Merge two values together recursively.
+///
+/// Arguments: `:a :b`
+///
+/// Keyed Arguments:
+/// * `:array-merge` - if present, arrays are element-wise deeply merged rather than appended.
+///
+/// Returns the result of merging `b` into `a` according to the following rules:
+/// * If `a` and `b` are both:
+///   * Maps - The entries of `b` are added to those in `a`. When a key is present in both, the
+///   values are deeply merged.
+///   * Arrays - The values of `b` are appended to the end of those in `a`. If `array-merge` is
+///   specified, arrays are element-wise deeply merged.
+/// * Otherwise, `b` is preferred and returned.
+async fn merge(a: _, b: _, (array_merge): [_]) -> Value {
+    let array_merge = array_merge.is_some();
+
+    struct Merger {
+        array_merge: bool,
+    }
+
+    impl Merger {
+        fn merge<'a>(&'a self, mut a: Value, mut b: Value) -> BoxFuture<'a, Value> {
+            async move {
+                drop(Context::eval(&mut a).await);
+                drop(Context::eval(&mut b).await);
+
+                if a.ergo_type().unwrap() == b.ergo_type().unwrap() {
+                    ergo_runtime::value::match_value! { a,
+                        types::Map(mut a) => {
+                            let types::Map(b) = b.as_type::<types::Map>().unwrap().to_owned();
+                            for (k, bv) in b {
+                                let v = if let Some(av) = a.remove(&k) {
+                                    self.merge(av, bv).await
+                                } else {
+                                    bv
+                                };
+                                a.insert(k, v);
+                            }
+                            return types::Map(a).into();
+                        },
+                        types::Array(mut a) => {
+                            let types::Array(b) = b.as_type::<types::Array>().unwrap().to_owned();
+                            if self.array_merge {
+                                let merge_len = std::cmp::min(a.len(), b.len());
+                                let mut biter = b.into_iter();
+                                for (av, bv) in a.iter_mut().zip(biter.by_ref().take(merge_len)) {
+                                    *av = self.merge(av.clone(), bv).await;
+                                }
+                                a.extend(biter);
+                            } else {
+                                a.extend(b);
+                            }
+                            return types::Array(a).into();
+                        },
+                        _ => ()
+                    }
+                }
+                b
+            }
+            .boxed()
+        }
+    }
+
+    Merger { array_merge }.merge(a, b).await
+}
+
 #[cfg(test)]
 mod test {
     ergo_script::tests! {
@@ -336,6 +406,15 @@ mod test {
         fn dynamic_binding_multiple_scopes(t) {
             t.assert_content_eq("the-value = self:value:dynamic:get the-value
                 [self:value:dynamic:eval {the-value = 10} :the-value, self:value:dynamic:eval {the-value = hi} :the-value]", "[10,hi]");
+        }
+
+        fn merge(t) {
+            t.assert_content_eq("self:value:merge [1,2] [3,4]", "[1,2,3,4]");
+            t.assert_content_eq("self:value:merge hi ()", "()");
+            t.assert_content_eq("self:value:merge {a = [1,2,3], b = { x = 1, y = 2 }, c = hi} {a = [4], b = { x = 42, z = 3 }}",
+                "{a = [1,2,3,4], b = { x = 42, y = 2, z = 3 }, c = hi}");
+            t.assert_content_eq("self:value:merge ^array-merge {a = [{z=1},2,3], b = [1]} {a = [{y=4}], b = [4,5,6]}",
+                "{a = [{y=4,z=1},2,3], b = [4,5,6]}");
         }
     }
 }
