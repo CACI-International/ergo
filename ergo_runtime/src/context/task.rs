@@ -157,14 +157,15 @@ mod task_priority {
     use std::task::{Context, Poll};
 
     enum WaitState {
-        Pending,
-        Waiting(Waker),
+        Runnable,
+        FuturePending,
+        WaitingForPriority(Waker),
         Done,
     }
 
     #[derive(Default)]
     struct Control {
-        pending: BTreeMap<u32, HashSet<NonNull<Registration>>>,
+        runnable: BTreeMap<u32, HashSet<NonNull<Registration>>>,
     }
 
     // NonNull<Registration> are always accessed while locking the control, so are Send and Sync.
@@ -173,13 +174,13 @@ mod task_priority {
 
     impl Control {
         pub fn wake_next(&mut self) {
-            if let Some((_, v)) = self.pending.iter_mut().next() {
+            if let Some((_, v)) = self.runnable.iter_mut().next() {
                 for reg in v.iter() {
                     match std::mem::replace(
                         &mut unsafe { reg.clone().as_mut() }.wait_state,
-                        WaitState::Pending,
+                        WaitState::Runnable,
                     ) {
-                        WaitState::Waiting(waker) => waker.wake(),
+                        WaitState::WaitingForPriority(waker) => waker.wake(),
                         _ => (),
                     }
                 }
@@ -192,54 +193,86 @@ mod task_priority {
     }
 
     pub struct Registration {
-        control: Arc<RMutex<Control>>,
         priority: u32,
         wait_state: WaitState,
     }
 
-    impl Future for Registration {
-        type Output = ();
+    #[pin_project::pin_project(PinnedDrop)]
+    pub struct Prioritized<Fut> {
+        registration: Registration,
+        control: Arc<RMutex<Control>>,
+        #[pin]
+        future: Fut,
+    }
 
-        fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<()> {
-            let me = &mut *self;
-            let ptr = NonNull::from(&*me);
-            let mut guard = me.control.lock();
+    impl<Fut: Future> Future for Prioritized<Fut> {
+        type Output = Fut::Output;
+
+        fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+            let mut proj = self.project();
+            let ptr = NonNull::from(&*proj.registration);
+            let mut guard = proj.control.lock();
+            // If we previously returned a Poll::Pending due from the future, we should re-add
+            // ourselves to the pending queue and then see whether we should run.
+            if let WaitState::FuturePending = proj.registration.wait_state {
+                let set = guard
+                    .runnable
+                    .entry(proj.registration.priority)
+                    .or_default();
+                set.insert(ptr);
+                proj.registration.wait_state = WaitState::Runnable;
+            }
+            // Get the front of the queue.
             let (k, v) = guard
-                .pending
+                .runnable
                 .iter_mut()
                 .next()
                 .expect("registration polled but no registrations pending");
-            let run_now = *k == me.priority;
+            // Check whether our priority matches the front of the queue (indicating we can run).
+            let run_now = *k == proj.registration.priority;
             if run_now {
+                // Remove ourselves from the queue (and possibly wake up the next tier).
                 v.remove(&ptr);
                 if v.is_empty() {
                     let k = k.clone();
                     drop(v);
-                    guard.pending.remove(&k);
+                    guard.runnable.remove(&k);
                     guard.wake_next();
                 }
-                me.wait_state = WaitState::Done;
-                Poll::Ready(())
+                proj.registration.wait_state = WaitState::Done;
+                drop(guard);
+                // Run the future.
+                let ret = proj.future.poll(cx);
+                if ret.is_pending() {
+                    // If the future is pending, store that state but don't add ourselves back to
+                    // the queue (as we are not runnable).
+                    proj.registration.wait_state = WaitState::FuturePending;
+                }
+                ret
             } else {
-                me.wait_state = WaitState::Waiting(cx.waker().clone());
+                // We still remain in the runnable queue, but add the waker to be awoken later.
+                proj.registration.wait_state = WaitState::WaitingForPriority(cx.waker().clone());
                 Poll::Pending
             }
         }
     }
 
-    impl Drop for Registration {
-        fn drop(&mut self) {
-            match &self.wait_state {
+    #[pin_project::pinned_drop]
+    impl<Fut> PinnedDrop for Prioritized<Fut> {
+        fn drop(self: Pin<&mut Self>) {
+            let proj = self.project();
+            match &proj.registration.wait_state {
                 WaitState::Done => return,
                 _ => (),
             }
-            let ptr = NonNull::from(&*self);
-            let mut guard = self.control.lock();
-            let should_wake_next = *guard.pending.keys().next().unwrap() == self.priority;
-            let set = guard.pending.get_mut(&self.priority).unwrap();
+            let ptr = NonNull::from(&*proj.registration);
+            let mut guard = proj.control.lock();
+            let should_wake_next =
+                *guard.runnable.keys().next().unwrap() == proj.registration.priority;
+            let set = guard.runnable.get_mut(&proj.registration.priority).unwrap();
             set.remove(&ptr);
             if set.is_empty() {
-                guard.pending.remove(&self.priority);
+                guard.runnable.remove(&proj.registration.priority);
                 if should_wake_next {
                     guard.wake_next();
                 }
@@ -252,16 +285,19 @@ mod task_priority {
             Self::default()
         }
 
-        pub fn register(&self, priority: u32) -> Pin<Box<Registration>> {
-            let reg = Box::pin(Registration {
+        pub fn prioritize<Fut>(&self, future: Fut, priority: u32) -> Pin<Box<Prioritized<Fut>>> {
+            let ret = Box::pin(Prioritized {
+                registration: Registration {
+                    priority,
+                    wait_state: WaitState::Runnable,
+                },
                 control: self.control.clone(),
-                priority,
-                wait_state: WaitState::Pending,
+                future,
             });
             let mut guard = self.control.lock();
-            let set = guard.pending.entry(priority).or_default();
-            set.insert(reg.as_ref().get_ref().into());
-            reg
+            let set = guard.runnable.entry(priority).or_default();
+            set.insert((&ret.as_ref().get_ref().registration).into());
+            ret
         }
     }
 
@@ -275,7 +311,7 @@ mod task_priority {
 
     impl std::fmt::Debug for TaskPriority {
         fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-            f.debug_struct("TaskPriority").finish()
+            f.debug_struct("TaskPriority").finish_non_exhaustive()
         }
     }
 }
@@ -374,12 +410,8 @@ struct TokioThreadPool {
 
 impl ThreadPoolInterface for std::sync::Arc<TokioThreadPool> {
     fn spawn_ok(&self, priority: u32, future: BoxFuture<'static, ()>) {
-        let reg = self.priority.register(priority);
-        self.pool.spawn(async move {
-            // TODO re-register when `future` returns pending?
-            reg.await;
-            future.await
-        });
+        let prioritized = self.priority.prioritize(future, priority);
+        self.pool.spawn(prioritized);
     }
 
     fn spawn_blocking(

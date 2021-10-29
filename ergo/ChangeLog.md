@@ -20,6 +20,9 @@
 * Remove default doc metadata (which was present for most of the script
   primitive types).
   * Now the only doc metadata is that explicitly introduced by users.
+* Improve runtime task prioritization.
+  * Previously priorities were only used when a task began, but now they are
+    used at any await points in tasks.
 
 ## 1.0.0-rc.0  -- 2021-08-01
 Most of the changes listed below are breaking changes, so there is no separate

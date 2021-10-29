@@ -84,7 +84,6 @@ scripts reside.
 ## Development Notes
 
 ### TODO
-* Display more detailed error information at exit?
 * Extend the Ctrl-C behavior to better cancel/stop execution.
   * Right now it only cancels tasks.
 * Persist command timing information for better estimates.
