@@ -15,11 +15,14 @@ pub trait Output: LogTarget {
     fn update(&mut self);
 }
 
-pub fn output(format: crate::options::OutputFormat, keep_going: bool) -> Option<OutputInstance> {
+pub fn output(
+    format: crate::options::OutputFormat,
+    keep_going: bool,
+) -> Option<(OutputInstance, bool)> {
     use interface::OutputType::*;
     interface::stdout(format).map(|v| match v {
-        Term(term_output) => terminal::Output::new(term_output, keep_going).into(),
-        Dumb(w) => plain::Output::new(w).into(),
+        Term(term_output) => (terminal::Output::new(term_output, keep_going).into(), true),
+        Dumb(w) => (plain::Output::new(w).into(), false),
     })
 }
 

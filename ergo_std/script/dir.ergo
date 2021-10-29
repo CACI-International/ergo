@@ -278,17 +278,17 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
 ## The ergo standard library.
 ##
 ## This library provides a number of submodules that group related functions, as well as some
-## top-level functions. It is often useful to merge the library into the top-level environment, for
-## instance with `^ergo std`.
+## top-level functions. It is often useful to use `std:import` to import subsets of functionality
+## from the library.
 ##
-## # Types
+## ## Types
 ## {{(mdoc:modules :self Any Array Bool Error Function Iter Map MapEntry Number Order Path String
 ##    Unit Unset)}}
 ##
-## # Modules
+## ## Modules
 ## {{mdoc:modules :self bind cmp doc dynamic env fs io json log meta net source sync test type}}
 ##
-## # Functions
+## ## Functions
 ## {{(mdoc:functions :self by-content cache debug default equal ergo-remote eval exec getopt
 ##    identity if import match merge optional required task variable)}}
 {

@@ -23,7 +23,7 @@ mod constants {
 }
 
 use options::*;
-use output::{error as error_output, output, Output, TermToTermcolor};
+use output::{error as error_output, output, Output, OutputInstance, TermToTermcolor};
 
 trait AppErr {
     type Output;
@@ -90,9 +90,7 @@ fn string_quote<S: AsRef<str>>(s: S) -> String {
         .join("\"'\"")
 }
 
-fn run(opts: Opts) -> Result<String, String> {
-    let mut output = output(opts.format, !opts.stop)
-        .app_err_result("could not create output from requested format")?;
+fn run(opts: Opts, mut output: OutputInstance) -> Result<String, String> {
     output.set_log_level(opts.log_level);
     let logger = std::sync::Arc::new(std::sync::Mutex::new(output));
 
@@ -476,10 +474,13 @@ fn main() {
     if opts.doc {
         opts.page ^= true;
     }
-
+    let doc = opts.doc;
     let paging_enabled = opts.page;
 
-    let result = run(opts);
+    let (output, is_terminal) =
+        output(opts.format, !opts.stop).app_err("could not create output with requested format");
+
+    let result = run(opts, output);
 
     // Restore terminal state prior to the pager being used.
     unsafe { terminal_state::restore() };
@@ -487,15 +488,21 @@ fn main() {
     if paging_enabled {
         pager::Pager::with_default_pager(if cfg!(target_os = "macos") {
             // macos less is old and buggy, not working correctly with `-F`
-            "less"
+            "less -R"
         } else {
-            "less -F"
+            "less -R -F"
         })
         .setup();
     }
 
     match result {
-        Ok(s) => println!("{}", s),
+        Ok(s) => {
+            if doc && is_terminal {
+                termimad::print_text(&s);
+            } else {
+                println!("{}", s);
+            }
+        }
         Err(e) => {
             // Don't use err_exit as that restores terminal state, which may mess with a pager.
             eprintln!("{}", e);
