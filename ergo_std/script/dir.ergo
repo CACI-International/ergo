@@ -383,7 +383,7 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
     ## {{type-function ":number"}}
     ##
     ## # Functions
-    ## {{mdoc:functions :self from compare}}
+    ## {{mdoc:functions :self from compare + - * / %}}
     Number = match-indices plugin:type:Number plugin:number
 
     ## The Order type and related constants.

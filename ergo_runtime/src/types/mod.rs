@@ -13,7 +13,7 @@ mod index;
 pub mod iter;
 mod map;
 mod map_entry;
-mod number;
+pub mod number;
 mod path;
 mod string;
 mod unbound;

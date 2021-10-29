@@ -18,6 +18,7 @@
   * `std:Iter:order` - order an iterator according to an ordering function
 * Add `std:Path:from`, and allow Strings to be converted to Paths.
 * Add `std:merge` to deeply merge maps and arrays.
+* Add basic math operators (`+`, `-`, `*`, `/`, and `%`) to `std:Number`.
 
 ### Improvements
 * Improve error return values when using `std:eval`.

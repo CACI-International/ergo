@@ -98,7 +98,6 @@ scripts reside.
 * Add hostname-based(?) request parameters.
 * HTML doc generation.
 * Equality function.
-* Math.
 * Rework match error behavior.
 * Improve sources of capture bindings.
 * Debugger and profiler.

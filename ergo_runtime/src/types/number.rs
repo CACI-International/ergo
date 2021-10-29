@@ -9,6 +9,8 @@ use crate::{depends, Dependencies, TypedValue};
 use bincode;
 use num::{bigint::BigInt, rational::Ratio, BigRational, FromPrimitive, ToPrimitive};
 
+pub use num::Zero;
+
 /// Script number type.
 ///
 /// Script numbers are rational bigints.
