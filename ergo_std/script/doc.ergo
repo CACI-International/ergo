@@ -8,52 +8,41 @@ plugin = ergo plugin
 ## by two newlines).
 summary = fn :val -> (plugin:string:split "\n\n" (doc :val)):0
 
-## Document a module.
+path-safe = fn :v -> {
+    plugin:string:join __slash__ <| plugin:string:split / :v
+}
+
+## Document a module item.
 ##
 ## Arguments: `:value :module-index`
 ##
-## The module must be accessible as an index `module-index` of `value`.
-## If generating documentation, this will generate the module documentation separately and provide a
-## link. It will display a summary of the module documentation.
-module = fn :self :name -> {
+## The item must be accessible as an index `module-index` of `value`.
+## If generating documentation, this will generate the item documentation separately and provide a
+## link. It will display a summary of the item documentation.
+item = fn :self :name -> {
     first = !plugin:match doc:path: [
         plugin:type:Unset -> :name
-        _ -> plugin:string:format "[{}]({})" :name (doc:child :name self::name)
+        _ -> {
+            pname = path-safe :name
+            path = doc:child (path-safe :name) self::name
+            url-path = plugin:path:join ^<|plugin:array:from <| plugin:iter:map plugin:net:url-encode <| plugin:path:split :path
+            plugin:string:format "[{}]({})" :name :url-path
+        }
     ]
     plugin:string:format "{}: {}" :first (summary self::name)
 }
 
 ## Document module indices of a value.
 ##
-## Arguments: `:value ^:modules`
+## Arguments: `:value ^:indices`
 ##
-## Document multiple modules as an unordered list, with links to separate pages for each module if
+## Document multiple items as an unordered list, with links to separate pages for each item if
 ## generating documentation. `modules` must be indices of `value`.
-modules = fn :self ^:names -> {
-    plugin:iter:map (fn :n -> plugin:string:format "* {}" <| module :self :n) names:positional | plugin:string:join "\n"
+items = fn :self ^:names -> {
+    plugin:iter:map (fn :n -> plugin:string:format "* {}" <| item :self :n) names:positional | plugin:string:join "\n"
 }
 
-## Document function indices of a value.
-##
-## Arguments: `:value ^:functions`
-##
-## Document multiple functions as an unordered list with summaries, or as inline sections if
-## generating documentation. `functions` must be indices of `value`.
-functions = fn :self ^:names -> {
-    names = names:positional
-    !plugin:match doc:path: [
-        plugin:type:Unset -> {
-            plugin:iter:map (fn :n -> plugin:string:format "* {}: {}" :n (summary self::n)) :names | plugin:string:join "\n"
-        }
-        _ -> {
-            # Build an unordered list of links to the functions
-            list = (plugin:iter:map (fn :n -> plugin:string:format "* [{0}](#{0}): {1}" :n (summary self::n)) :names
-                    | plugin:string:join "\n")
-            content = (plugin:iter:map (fn :n -> plugin:string:format "<div class='function'>\n\n## {}\n{}\n\n</div>" :n (doc self::n)) :names
-                    | plugin:string:join "\n\n")
-            plugin:string:format "{}\n\n{}" :list :content
-        }
-    ]
-}
+modules = :items
+functions = :items
 
 {summary, modules, functions}

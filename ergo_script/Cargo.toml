@@ -7,6 +7,8 @@ edition = "2021"
 [dependencies]
 ergo_runtime = { path = "../ergo_runtime" }
 futures = "^0.3"
+horrorshow = "0.8"
 libloading = "^0.6"
 log = "^0.4"
 plugin_tls = { version = "0.3", features = ["host"] }
+pulldown-cmark = "0.8"

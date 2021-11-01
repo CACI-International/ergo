@@ -20,7 +20,8 @@ use std::convert::TryFrom;
 
 pub fn module() -> Value {
     crate::make_string_map! {
-        "http" = http()
+        "http" = http(),
+        "url-encode" = url_encode()
     }
 }
 
@@ -281,6 +282,24 @@ ergo_runtime::type_system::ergo_traits_fn! {
                 .into()
         }
     }
+}
+
+#[types::ergo_fn]
+/// Encode a string as a url component.
+///
+/// Arguments: `(Into<String> :s)`
+///
+/// Returns a url-encoded string.
+async fn url_encode(s: _) -> Value {
+    let s = traits::into::<types::String>(s).await?;
+    types::String::from(
+        percent_encoding::utf8_percent_encode(
+            s.as_ref().as_str(),
+            percent_encoding::NON_ALPHANUMERIC,
+        )
+        .to_string(),
+    )
+    .into()
 }
 
 #[cfg(test)]

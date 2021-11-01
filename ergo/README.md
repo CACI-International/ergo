@@ -94,7 +94,7 @@ scripts reside.
   * This will allow loaded plugins to be properly dropped rather than leaked.
 * Reference count (non-root) cache values?
 
-* HTML doc generation.
+* No-arg function calls.
 * Add script-specified network cache locations (for local vendoring).
 * Add hostname-based(?) request parameters.
 * Rework match error behavior.

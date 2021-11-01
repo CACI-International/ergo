@@ -286,7 +286,7 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
 ##    Unit Unset)}}
 ##
 ## ## Modules
-## {{mdoc:modules :self bind cmp doc dynamic env fs io json log meta net source sync test type}}
+## {{mdoc:modules :self bind doc dynamic env fs io json log meta net source sync test type}}
 ##
 ## ## Functions
 ## {{(mdoc:functions :self by-content cache debug default equal ergo-remote eval exec getopt
@@ -505,10 +505,10 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
 
     ## Networking functions.
     ##
-    ## {{mdoc:functions :self download http unarchive}}
+    ## {{mdoc:functions :self download http unarchive url-encode}}
     net = {
         import {download, unarchive} = :mnet
-        import { http } = plugin:net
+        import { http, url-encode } = plugin:net
     }
 
     ## Value source location functions.

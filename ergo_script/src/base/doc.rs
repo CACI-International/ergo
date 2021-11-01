@@ -64,6 +64,36 @@ impl DocPath {
     }
 }
 
+fn write_doc(path: &std::path::Path, md: &str) -> Result<(), String> {
+    use horrorshow::{helper::doctype, html, prelude::*};
+
+    struct Markdown<'a>(&'a str);
+
+    impl<'a> RenderOnce for Markdown<'a> {
+        fn render_once(self, tmpl: &mut TemplateBuffer) {
+            use pulldown_cmark::{html, Parser};
+            let p = Parser::new(self.0);
+            let mut s = String::new();
+            html::push_html(&mut s, p);
+            tmpl.write_raw(&s);
+        }
+    }
+
+    let mut f = std::io::BufWriter::new(std::fs::File::create(path).map_err(|e| e.to_string())?);
+    let template = html! {
+        : doctype::HTML;
+        html {
+            head {
+                title: "docs";
+            }
+            body {
+                : Markdown(md);
+            }
+        }
+    };
+    template.write_to_io(&mut f).map_err(|e| e.to_string())
+}
+
 /// The doc function, supporting a number of indexed functions as well.
 pub fn doc() -> Value {
     let path: Value = types::ergo_fn_value! {
@@ -102,11 +132,10 @@ pub fn doc() -> Value {
                 ).await?;
 
             if doc_path.is_dir() {
-                doc_path.push("index.md");
-            } else {
-                doc_path.set_extension("md");
+                doc_path.push("index");
             }
-            std::fs::write(&doc_path, doc.as_bytes())
+            doc_path.set_extension("html");
+            write_doc(&doc_path, &doc)
                 .add_primary_label(path_source.with("while writing to path from this value"))
                 .add_note(format_args!("path was {}", doc_path.display()))?;
             types::Path::from(doc_path).into()
@@ -153,12 +182,11 @@ pub fn doc() -> Value {
                         ).await?;
 
                     if new_path.is_dir() {
-                        rel_path.push("index.md");
-                    } else {
-                        rel_path.set_extension("md");
+                        rel_path.push("index");
                     }
+                    rel_path.set_extension("html");
                     let output_file = old_doc_path.join(&rel_path);
-                    std::fs::write(&output_file, doc.as_bytes())
+                    write_doc(&output_file, &doc)
                         .add_primary_label(path_source.with("while writing to path from this value"))
                         .add_note(format_args!("path was {}", output_file.display()))?;
                     types::Path::from(rel_path).into()

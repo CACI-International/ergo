@@ -24,6 +24,7 @@
   * `not` for complements
   * `and` for conjunction
   * `or` for disjunction
+* Add `std:net:url-encode` for url-encoding strings.
 
 ### Improvements
 * Improve error return values when using `std:eval`.
@@ -33,6 +34,7 @@
 * Allow `std:fs:copy` to copy symlinks rather than follow them by default.
   * Add a `follow-symlinks` keyed argument to change this behavior.
 * Improve `std:Path:or-source` to error when non-Path values are passed.
+* Change `std:doc:functions` to generate per-function doc children.
 
 ### Bugfixes
 * Fix the `std:fs:glob` relative directory.
