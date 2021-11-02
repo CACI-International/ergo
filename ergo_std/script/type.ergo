@@ -14,7 +14,7 @@ basic-type = fn :check -> :a -> !match :a [
 ##
 ## Returns a type that will check arguments like typical type functions.
 MapValues = fn (type:Map :fields) -> basic-type <| pat :out -> type:Map :m -> {
-    bind :out <| !map:from <| iter:map (fn (type:MapEntry: :k :v) -> type:MapEntry: :k (!fields::k :v)) :m
+    bind :out <| !map:from <| iter:map (fn (type:MapEntry:@ :k :v) -> type:MapEntry:@ :k (!fields::k :v)) :m
 }
 
 ## Match maps where all keys match a specific type and all values match a specific type.
@@ -24,7 +24,7 @@ MapValues = fn (type:Map :fields) -> basic-type <| pat :out -> type:Map :m -> {
 ## Returns a type that will check arguments like typical type functions.
 MapOf = fn (type:Function :keys) (type:Function :values) -> {
     basic-type <| pat :out -> type:Map :m -> {
-        bind :out <| !map:from <| iter:map (fn (type:MapEntry: (keys :k) (values :v)) -> type:MapEntry: :k :v) :m
+        bind :out <| !map:from <| iter:map (fn (type:MapEntry:@ (keys :k) (values :v)) -> type:MapEntry:@ :k :v) :m
     }
 }
 
@@ -62,7 +62,7 @@ optional = pat :out -> :v -> !match :v [
 ##
 ## Pattern Arguments: `:target`
 required = pat :out ^{source} -> :v -> !match :v [
-    type:Unset -> type:Error: (source=!match :source [type:Unset -> :v, _ -> :source]) "required value missing"
+    type:Unset -> type:Error:@ (source=!match :source [type:Unset -> :v, _ -> :source]) "required value missing"
     _ -> bind :out :v
 ]
 
@@ -107,10 +107,10 @@ enum = fn (type:String :name) (type:Map :variants) -> {
     ]
     # Create map interface for enum variants
     key-to-accessor = fn :key -> :a -> !match :a [
-        fn ^:args -> tp: :key ^:args
-        pat ^:args -> tp: !:key ^!:args -> ()
+        fn ^:args -> tp:@ :key ^:args
+        pat ^:args -> tp:@ !:key ^!:args -> ()
     ]
-    type:Map :accessor = :variants | iter:map (fn (type:MapEntry: :key _) -> type:MapEntry: :key (key-to-accessor :key)) | map:from
+    type:Map :accessor = :variants | iter:map (fn (type:MapEntry:@ :key _) -> type:MapEntry:@ :key (key-to-accessor :key)) | map:from
     # Wrap the accessor to add a way to check for `tp` using it.
     :a -> !match :a [index :arg -> accessor::arg,:tp]
 }
@@ -129,9 +129,9 @@ enum = fn (type:String :name) (type:Map :variants) -> {
 ##     first = :String
 ##     second = :String
 ## }
-## pair = StringPair: { first = hello, second = world }
+## pair = StringPair:@ { first = hello, second = world }
 ## StringPair _ = :pair
-## StringPair: {first,second} = :pair
+## StringPair:@ {first,second} = :pair
 ## ```
 struct = fn (type:String :name) (type:Map :fields) -> {
     type:new :name <| :a -> !match :a [

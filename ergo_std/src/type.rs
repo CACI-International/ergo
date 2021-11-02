@@ -17,6 +17,8 @@ use ergo_runtime::{
 };
 use futures::FutureExt;
 
+const TYPE_BINDING_INDEX: &'static str = "@";
+
 pub fn module() -> Value {
     crate::make_string_map! {
         "new" = new(),
@@ -249,39 +251,41 @@ fn make_match_fn<S: Into<String>>(
                 let source = Source::get(&arg);
                 match_value! {arg,
                     types::Args { mut args } => {
-                        let arg = args.next();
+                        let mut v = try_result!(args.next_or_error("value", source));
                         try_result!(args.unused_arguments());
-                        match arg {
-                            None => try_result!(constructor.add_primary_label(source.with(""))),
-                            Some(mut v) => {
-                                drop(Context::eval(&mut v).await);
-                                if v.ergo_type().unwrap() != &tp {
-                                    return traits::type_error_for_t(v, &tp).into_error().into();
-                                }
-                                v
-                            }
+                        drop(Context::eval(&mut v).await);
+                        if v.ergo_type().unwrap() != &tp {
+                            return traits::type_error_for_t(v, &tp).into_error().into();
                         }
+                        v
                     },
                     types::PatternArgs { mut args } => {
-                        let arg = args.next();
+                        let v = try_result!(args.next_or_error("binding", source));
                         try_result!(args.unused_arguments());
-                        match arg {
-                            None => try_result!(constructor.add_primary_label(source.with(""))),
-                            Some(v) => {
-                                let deps = depends![v];
-                                types::Unbound::new_no_doc(move |mut arg| {
-                                    let v = v.clone();
-                                    let tp = tp.clone();
-                                    async move {
-                                        drop(Context::eval(&mut arg).await);
-                                        if arg.ergo_type().unwrap() != &tp {
-                                            return traits::type_error_for_t(arg, &tp).into_error().into();
-                                        }
-                                        traits::bind(v, arg).await
-                                    }.boxed()
-                                }, deps).into()
+                        let deps = depends![v];
+                        types::Unbound::new_no_doc(move |mut arg| {
+                            let v = v.clone();
+                            let tp = tp.clone();
+                            async move {
+                                drop(Context::eval(&mut arg).await);
+                                if arg.ergo_type().unwrap() != &tp {
+                                    return traits::type_error_for_t(arg, &tp).into_error().into();
+                                }
+                                traits::bind(v, arg).await
+                            }.boxed()
+                        }, deps).into()
+                    },
+                    types::Index(v) => {
+                        if let Ok(s) = v.as_type::<types::String>() {
+                            if s.as_ref().as_str() == TYPE_BINDING_INDEX {
+                                return try_result!(constructor.add_primary_label(source.with("")));
                             }
                         }
+                        ergo_runtime::error!(
+                            labels: [ primary(source.with("")) ],
+                            notes: [ "only the `@` index is supported" ],
+                            error: "unrecognized type index"
+                        ).into()
                     },
                     mut v => {
                         drop(Context::eval(&mut v).await);
@@ -538,8 +542,8 @@ mod test {
         }
 
         fn error(t) {
-            t.assert_eq("bind (self:type:Error :e -> ()) (self:type:Error: doh)", "()");
-            t.assert_eq("a=1; bind (self:type:Error :e -> ()) (self:type:Error: (source = :a) doh)", "()");
+            t.assert_eq("bind (self:type:Error :e -> ()) (self:type:Error:@ doh)", "()");
+            t.assert_eq("a=1; bind (self:type:Error :e -> ()) (self:type:Error:@ (source = :a) doh)", "()");
         }
 
         fn string(t) {
@@ -552,9 +556,9 @@ mod test {
         }
 
         fn map_entry(t) {
-            t.assert_script_success("self:type:MapEntry: k v");
-            t.assert_eq("(self:type:MapEntry: k v):key","k");
-            t.assert_eq("(self:type:MapEntry: k v):value","v");
+            t.assert_script_success("self:type:MapEntry:@ k v");
+            t.assert_eq("(self:type:MapEntry:@ k v):key","k");
+            t.assert_eq("(self:type:MapEntry:@ k v):value","v");
         }
 
         fn function(t) {
@@ -567,15 +571,15 @@ mod test {
         }
 
         fn number(t) {
-            t.assert_success("self:type:Number: 1");
-            t.assert_success("self:type:Number: -3.14");
-            t.assert_success("self:type:Number: 1/2");
-            t.assert_success("self:type:Number: -3/4");
-            t.assert_success("self:type:Number: 0.5");
-            t.assert_success("self:type:Number: -0.3");
-            t.assert_eq("self:type:Number: 0.5", "self:type:Number: 1/2");
-            t.assert_fail("self:type:Number: ()");
-            t.assert_success("fn (self:type:Number :x) -> () |><| self:type:Number: 0");
+            t.assert_success("self:type:Number:@ 1");
+            t.assert_success("self:type:Number:@ -3.14");
+            t.assert_success("self:type:Number:@ 1/2");
+            t.assert_success("self:type:Number:@ -3/4");
+            t.assert_success("self:type:Number:@ 0.5");
+            t.assert_success("self:type:Number:@ -0.3");
+            t.assert_eq("self:type:Number:@ 0.5", "self:type:Number:@ 1/2");
+            t.assert_fail("self:type:Number:@ ()");
+            t.assert_success("fn (self:type:Number :x) -> () |><| self:type:Number:@ 0");
         }
 
         // omit map/array/path/etc, they use the same macro so should be fundamentally the same
@@ -585,10 +589,10 @@ mod test {
                 fn (self:type:String :a) (self:type:Unit :b) -> [:a,:b]
                 pat :a :b -> [:a2,:b2] -> { bind :a :a2; bind :b :b2 }
             ])
-            val = my_type: str ()
+            val = my_type:@ str ()
             fn !:my_type -> () |> :val
             fn (my_type _) -> () |> :val
-            my_type: :x :y = :val
+            my_type:@ :x :y = :val
             [:x,:y]",
                 "[str,()]"
             );
@@ -604,7 +608,7 @@ mod test {
                 fn (self:type:String :a) (self:type:Unit :b) -> [:a,:b]
                 pat :a :b -> [:a2,:b2] -> { bind :a :a2; bind :b :b2 }
             ])
-            val = my_type: str ()
+            val = my_type:@ str ()
             val:0",
                 "str"
             );
@@ -613,7 +617,7 @@ mod test {
                 fn (self:type:String :a) (self:type:Unit :b) -> [:a,:b]
                 pat :a :b -> [:a2,:b2] -> { bind :a :a2; bind :b :b2 }
             ])
-            val = my_type: str ()
+            val = my_type:@ str ()
             val:string",
                 "str"
             );

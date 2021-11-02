@@ -41,8 +41,6 @@ impl Runtime {
         let load_functions = base::LoadFunctions::new(load_path);
         let env = vec![
             (constants::PROGRAM_NAME, load_functions.load),
-            ("std", load_functions.std),
-            ("workspace", load_functions.workspace),
             ("fn", base::pat_args_to_args()),
             ("pat", base::pat_args_to_pat_args()),
             ("index", base::index()),
@@ -93,7 +91,11 @@ impl Runtime {
             let mut guard = self.load_data.ast_context.lock();
             Script::load(src.with(content), &mut *guard, self.load_data.lint_level())?
         };
-        s.top_level_env(self.load_data.top_level_env.lock().clone());
+        let source_path = sources.path(src.source_id);
+        s.top_level_env(
+            self.load_data
+                .script_top_level_env(source_path.as_ref().map(|p| p.as_path())),
+        );
         if self.load_data.backtrace() {
             s.enable_backtrace();
         }
@@ -128,27 +130,26 @@ impl Runtime {
         self.load_data.resolve_script_path(working_dir, path)
     }
 
-    /// Apply any Unbound values on empty Args (recursively).
+    /// Apply any Unbound values on `()` Args.
     pub async fn apply_unbound(mut val: Value) -> Value {
         let src = ergo_runtime::metadata::Source::get(&val);
-        loop {
-            drop(Context::eval(&mut val).await);
-            if val.is_type::<ergo_runtime::types::Unbound>() {
-                val = ergo_runtime::traits::bind(
-                    val,
-                    ergo_runtime::metadata::Source::imbue(
-                        src.clone().with(
-                            ergo_runtime::types::Args {
-                                args: Default::default(),
-                            }
-                            .into(),
-                        ),
-                    ),
-                )
-                .await;
-            } else {
-                break;
-            }
+        let set_source = |v| ergo_runtime::metadata::Source::imbue(src.clone().with(v));
+        drop(Context::eval(&mut val).await);
+        use ergo_runtime::types;
+        if val.is_type::<types::Unbound>() {
+            val = ergo_runtime::traits::bind(
+                val,
+                set_source(
+                    types::Args {
+                        args: types::args::Arguments::positional(vec![set_source(
+                            types::Unit.into(),
+                        )])
+                        .unchecked(),
+                    }
+                    .into(),
+                ),
+            )
+            .await;
         }
         val
     }
@@ -459,22 +460,24 @@ mod test {
 
     #[test]
     fn function_no_args() -> Result<(), String> {
-        script_eval_to("f = fn: -> a; f:", SRString("a"))
+        script_eval_to("f = fn ^[] -> a; f ^[]", SRString("a"))?;
+        script_parse_fail("f = fn: -> a")?;
+        Ok(())
     }
 
     #[test]
     fn function_capture() -> Result<(), String> {
-        script_eval_to(":f = { :a = 100; _ -> :a }; :a = 5; f:", SRString("100"))?;
-        script_parse_fail(":f = _ -> :b; f:")?;
+        script_eval_to(":f = { :a = 100; _ -> :a }; :a = 5; f()", SRString("100"))?;
+        script_parse_fail(":f = _ -> :b; f()")?;
         script_eval_to(
-            ":f = fn :a -> { :b = [:a,something]; fn: -> {b,a} }; (f hi):",
+            ":f = fn :a -> { :b = [:a,something]; fn() -> {b,a} }; (f hi) ()",
             SRMap(&[
                 ("b", SRArray(&[SRString("hi"), SRString("something")])),
                 ("a", SRString("hi")),
             ]),
         )?;
-        script_fail(":a = 5; ::a = 10; :f = _ -> ::a; f:")?;
-        script_parse_fail(":a = 5; ::a = 10; :f = _ -> :b = 4; f:; :b")?;
+        script_fail(":a = 5; ::a = 10; :f = _ -> ::a; f()")?;
+        script_parse_fail(":a = 5; ::a = 10; :f = _ -> :b = 4; f(); :b")?;
         Ok(())
     }
 

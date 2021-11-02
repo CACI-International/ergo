@@ -46,6 +46,8 @@ pub enum Error<TreeError> {
     BadEqual,
     /// A doc comment was in an invalid position.
     BadDocComment,
+    /// A colon suffix was found.
+    BadColonSuffix,
 }
 
 impl<E: fmt::Display> fmt::Display for Error<E> {
@@ -57,6 +59,10 @@ impl<E: fmt::Display> fmt::Display for Error<E> {
             Error::BadDocComment => write!(
                 f,
                 "doc comments can only be within blocks or brackets, preceding an expression or binding"
+            ),
+            Error::BadColonSuffix => write!(
+                f,
+                "missing index value for ':'"
             ),
         }
     }
@@ -374,14 +380,7 @@ fn to_expression<E>(
             to_expression(ctx.pattern(true), *a)?,
             to_expression(ctx.pattern(false), *b)?,
         ))),
-        Tree::ColonSuffix(f) => {
-            let f = to_expression(ctx.pattern(false).string_implies(StringImplies::Get), *f)?;
-            if ctx.pattern {
-                Ok(source.with(Expression::pat_command(f, vec![])))
-            } else {
-                Ok(source.with(Expression::command(f, vec![])))
-            }
-        }
+        Tree::ColonSuffix(_) => Err(vec![source.with(Error::BadColonSuffix)]),
         Tree::Parens(inner) => {
             let mut inner = inner.into_iter().peekable();
             match inner.next() {
@@ -546,18 +545,6 @@ mod test {
     }
 
     #[test]
-    fn command_no_args() {
-        assert_single("f:", E::command(src(E::get(s("f"))), command_items![]));
-        assert_single(
-            "(mod f):",
-            E::command(
-                src(E::command(src(E::get(s("mod"))), command_items![s("f")])),
-                command_items![],
-            ),
-        );
-    }
-
-    #[test]
     fn force_command() {
         assert_single(
             "!echo howdy",
@@ -600,10 +587,13 @@ mod test {
     #[test]
     fn bind() {
         assert_block_item(
-            ":a= echo:",
+            ":a= echo()",
             BI::Bind(
                 src(E::set(s("a"))),
-                src(E::command(src(E::get(s("echo"))), command_items![])),
+                src(E::command(
+                    src(E::get(s("echo"))),
+                    command_items![src(E::unit())],
+                )),
             ),
         );
         assert_block_item("::a=a", BI::Bind(src(E::set(src(E::get(s("a"))))), s("a")));
@@ -633,6 +623,11 @@ mod test {
     #[test]
     fn extra_equal() {
         assert_fail(":a = :b = c");
+    }
+
+    #[test]
+    fn trailing_colon() {
+        assert_fail("f:");
     }
 
     #[test]
@@ -721,13 +716,16 @@ mod test {
     #[test]
     fn block() {
         assert_single(
-            "{ a\n () \n:c = echo:\n()}",
+            "{ a\n () \n:c = echo()\n()}",
             E::block(block_items![
                 bind(src(E::set(s("a"))), src(E::get(s("a")))),
                 src(E::unit()),
                 bind(
                     src(E::set(s("c"))),
-                    src(E::command(src(E::get(s("echo"))), command_items![]))
+                    src(E::command(
+                        src(E::get(s("echo"))),
+                        command_items![src(E::unit())]
+                    ))
                 ),
                 src(E::unit())
             ]),

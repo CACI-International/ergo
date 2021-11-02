@@ -89,7 +89,7 @@ partial = fn :f ^:args -> fn ^:args2 -> f ^:args ^:args2
 ## out = Path:with-output <| fn :p -> exec touch :p
 ## ```
 with-output-path = fn :f -> {
-    file = plugin:path:new:
+    file = plugin:path:new()
     { !f :file, :file }
 }
 
@@ -160,21 +160,21 @@ memoize = fn (plugin:type:Function :f) -> fn ^:args -> plugin:value:cache (no-pe
 ## ### Example Usage
 ## ```ergo
 ## # Basic import (no different than normal binding)
-## import :s = std:
+## import :s = :std
 ##
 ## # Name import
-## import {fs = {write},io} = std:
+## import {fs = {write},io} = :std
 ## write file.txt io:stdin
 ##
 ## # Renaming import
-## import {path = :stdpath} = std:
-## stdpath:new:
+## import {path = :stdpath} = :std
+## stdpath:new()
 ## ```
 import = {
     inner = recursive <| fn :self :descr -> :v -> {
         plugin:match :descr [
             plugin:type:Map :m -> {
-                plugin:iter:map (fn (plugin:type:MapEntry: :key :value) -> { fn (mtype:required (source=!:key) !(self :self :value)) -> () |> v::key }) :m
+                plugin:iter:map (fn (plugin:type:MapEntry:@ :key :value) -> { fn (mtype:required (source=!:key) !(self :self :value)) -> () |> v::key }) :m
                 ()
             }
             :other -> bind :other :v
@@ -187,7 +187,7 @@ import = {
 match-indices = fn :fallback :from -> :a -> !{
     { result } = plugin:match :a [
         index :i -> !plugin:match from::i [
-            plugin:type:Unset -> !plugin:type:Error: (source = :from) <| plugin:string:format "missing index: {}" :i
+            plugin:type:Unset -> !plugin:type:Error:@ (source = :from) <| plugin:string:format "missing index: {}" :i
             :x -> { result = :x }
         ]
         # We want the binding to occur immediately, but if there is an error we do not want to make
@@ -210,11 +210,11 @@ If bound directly to a value (versus calling with an argument), checks that the 
 type."
     )
     compose = (
-"If called without arguments, returns a composition function which can be used to compose or
-decompose instances of the type."
+"If indexed with `@`, returns a binding function which can be used to compose or decompose instances
+of the type."
     )
     matches [
-        fn: -> :binding
+        fn () -> :binding
         fn :args -> plugin:string:format "{}\n\n{}\nArguments: `{}`" :binding :compose :args
     ]
 }
@@ -238,7 +238,7 @@ if = fn :cond :if_true ^:if_false -> plugin:match (plugin:bool:from :cond) [
     plugin:bool:false -> plugin:match (plugin:array:from :if_false) [
         [] -> :unset
         [:if_false] -> :if_false
-        [_,^:rest] -> plugin:type:Error: (source=:rest) "too many arguments supplied to if"
+        [_,^:rest] -> plugin:type:Error:@ (source=:rest) "too many arguments supplied to if"
     ]
 ]
 
@@ -296,12 +296,12 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
     ##
     ## This type will always match the given value.
     ##
-    ## {{type-function:}}
+    ## {{type-function()}}
     Any = plugin:type:Any
 
     ## The Array type and related functions.
     ##
-    ## {{type-function:}}
+    ## {{type-function()}}
     ##
     ## # Functions
     ## {{mdoc:functions :self from Values Of}}
@@ -313,7 +313,7 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
 
     ## The Bool type and related functions.
     ##
-    ## {{type-function:}}
+    ## {{type-function()}}
     ##
     ## # Values
     ## The constants `true` and `false` are indices in the module.
@@ -332,7 +332,7 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
 
     ## The Function type and related functions.
     ##
-    ## {{type-function:}}
+    ## {{type-function()}}
     ##
     ## # Functions
     ## {{mdoc:functions :self memoize partial pass recursive}}
@@ -345,7 +345,7 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
     ## you these functions directly on arrays and maps (but you should take care to convert the
     ## resulting Iters back to arrays and maps when necessary).
     ##
-    ## {{type-function:}}
+    ## {{type-function()}}
     ##
     ## # Functions
     ## {{
@@ -358,7 +358,7 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
     ##
     ## When converting a map to/from an iterator, the iterator elements will/must be `MapEntry` types.
     ##
-    ## {{type-function:}}
+    ## {{type-function()}}
     ##
     ## # Functions
     ## {{mdoc:functions :self from Values Of}}
@@ -388,7 +388,7 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
 
     ## The Order type and related constants.
     ##
-    ## {{type-function:}}
+    ## {{type-function()}}
     ##
     ## # Values
     ## The constants `less`, `equal`, and `greater` are indices in the type.
@@ -396,7 +396,7 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
 
     ## The Path type and related functions.
     ##
-    ## {{type-function:}}
+    ## {{type-function()}}
     ##
     ## # Functions
     ## {{mdoc:functions :self new from join split name or-source parent relative with-output}}
@@ -404,7 +404,7 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
 
     ## The String type and related functions.
     ##
-    ## {{type-function:}}
+    ## {{type-function()}}
     ##
     ## # Functions
     ## {{mdoc:functions :self chars compare format from join split trim}}
@@ -412,12 +412,12 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
 
     ## The Unit type.
     ##
-    ## {{type-function:}}
+    ## {{type-function()}}
     Unit = plugin:type:Unit
 
     ## The Unset type.
     ##
-    ## {{type-function:}}
+    ## {{type-function()}}
     ##
     ## If called with no arguments, returns an Unset instance.
     ##

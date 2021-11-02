@@ -192,6 +192,28 @@ impl DiagnosticInfo for Diagnostic {
     }
 }
 
+impl DiagnosticInfo for &'_ mut Diagnostic {
+    type Output = ();
+
+    fn into_diagnostic(self) -> Self::Output {}
+
+    fn set_severity(self, severity: Severity) -> Self::Output {
+        self.severity = severity;
+    }
+
+    fn set_message<S: ToString>(self, message: S) -> Self::Output {
+        self.message = message.to_string().into();
+    }
+
+    fn add_label(self, label: Label) -> Self::Output {
+        self.labels.push(label);
+    }
+
+    fn add_note<S: ToString>(self, note: S) -> Self::Output {
+        self.notes.push(note.to_string().into());
+    }
+}
+
 impl<T, E: Into<Diagnostic>> DiagnosticInfo for std::result::Result<T, E> {
     type Output = std::result::Result<T, Diagnostic>;
 

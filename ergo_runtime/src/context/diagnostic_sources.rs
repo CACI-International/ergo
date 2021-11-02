@@ -249,6 +249,14 @@ impl Sources {
         })
     }
 
+    /// Get the path of the source, if any.
+    pub fn path(&self, id: SourceId) -> Option<std::path::PathBuf> {
+        self.get(id).and_then(|source| match source {
+            Source::File { path, .. } | Source::BinaryFile { path } => Some(path.clone().into()),
+            _ => None,
+        })
+    }
+
     fn get(&self, id: SourceId) -> Option<&Source> {
         unsafe fn return_ref<'a, T: std::ops::Deref<Target = Source> + 'a>(
             guard: T,

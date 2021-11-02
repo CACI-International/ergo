@@ -144,9 +144,9 @@ async fn modulus(a: _, b: _) -> Value {
 mod test {
     ergo_script::tests! {
         fn from(t) {
-            t.assert_content_eq("self:type:Number: 1/4", "self:number:from 0.25");
-            t.assert_ne("self:type:Number: 1/3", "self:number:from 0.333333333333333333333333");
-            t.assert_fail("self:type:Number: 1/0");
+            t.assert_content_eq("self:type:Number:@ 1/4", "self:number:from 0.25");
+            t.assert_ne("self:type:Number:@ 1/3", "self:number:from 0.333333333333333333333333");
+            t.assert_fail("self:type:Number:@ 1/0");
         }
 
         fn compare(t) {

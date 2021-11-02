@@ -7,11 +7,8 @@ use ergo_runtime::{
     error::{DiagnosticInfo, RResult},
     metadata, nsid, traits, try_result,
     type_system::ErgoType,
-    types,
-    value::match_value,
-    Context, Source, Value,
+    types, Context, Source, Value,
 };
-use futures::future::FutureExt;
 use libloading as dl;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -23,7 +20,7 @@ pub struct LoadData {
     // actual loading of the script/plugin to take advantage of evaluation caching.
     pub load_cache: Arc<RMutex<BTreeMap<PathBuf, Value>>>,
     pub load_path: Arc<Vec<PathBuf>>,
-    pub top_level_env: Arc<RMutex<BTreeMap<String, Value>>>,
+    top_level_env: Arc<RMutex<BTreeMap<String, Value>>>,
     pub ast_context: Arc<RMutex<crate::ast::Context>>,
     pub lint: Arc<RMutex<crate::ast::LintLevel>>,
     pub backtrace: Arc<std::sync::atomic::AtomicBool>,
@@ -90,6 +87,110 @@ impl LoadData {
         .or_else(|| self.load_path.iter().find_map(|p| get(p.as_ref())))
     }
 
+    /// Create the top-level env for the given script file.
+    pub fn script_top_level_env(&self, script_file: Option<&Path>) -> BTreeMap<String, Value> {
+        let mut env = self.top_level_env.lock().clone();
+
+        // Add `std`, which will act like `ergo std` relative to the path.
+        {
+            let ld = self.clone();
+            let working_dir = script_file.and_then(|p| p.parent()).map(|p| p.to_owned());
+            let mut std = Value::dyn_new(
+                move || async move {
+                    let wd = working_dir.clone();
+                    let path = match ld.resolve_script_path(working_dir, "std".as_ref()) {
+                        Some(path) => path,
+                        None => {
+                            let mut e =
+                                ergo_runtime::error::Diagnostic::from("could not find std library");
+                            if let Some(p) = wd {
+                                (&mut e).add_note(format_args!(
+                                    "while trying to load from {}",
+                                    p.display()
+                                ));
+                            }
+                            return types::Error::from(e).into();
+                        }
+                    };
+
+                    ld.load_script(&path).await
+                },
+                depends![nsid!(func::std)],
+            );
+            metadata::Doc::set_string(&mut std, "Get the value as if `ergo std` were run.");
+            env.insert("std".into(), std);
+        }
+
+        {
+            let ld = self.clone();
+            // If the current file is a workspace, allow it to load from parent workspaces.
+            let (path_basis, check_for_workspace) = match script_file {
+                Some(p) => (p.to_owned(), true),
+                None => (
+                    std::env::current_dir().expect("couldn't get current directory"),
+                    false,
+                ),
+            };
+            let mut workspace = Value::dyn_new(
+                move || async move {
+                    let resolved = Context::global()
+                        .shared_state
+                        .get(|| Ok(ResolvedWorkspaces::default()))
+                        .unwrap();
+
+                    let path = try_result!({
+                        let mut guard = resolved.map.lock();
+                        match guard.get(&path_basis) {
+                            Some(v) => v.clone(),
+                            None => {
+                                // Change path to directory containing parent workspace.ergo
+                                // component, if any.
+                                let path = if check_for_workspace {
+                                    let mut components = path_basis.components();
+                                    // Take parent directory of script, or parent directory of
+                                    // directory containing the workspace.
+                                    loop {
+                                        match components.next_back() {
+                                            Some(std::path::Component::Normal(c))
+                                                if c == WORKSPACE_NAME =>
+                                            {
+                                                break components.as_path();
+                                            }
+                                            Some(_) => continue,
+                                            None => break path_basis.as_path(),
+                                        }
+                                    }
+                                    .parent()
+                                } else {
+                                    Some(path_basis.as_path())
+                                };
+
+                                let result = path.and_then(|p| {
+                                    p.ancestors()
+                                        .find_map(script_path_exists(WORKSPACE_NAME, false))
+                                });
+                                guard.insert(path_basis.clone(), result.clone());
+                                result
+                            }
+                        }
+                    }
+                    .set_message("no ancestor workspace found")
+                    .add_note(format_args!("for path {}", path_basis.display())));
+
+                    ld.load_script(&path).await
+                },
+                depends![nsid!(func::workspace)],
+            );
+            metadata::Doc::set_string(
+                &mut workspace,
+                "Get the value as if `ergo path/to/ancestor/workspace.ergo` were run.",
+            );
+            env.insert("workspace".into(), workspace);
+        }
+
+        env
+    }
+
     /// Load a script at the given path.
     ///
     /// The path should already be verified as an existing file.
@@ -132,7 +233,7 @@ impl LoadData {
                             match script_result {
                                 Err(e) => Err(e),
                                 Ok(mut s) => {
-                                    s.top_level_env(me.top_level_env.lock().clone());
+                                    s.top_level_env(me.script_top_level_env(Some(&path)));
                                     if me.backtrace() {
                                         s.enable_backtrace();
                                     }
@@ -180,8 +281,6 @@ impl LoadData {
 
 pub struct LoadFunctions {
     pub load: Value,
-    pub std: Value,
-    pub workspace: Value,
     pub load_data: LoadData,
 }
 
@@ -245,121 +344,7 @@ impl LoadFunctions {
             }
         };
 
-        let ld = load_data.clone();
-        let std = types::Unbound::new(
-            move |v| {
-                let ld = ld.clone();
-                async move {
-                    let src = metadata::Source::get(&v);
-                    let working_dir = Context::source_path(&src);
-                    let working_dir = working_dir.as_ref().and_then(|p| p.parent());
-
-                    let path = match ld.resolve_script_path(working_dir, "std".as_ref()) {
-                        Some(path) => path,
-                        None => {
-                            return src.with("could not find std library").into_error().into();
-                        }
-                    };
-
-                    let lib = ld.load_script(&path).await;
-
-                    match_value!{v,
-                        types::Args { args } => {
-                            if args.is_empty() {
-                                // If called with no args, return the loaded library.
-                                lib
-                            } else {
-                                traits::bind(lib, metadata::Source::imbue(src.with(types::Args { args }.into()))).await
-                            }
-                        }
-                        v => traits::bind(lib, v).await
-                    }
-                }
-                .boxed()
-            },
-            depends![nsid!(func::std)],
-            "Get the value as if `ergo std` were run, and apply any bindings to it. Return the library if called with no arguments."
-        )
-        .into();
-
-        let ld = load_data.clone();
-        let workspace = types::Unbound::new(
-            move |v| {
-                let ld = ld.clone();
-                async move {
-                    let src = metadata::Source::get(&v);
-
-                    // If the current file is a workspace, allow it to load from parent workspaces.
-                    let (path_basis, check_for_workspace) = match Context::source_path(&src) {
-                        Some(p) => (p, true),
-                        None => (std::env::current_dir().expect("couldn't get current directory"), false)
-                    };
-
-                    let resolved = Context::global().shared_state.get(|| Ok(ResolvedWorkspaces::default())).unwrap();
-
-                    let path = try_result!({
-                        let mut guard = resolved.map.lock();
-                        match guard.get(&path_basis) {
-                            Some(v) => v.clone(),
-                            None => {
-                                let within_workspace = check_for_workspace && path_basis.file_name().map(|v| v == WORKSPACE_NAME).unwrap_or(false);
-
-                                let mut ancestors = path_basis.ancestors().peekable();
-                                if within_workspace {
-                                    while let Some(v) = ancestors.peek().and_then(|a| a.file_name()) {
-                                        if v == WORKSPACE_NAME {
-                                            ancestors.next();
-                                        } else {
-                                            break;
-                                        }
-                                    }
-                                    // Skip one more to drop parent directory of top-most workspace, which would find
-                                    // the same workspace as the original.
-                                    ancestors.next();
-                                }
-
-                                let result = ancestors.find_map(script_path_exists(WORKSPACE_NAME, false));
-                                guard.insert(path_basis, result.clone());
-                                result
-                            }
-                        }
-                    }
-                    .set_message("no ancestor workspace found")
-                    .add_primary_label(src.with(""))
-                    );
-
-                    let lib = ld.load_script(&path).await;
-
-                    match_value!{v,
-                        types::Args { args } => {
-                            if args.is_empty() {
-                                // If called with no args, return the loaded library.
-                                lib
-                            } else {
-                                traits::bind(lib, metadata::Source::imbue(src.with(types::Args { args }.into()))).await
-                            }
-                        }
-                        v => traits::bind(lib, v).await
-                    }
-                }
-                .boxed()
-            },
-            depends![nsid!(func::workspace)],
-            "Get the value as if `ergo path/to/ancestor/workspace.ergo` was run, and apply any bindings to it.
-    Return the workspace value if called with no arguments.
-
-    Note that this only retrieves the active workspace _when bound_, so if you want to use `workspace`
-    within a function that is to be used outside of the workspace, you should retrieve the workspace
-    outside of the function and reference that."
-        )
-        .into();
-
-        LoadFunctions {
-            load,
-            std,
-            workspace,
-            load_data,
-        }
+        LoadFunctions { load, load_data }
     }
 }
 

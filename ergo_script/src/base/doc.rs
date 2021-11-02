@@ -99,11 +99,11 @@ pub fn doc() -> Value {
     let path: Value = types::ergo_fn_value! {
         /// Get the current documentation path, if any.
         ///
-        /// Arguments: (none)
+        /// Arguments: `()`
         ///
         /// Returns the doc Path, or Unset if no Path is present (documentation is not being
         /// written to the filesystem).
-        async fn path() -> Value {
+        async fn path(_: types::Unit) -> Value {
             match DocPath::get() {
                 None => types::Unset.into(),
                 Some(p) => types::Path::from(p.current()).into()

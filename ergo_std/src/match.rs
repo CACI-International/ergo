@@ -114,7 +114,7 @@ mod test {
         }
 
         fn match_case_body_failure(t) {
-            t.assert_eq("self:match 1 [1 -> !self:types:Error: NO, 1 -> 2]", "2");
+            t.assert_eq("self:match 1 [1 -> !self:types:Error:@ NO, 1 -> 2]", "2");
         }
 
         fn match_case_body_bind_failure(t) {
@@ -122,8 +122,8 @@ mod test {
         }
 
         fn match_fallback(t) {
-            t.assert_content_eq("a = _ -> !self:type:Error: doh; self:type:Error _ = self:match (fallback=:a) hi []; ()", "()");
-            t.assert_fail("a = _ -> !self:type:Error: doh; self:match hi [:a]; ()");
+            t.assert_content_eq("a = _ -> !self:type:Error:@ doh; self:type:Error _ = self:match (fallback=:a) hi []; ()", "()");
+            t.assert_fail("a = _ -> !self:type:Error:@ doh; self:match hi [:a]; ()");
         }
     }
 }

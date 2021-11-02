@@ -20,7 +20,7 @@ path-safe = fn :v -> {
 ## If generating documentation, this will generate the item documentation separately and provide a
 ## link. It will display a summary of the item documentation.
 item = fn :self :name -> {
-    first = !plugin:match doc:path: [
+    first = !plugin:match (doc:path()) [
         plugin:type:Unset -> :name
         _ -> {
             pname = path-safe :name

@@ -9,13 +9,13 @@ plugin = ergo plugin
 ## failure. The keys of the maps are used to name the tests.
 run = {
     f = fn :self :name :x -> plugin:match :x [
-        plugin:type:Map :m -> plugin:iter:flatten <| plugin:iter:map (fn (plugin:type:MapEntry: :k :v) -> {
+        plugin:type:Map :m -> plugin:iter:flatten <| plugin:iter:map (fn (plugin:type:MapEntry:@ :k :v) -> {
             self :self (plugin:string:format "{}:{}" :name :k) :v
         }) :m
         plugin:type:Error :e -> [{ name, result = plugin:string:format "failed with error: {}" <| std:Error:display :e }]
         plugin:bool:true -> [{ name, result = success }]
         plugin:bool:false -> [{ name, result = failed }]
-        _ -> plugin:type:Error: (source=:x) "invalid test result"
+        _ -> plugin:type:Error:@ (source=:x) "invalid test result"
     ]
 
     print-result = fn {name, result} -> plugin:string:format "{}\t\t\t{}" :name :result

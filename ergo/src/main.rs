@@ -271,7 +271,7 @@ fn run(opts: Opts, mut output: OutputInstance) -> Result<String, String> {
             None => {
                 // When there are no arguments, always call workspace:command function.
                 // This returns _just_ the function, so that documentation will work as expected, but it
-                // will then be called without arguments (with Runtime::apply_unbound).
+                // will then be called (with Runtime::apply_unbound).
                 "workspace:command".into()
             }
             Some(a) => {

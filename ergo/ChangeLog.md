@@ -25,6 +25,26 @@
     used at any await points in tasks.
 * Format markdown output in the terminal when `--doc` is used.
 * Change `doc:write` output to be HTML rather than markdown.
+* Remove the `:` suffix operator for no-arg function calls. While no-arg
+  function calls are still possible with `f ^[]`, idiomatically it is
+  recommended that no-arg calls are done by accepting a single `()` argument.
+  * `doc:path` has been changed to take a single `()` argument.
+  * `workspace` and `std` no longer require binding; you can access them as if
+    they were loaded values (e.g., `std:import { Path } = :std` rather than `... = std:`).
+  * To be idiomatic, if a function is returned as the final value of a function,
+    it will be called with a `()` argument rather than with no arguments as was
+    previously done.
+
+### Migration Guide
+* If you had any line comments without a space, a space will need to be added to
+  retain the original meaning now that tree comments have been added. E.g.,
+  `#hello world` becomes `# hello world`.
+* `doc:path` calls must be changed to `doc:path()`.
+* `workspace:` and `std:` must be changed to `:workspace` and `:std`,
+  respectively. Other uses of the bindings ought to work as they did before.
+* If a workspace `command` or script that was intended to be called from the
+  command line returns a function, be sure that the no-argument case now is
+  translated to something taking a `()` argument.
 
 ## 1.0.0-rc.0  -- 2021-08-01
 Most of the changes listed below are breaking changes, so there is no separate

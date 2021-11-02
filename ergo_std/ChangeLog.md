@@ -35,6 +35,9 @@
   * Add a `follow-symlinks` keyed argument to change this behavior.
 * Improve `std:Path:or-source` to error when non-Path values are passed.
 * Change `std:doc:functions` to generate per-function doc children.
+* No-arg functions are changed to take a single `()` argument to be idiomatic.
+* Change type functions to use the `@` index for binding
+  construction/destruction.
 
 ### Bugfixes
 * Fix the `std:fs:glob` relative directory.
@@ -43,6 +46,14 @@
 * Fix the behavior of `std:require` when a value is Unset, and ensure that
   documentation is carried over through `std:import` uses.
 * Correctly capture network client errors in the runtime.
+
+### Migration Guide
+* Change the following functions from `function:` to `function ()`:
+  * `std:Path:new`
+  * `std:io:stdin`
+* Change all type construction/destruction to use `Type:@` rather than `Type:`.
+  * This includes _all_ types in `std` as well as any types created with
+    `std:type` functions.
 
 ## 1.0.0-rc.0  -- 2021-08-01
 ### New Features

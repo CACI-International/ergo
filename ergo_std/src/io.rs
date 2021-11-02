@@ -44,10 +44,10 @@ static STDIN_ID: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize
 #[types::ergo_fn]
 /// Get the standard input ByteStream of the process.
 ///
-/// Arguments: (none)
+/// Arguments: `()`
 ///
 /// Returns a ByteStream that takes exclusive access of the process standard input.
-async fn stdin() -> Value {
+async fn stdin(_: types::Unit) -> Value {
     let id = STDIN_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let guard = STDIN_MUTEX.lock().await;
     Value::constant_deps(

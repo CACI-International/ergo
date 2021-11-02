@@ -20,47 +20,45 @@ used to estimate future performance.
 ```sh
 #!/usr/bin/env ergo
 
-^ergo std
+std:import { Path, cache, env, exec, fs = {track} } = :std
 
-run_with_path = fn ^{^kwargs} ^args -> exec ^:kwargs ^{env = {PATH = env:get PATH}} ^:args |>:complete
+run_with_path = fn ^:args -> exec (env = {PATH = env:get PATH}) ^:args |>:complete
 
 # Get influxdb-cxx
 influx = {
-  checkout = seq ^[
-      dir = (path:new)
+  checkout = Path:with-output <| fn :dir -> {
       exec git clone https://github.com/awegrzyn/influxdb-cxx.git :dir |>:complete
-      :dir
-  ]
-  include = path:join :checkout include
-  builddir = seq ^[
-      dir = (path:new)
+  }
+  include = Path:join :checkout include
+  builddir = Path:with-output <| :dir -> {
       run_with_path cmake -DCMAKE_BUILD_TYPE=Release -S :checkout -B :dir
-      :dir
-  ]
-  lib = value:cache <| seq ^[
-      run_with_path ^{ pwd = :builddir } make InfluxDB
-      path:join :builddir lib libInfluxDB.so
-  ]
+  }
+  lib = cache {
+      run_with_path (pwd = :builddir) make InfluxDB
+      Path:join :builddir lib libInfluxDB.so
+  }
 
-  { include, lib, libpath = path:join :builddir lib }
+  { include, lib, libpath = Path:join :builddir lib }
 }
 
 # Create test program
-test = value:cache <| seq ^[
-    out = (path:new)
-    run_with_path c++ -std=c++17 -o :out -I influx:include (fs:track main.cpp) influx:lib
-    :out
-]
-
-test-dist = path:join :script-dir influx-test
-
-# Create output map
-{
-  dist = fs:copy :test :test-dist
-  clean = exec rm -f :test-dist |>:complete
-  test = exec ^{env = {LD_LIBRARY_PATH = influx:libpath}} :test
+test = cache <| Path:with-output <| fn :out -> {
+    run_with_path c++ -std=c++17 -o :out -I influx:include (track main.cpp) influx:lib
 }
+
+test-dist = Path:join (std:script:dir()) influx-test
+
+# Create command interface
+commands = {
+  dist = fs:copy :test :test-dist
+  clean = fs:remove :test-dist
+  test = exec (env = {LD_LIBRARY_PATH = influx:libpath}) :test
+}
+fn :cmd -> commands::cmd
 ```
+
+If you make the above script executable, then you can run `./script dist`,
+`./script clean`, or `./script test`.
 
 ## Documentation
 All values can have associated docstrings, which can be accessed with the `-d`
@@ -69,8 +67,7 @@ documentation. If `PAGER` is not set in the environment, this defaults to `less
 -F`.
 
 Unfortunately, it seems like older Mac versions have a buggy `less` which will
-not work correctly with this flag. You can either:
-* set `PAGER` to not use `-F`,
+not work correctly with this flag, so the default is `less`. You can:
 * set `PAGER` as `more -F` (which on mac is actually `less` in `LESS_IS_MORE` mode, but seems
   to work),
 * install a newer version of `less` with brew and set `PAGER` to that, or
@@ -94,7 +91,6 @@ scripts reside.
   * This will allow loaded plugins to be properly dropped rather than leaked.
 * Reference count (non-root) cache values?
 
-* No-arg function calls.
 * Add script-specified network cache locations (for local vendoring).
 * Add hostname-based(?) request parameters.
 * Rework match error behavior.

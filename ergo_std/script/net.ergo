@@ -21,7 +21,7 @@ download = fn (plugin:type:String :url) (plugin:type:Path :target) ^:rest -> {
 ##
 ## Returns the unpacked remote archive directory.
 unarchive = fn ^:args -> {
-    unpacked-dir = plugin:path:new:
+    unpacked-dir = plugin:path:new()
     archive = plugin:net:http ^:args |>:body
     plugin:fs:unarchive :unpacked-dir :archive
     :unpacked-dir
