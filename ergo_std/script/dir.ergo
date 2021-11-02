@@ -294,7 +294,7 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
 {
     ## The Any type.
     ##
-    ## This type will always match the given value.
+    ## This type will evaluate values and reject Errors.
     ##
     ## {{type-function()}}
     Any = plugin:type:Any

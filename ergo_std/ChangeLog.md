@@ -38,6 +38,8 @@
 * No-arg functions are changed to take a single `()` argument to be idiomatic.
 * Change type functions to use the `@` index for binding
   construction/destruction.
+* Change `std:Any` to be more useful. It will evaluate the value and reject any
+  Errors.
 
 ### Bugfixes
 * Fix the `std:fs:glob` relative directory.
@@ -54,6 +56,11 @@
 * Change all type construction/destruction to use `Type:@` rather than `Type:`.
   * This includes _all_ types in `std` as well as any types created with
     `std:type` functions.
+* If `std:Any` was being used, ensure its usage aligns with the new semantics.
+  * A value matching the old semantics would be:
+  ```
+  OldAny = std:match:value [fn :x -> :x, pat :tgt -> :x -> bind :tgt :x, :x -> :x]
+  ```
 
 ## 1.0.0-rc.0  -- 2021-08-01
 ### New Features

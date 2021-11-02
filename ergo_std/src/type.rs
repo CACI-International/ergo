@@ -211,17 +211,19 @@ fn match_any() -> Value {
                 let source = Source::get(&arg);
                 match_value! {arg,
                     types::Args { mut args } => {
-                        let v = try_result!(args.next_or_error("value", source));
+                        let mut v = try_result!(args.next_or_error("value", source));
                         try_result!(args.unused_arguments());
+                        try_result!(Context::eval(&mut v).await);
                         v
                     },
                     types::PatternArgs { mut args } => {
                         let v = try_result!(args.next_or_error("value pattern", source));
                         try_result!(args.unused_arguments());
                         let deps = depends![v];
-                        types::Unbound::new_no_doc(move |arg| {
+                        types::Unbound::new_no_doc(move |mut arg| {
                             let v = v.clone();
                             async move {
+                                try_result!(Context::eval(&mut arg).await);
                                 traits::bind(v, arg).await
                             }.boxed()
                         }, deps).into()
@@ -232,7 +234,7 @@ fn match_any() -> Value {
             .boxed()
         },
         depends![nsid!(std::type::Any)],
-        "Matches any value.",
+        "Matches any value (except Errors). Evaluates the value to a typed value.",
     )
     .into()
 }
@@ -518,6 +520,7 @@ mod test {
             t.assert_eq("self:type:Any hello", "hello");
             t.assert_eq("self:type:Any :x = hello; :x", "hello");
             t.assert_success("!self:type:Any = hello");
+            t.assert_fail("self:type:Any :x = self:type:Error:@ err");
         }
 
         fn unset(t) {
