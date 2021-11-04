@@ -91,6 +91,9 @@ scripts reside.
   * This will allow loaded plugins to be properly dropped rather than leaked.
 * Reference count (non-root) cache values?
 
+* `if` + `else`
+* meta:eval
+* Progress spinner
 * Rework match error behavior.
 * Add script-specified network cache locations (for local vendoring).
 * Add hostname-based(?) request parameters.
