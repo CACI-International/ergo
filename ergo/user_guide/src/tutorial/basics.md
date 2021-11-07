@@ -110,7 +110,7 @@ these are each individual strings
 
 ### Compound data
 Arrays and maps are also supported in scripts. Items in arrays and maps can be
-separated by commas, newlines, or semicolons indescriminately.
+separated by commas, newlines, or semicolons indiscriminately.
 
 ```ergo
 [this,is,an,array]

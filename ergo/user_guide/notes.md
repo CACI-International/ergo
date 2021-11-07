@@ -3,3 +3,4 @@
   manner?
 * Block evaluation.
 * Pipe operators.
+* workspace/dir.ergo
