@@ -90,6 +90,14 @@ scripts reside.
   runtime.
   * This will allow loaded plugins to be properly dropped rather than leaked.
 * Reference count (non-root) cache values?
+* Debugger and profiler.
+* Cached inner values should evaluate to typed values with the correct identity.
+  * E.g. suppose `value` is a dynamic value with id `A` that evaluates to a
+    String with id `B`. If you run `cache :value`, it will add an entry based on
+    `A` and store the String, but then when loaded later the returned value will
+    be String-typed but still have id `A` when it really should be `B`.
+    Specifically, the returned value should be dynamic with id `A` but should
+    evaluate (trivially) to a String with id `B`.
 
 * `if` + `else`
 * meta:eval
@@ -98,7 +106,6 @@ scripts reside.
 * Add script-specified network cache locations (for local vendoring).
 * Add hostname-based(?) request parameters.
 * Improve sources of capture bindings.
-* Debugger and profiler.
 * Improve UI error behavior.
   * Display the aggregated errors at the end of execution (rather than the
     returned error value).

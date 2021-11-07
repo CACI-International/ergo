@@ -25,6 +25,8 @@
   * `and` for conjunction
   * `or` for disjunction
 * Add `std:net:url-encode` for url-encoding strings.
+* Add a `pretty` keyed argument to `std:json:stringify` to make the output
+  string nicely formatted.
 
 ### Improvements
 * Improve error return values when using `std:eval`.

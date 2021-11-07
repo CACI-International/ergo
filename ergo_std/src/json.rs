@@ -4,7 +4,7 @@ use ergo_runtime::{
     error::DiagnosticInfo, metadata::Source, traits, types, value::match_value, Context, Value,
 };
 use futures::future::{BoxFuture, FutureExt};
-use json::{parse as json_parse, stringify as json_stringify, JsonValue};
+use json::{self, JsonValue};
 
 pub fn module() -> Value {
     crate::make_string_map! {
@@ -18,7 +18,7 @@ pub fn module() -> Value {
 ///
 /// Arguments: `String :json`
 async fn parse(json: types::String) -> Value {
-    let json_val = json_parse(json.as_ref().0.as_str())
+    let json_val = json::parse(json.as_ref().0.as_str())
         .add_primary_label(Source::get(&json).with("while parsing JSON from this value"))?;
 
     fn json_to_val(src: &ergo_runtime::Source<()>, json: JsonValue) -> Value {
@@ -64,7 +64,10 @@ async fn parse(json: types::String) -> Value {
 /// Convert the given native ergo value to a JSON string.
 ///
 /// Arguments: `:value`
-async fn stringify(value: _) -> Value {
+///
+/// Keyed Arguments:
+/// `:pretty` - if present, the output will be pretty-printed.
+async fn stringify(value: _, (pretty): [_]) -> Value {
     fn val_to_json(mut val: Value) -> BoxFuture<'static, ergo_runtime::Result<JsonValue>> {
         async move {
             Context::eval(&mut val).await?;
@@ -103,8 +106,15 @@ async fn stringify(value: _) -> Value {
         .boxed()
     }
 
+    let pretty = pretty.is_some();
+
     let val = val_to_json(value).await?;
-    types::String::from(json_stringify(val)).into()
+    types::String::from(if pretty {
+        json::stringify_pretty(val, 4)
+    } else {
+        json::stringify(val)
+    })
+    .into()
 }
 
 #[cfg(test)]
@@ -122,6 +132,14 @@ mod test {
                 }",
                 // The actual string is subject to value identity ordering of keys.
                 r#"'{"a":null,"d":["str"],"c":true,"b":1}'"#
+            );
+        }
+
+        fn stringify_pretty(t) {
+            t.assert_content_eq("self:json:parse <| self:json:stringify ^pretty {
+                    a = (), b = self:type:Number:@ 1, c = self:bool:true, d = [str]
+                }",
+                "{ a = (), b = self:type:Number:@ 1, c = self:bool:true, d = [str] }"
             );
         }
     }
