@@ -99,7 +99,9 @@ scripts reside.
     Specifically, the returned value should be dynamic with id `A` but should
     evaluate (trivially) to a String with id `B`.
 
-* meta:eval
+* Block strings.
+* Interpolate quoted strings like doc comments.
+* Attributes.
 * Progress spinner
 * Rework match error behavior.
 * Add script-specified network cache locations (for local vendoring).

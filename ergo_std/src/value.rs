@@ -27,6 +27,7 @@ pub fn module() -> Value {
         "identity" = identity(),
         "merge" = merge(),
         "meta" = crate::make_string_map! {
+            "eval" = meta_eval(),
             "get" = meta_get(),
             "set" = meta_set()
         },
@@ -212,6 +213,26 @@ async fn identity(value: _) -> Value {
 /// Arguments: `:value`
 async fn eval(mut value: _) -> Value {
     drop(Context::eval(&mut value).await);
+    value
+}
+
+#[types::ergo_fn]
+/// Evaluate a value until certain metadata is available.
+///
+/// Arguments: `:metadata-key :value`
+///
+/// Returns the value which had the metadata, or the final value resulting from evaluation if no
+/// matching metadata was found.
+async fn meta_eval(metadata_key: _, mut value: _) -> Value {
+    while !value.is_evaluated()
+        && value
+            .get_metadata(&Runtime {
+                key: metadata_key.id(),
+            })
+            .is_none()
+    {
+        Context::eval_once(&mut value).await;
+    }
     value
 }
 

@@ -507,7 +507,7 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
     ## Values can have arbitrary metadata attached to them at runtime. This metadata can be
     ## retrieved without evaluating the value.
     ##
-    ## {{mdoc:functions :self get set}}
+    ## {{mdoc:functions :self eval get set}}
     meta = plugin:value:meta
 
     ## Networking functions.

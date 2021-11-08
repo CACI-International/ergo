@@ -8,7 +8,7 @@
     results.
 * Add `fallback` keyed argument to `std:match`.
   * This is more ergonomic for cases where the final case may error (but that
-    error should be retained).
+    error should be returned).
 * Add the `std:sync` module for synchronizing concurrent evaluation.
 * Add `std:Iter:count`.
 * Add ordering utilities:
@@ -27,6 +27,7 @@
 * Add `std:net:url-encode` for url-encoding strings.
 * Add a `pretty` keyed argument to `std:json:stringify` to make the output
   string nicely formatted.
+* Add `std:meta:eval` to evaluate a value until a metadata key is present.
 
 ### Improvements
 * Improve error return values when using `std:eval`.
