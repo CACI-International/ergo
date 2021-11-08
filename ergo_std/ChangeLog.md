@@ -44,6 +44,8 @@
 * Change `std:Any` to be more useful. It will evaluate the value and reject any
   Errors.
 * Add `else` keyword and `else if` additional cases to `std:if`.
+* Change `std:match` to reject Errors by default, and add an `allow-error` flag
+  to allow errors (matching the old behavior).
 
 ### Bugfixes
 * Fix the `std:fs:glob` relative directory.
@@ -66,6 +68,8 @@
   OldAny = std:match:value [fn :x -> :x, pat :tgt -> :x -> bind :tgt :x, :x -> :x]
   ```
 * Add an `else` keyword to `std:if` calls when necessary.
+* Add `^allow-error` to `std:match` calls where matching errors is intentional
+  (there probably aren't many cases of this).
 
 ## 1.0.0-rc.0  -- 2021-08-01
 ### New Features

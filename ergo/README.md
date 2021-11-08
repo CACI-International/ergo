@@ -103,7 +103,6 @@ scripts reside.
 * Interpolate quoted strings like doc comments.
 * Attributes.
 * Progress spinner
-* Rework match error behavior.
 * Add script-specified network cache locations (for local vendoring).
 * Add hostname-based(?) request parameters.
 * Improve sources of capture bindings.

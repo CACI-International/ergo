@@ -9,21 +9,34 @@ use ergo_runtime::{metadata::Source, traits, types, Context, Value};
 ///
 /// Keyed Arguments:
 /// * `:fallback` - A fallback value to bind the match value to if no other bindings match. This
-/// differs from adding a final `:a -> ...` case in error handling: if binding to the fallback
-/// value results in an error it is returned, whereas if binding to an equivalent final case
-/// results in an error it is interpreted as not matching (which results in a generic error).
+///   differs from adding a final `:a -> ...` case in error handling: if binding to the fallback
+///   value results in an error it is returned, whereas if binding to an equivalent final case
+///   results in an error it is interpreted as not matching (which results in a generic error).
+/// * `:allow-error` - If present, Error values will be allowed to be matched (normally they will
+///   be propagated immediately).
 ///
-/// Returns the value resulting from the first value in `bindings` that doesn't produce an error
+/// Returns the value resulting from the first value in `bindings` that doesn't produce an Error
 /// when bound with `value`.
-pub async fn function(mut value: _, bindings: types::Array, (fallback): [_]) -> Value {
+pub async fn function(
+    mut value: _,
+    bindings: types::Array,
+    (fallback): [_],
+    (allow_error): [_],
+) -> Value {
     let bindings = bindings.to_owned().0;
+    let allow_error = allow_error.is_some();
 
     let result = Context::fork(
         // Do not propagate errors while trying the bindings
         |ctx| ctx.error_scope = ergo_runtime::context::ErrorScope::new(|_| ()),
         async move {
             let orig_source = Source::get(&value);
-            drop(Context::eval(&mut value).await);
+            let eval_result = Context::eval(&mut value).await;
+            if allow_error {
+                drop(eval_result)
+            } else {
+                eval_result?;
+            }
             let mut err_labels = Vec::new();
             for b in bindings {
                 let b_source = Source::get(&b);
@@ -107,6 +120,11 @@ mod test {
             t.assert_content_eq("self:match [1,2,3] [{^:keys} -> :keys, [:a,:b] -> :a, [:a,:b,:c] -> :c]", "3");
             t.assert_content_eq("self:match [1,2,3] [:a -> :a, [:a,:b,:c] -> :b]", "[1,2,3]");
             t.assert_content_eq("self:match str [a -> a, str -> success]", "success");
+        }
+
+        fn match_error(t) {
+            t.assert_fail("self:match (self:type:Error:@ doh) [a -> a]");
+            t.assert_content_eq("self:match ^allow-error (self:type:Error:@ doh) [self:type:Error _ -> error]", "error");
         }
 
         fn match_failure(t) {

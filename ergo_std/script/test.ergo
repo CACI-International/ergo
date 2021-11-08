@@ -8,7 +8,7 @@ plugin = ergo plugin
 ## tests), `Bool:true` to indicate success, `Bool:false` to indicate failure, or `Error` to indicate
 ## failure. The keys of the maps are used to name the tests.
 run = {
-    f = fn :self :name :x -> plugin:match :x [
+    f = fn :self :name :x -> plugin:match ^allow-error :x [
         plugin:type:Map :m -> plugin:iter:flatten <| plugin:iter:map (fn (plugin:type:MapEntry:@ :k :v) -> {
             self :self (plugin:string:format "{}:{}" :name :k) :v
         }) :m
