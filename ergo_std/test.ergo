@@ -22,9 +22,9 @@ type = {
             first = std:String
             second = std:String
         }
-        pair = StringPair: { first = hello, second = world }
+        pair = StringPair:@ { first = hello, second = world }
         StringPair _ = :pair
-        StringPair: {first = hello, second = world} = :pair
+        StringPair:@ {first = hello, second = world} = :pair
         std:Bool:true
     }
 }
@@ -39,7 +39,7 @@ eval = {
         std:Bool:true
     }
     error = {
-        std:Error _ = std:eval <| std:Error: "oh no"
+        std:Error _ = std:eval <| std:Error:@ "oh no"
         std:Bool:true
     }
 }
@@ -55,4 +55,43 @@ required = {
     ]
 }
 
-std:test:run { type, equal, eval, required }
+if = {
+    :"one case" = {
+        true = {
+            "yep" = std:if std:Bool:true yep
+            std:Bool:true
+        }
+        false = {
+            std:Unset _ = std:if std:Bool:false yep
+            std:Bool:true
+        }
+    }
+    else = {
+        "nope" = std:if std:Bool:false yep else nope
+        std:Bool:true
+    }
+    :"else if" = {
+        "second" = std:if std:Bool:false first else if std:Bool:true second
+        std:Bool:true
+    }
+    :"many else if" = {
+        "third" = std:if std:Bool:false first else if std:Bool:false second else if std:Bool:true third
+        std:Bool:true
+    }
+    :"else if unset" = {
+        std:Unset _ = std:if std:Bool:false first else if std:Bool:false second else if std:Bool:false third
+        std:Bool:true
+    }
+    :"else if else" = {
+        "nope" = std:if std:Bool:false first else if std:Bool:false second else if std:Bool:false third else nope
+        std:Bool:true
+    }
+    invalid = {
+        std:Error _ = std:if std:Bool:false a elif b
+        std:Error _ = std:if std:Bool:false a else if a
+        std:Error _ = std:if std:Bool:false a b
+        std:Bool:true
+    }
+}
+
+std:test:run { if, type, eval, required }

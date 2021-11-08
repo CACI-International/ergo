@@ -229,18 +229,25 @@ iter-split = fn :n :iter -> [plugin:iter:take :n :iter, plugin:iter:skip :n :ite
 
 ## Conditionally return a value.
 ##
-## Arguments: `(Into<Bool> :condition) :if_true (optional :if_false)`
+## Arguments: `(Into<Bool> :condition) :if_true [else if :cond2 :if_true2]... [else :if_false]`
 ##
-## If `condition` evaluates to true, `if_true` is returned. Otherwise `if_false` is returned. If
-## `if_false` is omitted, an Unset value will be returned.
-if = fn :cond :if_true ^:if_false -> plugin:match (plugin:bool:from :cond) [
-    plugin:bool:true -> :if_true
-    plugin:bool:false -> plugin:match (plugin:array:from :if_false) [
-        [] -> :unset
-        [:if_false] -> :if_false
-        [_,^:rest] -> plugin:type:Error:@ (source=:rest) "too many arguments supplied to if"
-    ]
-]
+## If `condition` evaluates to true, `if_true` is returned. Otherwise each following `cond2` is
+## subsequently tested (returning `if_true2` if one evaulates to true), and `if_false` is returned
+## if no conditions evaluate to true. If the else condition is omitted, `unset` will be returned.
+if = fn :cond :if_true ^:rest -> {
+    do-condition = recursive <| fn :self :cond :if_true :rest -> {
+        plugin:match (plugin:bool:from :cond) [
+            plugin:bool:true -> :if_true
+            plugin:bool:false -> plugin:match :rest [
+                [else,if,:cond2,:if_true2,^:rest] -> self :self :cond2 :if_true2 :rest
+                [else,:if_false] -> :if_false
+                [] -> :unset
+                :other -> plugin:type:Error:@ (source=:other) "unrecognized arguments supplied to `if`"
+            ]
+        ]
+    }
+    do-condition :cond :if_true (plugin:array:from <| :rest)
+}
 
 ## Create a function which takes only string arguments as interpreted by `std:getopt`.
 ##

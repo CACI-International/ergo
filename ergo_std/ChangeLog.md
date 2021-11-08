@@ -42,6 +42,7 @@
   construction/destruction.
 * Change `std:Any` to be more useful. It will evaluate the value and reject any
   Errors.
+* Add `else` keyword and `else if` additional cases to `std:if`.
 
 ### Bugfixes
 * Fix the `std:fs:glob` relative directory.
@@ -63,6 +64,7 @@
   ```
   OldAny = std:match:value [fn :x -> :x, pat :tgt -> :x -> bind :tgt :x, :x -> :x]
   ```
+* Add an `else` keyword to `std:if` calls when necessary.
 
 ## 1.0.0-rc.0  -- 2021-08-01
 ### New Features

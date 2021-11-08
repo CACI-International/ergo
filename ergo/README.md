@@ -99,7 +99,6 @@ scripts reside.
     Specifically, the returned value should be dynamic with id `A` but should
     evaluate (trivially) to a String with id `B`.
 
-* `if` + `else`
 * meta:eval
 * Progress spinner
 * Rework match error behavior.
