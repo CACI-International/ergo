@@ -54,6 +54,8 @@
 * Fix the behavior of `std:require` when a value is Unset, and ensure that
   documentation is carried over through `std:import` uses.
 * Correctly capture network client errors in the runtime.
+* `std:String:format` patterns would match string prefixes rather than whole
+  strings; this has been fixed.
 
 ### Migration Guide
 * Change the following functions from `function:` to `function ()`:

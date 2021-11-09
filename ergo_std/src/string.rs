@@ -269,10 +269,15 @@ fn format() -> Value {
                                             Some(FormatBind::Value(_)) => panic!("invalid format bind state"),
                                             None => {
                                                 bind_strings.entry(v).or_default().push(s.to_owned());
+                                                s = &s[s.len()..];
                                             }
                                         }
                                     }
                                 }
+                            }
+
+                            if !s.is_empty() {
+                                return s_source.with(format!("string had characters remaining after matching: {}", s)).into_error().into();
                             }
 
                             for (k,v) in bind_strings {
@@ -429,6 +434,7 @@ mod test {
             t.assert_content_eq(r#"self:string:format "{{ {} }}" :v = "{ hi }""#, "{ v = hi }");
             t.assert_fail(r#"bind (self:string:format "no match {}" :v -> :v) match"#);
             t.assert_fail(r#"bind (self:string:format "{} no" :v -> :v) str"#);
+            t.assert_fail(r#"self:string:format "{}c" _ = abcd"#);
             t.assert_fail(r#"self:string:format "{}{}" :a :b = something"#);
             t.assert_fail(r#"self:string:format "{" = s"#);
             t.assert_fail(r#"self:string:format "}" = s"#);
