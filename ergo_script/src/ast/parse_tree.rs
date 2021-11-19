@@ -1,9 +1,11 @@
-//! Parsing of tree tokens.
+//! Tree parsing.
 //!
-//! Pipe operators are desugared and the syntax tree is formed.
-//! Commented trees are removed.
+//! A basic syntax tree is formed, and in the process:
+//! * Pipe operators are desugared.
+//! * Redundant groupings (parens) are removed.
+//! * Quoted string escape sequences are interpreted.
 
-use super::tokenize_tree::{PairedToken, SymbolicToken, TreeToken};
+use super::tokenize::{PairedToken, SymbolicToken, Token};
 use ergo_runtime::{source::IntoSource, Source};
 use std::fmt;
 
@@ -11,19 +13,32 @@ pub type TreeVec = Vec<Source<Tree>>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Tree {
-    String(String, bool),
-    DocString(String),
+    String(String),
     Bang(Box<Source<Tree>>),
     Caret(Box<Source<Tree>>),
     ColonPrefix(Box<Source<Tree>>),
-    ColonSuffix(Box<Source<Tree>>),
+    Hash(Box<Source<Tree>>),
+    DoubleHash(Box<Source<Tree>>),
     Equal(Box<Source<Tree>>, Box<Source<Tree>>),
     Arrow(Box<Source<Tree>>, Box<Source<Tree>>),
     Colon(Box<Source<Tree>>, Box<Source<Tree>>),
+    // Groups
     Parens(TreeVec),
     Curly(TreeVec),
     Bracket(TreeVec),
-    DocCurly(TreeVec),
+    // String Groups
+    Quote(StringTreeVec),
+    ApostropheSpace(StringTreeVec),
+    HashSpace(String),
+    DoubleHashSpace(StringTreeVec),
+}
+
+pub type StringTreeVec = Vec<Source<StringTree>>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StringTree {
+    String(String),
+    Expression(Source<Tree>),
 }
 
 /// A tree parser.
@@ -38,6 +53,7 @@ pub struct Parser<TokenIter: Iterator> {
 pub enum Error<TokError> {
     /// A tokenization error.
     Tokenization(TokError),
+    #[allow(dead_code)]
     /// A unary operator is missing its argument (which should be before it).
     UnaryMissingPrefix,
     /// A unary operator is missing its argument (which should be after it).
@@ -46,16 +62,31 @@ pub enum Error<TokError> {
     BinaryMissingPrevious,
     /// A binary operator is missing its next argument.
     BinaryMissingNext,
+    /// An escape sequence in a quoted string was not recognized.
+    UnrecognizedEscapeSequence,
+    /// A unicode character escape sequence is missing a closing character.
+    UnfinishedUnicodeCharacter,
+    /// A unicode character escape sequence contained an invalid digit.
+    InvalidUnicodeCharacter,
 }
 
 impl<E: fmt::Display> fmt::Display for Error<E> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Error::Tokenization(t) => write!(f, "{}", t),
+            Error::Tokenization(t) => t.fmt(f),
             Error::UnaryMissingPrefix => write!(f, "expected an argument before the operator"),
             Error::UnaryMissingSuffix => write!(f, "expected an argument after the operator"),
             Error::BinaryMissingPrevious => write!(f, "expected an argument before the operator"),
             Error::BinaryMissingNext => write!(f, "expected an argument after the operator"),
+            Error::UnrecognizedEscapeSequence => write!(f, "unrecognized escape sequence"),
+            Error::UnfinishedUnicodeCharacter => write!(
+                f,
+                "unfinished unicode character code (missing a closing `}}`)"
+            ),
+            Error::InvalidUnicodeCharacter => write!(
+                f,
+                "invalid unicode character code (1-6 hex digits required)"
+            ),
         }
     }
 }
@@ -90,9 +121,6 @@ impl<E> From<Source<Error<E>>> for Errors<E> {
 enum TreeOrSymbol {
     Tree(Tree),
     Symbol(SymbolicToken),
-    Comment,
-    ColonPriorFree,
-    ColonPostFree,
     Used,
 }
 
@@ -120,19 +148,18 @@ impl TreeOrSymbol {
         }
     }
 
+    pub fn is_tree(&self) -> bool {
+        match self {
+            TreeOrSymbol::Tree(_) => true,
+            _ => false,
+        }
+    }
+
     pub fn as_tree(self) -> Tree {
         match self {
             TreeOrSymbol::Tree(t) => t,
             _ => panic!("not a tree"),
         }
-    }
-
-    pub fn is_front_colon(&self) -> bool {
-        self == &TreeOrSymbol::ColonPriorFree
-    }
-
-    pub fn is_back_colon(&self) -> bool {
-        self == &TreeOrSymbol::ColonPostFree
     }
 
     pub fn is_leftward_pipe(&self) -> bool {
@@ -152,9 +179,9 @@ impl<T: IntoIterator> From<T> for Parser<T::IntoIter> {
     }
 }
 
-impl<I, E: fmt::Debug> Iterator for Parser<I>
+impl<'a, I, E: fmt::Debug> Iterator for Parser<I>
 where
-    I: Iterator<Item = Result<Source<TreeToken>, Source<E>>>,
+    I: Iterator<Item = Result<Source<Token<'a>>, Source<E>>>,
 {
     type Item = Result<Source<Tree>, Vec<Source<Error<E>>>>;
 
@@ -171,11 +198,84 @@ where
     }
 }
 
-impl<I, E: fmt::Debug> Parser<I>
+fn parse_escape_sequences<E>(s: &str) -> Result<String, (Error<E>, usize, usize)> {
+    let mut ret = String::with_capacity(s.len());
+    let mut escape = None;
+
+    let mut chars = s.char_indices();
+    while let Some((offset, c)) = chars.next() {
+        match escape.take() {
+            None => {
+                if c == '\\' {
+                    escape = Some(offset);
+                } else {
+                    ret.push(c);
+                }
+            }
+            Some(start_offset) => {
+                let end_offset = offset + c.len_utf8();
+                match c {
+                    '"' | '\\' => ret.push(c),
+                    'n' => ret.push('\n'),
+                    't' => ret.push('\t'),
+                    'u' => {
+                        if let Some((offset, '{')) = chars.next() {
+                            let unicode_hex = chars.as_str();
+                            let mut end = false;
+                            while let Some((_, c)) = chars.next() {
+                                if c == '}' {
+                                    end = true;
+                                    break;
+                                }
+                            }
+                            if !end {
+                                return Err((
+                                    Error::UnfinishedUnicodeCharacter,
+                                    start_offset,
+                                    s.len(),
+                                ));
+                            } else {
+                                let unicode_hex_len =
+                                    unicode_hex.len() - chars.as_str().len() - '}'.len_utf8();
+                                // SAFETY: end must be in bounds and on a character boundary
+                                // according to the character iterator.
+                                let unicode_hex =
+                                    unsafe { unicode_hex.get_unchecked(..unicode_hex_len) };
+                                let end_offset =
+                                    offset + '{'.len_utf8() + unicode_hex_len + '}'.len_utf8();
+                                ret.push(
+                                    u32::from_str_radix(unicode_hex, 16)
+                                        .ok()
+                                        .and_then(|val| char::try_from(val).ok())
+                                        .ok_or((
+                                            Error::InvalidUnicodeCharacter,
+                                            start_offset,
+                                            end_offset,
+                                        ))?,
+                                );
+                            }
+                        } else {
+                            return Err((
+                                Error::UnrecognizedEscapeSequence,
+                                start_offset,
+                                end_offset,
+                            ));
+                        }
+                    }
+                    _ => return Err((Error::UnrecognizedEscapeSequence, start_offset, end_offset)),
+                }
+            }
+        }
+    }
+
+    Ok(ret)
+}
+
+impl<'a, I, E: fmt::Debug> Parser<I>
 where
-    I: Iterator<Item = Result<Source<TreeToken>, Source<E>>>,
+    I: Iterator<Item = Result<Source<Token<'a>>, Source<E>>>,
 {
-    fn next_tok(&mut self) -> Result<Option<Source<TreeToken>>, Source<Error<E>>> {
+    fn next_tok(&mut self) -> Result<Option<Source<Token<'a>>>, Source<Error<E>>> {
         match self.tokens.next() {
             None => Ok(None),
             Some(Err(e)) => Err(e.map(Error::Tokenization)),
@@ -189,17 +289,9 @@ where
             Some(t) => {
                 let (source, t) = t.take();
                 Ok(Some(match t {
-                    TreeToken::Symbol(s) => source.with(match s {
-                        SymbolicToken::String { string, quoted } => {
-                            Tree::String(string, quoted).into()
-                        }
-                        SymbolicToken::DocString(s) => Tree::DocString(s).into(),
-                        o => o.into(),
-                    }),
-                    TreeToken::Comment => source.with(TreeOrSymbol::Comment),
-                    TreeToken::ColonPriorFree => source.with(TreeOrSymbol::ColonPriorFree),
-                    TreeToken::ColonPostFree => source.with(TreeOrSymbol::ColonPostFree),
-                    TreeToken::StartNested(p) => {
+                    Token::Symbol(s) => source.with(s.into()),
+                    Token::String(s) => source.with(TreeOrSymbol::Tree(Tree::String(s.into()))),
+                    Token::StartNested(p) => {
                         let mut src = None;
                         let t = match p {
                             PairedToken::Paren => {
@@ -212,45 +304,25 @@ where
                                     Tree::Parens(grp)
                                 }
                             }
-                            PairedToken::Curly => {
-                                let groups = self.groups()?;
-                                // Elaborate solitary literal strings `a` to `:a = :a`.
-                                let groups = groups
-                                    .into_iter()
-                                    .map(|v| {
-                                        let (source, v) = v.take();
-                                        match v {
-                                            Tree::String(s, false) => {
-                                                let colon = Box::from(
-                                                    source.clone().with(Tree::ColonPrefix(
-                                                        source
-                                                            .clone()
-                                                            .with(Tree::String(s, false))
-                                                            .into(),
-                                                    )),
-                                                );
-                                                source
-                                                    .with(Tree::Equal(colon.clone(), colon.clone()))
-                                            }
-                                            o => source.with(o),
-                                        }
-                                    })
-                                    .collect();
-                                Tree::Curly(groups)
-                            }
+                            PairedToken::Curly => Tree::Curly(self.groups()?),
                             PairedToken::Bracket => Tree::Bracket(self.groups()?),
-                            // It's not really useful to elaborate strings in doc curlies, so we
-                            // won't treat them quite the same as curlies.
-                            PairedToken::DocCurly => Tree::DocCurly(self.groups()?),
+                            PairedToken::Quote => Tree::Quote(self.string_tree(true)?),
+                            PairedToken::ApostropheSpace => {
+                                Tree::ApostropheSpace(self.string_tree(false)?)
+                            }
+                            PairedToken::HashSpace => Tree::HashSpace(self.join_strings()?),
+                            PairedToken::DoubleHashSpace => {
+                                Tree::DoubleHashSpace(self.string_tree(false)?)
+                            }
                         };
                         // Next token must be valid and EndNested
                         let end = self.next_tok().unwrap().unwrap();
-                        debug_assert!(*end == TreeToken::EndNested);
+                        debug_assert!(*end == Token::EndNested);
                         src.unwrap_or_else(|| (source, end).into_source().source())
                             .with(t.into())
                     }
-                    TreeToken::EndNested => panic!("unexpected token"),
-                    TreeToken::NextChild => panic!("unexpected token"),
+                    Token::EndNested => panic!("unexpected token"),
+                    Token::NextChild => panic!("unexpected token"),
                 }))
             }
         }
@@ -263,28 +335,19 @@ where
         while self
             .tokens
             .peek()
-            .map(|t| {
-                t.as_ref()
-                    .map(|t| *t == TreeToken::NextChild)
-                    .unwrap_or(false)
-            })
+            .map(|t| t.as_ref().map(|t| *t == Token::NextChild).unwrap_or(false))
             .unwrap_or(false)
         {
             self.tokens.next();
         }
 
-        // Read all tokens until end of current group, next child separator, or doc tokens
-        // (which should be considered separate groups).
+        // Read all tokens until end of current group or next child separator.
         while self
             .tokens
             .peek()
             .map(|t| {
                 t.as_ref()
-                    .map(|t| {
-                        *t != TreeToken::EndNested
-                            && *t != TreeToken::NextChild
-                            && (parts.is_empty() || !t.is_doc_token())
-                    })
+                    .map(|t| *t != Token::EndNested && *t != Token::NextChild)
                     .unwrap_or(true)
             })
             .unwrap_or(false)
@@ -296,25 +359,12 @@ where
             return Ok(vec![]);
         }
 
-        // Elaborate [`Colon`,`ColonPostFree`] to [`ColonPostFree`, `ColonPostFree`] so multiple
-        // trailing colons works as expected.
-        {
-            let mut make_suffix = false;
-            for t in parts.iter_mut().rev() {
-                if make_suffix && **t == TreeOrSymbol::Symbol(SymbolicToken::Colon) {
-                    **t = TreeOrSymbol::ColonPostFree;
-                }
-                make_suffix = **t == TreeOrSymbol::ColonPostFree;
-            }
-        }
-
         // Resolve operators
         // Precedence (descending):
         //   Colon Prefix
         //   Colon (Left assoc)
-        //   Colon Suffix
         //   Bang/Caret Prefix
-        //   Comment Prefix
+        //   Hash/DoubleHash Prefix
         //   Bang Expression Prefix
         //   Arrow (Right assoc)
         //   Pipe/PipeRight (Left assoc macro)
@@ -448,7 +498,7 @@ where
         where
             Pred: Fn(&TreeOrSymbol) -> bool,
             Part: Fn(&mut Toks) -> TResult<E>,
-            Join: Fn(TreeOrSymbol, Source<Tree>) -> Option<Tree> + Clone,
+            Join: Fn(TreeOrSymbol, Source<Tree>) -> Tree + Clone,
         {
             let split = toks.iter().position(|p| syms(&*p));
             if let Some(pos) = split {
@@ -464,12 +514,9 @@ where
                 let mut td = prefix_op(b, syms, part, join.clone())?;
                 let new_t = (t, td.pop_front().unwrap())
                     .into_source()
-                    .map(|(t, v)| join(t.unwrap(), v))
-                    .transpose();
+                    .map(|(t, v)| join(t.unwrap(), v));
                 let mut ret = a;
-                if let Some(v) = new_t {
-                    ret.push_back(v);
-                }
+                ret.push_back(new_t);
                 ret.extend(td);
                 Ok(ret)
             } else {
@@ -477,6 +524,7 @@ where
             }
         }
 
+        #[allow(dead_code)]
         fn suffix_op<Pred, Part, Join, E>(
             toks: &mut Toks,
             syms: Pred,
@@ -521,13 +569,26 @@ where
         fn colon_prefix<E>(toks: &mut Toks) -> TResult<E> {
             prefix_op(
                 toks,
-                |t| t.is_front_colon(),
+                |v| v.is_symbol(&SymbolicToken::ColonPrefix),
                 to_treedeque,
-                |_, t| Some(Tree::ColonPrefix(t.into())),
+                |_, t| Tree::ColonPrefix(t.into()),
             )
         }
 
         fn colon<E>(toks: &mut Toks) -> TResult<E> {
+            // Change Colon to ColonPrefix when appropriate (when prior TreeOrSymbol isn't a tree).
+            for s in toks
+                .split_inclusive_mut(|t| t.value() == &TreeOrSymbol::Symbol(SymbolicToken::Colon))
+            {
+                if s.len() == 0 {
+                    continue;
+                }
+                if s[s.len() - 1] == TreeOrSymbol::Symbol(SymbolicToken::Colon)
+                    && (s.len() == 1 || !s[s.len() - 2].is_tree())
+                {
+                    *s[s.len() - 1] = TreeOrSymbol::Symbol(SymbolicToken::ColonPrefix);
+                }
+            }
             left_bin_op(
                 toks,
                 |v| v.is_symbol(&SymbolicToken::Colon),
@@ -546,41 +607,34 @@ where
             )
         }
 
-        fn colon_suffix<E>(toks: &mut Toks) -> TResult<E> {
-            suffix_op(
-                toks,
-                |t| t.is_back_colon(),
-                colon,
-                |_, t| Tree::ColonSuffix(t.into()),
-            )
-        }
-
         fn bang_caret_prefixes<E>(toks: &mut Toks) -> TResult<E> {
             prefix_op(
                 toks,
                 |t| t.is_symbol(&SymbolicToken::Bang) || t.is_symbol(&SymbolicToken::Caret),
-                colon_suffix,
-                |s, t| {
-                    Some(match s {
-                        TreeOrSymbol::Symbol(SymbolicToken::Bang) => Tree::Bang(t.into()),
-                        TreeOrSymbol::Symbol(SymbolicToken::Caret) => Tree::Caret(t.into()),
-                        _ => panic!("unexpected symbol"),
-                    })
+                colon,
+                |s, t| match s {
+                    TreeOrSymbol::Symbol(SymbolicToken::Bang) => Tree::Bang(t.into()),
+                    TreeOrSymbol::Symbol(SymbolicToken::Caret) => Tree::Caret(t.into()),
+                    _ => panic!("unexpected symbol"),
                 },
             )
         }
 
-        fn comment_prefix<E>(toks: &mut Toks) -> TResult<E> {
+        fn hash_prefixes<E>(toks: &mut Toks) -> TResult<E> {
             prefix_op(
                 toks,
-                |t| t == &TreeOrSymbol::Comment,
+                |t| t.is_symbol(&SymbolicToken::Hash) || t.is_symbol(&SymbolicToken::DoubleHash),
                 bang_caret_prefixes,
-                |_, _| None,
+                |s, t| match s {
+                    TreeOrSymbol::Symbol(SymbolicToken::Hash) => Tree::Hash(t.into()),
+                    TreeOrSymbol::Symbol(SymbolicToken::DoubleHash) => Tree::DoubleHash(t.into()),
+                    _ => panic!("unexpected symbol"),
+                },
             )
         }
 
         fn bang_prefix_group<E>(toks: &mut Toks) -> TResult<E> {
-            prefixed_initial(toks, &SymbolicToken::Bang, comment_prefix, Tree::Bang)
+            prefixed_initial(toks, &SymbolicToken::Bang, hash_prefixes, Tree::Bang)
         }
 
         fn arrow<E>(toks: &mut Toks) -> TResult<E> {
@@ -713,20 +767,99 @@ where
     }
 
     fn groups(&mut self) -> Result<TreeVec, Errors<E>> {
+        self.until_end_nested(Self::group_as_tree)
+    }
+
+    fn next_as_string_tree(
+        &mut self,
+        quoted: bool,
+        remove_leading_newline: bool,
+    ) -> Result<Option<Source<StringTree>>, Errors<E>> {
+        match self.next_tok()? {
+            None => Ok(None),
+            Some(t) => {
+                let (mut source, t) = t.take();
+                match t {
+                    Token::Symbol(SymbolicToken::Caret) => {
+                        let tree = self
+                            .tree_or_symbol()?
+                            .expect("caret must be followed by a token")
+                            .map(|t| t.as_tree());
+                        Ok(Some(
+                            (source, tree.source())
+                                .into_source()
+                                .with(StringTree::Expression(tree)),
+                        ))
+                    }
+                    Token::String("\n") if remove_leading_newline => Ok(None),
+                    Token::String(mut s) => {
+                        // Check if next token is the end
+                        let remove_trailing_newline = !quoted
+                            && self
+                                .tokens
+                                .peek()
+                                .unwrap()
+                                .as_ref()
+                                .map(|t| t == &Token::EndNested)
+                                .unwrap_or(false);
+                        if remove_trailing_newline && s.ends_with('\n') {
+                            // SAFETY: ends_with() guarantees the offset will be valid
+                            s = unsafe { s.get_unchecked(..s.len() - '\n'.len_utf8()) };
+                            if s.is_empty() {
+                                return Ok(None);
+                            }
+                        }
+                        if quoted {
+                            match parse_escape_sequences(s) {
+                                Ok(s) => Ok(Some(source.with(StringTree::String(s)))),
+                                Err((e, start_offset, end_offset)) => {
+                                    source.location.start += start_offset;
+                                    source.location.length = end_offset - start_offset;
+                                    Err(source.with(e).into())
+                                }
+                            }
+                        } else {
+                            Ok(Some(source.with(StringTree::String(s.into()))))
+                        }
+                    }
+                    _ => panic!("unexpected token"),
+                }
+            }
+        }
+    }
+
+    fn string_tree(&mut self, quoted: bool) -> Result<StringTreeVec, Errors<E>> {
+        let mut first = true;
+        self.until_end_nested(|this| {
+            this.next_as_string_tree(quoted, !quoted && std::mem::replace(&mut first, false))
+        })
+    }
+
+    fn join_strings(&mut self) -> Result<String, Errors<E>> {
+        self.until_end_nested(|this| match this.next_tok()? {
+            None => Ok(None),
+            Some(st) => match st.unwrap() {
+                Token::String(s) => Ok(Some(s)),
+                _ => panic!("unexpected token"),
+            },
+        })
+        .map(|strs| strs.join(""))
+    }
+
+    fn until_end_nested<T, F>(&mut self, mut f: F) -> Result<Vec<T>, Errors<E>>
+    where
+        F: FnMut(&mut Self) -> Result<Option<T>, Errors<E>>,
+    {
         let mut result = Vec::new();
         let mut errors = Vec::new();
 
         while self
             .tokens
             .peek()
-            .map(|t| {
-                t.as_ref()
-                    .map(|t| *t != TreeToken::EndNested)
-                    .unwrap_or(true)
-            })
+            .map(|t| t.as_ref().map(|t| *t != Token::EndNested).unwrap_or(true))
             .unwrap_or(false)
         {
-            match self.group_as_tree() {
+            match f(self) {
                 Ok(Some(v)) => result.push(v),
                 Ok(None) => (),
                 Err(errs) => errors.extend(errs.0),
@@ -745,7 +878,6 @@ where
 mod test {
     use super::*;
     use crate::ast::tokenize::Tokens;
-    use crate::ast::tokenize_tree::TreeTokens;
 
     use Tree::*;
 
@@ -760,40 +892,180 @@ mod test {
     where
         R: From<Source<Tree>>,
     {
-        src(String(s.into(), false))
+        src(String(s.into()))
     }
 
     #[test]
     fn string() {
-        assert_single("s", String("s".into(), false));
-        assert_single("\"hello world\"", String("hello world".into(), true));
+        assert_single("s", String("s".into()));
     }
 
     #[test]
-    fn doc_comment() {
+    fn bang() {
+        assert_single("!a", Bang(s("a")));
+        assert_single("!a b c", Bang(src(Parens(vec![s("a"), s("b"), s("c")]))));
+        assert_single("a !b c", Parens(vec![s("a"), src(Bang(s("b"))), s("c")]));
+    }
+
+    #[test]
+    fn caret() {
+        assert_single("^a", Caret(s("a")));
+        assert_single("^a b c", Caret(src(Parens(vec![s("a"), s("b"), s("c")]))));
+        assert_single("a ^b c", Parens(vec![s("a"), src(Caret(s("b"))), s("c")]));
+    }
+
+    #[test]
+    fn colon_prefix() {
+        assert_single(":a", ColonPrefix(s("a")));
         assert_single(
-            "# some comment\n##doc comment\n",
-            DocString("doc comment".into()),
+            ":a b c",
+            Parens(vec![src(ColonPrefix(s("a"))), s("b"), s("c")]),
         );
+        assert_single(
+            "a :b c",
+            Parens(vec![s("a"), src(ColonPrefix(s("b"))), s("c")]),
+        );
+        assert_single("::a", ColonPrefix(src(ColonPrefix(s("a")))));
     }
 
     #[test]
-    fn tree_comment() {
-        assert_single("a #(b c) d", Parens(vec![s("a"), s("d")]));
-        assert_single("a #b d", Parens(vec![s("a"), s("d")]));
-        assert_single("a #!b d", Parens(vec![s("a"), s("d")]));
-        assert_single("a #^b d", Parens(vec![s("a"), s("d")]));
-        assert_single("a #[b (e f)] d", Parens(vec![s("a"), s("d")]));
-        assert_single("a #{b; ([e f])} d", Parens(vec![s("a"), s("d")]));
-        assert_single("#a b d", Parens(vec![s("b"), s("d")]));
+    fn hash_prefix() {
+        assert_single(
+            "a #(b c) d",
+            Parens(vec![
+                s("a"),
+                src(Hash(src(Parens(vec![s("b"), s("c")])))),
+                s("d"),
+            ]),
+        );
+        assert_single("a #b d", Parens(vec![s("a"), src(Hash(s("b"))), s("d")]));
+        assert_single(
+            "a #!b d",
+            Parens(vec![s("a"), src(Hash(src(Bang(s("b"))))), s("d")]),
+        );
+        assert_single(
+            "a #^b d",
+            Parens(vec![s("a"), src(Hash(src(Caret(s("b"))))), s("d")]),
+        );
+        assert_single(
+            "a #[b (e f)] d",
+            Parens(vec![
+                s("a"),
+                src(Hash(src(Bracket(vec![src(Parens(vec![
+                    s("b"),
+                    src(Parens(vec![s("e"), s("f")])),
+                ]))])))),
+                s("d"),
+            ]),
+        );
+        assert_single("#a b d", Parens(vec![src(Hash(s("a"))), s("b"), s("d")]));
         assert_fail("a ^#b d");
         assert_fail("a #(b c d");
     }
 
     #[test]
+    fn double_hash_prefix() {
+        assert_single(
+            "a ##(b c) d",
+            Parens(vec![
+                s("a"),
+                src(DoubleHash(src(Parens(vec![s("b"), s("c")])))),
+                s("d"),
+            ]),
+        );
+        assert_single(
+            "a ##b d",
+            Parens(vec![s("a"), src(DoubleHash(s("b"))), s("d")]),
+        );
+        assert_single(
+            "a ##!b d",
+            Parens(vec![s("a"), src(DoubleHash(src(Bang(s("b"))))), s("d")]),
+        );
+        assert_single(
+            "a ##^b d",
+            Parens(vec![s("a"), src(DoubleHash(src(Caret(s("b"))))), s("d")]),
+        );
+        assert_single(
+            "a ##[b (e f)] d",
+            Parens(vec![
+                s("a"),
+                src(DoubleHash(src(Bracket(vec![src(Parens(vec![
+                    s("b"),
+                    src(Parens(vec![s("e"), s("f")])),
+                ]))])))),
+                s("d"),
+            ]),
+        );
+        assert_single(
+            "##a b d",
+            Parens(vec![src(DoubleHash(s("a"))), s("b"), s("d")]),
+        );
+        assert_fail("a ^##b d");
+        assert_fail("a ##(b c d");
+    }
+
+    #[test]
+    fn equal() {
+        assert_single("a = b", Equal(s("a"), s("b")));
+    }
+
+    #[test]
+    fn arrow() {
+        assert_single("a -> b", Arrow(s("a"), s("b")));
+    }
+
+    #[test]
+    fn colon() {
+        assert_single("a:b", Colon(s("a"), s("b")));
+        assert_fail("a:");
+        assert_single("a:b:c", Colon(src(Colon(s("a"), s("b"))), s("c")));
+        assert_single(
+            ":a:b::c",
+            Colon(
+                src(Colon(src(ColonPrefix(s("a"))), s("b"))),
+                src(ColonPrefix(s("c"))),
+            ),
+        );
+        assert_single(
+            "a b:c :d",
+            Parens(vec![
+                s("a"),
+                src(Colon(s("b"), s("c"))),
+                src(ColonPrefix(s("d"))),
+            ]),
+        );
+    }
+
+    #[test]
+    fn pipe_sugar() {
+        assert_same("a b |> c d", "(a b) c d");
+        assert_same("a |> b c", "a b c");
+        assert_same("a b | c d", "c d (a b)");
+        assert_same("a | c d", "c d a");
+        assert_same("a b <| c d", "a b (c d)");
+        assert_same("a b <| c", "a b c");
+        assert_same(
+            "a | b <| c <| d | e |> f <| g | h",
+            "b (c ((e d) f (h g))) a",
+        );
+        assert_same("a b |>:<| c d", "(a b):(c d)");
+        assert_same("a b <|", "a b ()");
+        assert_same("a b |>", "a b");
+        assert_same("<| a b", "a b");
+    }
+
+    #[test]
+    fn pipe_colon() {
+        assert_same("a b |>:c d", "(a b):c d");
+        assert_same("a b |>:c | d", "d (a b):c");
+        assert_same("a b:<| c d", "a b:(c d)");
+        assert_same("a b |>:c:d", "(a b):c:d");
+    }
+
+    #[test]
     fn parens() {
         assert_single("a b", Parens(vec![s("a"), s("b")]));
-        assert_single("((a))", String("a".into(), false));
+        assert_single("((a))", String("a".into()));
     }
 
     #[test]
@@ -817,11 +1089,6 @@ mod test {
     }
 
     #[test]
-    fn curly_shorthand() {
-        assert_same("{a,b,:c=1}", "{:a=:a,:b=:b,:c=1}");
-    }
-
-    #[test]
     fn bracket() {
         assert_single(
             "[a b
@@ -837,95 +1104,126 @@ mod test {
     }
 
     #[test]
-    fn bang() {
-        assert_single("!a", Bang(s("a")));
-        assert_single("!a b c", Bang(src(Parens(vec![s("a"), s("b"), s("c")]))));
-        assert_single("a !b c", Parens(vec![s("a"), src(Bang(s("b"))), s("c")]));
+    fn quote() {
+        assert_single(
+            "\"hello world\"",
+            Quote(vec![src(StringTree::String("hello world".into()))]),
+        );
     }
 
     #[test]
-    fn caret() {
-        assert_single("^a", Caret(s("a")));
-        assert_single("^a b c", Caret(src(Parens(vec![s("a"), s("b"), s("c")]))));
-        assert_single("a ^b c", Parens(vec![s("a"), src(Caret(s("b"))), s("c")]));
+    fn quote_unicode_escape() {
+        assert_single(
+            r#""my \u{65}scape""#,
+            Quote(vec![src(StringTree::String("my escape".into()))]),
+        );
     }
 
     #[test]
-    fn colon() {
-        assert_single(":a", ColonPrefix(s("a")));
-        assert_single(
-            ":a b c",
-            Parens(vec![src(ColonPrefix(s("a"))), s("b"), s("c")]),
-        );
-        assert_single(
-            "a :b c",
-            Parens(vec![s("a"), src(ColonPrefix(s("b"))), s("c")]),
-        );
-        assert_single("::a", ColonPrefix(src(ColonPrefix(s("a")))));
+    fn quote_invalid_unicode_escape() {
+        assert_err(r#""\u{FFFFFF}""#, Error::InvalidUnicodeCharacter);
+        assert_err(r#""\u{hi}""#, Error::InvalidUnicodeCharacter);
+        assert_err(r#""\u{}""#, Error::InvalidUnicodeCharacter);
+        assert_err(r#""\u{1234512345}""#, Error::InvalidUnicodeCharacter);
     }
 
     #[test]
-    fn colon_ops() {
-        assert_single("a:b", Colon(s("a"), s("b")));
-        assert_single("a:", ColonSuffix(s("a")));
-        assert_single("a:b:c", Colon(src(Colon(s("a"), s("b"))), s("c")));
+    fn quote_unclosed_unicode_escape() {
+        assert_err(r#""\u{1234""#, Error::UnfinishedUnicodeCharacter);
+    }
+
+    #[test]
+    fn quote_bad_escape() {
+        assert_err("\"ohn\\o\"", Error::UnrecognizedEscapeSequence);
+    }
+
+    #[test]
+    fn quote_nested() {
         assert_single(
-            ":a:b::c:",
-            ColonSuffix(src(Colon(
-                src(Colon(src(ColonPrefix(s("a"))), s("b"))),
-                src(ColonPrefix(s("c"))),
-            ))),
-        );
-        assert_single(
-            "a b:c d:e:",
-            Parens(vec![
-                s("a"),
-                src(Colon(s("b"), s("c"))),
-                src(ColonSuffix(src(Colon(s("d"), s("e"))))),
+            "\"hello ^(get-name :name)!\"",
+            Quote(vec![
+                src(StringTree::String("hello ".into())),
+                src(StringTree::Expression(src(Parens(vec![
+                    s("get-name"),
+                    src(ColonPrefix(s("name"))),
+                ])))),
+                src(StringTree::String("!".into())),
             ]),
         );
     }
 
     #[test]
-    fn pipe_sugar() {
-        assert_same("a b |> c d", "(a b) c d");
-        assert_same("a |> b c", "a b c");
-        assert_same("a b | c d", "c d (a b)");
-        assert_same("a | c d", "c d a");
-        assert_same("a b <| c d", "a b (c d)");
-        assert_same("a b <| c", "a b c");
-        assert_same(
-            "a | b <| c <| d | e |> f <| g | h",
-            "b (c ((e d) f (h g))) a",
+    fn apostrophe_space_block() {
+        assert_single(
+            "'\n  ' block string\n  ' here",
+            ApostropheSpace(vec![
+                src(StringTree::String("block string\n".into())),
+                src(StringTree::String("here".into())),
+            ]),
         );
-        assert_same("a b |>:<| c d", "(a b):(c d)");
-        assert_same("a b <|", "a b ()");
-        assert_same("a b |>", "a b");
-        assert_same("<| a b", "a b");
-        assert_same("a b |>:", "(a b):");
     }
 
     #[test]
-    fn pipe_colon() {
-        assert_same("a b |>:c d", "(a b):c d");
-        assert_same("a b |>:c | d", "d (a b):c");
-        assert_same("a b:<| c d", "a b:(c d)");
-        assert_same("a b |>:c:d", "(a b):c:d");
+    fn apostrophe_space_block_nested() {
+        assert_single(
+            "'\n  ' block ^^^string\n  ' here",
+            ApostropheSpace(vec![
+                src(StringTree::String("block ".into())),
+                src(StringTree::String("^".into())),
+                src(StringTree::Expression(s("string"))),
+                src(StringTree::String("\n".into())),
+                src(StringTree::String("here".into())),
+            ]),
+        );
     }
 
     #[test]
-    fn equal() {
-        assert_single("a = b", Equal(s("a"), s("b")));
+    fn hash_space_block() {
+        assert_single(
+            "# hello world\n# this is a comment ^^^hi",
+            HashSpace("hello world\nthis is a comment ^^^hi".into()),
+        );
     }
 
     #[test]
-    fn force_equal() {
-        assert_single("a = b", Equal(s("a"), s("b")));
+    fn double_hash_space_block() {
+        assert_single(
+            "##\n  ## block string\n  ## here",
+            DoubleHashSpace(vec![
+                src(StringTree::String("block string\n".into())),
+                src(StringTree::String("here".into())),
+            ]),
+        );
     }
 
     #[test]
-    fn arrow() {
-        assert_single("a -> b", Arrow(s("a"), s("b")));
+    fn double_hash_space_block_nested() {
+        assert_single(
+            "##\n  ## block ^^^string\n  ## here",
+            DoubleHashSpace(vec![
+                src(StringTree::String("block ".into())),
+                src(StringTree::String("^".into())),
+                src(StringTree::Expression(s("string"))),
+                src(StringTree::String("\n".into())),
+                src(StringTree::String("here".into())),
+            ]),
+        );
+    }
+
+    #[test]
+    fn unary_no_arg() {
+        for op in &[":", "!", "^"] {
+            assert_fail(op);
+        }
+    }
+
+    #[test]
+    fn binary_no_arg() {
+        for op in &["->", "="] {
+            assert_err(op, Error::BinaryMissingPrevious);
+            assert_err(format!("a {}", op).as_str(), Error::BinaryMissingNext);
+            assert_err(format!("{} a", op).as_str(), Error::BinaryMissingPrevious);
+        }
     }
 
     #[test]
@@ -948,22 +1246,6 @@ mod test {
         )
     }
 
-    #[test]
-    fn unary_no_arg() {
-        for op in &[":", "!", "^"] {
-            assert_fail(op);
-        }
-    }
-
-    #[test]
-    fn binary_no_arg() {
-        for op in &["->", "="] {
-            assert_fail(op);
-            assert_fail(format!("a {}", op).as_str());
-            assert_fail(format!("{} a", op).as_str());
-        }
-    }
-
     fn assert_single(s: &str, expected: Tree) {
         let elements = single(s);
         dbg!(&elements);
@@ -971,7 +1253,7 @@ mod test {
     }
 
     fn single(s: &str) -> Tree {
-        Parser::from(TreeTokens::from(Tokens::from(Source::missing(s.chars()))))
+        Parser::from(Tokens::from(Source::missing(s)))
             .next()
             .unwrap()
             .unwrap()
@@ -979,10 +1261,22 @@ mod test {
     }
 
     fn assert_fail(s: &str) {
-        Parser::from(TreeTokens::from(Tokens::from(Source::missing(s.chars()))))
+        Parser::from(Tokens::from(Source::missing(s)))
             .next()
             .unwrap()
             .unwrap_err();
+    }
+
+    fn assert_err(s: &str, e: Error<super::super::tokenize::Error>) {
+        let got = Parser::from(Tokens::from(Source::missing(s)))
+            .next()
+            .unwrap()
+            .unwrap_err()
+            .pop()
+            .unwrap()
+            .unwrap();
+        dbg!(&got);
+        assert!(e == got);
     }
 
     fn assert_same(a: &str, b: &str) {

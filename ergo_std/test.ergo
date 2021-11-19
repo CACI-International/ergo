@@ -49,16 +49,16 @@ required = {
         std:required _ = hi
         std:Bool:true
     }
-    missing = std:match { std:required _ = :unset } [
-        std:Error _ -> std:Bool:true
-        _ -> std:Bool:false
-    ]
+    missing = {
+        std:Error _ = { std:required _ = :unset }
+        std:Bool:true
+    }
 }
 
 if = {
     :"one case" = {
         true = {
-            "yep" = std:if std:Bool:true yep
+            std:String "yep" = std:if std:Bool:true yep
             std:Bool:true
         }
         false = {
@@ -67,15 +67,15 @@ if = {
         }
     }
     else = {
-        "nope" = std:if std:Bool:false yep else nope
+        std:String "nope" = std:if std:Bool:false yep else nope
         std:Bool:true
     }
     :"else if" = {
-        "second" = std:if std:Bool:false first else if std:Bool:true second
+        std:String "second" = std:if std:Bool:false first else if std:Bool:true second
         std:Bool:true
     }
     :"many else if" = {
-        "third" = std:if std:Bool:false first else if std:Bool:false second else if std:Bool:true third
+        std:String "third" = std:if std:Bool:false first else if std:Bool:false second else if std:Bool:true third
         std:Bool:true
     }
     :"else if unset" = {
@@ -83,7 +83,7 @@ if = {
         std:Bool:true
     }
     :"else if else" = {
-        "nope" = std:if std:Bool:false first else if std:Bool:false second else if std:Bool:false third else nope
+        std:String "nope" = std:if std:Bool:false first else if std:Bool:false second else if std:Bool:false third else nope
         std:Bool:true
     }
     invalid = {

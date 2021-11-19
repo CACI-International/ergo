@@ -1,122 +1,76 @@
 //! AST tokenization.
+//!
+//! This does more than "traditional" tokenization, incorporating some parts of what might be
+//! considered parsing to have context-aware tokenization.
+//!
+//! The output stream of tokens is whitespace-agnostic. Commas and semicolons interpreted as
+//! expression separators where relevant (within curly and bracket tokens). Specifically,
+//! whitespace and commas/semicolons are interpreted as follows:
+//!
+//! * Lines (the root of the parsing) may contain whitespace-separated token trees.
+//! * Parens may contain whitespace- and/or newline-separated token trees.
+//! * Curly brackets and square brackets may contain newline-, semicolon-, and/or comma-separated
+//! lines.
+//!
+//! Quotes and line-oriented blocks preceded by apostrophes/hash/double-hash followed by a space
+//! are considered token trees. All but hash-preceded trees may contain carets which each must be
+//! followed by a single token tree.
 
+use ergo_runtime::abi_stable::type_erase::{Eraseable, Erased};
 use ergo_runtime::source::Source;
 use std::fmt;
 
-const MAX_TOKEN_LOOKAHEAD: u8 = 2;
-
-struct LookaheadIterator<I: Iterator> {
-    inner: I,
-    lookahead: [Option<I::Item>; MAX_TOKEN_LOOKAHEAD as usize],
-    next: u8,
-}
-
-impl<I: Iterator> LookaheadIterator<I> {
-    pub fn new(iter: I) -> Self {
-        let mut ret = LookaheadIterator {
-            inner: iter,
-            lookahead: Default::default(),
-            next: 0,
-        };
-        for i in 0..(MAX_TOKEN_LOOKAHEAD as usize) {
-            ret.lookahead[i] = ret.inner.next();
-        }
-        ret
-    }
-
-    pub fn peek(&self) -> Option<&I::Item> {
-        self.peek_at(0)
-    }
-
-    pub fn peek_at(&self, to: usize) -> Option<&I::Item> {
-        debug_assert!(to < MAX_TOKEN_LOOKAHEAD as usize);
-        self.lookahead[(self.next as usize + to) % MAX_TOKEN_LOOKAHEAD as usize].as_ref()
-    }
-
-    pub fn peek_match(&self, rest: &[I::Item]) -> bool
-    where
-        I::Item: PartialEq,
-    {
-        debug_assert!(rest.len() <= MAX_TOKEN_LOOKAHEAD as usize);
-        for i in 0..rest.len() {
-            if !self.peek_at(i).map(|v| v == &rest[i]).unwrap_or(false) {
-                return false;
-            }
-        }
-        true
-    }
-}
-
-impl<I: Iterator> Iterator for LookaheadIterator<I> {
-    type Item = I::Item;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let ret = std::mem::replace(&mut self.lookahead[self.next as usize], self.inner.next());
-        self.next += 1;
-        self.next %= MAX_TOKEN_LOOKAHEAD;
-        ret
-    }
-}
-
 /// Tokens relevant to expression interpretation.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SymbolicToken {
-    /// A string, either from quoted or unquoted words.
-    String {
-        string: String,
-        quoted: bool,
-    },
-    /// A doc string.
-    ///
-    /// Doc strings will always be present immediately after `Token::DocComment`, and immediately
-    /// before `Token::Newline`, even if empty.
-    DocString(String),
     Equal,
     Caret,
     Colon,
+    ColonPrefix,
     Bang,
     Arrow,
     Pipe,
     PipeLeft,
     PipeRight,
+    Hash,
+    DoubleHash,
 }
 
-/// Tokens which are parsed in pairs.
+/// Tokens which are parsed in pairs and used in grouping other tokens.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PairedToken {
     Paren,
     Curly,
     Bracket,
-    DocCurly,
+    Quote,
+    ApostropheSpace,
+    HashSpace,
+    DoubleHashSpace,
 }
 
 /// Script tokens.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Token {
+pub enum Token<'a> {
+    /// A string token.
+    ///
+    /// If strings are within quotes, they are guaranteed to have at least one character after any
+    /// backslash characters.
+    String(&'a str),
+    /// A symbolic token.
     Symbol(SymbolicToken),
-    Pair {
-        which: PairedToken,
-        open: bool,
-    },
-    DocComment,
-    TreeComment,
-    Comma,
-    Semicolon,
-    Newline,
-    /// One or more whitespace characters (except newlines).
-    Whitespace,
+    /// Start a nested paired grouping.
+    StartNested(PairedToken),
+    /// End the most recent nested paired grouping.
+    EndNested,
+    /// Start the next child withing the current grouping.
+    ///
+    /// Only valid within PairedToken::Curly and PairedToken::Bracket.
+    NextChild,
 }
 
-impl Token {
-    pub fn string<S: Into<String>>(s: S, quoted: bool) -> Self {
-        Token::Symbol(SymbolicToken::String {
-            string: s.into(),
-            quoted,
-        })
-    }
-
-    pub fn doc_string<S: Into<String>>(s: S) -> Self {
-        Token::Symbol(SymbolicToken::DocString(s.into()))
+impl<'a> Token<'a> {
+    pub fn string<S: Into<&'a str>>(s: S) -> Self {
+        Token::String(s.into())
     }
 
     pub fn equal() -> Self {
@@ -131,68 +85,16 @@ impl Token {
         Token::Symbol(SymbolicToken::Colon)
     }
 
+    pub fn colon_prefix() -> Self {
+        Token::Symbol(SymbolicToken::ColonPrefix)
+    }
+
     pub fn bang() -> Self {
         Token::Symbol(SymbolicToken::Bang)
     }
 
     pub fn arrow() -> Self {
         Token::Symbol(SymbolicToken::Arrow)
-    }
-
-    pub fn open_paren() -> Self {
-        Token::Pair {
-            which: PairedToken::Paren,
-            open: true,
-        }
-    }
-
-    pub fn close_paren() -> Self {
-        Token::Pair {
-            which: PairedToken::Paren,
-            open: false,
-        }
-    }
-
-    pub fn open_curly() -> Self {
-        Token::Pair {
-            which: PairedToken::Curly,
-            open: true,
-        }
-    }
-
-    pub fn close_curly() -> Self {
-        Token::Pair {
-            which: PairedToken::Curly,
-            open: false,
-        }
-    }
-
-    pub fn open_bracket() -> Self {
-        Token::Pair {
-            which: PairedToken::Bracket,
-            open: true,
-        }
-    }
-
-    pub fn close_bracket() -> Self {
-        Token::Pair {
-            which: PairedToken::Bracket,
-            open: false,
-        }
-    }
-
-    pub fn open_doc_curly() -> Self {
-        Token::Pair {
-            which: PairedToken::DocCurly,
-            open: true,
-        }
-    }
-
-    pub fn close_doc_curly() -> Self {
-        Token::Pair {
-            which: PairedToken::DocCurly,
-            open: false,
-        }
     }
 
     pub fn pipe() -> Self {
@@ -207,24 +109,48 @@ impl Token {
         Token::Symbol(SymbolicToken::PipeRight)
     }
 
-    pub fn implies_value_when_before(&self) -> bool {
-        match self {
-            Token::Symbol(SymbolicToken::PipeRight)
-            | Token::Symbol(SymbolicToken::String { .. })
-            | Token::Pair { open: false, .. } => true,
-            _ => false,
-        }
+    pub fn hash() -> Self {
+        Token::Symbol(SymbolicToken::Hash)
     }
 
-    pub fn implies_value_when_after(&self) -> bool {
-        match self {
-            Token::Symbol(SymbolicToken::PipeLeft)
-            | Token::Symbol(SymbolicToken::String { .. })
-            | Token::Symbol(SymbolicToken::Colon)
-            | Token::Symbol(SymbolicToken::Bang)
-            | Token::Pair { open: true, .. } => true,
-            _ => false,
-        }
+    pub fn double_hash() -> Self {
+        Token::Symbol(SymbolicToken::DoubleHash)
+    }
+
+    pub fn paren() -> Self {
+        Token::StartNested(PairedToken::Paren)
+    }
+
+    pub fn curly() -> Self {
+        Token::StartNested(PairedToken::Curly)
+    }
+
+    pub fn bracket() -> Self {
+        Token::StartNested(PairedToken::Bracket)
+    }
+
+    pub fn quote() -> Self {
+        Token::StartNested(PairedToken::Quote)
+    }
+
+    pub fn apostrophe_space() -> Self {
+        Token::StartNested(PairedToken::ApostropheSpace)
+    }
+
+    pub fn hash_space() -> Self {
+        Token::StartNested(PairedToken::HashSpace)
+    }
+
+    pub fn double_hash_space() -> Self {
+        Token::StartNested(PairedToken::DoubleHashSpace)
+    }
+
+    pub fn close() -> Self {
+        Token::EndNested
+    }
+
+    pub fn next() -> Self {
+        Token::NextChild
     }
 }
 
@@ -232,82 +158,31 @@ impl fmt::Display for SymbolicToken {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use SymbolicToken::*;
         match self {
-            // TODO handle quoted
-            String { string, .. } => write!(f, "{}", string),
-            DocString(s) => write!(f, "{}", s),
             Equal => write!(f, "="),
             Caret => write!(f, "^"),
-            Colon => write!(f, ":"),
+            Colon | ColonPrefix => write!(f, ":"),
             Bang => write!(f, "!"),
             Arrow => write!(f, "->"),
             Pipe => write!(f, "|"),
             PipeLeft => write!(f, "<|"),
             PipeRight => write!(f, "|>"),
+            Hash => write!(f, "#"),
+            DoubleHash => write!(f, "##"),
         }
     }
 }
 
 impl fmt::Display for PairedToken {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use PairedToken::*;
         match self {
-            PairedToken::Paren => write!(f, "parenthesis"),
-            PairedToken::Bracket => write!(f, "square bracket"),
-            PairedToken::Curly => write!(f, "curly bracket"),
-            PairedToken::DocCurly => write!(f, "doc curly bracket"),
-        }
-    }
-}
-
-impl fmt::Display for Token {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Token::Symbol(t) => write!(f, "{}", t),
-            Token::Pair {
-                which: PairedToken::Paren,
-                open,
-            } => {
-                if *open {
-                    write!(f, "(")
-                } else {
-                    write!(f, ")")
-                }
-            }
-            Token::Pair {
-                which: PairedToken::Bracket,
-                open,
-            } => {
-                if *open {
-                    write!(f, "[")
-                } else {
-                    write!(f, "]")
-                }
-            }
-            Token::Pair {
-                which: PairedToken::Curly,
-                open,
-            } => {
-                if *open {
-                    write!(f, "{{")
-                } else {
-                    write!(f, "}}")
-                }
-            }
-            Token::Pair {
-                which: PairedToken::DocCurly,
-                open,
-            } => {
-                if *open {
-                    write!(f, "{{{{")
-                } else {
-                    write!(f, "}}}}")
-                }
-            }
-            Token::DocComment => write!(f, "##"),
-            Token::TreeComment => write!(f, "#"),
-            Token::Comma => write!(f, ","),
-            Token::Semicolon => write!(f, ";"),
-            Token::Newline => write!(f, "\n"),
-            Token::Whitespace => write!(f, " "),
+            Paren => write!(f, "parenthesis"),
+            Curly => write!(f, "curly bracket"),
+            Bracket => write!(f, "square bracket"),
+            Quote => write!(f, "quote"),
+            ApostropheSpace => write!(f, "block string"),
+            HashSpace => write!(f, "line comment"),
+            DoubleHashSpace => write!(f, "doc comment"),
         }
     }
 }
@@ -318,7 +193,7 @@ impl PartialEq<Source<Self>> for PairedToken {
     }
 }
 
-impl PartialEq<Source<Self>> for Token {
+impl<'a> PartialEq<Source<Self>> for Token<'a> {
     fn eq(&self, other: &Source<Self>) -> bool {
         self == &**other
     }
@@ -327,29 +202,32 @@ impl PartialEq<Source<Self>> for Token {
 /// Tokenization errors.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Error {
-    /// A quoted string is missing a closing quote.
-    UnfinishedQuotedString,
-    /// A raw string is missing a closing sequence.
-    UnfinishedRawString,
-    /// An escape sequence in a quoted string was not recognized.
-    UnrecognizedEscapeSequence,
-    /// A unicode character escape sequence is missing a closing character.
-    UnfinishedUnicodeCharacter,
-    /// A unicode character escape sequence was too long.
-    LongUnicodeCharacter,
-    /// A unicode character escape sequence contained an invalid digit.
-    InvalidUnicodeCharacter,
+    /// A block string had an invalid starting sequence.
+    InvalidBlockString,
+    /// A colon was in an invalid location.
+    InvalidColon,
+    /// A caret within a quoted string was not followed by a word.
+    InvalidStringCaret,
+    /// An expression separator is invalid (comma or semicolon within nested expression).
+    InvalidExpressionSeparator,
+    /// An opened PairedToken does not have a corresponding closing PairedToken.
+    UnmatchedOpeningToken(PairedToken),
+    /// A closing PairedToken does not match the most recently-opened PairedToken.
+    UnmatchedClosingToken(PairedToken, Option<Source<PairedToken>>),
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Error::UnfinishedQuotedString => write!(f, "unfinished quoted string"),
-            Error::UnfinishedRawString => write!(f, "unfinished raw string"),
-            Error::UnrecognizedEscapeSequence => write!(f, "unrecognized escape sequence"),
-            Error::UnfinishedUnicodeCharacter => write!(f, "unfinished unicode character code"),
-            Error::LongUnicodeCharacter => write!(f, "unicode character code too long"),
-            Error::InvalidUnicodeCharacter => write!(f, "invalid unicode character code"),
+            Error::InvalidBlockString => write!(f, "block strings must be started with `\' `"),
+            Error::InvalidColon => write!(
+                f,
+                "colons must always be followed by an expression (without whitespace)"
+            ),
+            Error::InvalidStringCaret => write!(f, "expected an alphanumeric string to follow the caret"),
+            Error::InvalidExpressionSeparator => write!(f, "commas and semicolons may only be within curly and square brackets to separate expressions"),
+            Error::UnmatchedOpeningToken(t) => write!(f, "unmatched {}", t),
+            Error::UnmatchedClosingToken(t, _) => write!(f, "unmatched {}", t),
         }
     }
 }
@@ -357,404 +235,783 @@ impl fmt::Display for Error {
 impl std::error::Error for Error {}
 
 impl super::ToDiagnostic for Error {
-    fn additional_info(&self, _diagnostic: &mut ergo_runtime::error::Diagnostic) {}
-}
-
-#[derive(PartialEq, Eq, Clone, Copy, Debug)]
-enum DocCommentMode {
-    String,
-    Expression,
-}
-
-#[derive(PartialEq, Eq, Clone, Copy, Debug)]
-struct DocComment {
-    active: bool,
-    mode: DocCommentMode,
-}
-
-impl Default for DocComment {
-    fn default() -> Self {
-        DocComment {
-            active: false,
-            mode: DocCommentMode::String,
-        }
-    }
-}
-
-impl DocComment {
-    fn string() -> Self {
-        DocComment {
-            active: true,
-            mode: DocCommentMode::String,
-        }
-    }
-
-    fn expr() -> Self {
-        DocComment {
-            active: true,
-            mode: DocCommentMode::Expression,
-        }
-    }
-}
-
-#[derive(Debug)]
-enum Pending {
-    None,
-    String(String, bool, ergo_runtime::source::Location),
-    Result(Result<Source<Token>, Source<Error>>),
-}
-
-impl Default for Pending {
-    fn default() -> Self {
-        Pending::None
-    }
-}
-
-/// Iterator producing tokens or errors.
-pub struct Tokens<I: Iterator> {
-    iter: LookaheadIterator<I>,
-    source: Source<()>,
-    doc_comment: DocComment,
-    pending: Pending,
-}
-
-impl<I: Iterator, T> From<Source<T>> for Tokens<I>
-where
-    T: IntoIterator<IntoIter = I, Item = I::Item>,
-{
-    fn from(s: Source<T>) -> Self {
-        let (source, i) = s.take();
-        Tokens {
-            iter: LookaheadIterator::new(i.into_iter()),
-            source,
-            doc_comment: DocComment::default(),
-            pending: Pending::None,
-        }
-    }
-}
-
-impl<I: Iterator> Tokens<I> {
-    fn next_source(&mut self) -> Option<I::Item> {
-        let ret = self.iter.next();
-        if ret.is_some() {
-            self.source.location.length += 1;
-        }
-        ret
-    }
-
-    fn reset_source_start(&mut self) {
-        self.source.location.start += self.source.location.length;
-        self.source.location.length = 0;
-    }
-}
-
-impl<I: Iterator<Item = char>> Tokens<I> {
-    fn push_str(&mut self, c: char) {
-        match &mut self.pending {
-            Pending::None => {
-                self.pending = Pending::String(c.into(), false, self.source.location.clone());
+    fn additional_info(&self, diagnostic: &mut ergo_runtime::error::Diagnostic) {
+        match self {
+            Error::UnmatchedClosingToken(_, Some(close)) => {
+                diagnostic
+                    .labels
+                    .push(ergo_runtime::error::Label::secondary(
+                        close.clone().map(|t| format!("expected match for {}", t)),
+                    ));
             }
-            Pending::String(s, _, l) => {
-                s.push(c);
-                *l = &*l + &self.source.location;
-            }
-            Pending::Result(_) => panic!("cannot push string"),
+            _ => (),
+        }
+    }
+}
+
+mod next_token {
+    use super::*;
+
+    pub(super) struct Ref<'a, T> {
+        next: &'a mut Next,
+        valid: bool,
+        _phantom: std::marker::PhantomData<&'a T>,
+    }
+
+    impl<'a, T> Ref<'a, T> {
+        pub fn as_ref(&self) -> &T {
+            assert!(self.valid);
+            unsafe { self.next.current().as_ref() }
+        }
+
+        pub fn as_mut(&mut self) -> &mut T {
+            assert!(self.valid);
+            unsafe { self.next.current_mut().as_mut() }
+        }
+
+        pub fn push<N: NextToken>(&mut self, next: N) {
+            self.next.push(next);
+            self.valid = false;
+        }
+
+        pub fn finish(&mut self) -> T {
+            assert!(self.valid);
+            self.valid = false;
+            unsafe { self.next.pop().to_owned() }
         }
     }
 
-    fn extend_str(&mut self, s: String) {
-        match &mut self.pending {
-            Pending::None => {
-                self.pending = Pending::String(s, false, self.source.location.clone());
-            }
-            Pending::String(st, _, l) => {
-                st.push_str(&s);
-                *l = &*l + &self.source.location;
-            }
-            Pending::Result(_) => panic!("cannot extend string"),
+    pub(super) trait NextToken: Eraseable + Sized {
+        fn next<'a, 'tok>(
+            this: &mut Ref<'a, Self>,
+            position: &mut TokenPosition<'tok>,
+        ) -> Option<Result<Source<Token<'tok>>, Source<Error>>>;
+
+        fn call_next<'tok>(
+            next: &mut Next,
+            position: &mut TokenPosition<'tok>,
+        ) -> Option<Result<Source<Token<'tok>>, Source<Error>>> {
+            let mut this = Ref {
+                next,
+                valid: true,
+                _phantom: std::marker::PhantomData,
+            };
+            Self::next(&mut this, position)
+        }
+
+        fn close(self) -> Result<usize, Source<Error>>;
+
+        fn call_close(e: Erased) -> Result<usize, Source<Error>> {
+            Self::close(unsafe { e.to_owned() })
         }
     }
 
-    fn quoted_str(&mut self) {
-        match &mut self.pending {
-            Pending::String(_, quoted, _) => {
-                *quoted = true;
+    struct Impl {
+        call_next: for<'tok> fn(
+            &mut Next,
+            &mut TokenPosition<'tok>,
+        ) -> Option<Result<Source<Token<'tok>>, Source<Error>>>,
+        call_close: fn(Erased) -> Result<usize, Source<Error>>,
+        data: Erased,
+    }
+
+    impl Impl {
+        pub fn new<T: NextToken>(imp: T) -> Self {
+            Impl {
+                call_next: T::call_next,
+                call_close: T::call_close,
+                data: Erased::new(imp),
             }
-            _ => panic!("invalid pending string state"),
+        }
+
+        pub unsafe fn as_ref<T>(&self) -> &T {
+            self.data.as_ref()
+        }
+
+        pub unsafe fn as_mut<T>(&mut self) -> &mut T {
+            self.data.as_mut()
+        }
+
+        pub unsafe fn to_owned<T>(self) -> T {
+            self.data.to_owned()
         }
     }
 
-    fn next_non_string(&mut self) -> Option<Result<Source<Token>, Source<Error>>> {
-        self.reset_source_start();
+    pub(super) struct Next(Vec<Impl>);
 
-        // If in doc comment string mode, _always_ consume everything until newline/doc curly (even
-        // if empty) and emit a doc string. In any case, the doc comment state must be transitioned
-        // to something other than `DocComment::string()`.
-        if self.doc_comment == DocComment::string() {
-            let mut s = String::new();
-            while let Some(c) = self.iter.peek() {
-                if *c == '\n' {
-                    break;
-                } else if *c == '{' && self.iter.peek_at(1) == Some(&'{') {
-                    self.doc_comment = DocComment::expr();
-                    break;
-                } else {
-                    s.push(self.next_source().unwrap());
-                }
-            }
-            // Newline sets this too, but we need to ensure the doc comment state changes even if
-            // self.iter.peek() returned None.
-            if self.doc_comment == DocComment::string() {
-                self.doc_comment.active = false;
-            }
-            debug_assert!(self.doc_comment != DocComment::string());
-            return Some(Ok(self.source.clone().with(Token::doc_string(s))));
+    impl Next {
+        pub fn empty() -> Self {
+            Next(vec![])
         }
 
-        self.next_source().and_then(|c| {
-            if c == '#' {
-                let next = self.iter.peek();
-                // Doc comment (only when we are not in a doc comment expression)
-                if next == Some(&'#') && !self.doc_comment.active {
-                    self.next_source();
+        pub fn new<T: NextToken>(initial: T) -> Self {
+            Next(vec![Impl::new(initial)])
+        }
 
-                    self.doc_comment.active = true;
-                    Some(Ok(self.source.clone().with(Token::DocComment)))
-                } else if next.map(|c| c.is_whitespace()).unwrap_or(true) || (next == Some(&'#') && self.doc_comment.active) {
-                    // Line comment
-                    while let Some(c) = self.iter.peek() {
-                        if *c != '\n' {
-                            self.next_source();
-                        } else {
-                            break;
-                        }
-                    }
-                    self.next()
-                } else {
-                    // Tree comment
-                    Some(Ok(self.source.clone().with(Token::TreeComment)))
-                }
+        pub fn next<'tok>(
+            &mut self,
+            position: &mut TokenPosition<'tok>,
+        ) -> Option<Result<Source<Token<'tok>>, Source<Error>>> {
+            if self.is_empty() {
+                None
             } else {
-                // The remaining parsing will always result in some token based on the consumed
-                // character(s).
-                let tokentype =
-                    // Newlines
-                    if c == '\n' {
-                        self.doc_comment.active = false;
-                        Ok(Token::Newline)
-                    }
-                    // General whitespace
-                    else if c.is_whitespace() {
-                        while let Some(c) = self.iter.peek() {
-                            if c.is_whitespace() && *c != '\n' {
-                                self.next_source();
-                            } else {
-                                break;
-                            }
-                        }
-                        Ok(Token::Whitespace)
-                    }
-                    // Special characters
-                    else if c == '[' {
-                        Ok(Token::open_bracket())
-                    } else if c == ']' {
-                        Ok(Token::close_bracket())
-                    } else if c == '{' {
-                        // Check for doc open curly if applicable.
-                        Ok(if self.doc_comment == DocComment::expr() && self.iter.peek_match(&['{']) {
-                            self.next_source();
-                            Token::open_doc_curly()
-                        } else {
-                            Token::open_curly()
-                        })
-                    } else if c == '}' {
-                        // Check for doc closing curly if applicable.
-                        Ok(if self.doc_comment == DocComment::expr() && self.iter.peek_match(&['}']) {
-                            self.next_source();
-                            self.doc_comment = DocComment::string();
-                            Token::close_doc_curly()
-                        } else {
-                            Token::close_curly()
-                        })
-                    } else if c == '(' {
-                        Ok(Token::open_paren())
-                    } else if c == ')' {
-                        Ok(Token::close_paren())
-                    } else if c == ',' {
-                        Ok(Token::Comma)
-                    } else if c == ';' {
-                        Ok(Token::Semicolon)
-                    } else if c == '=' {
-                        Ok(Token::equal())
-                    } else if c == '^' {
-                        Ok(Token::caret())
-                    } else if c == ':' {
-                        Ok(Token::colon())
-                    } else if c == '!' {
-                        Ok(Token::bang())
-                    } else if c == '-' && self.iter.peek_match(&['>']) {
-                        self.next_source();
-                        Ok(Token::arrow())
-                    } else if c == '|' {
-                        Ok(if self.iter.peek_match(&['>']) {
-                            self.next_source();
-                            Token::pipe_right()
-                        } else { Token::pipe() })
-                    } else if c == '<' && self.iter.peek_match(&['|']) {
-                        self.next_source();
-                        Ok(Token::pipe_left())
-                    }
-                    // Quoted strings
-                    else if c == '"' {
-                        let mut s = String::default();
-                        let mut escape = false;
-                        while let Some(c) = self.next_source() {
-                            // Escape sequence
-                            if escape {
-                                if "\"\\".contains(c) {
-                                    s.push(c)
-                                } else if c == 'n' {
-                                    s.push('\n')
-                                } else if c == 't' {
-                                    s.push('\t')
-                                // Unicode character codes
-                                } else if c == 'u' && self.iter.peek_match(&['{']) {
-                                    self.next_source();
-                                    let mut unicode_hex = String::new();
-                                    loop {
-                                        match self.next_source() {
-                                            None | Some('"') => {
-                                                let mut val = self.source.clone().with(Error::UnfinishedUnicodeCharacter);
-                                                val.location.start = val.location.start + val.location.length - unicode_hex.len();
-                                                val.location.length = unicode_hex.len();
-                                                return Some(Err(val));
-                                            }
-                                            Some('}') => {
-                                                if unicode_hex.is_empty() {
-                                                    let mut val = self.source.clone().with(Error::InvalidUnicodeCharacter);
-                                                    val.location.start = val.location.start + val.location.length - 2;
-                                                    val.location.length = 2;
-                                                    return Some(Err(val));
-                                                }
+                let impl_fn = self.current().call_next;
+                impl_fn(self, position)
+            }
+        }
 
-                                                match <char as std::convert::TryFrom<u32>>::try_from(u32::from_str_radix(unicode_hex.as_str(), 16)
-                                                        .expect("all digits should be valid hex digits"))
-                                                {
-                                                    Err(_) => {
-                                                        let mut val = self.source.clone().with(Error::InvalidUnicodeCharacter);
-                                                        val.location.start = val.location.start + val.location.length - unicode_hex.len() - 1;
-                                                        val.location.length = unicode_hex.len();
-                                                        return Some(Err(val));
-                                                    }
-                                                    Ok(c) => s.push(c)
-                                                }
-                                                break;
-                                            }
-                                            Some(c) => {
-                                                if !c.is_ascii_hexdigit() {
-                                                    let mut val = self.source.clone().with(Error::InvalidUnicodeCharacter);
-                                                    val.location.start = val.location.start + val.location.length - 1;
-                                                    val.location.length = 1;
-                                                    return Some(Err(val));
-                                                }
-                                                if unicode_hex.len() == 6 {
-                                                    let mut val = self.source.clone().with(Error::LongUnicodeCharacter);
-                                                    val.location.start = val.location.start + val.location.length - unicode_hex.len() - 1;
-                                                    val.location.length = unicode_hex.len() + 1;
-                                                    return Some(Err(val));
-                                                }
-                                                unicode_hex.push(c);
-                                            }
-                                        }
-                                    }
-                                } else {
-                                    let mut val = self.source.clone().with(Error::UnrecognizedEscapeSequence);
-                                    val.location.start = val.location.start + val.location.length - 2;
-                                    val.location.length = 2;
-                                    return Some(Err(val));
-                                }
-                                escape = false;
-                            // Normal character
-                            } else {
-                                if c == '"' {
-                                    self.extend_str(s);
-                                    self.quoted_str();
-                                    return self.next_non_string();
-                                } else if c == '\\' {
-                                    escape = true;
-                                } else {
-                                    s.push(c);
-                                }
-                            }
-                        }
-                        Err(Error::UnfinishedQuotedString)
-                    }
-                    // Raw strings
-                    else if c == '\'' {
-                        let mut s = String::default();
-                        let mut count = 1;
-                        while let Some('\'') = self.iter.peek() {
-                            count += 1;
-                            self.next_source();
-                        }
-                        let close_count = count;
-                        while let Some(c) = self.next_source() {
-                            s.push(c);
-                            if c == '\'' {
-                                count -= 1;
-                                if count == 0 {
-                                    break
-                                }
-                            } else {
-                                count = close_count;
-                            }
-                        }
-                        if count != 0 {
-                            Err(Error::UnfinishedRawString)
-                        } else {
-                            s.truncate(s.len() - close_count);
-                            self.extend_str(s);
-                            self.quoted_str();
-                            return self.next_non_string();
-                        }
+        pub fn is_empty(&self) -> bool {
+            self.0.is_empty()
+        }
+
+        pub fn close<'tok>(&mut self) -> Result<usize, Source<Error>> {
+            let mut total = 0;
+            while let Some(imp) = self.0.pop() {
+                total += (imp.call_close)(imp.data)?;
+            }
+            Ok(total)
+        }
+
+        fn push<T: NextToken>(&mut self, next: T) {
+            self.0.push(Impl::new(next));
+        }
+
+        fn current(&self) -> &Impl {
+            self.0.last().unwrap()
+        }
+
+        fn current_mut(&mut self) -> &mut Impl {
+            self.0.last_mut().unwrap()
+        }
+
+        fn pop(&mut self) -> Impl {
+            self.0.pop().unwrap()
+        }
+    }
+}
+
+use next_token::{Next, NextToken};
+
+// All token parsing must be line-oriented, because of the use of line-prefixed contextual tokens.
+// What this means is that e.g., a quoted string spanning over a newline will be split into two
+// separate string tokens (which will be recombined with further quoted string processing).
+
+enum TokenElseString {
+    /// Return a token.
+    Some(Token<'static>),
+    /// Indicate the character is a string character.
+    String,
+    /// Move to the next character, but don't consider this a string character.
+    NonString,
+    /// Indicate an error.
+    Err(Error),
+}
+
+/// Read a token, optionally preceded by a string. Thus we move to the next non-string token while
+/// also parsing a string (if any) along the way.
+fn token_else_string<'a, 'tok, T, F>(
+    this: &mut next_token::Ref<'a, T>,
+    position: &mut TokenPosition<'tok>,
+    mut get_token: F,
+) -> Option<Result<Source<Token<'tok>>, Source<Error>>>
+where
+    F: FnMut(char, &mut next_token::Ref<'a, T>, &mut TokenPosition<'tok>) -> TokenElseString,
+{
+    let mut pending_str = position.remaining;
+    let mut pending_str_len = 0;
+
+    let token = loop {
+        position.reset_source_start();
+        if let Some(c) = position.next_char() {
+            match get_token(c, this, position) {
+                TokenElseString::Err(e) => break Some(Err(position.source(e))),
+                TokenElseString::Some(tok) => break Some(Ok(position.source(tok))),
+                TokenElseString::NonString => {
+                    if pending_str_len > 0 || c == '\n' {
+                        break None;
                     } else {
-                        self.push_str(c);
-                        return self.next_non_string();
-                    };
-                Some(match tokentype {
-                    Ok(t) => Ok(self.source.clone().with(t)),
-                    Err(e) => Err(self.source.clone().with(e)),
+                        pending_str = position.remaining;
+                        continue;
+                    }
+                }
+                TokenElseString::String => {
+                    pending_str_len += c.len_utf8();
+                }
+            }
+        } else {
+            break None;
+        }
+    };
+
+    if pending_str_len > 0 {
+        if let Some(t) = token {
+            this.push(ImmediateResult(t));
+        }
+        // SAFETY: pending_str_len is only incremented with the byte counts of subsequent
+        // characters within pending_str itself.
+        let s = unsafe { pending_str.get_unchecked(..pending_str_len) };
+        let mut src = position.source.clone();
+        src.location.start -= pending_str_len;
+        src.location.length = pending_str_len;
+        Some(Ok(src.with(Token::string(s))))
+    } else {
+        token
+    }
+}
+
+trait FinishAt: Eraseable {
+    const GROUP: bool;
+}
+
+macro_rules! finish_at {
+    ( $name:ident, $group:literal ) => {
+        struct $name;
+        impl FinishAt for $name {
+            const GROUP: bool = $group;
+        }
+    };
+}
+
+finish_at!(FinishAtNone, false);
+finish_at!(FinishAtGroup, true);
+
+/// Normal tokenization, with an optional (compile-time) behavior to finish after the first group
+/// completes. This is used for string expression parsing.
+struct Normal<T> {
+    nested: Vec<Source<PairedToken>>,
+    previous_was_boundary: bool,
+    _finish_at: T,
+}
+
+impl<T> Normal<T> {
+    fn new(finish_at: T) -> Self {
+        Normal {
+            nested: Default::default(),
+            previous_was_boundary: true,
+            _finish_at: finish_at,
+        }
+    }
+}
+
+impl<T: FinishAt> NextToken for Normal<T> {
+    fn next<'a, 'tok>(
+        this: &mut next_token::Ref<'a, Self>,
+        position: &mut TokenPosition<'tok>,
+    ) -> Option<Result<Source<Token<'tok>>, Source<Error>>> {
+        let has_children = this
+            .as_ref()
+            .nested
+            .last()
+            .map(|t| t == &PairedToken::Bracket || t == &PairedToken::Curly)
+            .unwrap_or(!T::GROUP);
+        token_else_string(this, position, |c, this, position| {
+            let me = this.as_mut();
+            let previous_was_boundary =
+                std::mem::replace(&mut me.previous_was_boundary, false) || position.line_start;
+            TokenElseString::Some(match c {
+                '=' => Token::equal(),
+                '^' => Token::caret(),
+                ':' => {
+                    let next_is_boundary =
+                        position.peek().map(|c| c.is_whitespace()).unwrap_or(true);
+                    if next_is_boundary {
+                        return TokenElseString::Err(Error::InvalidColon);
+                    } else if previous_was_boundary {
+                        Token::colon_prefix()
+                    } else {
+                        Token::colon()
+                    }
+                }
+                '!' => Token::bang(),
+                '-' if position.char_match(">") => Token::arrow(),
+                '|' if position.char_match(">") => Token::pipe_right(),
+                '|' => Token::pipe(),
+                '<' if position.char_match("|") => Token::pipe_left(),
+                '#' => {
+                    let double_hash = position.char_match("#");
+                    let has_space = position.char_match(" ")
+                        || position.peek().map(|c| c == '\n').unwrap_or(true);
+
+                    match (double_hash, has_space) {
+                        (true, true) => {
+                            this.push(BlockString::new(DoubleHashPrefix, has_children));
+                            Token::double_hash_space()
+                        }
+                        (true, false) => Token::double_hash(),
+                        (false, true) => {
+                            this.push(BlockString::new(HashPrefix, has_children));
+                            Token::hash_space()
+                        }
+                        (false, false) => Token::hash(),
+                    }
+                }
+                '(' => {
+                    me.nested.push(position.source(PairedToken::Paren));
+                    Token::paren()
+                }
+                ')' => {
+                    let last = me.nested.pop();
+                    if let Some(&PairedToken::Paren) = last.as_ref().map(|t| &**t) {
+                        if T::GROUP && me.nested.is_empty() {
+                            this.finish();
+                        }
+                        Token::close()
+                    } else {
+                        return TokenElseString::Err(Error::UnmatchedClosingToken(
+                            PairedToken::Paren,
+                            last,
+                        ));
+                    }
+                }
+                '{' => {
+                    me.nested.push(position.source(PairedToken::Curly));
+                    Token::curly()
+                }
+                '}' => {
+                    let last = me.nested.pop();
+                    if let Some(&PairedToken::Curly) = last.as_ref().map(|t| &**t) {
+                        if T::GROUP && me.nested.is_empty() {
+                            this.finish();
+                        }
+                        Token::close()
+                    } else {
+                        return TokenElseString::Err(Error::UnmatchedClosingToken(
+                            PairedToken::Curly,
+                            last,
+                        ));
+                    }
+                }
+                '[' => {
+                    me.nested.push(position.source(PairedToken::Bracket));
+                    Token::bracket()
+                }
+                ']' => {
+                    let last = me.nested.pop();
+                    if let Some(&PairedToken::Bracket) = last.as_ref().map(|t| &**t) {
+                        if T::GROUP && me.nested.is_empty() {
+                            this.finish();
+                        }
+                        Token::close()
+                    } else {
+                        return TokenElseString::Err(Error::UnmatchedClosingToken(
+                            PairedToken::Bracket,
+                            last,
+                        ));
+                    }
+                }
+                '"' => {
+                    if T::GROUP && me.nested.is_empty() {
+                        this.finish();
+                    }
+                    this.push(QuoteString::new(position.source(())));
+                    Token::quote()
+                }
+                '\'' => {
+                    let has_space = position.char_match(" ")
+                        || position.peek().map(|c| c == '\n').unwrap_or(true);
+                    if has_space {
+                        if T::GROUP && me.nested.is_empty() {
+                            this.finish();
+                        }
+                        this.push(BlockString::new(ApostrophePrefix, has_children));
+                        Token::apostrophe_space()
+                    } else {
+                        return TokenElseString::Err(Error::InvalidBlockString);
+                    }
+                }
+                ',' | ';' | '\n' if has_children => {
+                    me.previous_was_boundary = true;
+                    Token::next()
+                }
+                ',' | ';' => return TokenElseString::Err(Error::InvalidExpressionSeparator),
+                c if c.is_whitespace() => {
+                    me.previous_was_boundary = true;
+                    return TokenElseString::NonString;
+                }
+                _ => return TokenElseString::String,
+            })
+        })
+    }
+
+    fn close(mut self) -> Result<usize, Source<Error>> {
+        if let Some(last) = self.nested.pop() {
+            Err(last.map(Error::UnmatchedOpeningToken))
+        } else {
+            Ok(0)
+        }
+    }
+}
+
+/// Caret word tokenization, within a quoted string.
+///
+/// This tokenization context only reads a single alphanumeric and [-_] string.
+struct StringCaretWord {
+    caret_source: Source<()>,
+}
+
+impl StringCaretWord {
+    fn new(caret_source: Source<()>) -> Self {
+        StringCaretWord { caret_source }
+    }
+}
+
+impl NextToken for StringCaretWord {
+    fn next<'a, 'tok>(
+        this: &mut next_token::Ref<'a, Self>,
+        position: &mut TokenPosition<'tok>,
+    ) -> Option<Result<Source<Token<'tok>>, Source<Error>>> {
+        position.reset_source_start();
+
+        // This will only run once.
+        let me = this.finish();
+
+        let end = position
+            .remaining
+            .find(|c: char| !c.is_alphanumeric() && !"-_".contains(c))
+            .unwrap_or(position.remaining.len());
+        Some(if end == 0 {
+            Err(me.caret_source.with(Error::InvalidStringCaret))
+        } else {
+            let (s, rest) = position.remaining.split_at(end);
+            position.remaining = rest;
+            position.source.location.length += s.len();
+            Ok(position.source(Token::string(s)))
+        })
+    }
+
+    fn close(self) -> Result<usize, Source<Error>> {
+        Err(self.caret_source.with(Error::InvalidStringCaret))
+    }
+}
+
+/// A tokenization context which simply returns some number of closing tokens.
+struct CloseTokens {
+    count: usize,
+    source: Source<()>,
+}
+
+impl CloseTokens {
+    fn new(count: usize, source: Source<()>) -> Self {
+        assert!(count > 0);
+        CloseTokens { count, source }
+    }
+}
+
+impl NextToken for CloseTokens {
+    fn next<'a, 'tok>(
+        this: &mut next_token::Ref<'a, Self>,
+        _position: &mut TokenPosition<'tok>,
+    ) -> Option<Result<Source<Token<'tok>>, Source<Error>>> {
+        this.as_mut().count -= 1;
+
+        let source = if this.as_ref().count == 0 {
+            this.finish().source
+        } else {
+            this.as_ref().source.clone()
+        };
+        Some(Ok(source.with(Token::close())))
+    }
+
+    fn close(self) -> Result<usize, Source<Error>> {
+        Ok(self.count)
+    }
+}
+
+fn string_expression<'a, F>(position: &mut TokenPosition<'a>, set_next: F) -> Token<'static>
+where
+    F: FnOnce(bool),
+{
+    if position.char_match("^") {
+        Token::string("^")
+    } else {
+        match position.peek() {
+            Some('(' | '[' | '{' | '"') => set_next(true),
+            _ => set_next(false),
+        }
+        Token::caret()
+    }
+}
+
+trait BlockStringPrefix: Eraseable {
+    const DELIMITER: &'static str;
+    const ALLOW_NESTED: bool;
+}
+
+macro_rules! block_string_prefix {
+    ($name:ident, $delimiter:literal, $allow_nested:literal) => {
+        struct $name;
+        impl BlockStringPrefix for $name {
+            const DELIMITER: &'static str = $delimiter;
+            const ALLOW_NESTED: bool = $allow_nested;
+        }
+    };
+}
+
+block_string_prefix!(HashPrefix, "#", false);
+block_string_prefix!(DoubleHashPrefix, "##", true);
+block_string_prefix!(ApostrophePrefix, "'", true);
+
+/// A tokenization context which reads a block string of some sort. This includes doc comment
+/// blocks, string blocks, and comment blocks.
+struct BlockString<Prefix> {
+    nested: Next,
+    end_with_next: bool,
+    _prefix: Prefix,
+}
+
+impl<Prefix> BlockString<Prefix> {
+    pub fn new(prefix: Prefix, end_with_next: bool) -> Self {
+        BlockString {
+            nested: Next::empty(),
+            end_with_next,
+            _prefix: prefix,
+        }
+    }
+}
+
+impl<T: BlockStringPrefix> NextToken for BlockString<T> {
+    fn next<'a, 'tok>(
+        this: &mut next_token::Ref<'a, Self>,
+        position: &mut TokenPosition<'tok>,
+    ) -> Option<Result<Source<Token<'tok>>, Source<Error>>> {
+        let nested = &mut this.as_mut().nested;
+
+        if position.line_start {
+            // Skip non-newline whitespace and look for delimiter
+            let s = position
+                .remaining
+                .trim_start_matches(|c: char| c.is_whitespace() && c != '\n');
+            match s.strip_prefix(T::DELIMITER) {
+                Some(mut rest) if rest.starts_with(&[' ', '\n'][..]) => {
+                    // match delimiter, continue with this tokenization
+
+                    position.source.location.length += T::DELIMITER.len();
+                    position.reset_source_start();
+
+                    if rest.starts_with(' ') {
+                        // SAFETY: starts_with guarantees we can skip forward a space
+                        rest = unsafe { rest.get_unchecked(' '.len_utf8()..) };
+                    }
+                    position.reset_source_start();
+                    position.source.location.length += position.remaining.len() - rest.len();
+                    position.reset_source_start();
+                    position.remaining = rest;
+                }
+                _ => {
+                    // no delimiter, finish
+                    // flush inner tokens
+                    if let Some(r) = nested.next(position) {
+                        return Some(r);
+                    }
+                    let mut me = this.finish();
+                    return Some(me.nested.close().map(|close_tokens| {
+                        if me.end_with_next {
+                            this.push(ImmediateResult(Ok(position.source(Token::next()))));
+                        }
+                        if close_tokens > 0 {
+                            this.push(CloseTokens::new(close_tokens, position.source(())));
+                        }
+                        position.source(Token::close())
+                    }));
+                }
+            }
+        }
+
+        if nested.is_empty() {
+            token_else_string(this, position, |c, this, position| {
+                TokenElseString::Some(match c {
+                    '^' if T::ALLOW_NESTED => {
+                        let source = position.source(());
+                        string_expression(position, |next_group| {
+                            this.as_mut().nested = if next_group {
+                                Next::new(Normal::new(FinishAtGroup))
+                            } else {
+                                Next::new(StringCaretWord::new(source))
+                            };
+                        })
+                    }
+                    _ => return TokenElseString::String,
+                })
+            })
+        } else {
+            nested.next(position)
+        }
+    }
+
+    fn close(mut self) -> Result<usize, Source<Error>> {
+        Ok(self.nested.close()? + 1)
+    }
+}
+
+/// A tokenization context which reads a quoted string, with similar tokenization to block strings.
+struct QuoteString {
+    start: Source<()>,
+}
+
+impl QuoteString {
+    fn new(start: Source<()>) -> Self {
+        QuoteString { start }
+    }
+}
+
+impl NextToken for QuoteString {
+    fn next<'a, 'tok>(
+        this: &mut next_token::Ref<'a, Self>,
+        position: &mut TokenPosition<'tok>,
+    ) -> Option<Result<Source<Token<'tok>>, Source<Error>>> {
+        let mut escaped = false;
+        token_else_string(this, position, |c, this, position| {
+            if std::mem::replace(&mut escaped, false) {
+                TokenElseString::String
+            } else {
+                TokenElseString::Some(match c {
+                    '^' => {
+                        let source = position.source(());
+                        string_expression(position, |next_group| {
+                            if next_group {
+                                this.push(Normal::new(FinishAtGroup));
+                            } else {
+                                this.push(StringCaretWord::new(source));
+                            }
+                        })
+                    }
+                    '"' => {
+                        this.finish();
+                        Token::close()
+                    }
+                    c => {
+                        escaped = c == '\\';
+                        return TokenElseString::String;
+                    }
                 })
             }
         })
     }
+
+    fn close(self) -> Result<usize, Source<Error>> {
+        Err(self
+            .start
+            .with(Error::UnmatchedOpeningToken(PairedToken::Quote)))
+    }
 }
 
-impl<I: Iterator<Item = char>> Iterator for Tokens<I> {
-    type Item = Result<Source<Token>, Source<Error>>;
+/// A tokenization context which returns a single result immediately.
+struct ImmediateResult(Result<Source<Token<'static>>, Source<Error>>);
+
+impl NextToken for ImmediateResult {
+    fn next<'a, 'tok>(
+        this: &mut next_token::Ref<'a, Self>,
+        _position: &mut TokenPosition<'tok>,
+    ) -> Option<Result<Source<Token<'tok>>, Source<Error>>> {
+        Some(this.finish().0)
+    }
+
+    fn close(self) -> Result<usize, Source<Error>> {
+        panic!("immediate result closing: {:?}", self.0);
+    }
+}
+
+#[derive(Debug)]
+struct TokenPosition<'a> {
+    remaining: &'a str,
+    source: Source<()>,
+    line_start: bool,
+    next_line_start: bool,
+}
+
+/// Iterator producing tokens or errors.
+pub struct Tokens<'a> {
+    position: TokenPosition<'a>,
+    next: Next,
+}
+
+impl<'a> From<Source<&'a str>> for Tokens<'a> {
+    fn from(s: Source<&'a str>) -> Self {
+        let (source, remaining) = s.take();
+        Tokens {
+            position: TokenPosition {
+                remaining,
+                source,
+                line_start: true,
+                next_line_start: false,
+            },
+            next: Next::new(Normal::new(FinishAtNone)),
+        }
+    }
+}
+
+impl<'a> TokenPosition<'a> {
+    pub fn next_char(&mut self) -> Option<char> {
+        if self.next_line_start {
+            self.next_line_start = false;
+            self.line_start = true;
+            return None;
+        }
+        let mut chars = self.remaining.chars();
+        let c = chars.next()?;
+        self.remaining = chars.as_str();
+        self.source.location.length += c.len_utf8();
+        self.next_line_start = c == '\n';
+        self.line_start = false;
+        Some(c)
+    }
+
+    pub fn peek(&self) -> Option<char> {
+        self.remaining.chars().next()
+    }
+
+    pub fn char_match(&mut self, s: &str) -> bool {
+        if self.remaining.starts_with(s) {
+            // SAFETY: `s.len()` must be a valid unicode-boundary offset of self.remaining
+            self.remaining = unsafe { self.remaining.get_unchecked(s.len()..) };
+            self.source.location.length += s.len();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn reset_source_start(&mut self) {
+        self.source.location.start += self.source.location.length;
+        self.source.location.length = 0;
+    }
+
+    pub fn source<T>(&self, v: T) -> Source<T> {
+        self.source.clone().with(v)
+    }
+}
+
+impl<'a> Iterator for Tokens<'a> {
+    type Item = Result<Source<Token<'a>>, Source<Error>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match std::mem::take(&mut self.pending) {
-            Pending::String(s, quoted, l) => {
-                let mut src = self.source.clone();
-                src.location = l;
-                return Some(Ok(src.with(Token::string(s, quoted))));
+        loop {
+            let result = self.next.next(&mut self.position);
+            match result {
+                Some(v) => break Some(v),
+                None => {
+                    if self.position.remaining.is_empty() {
+                        break match self.next.close() {
+                            Err(e) => Some(Err(e)),
+                            Ok(close_tokens) => {
+                                if close_tokens > 1 {
+                                    self.next = Next::new(CloseTokens::new(
+                                        close_tokens - 1,
+                                        self.position.source(()),
+                                    ));
+                                }
+                                if close_tokens > 0 {
+                                    Some(Ok(self.position.source(Token::close())))
+                                } else {
+                                    None
+                                }
+                            }
+                        };
+                    } else {
+                        continue;
+                    }
+                }
             }
-            Pending::Result(r) => {
-                return Some(r);
-            }
-            _ => (),
-        }
-
-        let next = self.next_non_string();
-
-        if let Pending::String(s, quoted, l) = std::mem::take(&mut self.pending) {
-            self.pending = next.map(Pending::Result).unwrap_or(Pending::None);
-            let mut src = self.source.clone();
-            src.location = l;
-            Some(Ok(src.with(Token::string(s, quoted))))
-        } else {
-            next
         }
     }
 }
@@ -764,18 +1021,10 @@ mod test {
     use super::*;
 
     #[test]
-    fn symbols() -> Result<(), Source<Error>> {
+    fn symbols() {
         assert_tokens(
-            "[]{}(),;=^:!->|<||>\n",
+            "=^:!->|<||>#a##a",
             &[
-                Token::open_bracket(),
-                Token::close_bracket(),
-                Token::open_curly(),
-                Token::close_curly(),
-                Token::open_paren(),
-                Token::close_paren(),
-                Token::Comma,
-                Token::Semicolon,
                 Token::equal(),
                 Token::caret(),
                 Token::colon(),
@@ -784,257 +1033,565 @@ mod test {
                 Token::pipe(),
                 Token::pipe_left(),
                 Token::pipe_right(),
-                Token::Newline,
+                Token::hash(),
+                Token::string("a"),
+                Token::double_hash(),
+                Token::string("a"),
             ],
-        )
+        );
     }
 
     #[test]
-    fn whitespace() -> Result<(), Source<Error>> {
+    fn colon_prefix() {
+        assert_tokens(":a", &[Token::colon_prefix(), Token::string("a")]);
+        assert_tokens(" :a", &[Token::colon_prefix(), Token::string("a")]);
         assert_tokens(
-            " ,     \n   ",
+            "a :b",
             &[
-                Token::Whitespace,
-                Token::Comma,
-                Token::Whitespace,
-                Token::Newline,
-                Token::Whitespace,
+                Token::string("a"),
+                Token::colon_prefix(),
+                Token::string("b"),
             ],
-        )
+        );
+        assert_tokens(
+            "-> :b",
+            &[Token::arrow(), Token::colon_prefix(), Token::string("b")],
+        );
     }
 
     #[test]
-    fn strings() -> Result<(), Source<Error>> {
+    fn colon() {
         assert_tokens(
-            "hello \"world[]{}():!,;=^|<||>->\" \"escape\\\"quote\\n\"",
+            "a:b",
+            &[Token::string("a"), Token::colon(), Token::string("b")],
+        );
+        assert_err("a:", Error::InvalidColon);
+        assert_err("a: ", Error::InvalidColon);
+        assert_err(":", Error::InvalidColon);
+        assert_err(": ", Error::InvalidColon);
+    }
+
+    #[test]
+    fn pipe_colon() {
+        assert_tokens(
+            "\"hi\" |>:something",
             &[
-                Token::string("hello", false),
-                Token::Whitespace,
-                Token::string("world[]{}():!,;=^|<||>->", true),
-                Token::Whitespace,
-                Token::string("escape\"quote\n", true),
-            ],
-        )
-    }
-
-    #[test]
-    fn raw_strings() -> Result<(), Source<Error>> {
-        assert_tokens(
-            r"'hello \\\n world'",
-            &[Token::string(r"hello \\\n world", true)],
-        )?;
-        assert_tokens(
-            r#"'''with ' quotes '' "123'''"#,
-            &[Token::string(r#"with ' quotes '' "123"#, true)],
-        )?;
-        Ok(())
-    }
-
-    #[test]
-    fn quote_concat_strings() -> Result<(), Source<Error>> {
-        assert_tokens("hello\"world\"'hi'", &[Token::string("helloworldhi", true)])
-    }
-
-    #[test]
-    fn string_ends() -> Result<(), Source<Error>> {
-        assert_tokens(
-            "a[b]c{d}e(f)g:h,i;j^k=l\nm n|o<|p|>q!r->",
-            &[
-                Token::string("a", false),
-                Token::open_bracket(),
-                Token::string("b", false),
-                Token::close_bracket(),
-                Token::string("c", false),
-                Token::open_curly(),
-                Token::string("d", false),
-                Token::close_curly(),
-                Token::string("e", false),
-                Token::open_paren(),
-                Token::string("f", false),
-                Token::close_paren(),
-                Token::string("g", false),
-                Token::colon(),
-                Token::string("h", false),
-                Token::Comma,
-                Token::string("i", false),
-                Token::Semicolon,
-                Token::string("j", false),
-                Token::caret(),
-                Token::string("k", false),
-                Token::equal(),
-                Token::string("l", false),
-                Token::Newline,
-                Token::string("m", false),
-                Token::Whitespace,
-                Token::string("n", false),
-                Token::pipe(),
-                Token::string("o", false),
-                Token::pipe_left(),
-                Token::string("p", false),
+                Token::quote(),
+                Token::string("hi"),
+                Token::close(),
                 Token::pipe_right(),
-                Token::string("q", false),
-                Token::bang(),
-                Token::string("r", false),
-                Token::arrow(),
-            ],
-        )
-    }
-
-    #[test]
-    fn unicode_escape() -> Result<(), Source<Error>> {
-        assert_tokens(r#""my \u{65}scape""#, &[Token::string("my escape", true)])
-    }
-
-    #[test]
-    fn invalid_unicode_escape() {
-        let err = assert_tokens(r#""\u{FFFFFF}""#, &[]).unwrap_err().unwrap();
-        assert!(err == Error::InvalidUnicodeCharacter);
-
-        let err = assert_tokens(r#""\u{hi}""#, &[]).unwrap_err().unwrap();
-        assert!(err == Error::InvalidUnicodeCharacter);
-
-        let err = assert_tokens(r#""\u{}""#, &[]).unwrap_err().unwrap();
-        assert!(err == Error::InvalidUnicodeCharacter);
-    }
-
-    #[test]
-    fn unclosed_unicode_escape() {
-        let err = assert_tokens(r#""\u{1234""#, &[]).unwrap_err().unwrap();
-        println!("{}", err);
-        assert!(err == Error::UnfinishedUnicodeCharacter);
-    }
-
-    #[test]
-    fn long_unicode_escape() {
-        let err = assert_tokens(r#""\u{1234512345}""#, &[])
-            .unwrap_err()
-            .unwrap();
-        assert!(err == Error::LongUnicodeCharacter);
-    }
-
-    #[test]
-    fn bad_escape() {
-        let err = assert_tokens("\"ohn\\o\"", &[]).unwrap_err().unwrap();
-        assert!(err == Error::UnrecognizedEscapeSequence);
-    }
-
-    #[test]
-    fn unfinished_string() {
-        let err = assert_tokens("\"ohno", &[]).unwrap_err().unwrap();
-        assert!(err == Error::UnfinishedQuotedString);
-    }
-
-    #[test]
-    fn line_comments() -> Result<(), Source<Error>> {
-        assert_tokens(
-            "# This is a comment\n: # This is also a comment\n# One last comment",
-            &[
-                Token::Newline,
                 Token::colon(),
-                Token::Whitespace,
-                Token::Newline,
+                Token::string("something"),
+            ],
+        );
+    }
+
+    #[test]
+    fn parens() {
+        assert_tokens("()", &[Token::paren(), Token::close()]);
+    }
+
+    #[test]
+    fn parens_separators() {
+        assert_err("(,)", Error::InvalidExpressionSeparator);
+        assert_err("(;)", Error::InvalidExpressionSeparator);
+    }
+
+    #[test]
+    fn parens_unclosed() {
+        assert_err("(hi", Error::UnmatchedOpeningToken(PairedToken::Paren));
+        assert_err(
+            "hi)",
+            Error::UnmatchedClosingToken(PairedToken::Paren, None),
+        );
+    }
+
+    #[test]
+    fn parens_newlines() {
+        assert_tokens("(\n\n\n)", &[Token::paren(), Token::close()]);
+    }
+
+    #[test]
+    fn brackets() {
+        assert_tokens("[]", &[Token::bracket(), Token::close()]);
+    }
+
+    #[test]
+    fn brackets_separators() {
+        assert_tokens("[,]", &[Token::bracket(), Token::next(), Token::close()]);
+        assert_tokens("[;]", &[Token::bracket(), Token::next(), Token::close()]);
+        assert_tokens("[\n]", &[Token::bracket(), Token::next(), Token::close()]);
+    }
+
+    #[test]
+    fn brackets_unclosed() {
+        assert_err("[hi", Error::UnmatchedOpeningToken(PairedToken::Bracket));
+        assert_err(
+            "hi]",
+            Error::UnmatchedClosingToken(PairedToken::Bracket, None),
+        );
+    }
+
+    #[test]
+    fn curly() {
+        assert_tokens("{}", &[Token::curly(), Token::close()]);
+    }
+
+    #[test]
+    fn curly_separators() {
+        assert_tokens("{,}", &[Token::curly(), Token::next(), Token::close()]);
+        assert_tokens("{;}", &[Token::curly(), Token::next(), Token::close()]);
+        assert_tokens("{\n}", &[Token::curly(), Token::next(), Token::close()]);
+    }
+
+    #[test]
+    fn curly_unclosed() {
+        assert_err("{hi", Error::UnmatchedOpeningToken(PairedToken::Curly));
+        assert_err(
+            "hi}",
+            Error::UnmatchedClosingToken(PairedToken::Curly, None),
+        );
+    }
+
+    #[test]
+    fn top_level_separators() {
+        assert_tokens(",;\n", &[Token::next(), Token::next(), Token::next()]);
+    }
+
+    #[test]
+    fn strings() {
+        assert_tokens(
+            "hello world",
+            &[Token::string("hello"), Token::string("world")],
+        );
+    }
+
+    #[test]
+    fn string_ends() {
+        assert_tokens(
+            "a[b]c{d}e(f)g:h,i;j^k=l\nm n|o<|p|>q!r->s\"t\"",
+            &[
+                Token::string("a"),
+                Token::bracket(),
+                Token::string("b"),
+                Token::close(),
+                Token::string("c"),
+                Token::curly(),
+                Token::string("d"),
+                Token::close(),
+                Token::string("e"),
+                Token::paren(),
+                Token::string("f"),
+                Token::close(),
+                Token::string("g"),
+                Token::colon(),
+                Token::string("h"),
+                Token::next(),
+                Token::string("i"),
+                Token::next(),
+                Token::string("j"),
+                Token::caret(),
+                Token::string("k"),
+                Token::equal(),
+                Token::string("l"),
+                Token::next(),
+                Token::string("m"),
+                Token::string("n"),
+                Token::pipe(),
+                Token::string("o"),
+                Token::pipe_left(),
+                Token::string("p"),
+                Token::pipe_right(),
+                Token::string("q"),
+                Token::bang(),
+                Token::string("r"),
+                Token::arrow(),
+                Token::string("s"),
+                Token::quote(),
+                Token::string("t"),
+                Token::close(),
+            ],
+        );
+    }
+
+    #[test]
+    fn quotes() {
+        assert_tokens(
+            r#""hello world""#,
+            &[Token::quote(), Token::string("hello world"), Token::close()],
+        );
+    }
+
+    #[test]
+    fn quotes_newline() {
+        assert_tokens(
+            "\"hello\nworld\"",
+            &[
+                Token::quote(),
+                Token::string("hello\n"),
+                Token::string("world"),
+                Token::close(),
+            ],
+        );
+    }
+
+    #[test]
+    fn quotes_nested() {
+        assert_tokens(
+            "\"^name\"",
+            &[
+                Token::quote(),
+                Token::caret(),
+                Token::string("name"),
+                Token::close(),
+            ],
+        );
+    }
+
+    #[test]
+    fn quotes_unclosed() {
+        assert_err("\"hi!", Error::UnmatchedOpeningToken(PairedToken::Quote));
+    }
+
+    #[test]
+    fn string_nested() {
+        assert_tokens(
+            "\"hi ^name\"",
+            &[
+                Token::quote(),
+                Token::string("hi "),
+                Token::caret(),
+                Token::string("name"),
+                Token::close(),
+            ],
+        );
+        assert_tokens(
+            "\"hi ^(name)\"",
+            &[
+                Token::quote(),
+                Token::string("hi "),
+                Token::caret(),
+                Token::paren(),
+                Token::string("name"),
+                Token::close(),
+                Token::close(),
+            ],
+        );
+        assert_err("\"hi ^ \"", Error::InvalidStringCaret);
+    }
+
+    #[test]
+    fn string_nested_escape() {
+        assert_tokens(
+            "\"hi ^^\"",
+            &[
+                Token::quote(),
+                Token::string("hi "),
+                Token::string("^"),
+                Token::close(),
+            ],
+        );
+    }
+
+    #[test]
+    fn block_string() {
+        assert_tokens(
+            "' hello\n' world",
+            &[
+                Token::apostrophe_space(),
+                Token::string("hello\n"),
+                Token::string("world"),
+                Token::close(),
+            ],
+        );
+        assert_tokens(
+            "'\n  ' hello\n  '\n  '  world\nhi",
+            &[
+                Token::apostrophe_space(),
+                Token::string("\n"),
+                Token::string("hello\n"),
+                Token::string("\n"),
+                Token::string(" world\n"),
+                Token::close(),
+                Token::next(),
+                Token::string("hi"),
+            ],
+        );
+    }
+
+    #[test]
+    fn block_string_no_space() {
+        assert_err("'hi", Error::InvalidBlockString);
+    }
+
+    #[test]
+    fn block_string_nested() {
+        assert_tokens(
+            "' hello ^name",
+            &[
+                Token::apostrophe_space(),
+                Token::string("hello "),
+                Token::caret(),
+                Token::string("name"),
+                Token::close(),
+            ],
+        );
+    }
+
+    #[test]
+    fn hash() {
+        assert_tokens(
+            "#(a#)",
+            &[
+                Token::hash(),
+                Token::paren(),
+                Token::string("a"),
+                Token::hash(),
+                Token::close(),
+            ],
+        );
+    }
+
+    #[test]
+    fn hash_block() {
+        assert_tokens(
+            "# hello\n# world",
+            &[
+                Token::hash_space(),
+                Token::string("hello\n"),
+                Token::string("world"),
+                Token::close(),
+            ],
+        );
+        assert_tokens(
+            "#\n  # hello\n  #\n  #  world\nhi",
+            &[
+                Token::hash_space(),
+                Token::string("\n"),
+                Token::string("hello\n"),
+                Token::string("\n"),
+                Token::string(" world\n"),
+                Token::close(),
+                Token::next(),
+                Token::string("hi"),
+            ],
+        );
+    }
+
+    #[test]
+    fn hash_block_no_nested() {
+        assert_tokens(
+            "# hello ^name",
+            &[
+                Token::hash_space(),
+                Token::string("hello ^name"),
+                Token::close(),
+            ],
+        );
+    }
+
+    #[test]
+    fn double_hash() {
+        assert_tokens(
+            "##(a##)",
+            &[
+                Token::double_hash(),
+                Token::paren(),
+                Token::string("a"),
+                Token::double_hash(),
+                Token::close(),
+            ],
+        );
+    }
+
+    #[test]
+    fn double_hash_block() {
+        assert_tokens(
+            "## hello\n## world",
+            &[
+                Token::double_hash_space(),
+                Token::string("hello\n"),
+                Token::string("world"),
+                Token::close(),
+            ],
+        );
+        assert_tokens(
+            "##\n  ## hello\n  ##\n  ##  world\nhi",
+            &[
+                Token::double_hash_space(),
+                Token::string("\n"),
+                Token::string("hello\n"),
+                Token::string("\n"),
+                Token::string(" world\n"),
+                Token::close(),
+                Token::next(),
+                Token::string("hi"),
+            ],
+        );
+    }
+
+    #[test]
+    fn double_hash_block_nested() {
+        assert_tokens(
+            "## hello ^name",
+            &[
+                Token::double_hash_space(),
+                Token::string("hello "),
+                Token::caret(),
+                Token::string("name"),
+                Token::close(),
+            ],
+        );
+    }
+
+    #[test]
+    fn children() {
+        assert_tokens(
+            "a b c
+        ->;
+        b = !, c; d",
+            &[
+                Token::string("a"),
+                Token::string("b"),
+                Token::string("c"),
+                Token::next(),
+                Token::arrow(),
+                Token::next(),
+                Token::next(),
+                Token::string("b"),
+                Token::equal(),
+                Token::bang(),
+                Token::next(),
+                Token::string("c"),
+                Token::next(),
+                Token::string("d"),
+            ],
+        );
+    }
+
+    #[test]
+    fn nested() {
+        assert_tokens(
+            "a (a b\nc d) {a b\nc d} [a b\nc d] ({a b} c [d e\nf {g (h)}])\n(i)",
+            &[
+                Token::string("a"),
+                Token::paren(),
+                Token::string("a"),
+                Token::string("b"),
+                Token::string("c"),
+                Token::string("d"),
+                Token::close(),
+                Token::curly(),
+                Token::string("a"),
+                Token::string("b"),
+                Token::next(),
+                Token::string("c"),
+                Token::string("d"),
+                Token::close(),
+                Token::bracket(),
+                Token::string("a"),
+                Token::string("b"),
+                Token::next(),
+                Token::string("c"),
+                Token::string("d"),
+                Token::close(),
+                Token::paren(),
+                Token::curly(),
+                Token::string("a"),
+                Token::string("b"),
+                Token::close(),
+                Token::string("c"),
+                Token::bracket(),
+                Token::string("d"),
+                Token::string("e"),
+                Token::next(),
+                Token::string("f"),
+                Token::curly(),
+                Token::string("g"),
+                Token::paren(),
+                Token::string("h"),
+                Token::close(),
+                Token::close(),
+                Token::close(),
+                Token::close(),
+                Token::next(),
+                Token::paren(),
+                Token::string("i"),
+                Token::close(),
             ],
         )
     }
 
     #[test]
-    fn tree_comments() -> Result<(), Source<Error>> {
+    fn nested_blocks() {
         assert_tokens(
-            "#hello world",
+            "## a b ^{
+             ##  v = 5
+             ##
+             ##  x = '
+             ##  ' this is
+             ##  ' nested ^v
+             ## }",
             &[
-                Token::TreeComment,
-                Token::string("hello", false),
-                Token::Whitespace,
-                Token::string("world", false),
+                Token::double_hash_space(),
+                Token::string("a b "),
+                Token::caret(),
+                Token::curly(),
+                Token::next(),
+                Token::string("v"),
+                Token::equal(),
+                Token::string("5"),
+                Token::next(),
+                Token::next(),
+                Token::string("x"),
+                Token::equal(),
+                Token::apostrophe_space(),
+                Token::string("\n"),
+                Token::string("this is\n"),
+                Token::string("nested "),
+                Token::caret(),
+                Token::string("v"),
+                Token::string("\n"),
+                Token::close(),
+                Token::next(),
+                Token::close(),
+                Token::close(),
             ],
-        )?;
-        assert_tokens(
-            "#[hello world]",
-            &[
-                Token::TreeComment,
-                Token::open_bracket(),
-                Token::string("hello", false),
-                Token::Whitespace,
-                Token::string("world", false),
-                Token::close_bracket(),
-            ],
-        )?;
-        Ok(())
+        );
     }
 
     #[test]
-    fn doc_comments() -> Result<(), Source<Error>> {
-        assert_tokens(
-            "##This is a doc comment\nhello world",
-            &[
-                Token::DocComment,
-                Token::doc_string("This is a doc comment"),
-                Token::Newline,
-                Token::string("hello", false),
-                Token::Whitespace,
-                Token::string("world", false),
-            ],
-        )?;
-        assert_tokens(
-            "##This is a doc comment\n##more doc comment\n  ##  and more\nhello",
-            &[
-                Token::DocComment,
-                Token::doc_string("This is a doc comment"),
-                Token::Newline,
-                Token::DocComment,
-                Token::doc_string("more doc comment"),
-                Token::Newline,
-                Token::Whitespace,
-                Token::DocComment,
-                Token::doc_string("  and more"),
-                Token::Newline,
-                Token::string("hello", false),
-            ],
-        )?;
-        Ok(())
+    fn nested_mismatch() {
+        assert_err(
+            "(a {b c\n d [e,f})",
+            Error::UnmatchedClosingToken(
+                PairedToken::Curly,
+                Some(Source::missing(PairedToken::Bracket)),
+            ),
+        );
+        assert_err(
+            "a {b c\n d [e,f]})",
+            Error::UnmatchedClosingToken(PairedToken::Paren, None),
+        );
+        assert_err("## ^(\na", Error::UnmatchedOpeningToken(PairedToken::Paren));
     }
 
-    #[test]
-    fn doc_comment_expression() -> Result<(), Source<Error>> {
-        assert_tokens(
-            "##doc comment {{ hello }}",
-            &[
-                Token::DocComment,
-                Token::doc_string("doc comment "),
-                Token::open_doc_curly(),
-                Token::Whitespace,
-                Token::string("hello", false),
-                Token::Whitespace,
-                Token::close_doc_curly(),
-                Token::doc_string(""),
-            ],
-        )?;
-        assert_tokens(
-            "##doc comment {{\n##hello\n##}}",
-            &[
-                Token::DocComment,
-                Token::doc_string("doc comment "),
-                Token::open_doc_curly(),
-                Token::Newline,
-                Token::DocComment,
-                Token::string("hello", false),
-                Token::Newline,
-                Token::DocComment,
-                Token::close_doc_curly(),
-                Token::doc_string(""),
-            ],
-        )?;
-        Ok(())
-    }
-
-    fn assert_tokens(s: &str, expected: &[Token]) -> Result<(), Source<Error>> {
-        let toks: Vec<_> = Tokens::from(Source::missing(s.chars()))
-            .collect::<Result<Vec<_>, _>>()?
+    fn assert_tokens(s: &str, expected: &[Token]) {
+        let toks: Vec<_> = Tokens::from(Source::missing(s))
+            .collect::<Result<Vec<_>, _>>()
+            .expect("failed to tokenize")
             .into_iter()
             .map(|t| t.unwrap())
             .collect();
         dbg!(&toks);
         assert!(toks == expected);
-        Ok(())
+    }
+
+    fn assert_err(s: &str, err: Error) {
+        let e = Tokens::from(Source::missing(s))
+            .collect::<Result<Vec<_>, _>>()
+            .expect_err("tokenization should have errored");
+        dbg!(&e);
+        assert!(e == err);
     }
 }

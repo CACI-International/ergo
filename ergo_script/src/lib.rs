@@ -312,7 +312,7 @@ mod test {
     }
 
     #[test]
-    fn block_string() -> Result<(), String> {
+    fn block_return_string() -> Result<(), String> {
         script_eval_to(":a = 1\n:b = 2\n{:c=3,a,\"b\"}", SRString("b"))
     }
 
@@ -353,7 +353,7 @@ mod test {
         #[test]
         fn expression() -> Result<(), String> {
             script_eval_to(
-                "## doc {{ comment }}
+                "## doc ^\"comment\"
                 a = ()
                 doc :a",
                 SRString("doc comment"),
@@ -363,32 +363,18 @@ mod test {
         #[test]
         fn expression_scope() -> Result<(), String> {
             script_eval_to(
-                "## {{v = comment}}doc {{:v}}
-                a = ()
-                doc :a",
-                SRString("doc comment"),
-            )?;
-            script_eval_to(
                 "v = comment
-                ## doc {{:v}}
+                ## doc ^v
                 a = ()
                 doc :a",
                 SRString("doc comment"),
-            )?;
-            script_eval_to(
-                "v = hello
-                ## {{v = comment}}doc {{:v}}
-                ()
-                :v",
-                SRString("hello"),
-            )?;
-            Ok(())
+            )
         }
 
         #[test]
         fn expression_self() -> Result<(), String> {
             script_eval_to(
-                "## doc {{self:v}}
+                "## doc ^(self:v)
                 a = { v = comment }
                 doc :a",
                 SRString("doc comment"),
@@ -491,6 +477,41 @@ mod test {
         script_eval_to(
             "b = {a = 1}; q = fn :p -> :p; f = !q (fn :x -> b::x); f a",
             SRString("1"),
+        )
+    }
+
+    #[test]
+    fn quote_compound_string() -> Result<(), String> {
+        script_eval_to("x = b, \"a ^x\"", SRString("a b"))?;
+        script_eval_to("x = b, y = c, \"a^x^y\"", SRString("abc"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn quote_preserves_whitespace() -> Result<(), String> {
+        script_eval_to("hi=hi, \"\n\n^hi\n\"", SRString("\n\nhi\n"))
+    }
+
+    #[test]
+    fn basic_string_equality() -> Result<(), String> {
+        script_parse_id_eq("string", "\"string\"")?;
+        script_parse_id_eq("string", "' string")?;
+        Ok(())
+    }
+
+    #[test]
+    fn block_string() -> Result<(), String> {
+        script_eval_to(
+            "v = block, '\n  ' this is my ^v string",
+            SRString("this is my block string"),
+        )
+    }
+
+    #[test]
+    fn attributes() -> Result<(), String> {
+        script_eval_to(
+            "replace = fn :val -> _ -> :val; ##(replace newvalue) value",
+            SRString("newvalue"),
         )
     }
 
@@ -799,6 +820,14 @@ mod test {
         let mut b = script_eval(&runtime, b)?;
         runtime.block_on(Context::eval(&mut a)).unwrap();
         runtime.block_on(Context::eval(&mut b)).unwrap();
+        assert!(a.id() == b.id());
+        Ok(())
+    }
+
+    fn script_parse_id_eq(a: &str, b: &str) -> Result<(), String> {
+        let runtime = make_runtime()?;
+        let a = script_eval(&runtime, a)?;
+        let b = script_eval(&runtime, b)?;
         assert!(a.id() == b.id());
         Ok(())
     }

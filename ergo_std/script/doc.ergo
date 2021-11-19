@@ -34,7 +34,7 @@ item = fn :self :name -> {
 
 ## Document module indices of a value.
 ##
-## Arguments: `:value ^:indices`
+## Arguments: `:value ^^:indices`
 ##
 ## Document multiple items as an unordered list, with links to separate pages for each item if
 ## generating documentation. `modules` must be indices of `value`.

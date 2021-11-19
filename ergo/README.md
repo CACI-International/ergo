@@ -99,12 +99,10 @@ scripts reside.
     Specifically, the returned value should be dynamic with id `A` but should
     evaluate (trivially) to a String with id `B`.
 
-* Block strings.
-* Interpolate quoted strings like doc comments.
-* Attributes.
-* Progress spinner
 * Add script-specified network cache locations (for local vendoring).
 * Add hostname-based(?) request parameters.
+
+* Progress spinner
 * Improve sources of capture bindings.
 * Improve UI error behavior.
   * Display the aggregated errors at the end of execution (rather than the

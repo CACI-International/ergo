@@ -13,18 +13,24 @@ use std::hash::Hasher;
 use std::rc::Rc;
 use std::sync::Arc;
 
+trait ToDiagnostic: ToString {
+    fn to_diagnostic(self) -> ergo_runtime::error::Diagnostic
+    where
+        Self: Sized,
+    {
+        let mut diag = ergo_runtime::error::Diagnostic::from("");
+        self.additional_info(&mut diag);
+        diag.message = self.to_string().into();
+        diag
+    }
+
+    fn additional_info(&self, diagnostic: &mut ergo_runtime::error::Diagnostic);
+}
+
 pub mod keyset;
 mod parse;
 mod parse_tree;
 mod tokenize;
-mod tokenize_tree;
-
-/// Parts of a doc comment.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum DocCommentPart {
-    String(std::string::String),
-    ExpressionBlock(Vec<BlockItem>),
-}
 
 pub type CaptureSet = keyset::KeySet;
 pub type CaptureKey = keyset::Key;
@@ -184,6 +190,54 @@ macro_rules! expression_types {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum StringItem {
+    String(std::string::String),
+    Expression(Expr),
+}
+
+impl Subexpressions for StringItem {
+    fn subexpressions<F>(&self, mut f: F)
+    where
+        F: FnMut(SubExpr),
+    {
+        match self {
+            StringItem::Expression(e) => f(SubExpr::SubExpr(e)),
+            StringItem::String(_) => (),
+        }
+    }
+
+    fn subexpressions_mut<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&mut Expr),
+    {
+        match self {
+            StringItem::Expression(e) => f(e),
+            StringItem::String(_) => (),
+        }
+    }
+}
+
+impl From<&StringItem> for Dependencies {
+    fn from(part: &StringItem) -> Self {
+        match part {
+            StringItem::String(s) => depends![s],
+            StringItem::Expression(e) => depends![e],
+        }
+    }
+}
+
+impl StringItem {
+    /// Get the dependencies of multiple string items.
+    pub fn dependencies<'a, I: IntoIterator<Item = &'a StringItem>>(parts: I) -> Dependencies {
+        let mut deps = depends![];
+        for p in parts {
+            deps += p.into();
+        }
+        deps
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum BlockItem {
     Expr(Expr),
     Bind(Expr, Expr),
@@ -301,6 +355,8 @@ expression_types! {
 
     pub struct String(std::string::String);
 
+    pub struct CompoundString { [items: StringItem] }
+
     pub struct Array { [items: ArrayItem] }
 
     pub struct Block { [items: BlockItem] }
@@ -325,10 +381,33 @@ expression_types! {
     pub struct Capture(CaptureKey);
 
     pub struct DocComment {
-        (pub parts: Vec<DocCommentPart>),
+        (pub items: Vec<StringItem>),
         (pub self_capture_key: Option<CaptureKey>),
         value
     }
+
+    pub struct Attribute { attr, value }
+}
+
+/// The type of a parsed expression.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ExpressionType {
+    Unit,
+    BindAny,
+    String,
+    CompoundString,
+    Array,
+    Block,
+    Function,
+    Get,
+    Set,
+    Index,
+    Command,
+    PatternCommand,
+    Force,
+    DocComment,
+    Attribute,
+    Capture,
 }
 
 struct ExpressionInner {
@@ -389,6 +468,13 @@ impl Expression {
 
     pub fn string(s: std::string::String) -> Self {
         Self::create(String(s))
+    }
+
+    pub fn compound_string(items: Vec<StringItem>) -> Self {
+        Self::create(CompoundString {
+            items,
+            captures: Default::default(),
+        })
     }
 
     pub fn array(items: Vec<ArrayItem>) -> Self {
@@ -459,11 +545,19 @@ impl Expression {
         })
     }
 
-    pub fn doc_comment(parts: Vec<DocCommentPart>, value: Expr) -> Self {
+    pub fn doc_comment(items: Vec<StringItem>, value: Expr) -> Self {
         Self::create(DocComment {
-            parts,
+            items,
             value,
             self_capture_key: None,
+            captures: Default::default(),
+        })
+    }
+
+    pub fn attribute(attr: Expr, value: Expr) -> Self {
+        Self::create(Attribute {
+            attr,
+            value,
             captures: Default::default(),
         })
     }
@@ -518,6 +612,7 @@ macro_rules! match_all {
             Unit($e) => $body,
             BindAny($e) => $body,
             String($e) => $body,
+            CompoundString($e) => $body,
             Array($e) => $body,
             Block($e) => $body,
             Function($e) => $body,
@@ -529,6 +624,7 @@ macro_rules! match_all {
             Force($e) => $body,
             Capture($e) => $body,
             DocComment($e) => $body,
+            Attribute($e) => $body,
         )
     };
     ( mut $v:expr, $e:pat => $body:expr ) => {
@@ -536,6 +632,7 @@ macro_rules! match_all {
             Unit($e) => $body,
             BindAny($e) => $body,
             String($e) => $body,
+            CompoundString($e) => $body,
             Array($e) => $body,
             Block($e) => $body,
             Function($e) => $body,
@@ -547,6 +644,7 @@ macro_rules! match_all {
             Force($e) => $body,
             Capture($e) => $body,
             DocComment($e) => $body,
+            Attribute($e) => $body,
         )
     };
 }
@@ -680,6 +778,10 @@ impl Expression {
     /// Return the set of captures in this expression, if any.
     pub fn captures(&self) -> Option<&CaptureSet> {
         match_expression!(self,
+            Unit(_) => None,
+            BindAny(_) => None,
+            String(_) => None,
+            CompoundString(v) => Some(&v.captures),
             Array(v) => Some(&v.captures),
             Block(v) => Some(&v.captures),
             Function(v) => Some(&v.captures),
@@ -690,7 +792,8 @@ impl Expression {
             PatternCommand(v) => Some(&v.captures),
             Force(v) => Some(&v.captures),
             DocComment(v) => Some(&v.captures),
-            _ => None
+            Attribute(v) => Some(&v.captures),
+            Capture(_) => None,
         )
     }
 
@@ -747,6 +850,7 @@ impl Expression {
                 Unit(v) => v == unsafe { other.as_ref_unchecked::<Unit>() },
                 BindAny(v) => v == unsafe { other.as_ref_unchecked::<BindAny>() },
                 String(v) => v == unsafe { other.as_ref_unchecked::<String>() },
+                CompoundString(v) => v == unsafe { other.as_ref_unchecked::<CompoundString>() },
                 Array(v) => v == unsafe { other.as_ref_unchecked::<Array>() },
                 Block(v) => v == unsafe { other.as_ref_unchecked::<Block>() },
                 Function(v) => v == unsafe { other.as_ref_unchecked::<Function>() },
@@ -757,6 +861,7 @@ impl Expression {
                 PatternCommand(v) => v == unsafe { other.as_ref_unchecked::<PatternCommand>() },
                 Force(v) => v == unsafe { other.as_ref_unchecked::<Force>() },
                 DocComment(v) => v == unsafe { other.as_ref_unchecked::<DocComment>() },
+                Attribute(v) => v == unsafe { other.as_ref_unchecked::<Attribute>() },
                 Capture(v) => v == unsafe { other.as_ref_unchecked::<Capture>() },
             )
         }
@@ -777,6 +882,10 @@ impl Expression {
         }
         let p = &mut self;
         match_expression_mut!(p,
+            Unit(_) => (),
+            BindAny(_) => (),
+            String(_) => (),
+            CompoundString(v) => v.captures = captures,
             Array(v) => v.captures = captures,
             Block(v) => v.captures = captures,
             Function(v) => v.captures = captures,
@@ -787,73 +896,15 @@ impl Expression {
             PatternCommand(v) => v.captures = captures,
             Force(v) => v.captures = captures,
             DocComment(v) => v.captures = captures,
-            _ => ()
+            Attribute(v) => v.captures = captures,
+            Capture(_) => (),
         );
         self
     }
 }
 
-/// The type of a parsed expression.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum ExpressionType {
-    Unit,
-    BindAny,
-    String,
-    Array,
-    Block,
-    Function,
-    Get,
-    Set,
-    Index,
-    Command,
-    PatternCommand,
-    Force,
-    DocComment,
-    Capture,
-}
-
 /// Expressions with source information.
 pub type Expr = Source<Expression>;
-
-impl From<&DocCommentPart> for Dependencies {
-    fn from(part: &DocCommentPart) -> Self {
-        match part {
-            DocCommentPart::String(s) => depends![s],
-            DocCommentPart::ExpressionBlock(es) => {
-                let mut deps = depends![];
-                for e in es {
-                    deps += e.into()
-                }
-                deps
-            }
-        }
-    }
-}
-
-impl DocCommentPart {
-    /// Get the dependencies of multiple doc comment parts.
-    pub fn dependencies<'a, I: IntoIterator<Item = &'a DocCommentPart>>(parts: I) -> Dependencies {
-        let mut deps = depends![];
-        for p in parts {
-            deps += p.into();
-        }
-        deps
-    }
-}
-
-trait ToDiagnostic: ToString {
-    fn to_diagnostic(self) -> ergo_runtime::error::Diagnostic
-    where
-        Self: Sized,
-    {
-        let mut diag = ergo_runtime::error::Diagnostic::from("");
-        self.additional_info(&mut diag);
-        diag.message = self.to_string().into();
-        diag
-    }
-
-    fn additional_info(&self, diagnostic: &mut ergo_runtime::error::Diagnostic);
-}
 
 /// Load an AST from the given string.
 ///
@@ -871,9 +922,8 @@ pub fn load(
     ),
     Error,
 > {
-    let toks = tokenize::Tokens::from(source.map(|s| s.chars()));
-    let tree_toks = tokenize_tree::TreeTokens::from(toks);
-    let tree_parser = parse_tree::Parser::from(tree_toks);
+    let toks = tokenize::Tokens::from(source);
+    let tree_parser = parse_tree::Parser::from(toks);
     let parser = parse::Parser::from(tree_parser);
 
     let mut expr = parser
@@ -1142,6 +1192,12 @@ impl<'a> ExpressionCompiler<'a> {
             Unit(_) => (),
             BindAny(_) => (),
             String(_) => (),
+            CompoundString(v) => {
+                let mut e_caps = Captures::default();
+                v.subexpressions_mut(|e| self.compile_captures(e, &mut e_caps));
+                caps |= &e_caps;
+                v.captures = e_caps.direct;
+            },
             Array(v) => {
                 let mut e_caps = Captures::default();
                 v.subexpressions_mut(|e| self.compile_captures(e, &mut e_caps));
@@ -1321,24 +1377,10 @@ impl<'a> ExpressionCompiler<'a> {
                 self.capture_mapping.restore_set_scope(old_scope);
                 v.self_capture_key = Some(key);
 
-                for p in &mut v.parts {
+                for p in &mut v.items {
                     match p {
-                        DocCommentPart::ExpressionBlock(block) => {
-                            for i in block {
-                                match i {
-                                    BlockItem::Bind(b, e) => {
-                                        self.compile_captures(&mut *e, &mut e_caps);
-                                        let old_scope = self.capture_mapping.current_as_set_scope();
-                                        self.compile_captures(&mut *b, &mut e_caps);
-                                        self.capture_mapping.restore_set_scope(old_scope);
-                                    }
-                                    BlockItem::Expr(e) | BlockItem::Merge(e) => {
-                                        self.compile_captures(&mut *e, &mut e_caps);
-                                    }
-                                }
-                            }
-                        }
-                        DocCommentPart::String(_) => ()
+                        StringItem::Expression(e) => self.compile_captures(e, &mut e_caps),
+                        StringItem::String(_) => ()
                     }
                 }
                 let in_scope = self.capture_mapping.up();
@@ -1351,9 +1393,17 @@ impl<'a> ExpressionCompiler<'a> {
                     }
                 }
 
-                v.captures.difference_with(&in_scope_captures);
                 caps |= &e_caps;
                 v.captures = e_caps.direct;
+            },
+            Attribute(v) => {
+                let mut e_caps = Captures::default();
+                self.compile_captures(&mut v.attr, &mut e_caps);
+                self.compile_captures(&mut v.value, &mut e_caps);
+                v.captures = e_caps.direct.clone();
+                // Attribute expressions are always considered forced.
+                self.capture(e, src, &mut e_caps);
+                caps |= &e_caps;
             },
         );
     }

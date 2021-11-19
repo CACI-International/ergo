@@ -4,11 +4,12 @@
 //! tracks source locations for values so that when an error occurs, useful error information can
 //! be provided.
 
-use crate::ast::{self, CaptureKey, CaptureSet, DocCommentPart, Expr};
+use crate::ast::{self, CaptureKey, CaptureSet, Expr};
 use ergo_runtime::abi_stable::external_types::RMutex;
 use ergo_runtime::Result;
 use ergo_runtime::{
     depends,
+    error::ErrorOrDiagnostic,
     metadata::{self, Source},
     nsid, traits, try_result, types,
     value::match_value,
@@ -282,10 +283,6 @@ impl Sets {
         Sets { inner: None }
     }
 
-    pub fn is_present(&self) -> bool {
-        self.inner.is_some()
-    }
-
     pub fn add(&self, cap: Option<CaptureKey>, key: Value, value: Value) {
         self.inner().push((cap, key, value));
     }
@@ -297,13 +294,6 @@ impl Sets {
                 a.lock().clone()
             }
             Ok(v) => v.into_inner(),
-        }
-    }
-
-    pub fn extend<T: IntoIterator<Item = SetsItem>>(&self, sets: T) {
-        let mut guard = self.inner();
-        for entry in sets.into_iter() {
-            guard.push(entry);
         }
     }
 
@@ -322,16 +312,11 @@ impl Sets {
 enum BlockItemMode {
     Block,
     Command,
-    DocBlock,
 }
 
 impl BlockItemMode {
     fn command(&self) -> bool {
         self == &BlockItemMode::Command
-    }
-
-    fn doc(&self) -> bool {
-        self == &BlockItemMode::DocBlock
     }
 }
 
@@ -491,10 +476,6 @@ impl Evaluator {
                     traits::bind_no_error(b, e).await?;
                     let new_sets = new_sets.into_inner();
 
-                    if mode.doc() && sets.is_present() {
-                        sets.extend(new_sets.clone());
-                    }
-
                     for (cap, k, mut v) in new_sets {
                         Context::eval_once(&mut v).await;
 
@@ -513,6 +494,28 @@ impl Evaluator {
         } else {
             Ok((results, env))
         }
+    }
+
+    async fn evaluate_string_items(
+        self,
+        items: Vec<ast::StringItem>,
+        captures: &Captures,
+        local_env: Option<&LocalEnv>,
+        sets: &Sets,
+    ) -> std::result::Result<Value, ErrorOrDiagnostic> {
+        let mut result = std::string::String::new();
+        let mut formatter = traits::Formatter::new(&mut result);
+        for item in items {
+            match item {
+                ast::StringItem::String(s) => formatter.write_str(&s)?,
+                ast::StringItem::Expression(e) => {
+                    let val = self.eval_with_env(e, &captures, local_env, sets).await;
+                    traits::display(val, &mut formatter).await?;
+                }
+            }
+        }
+        drop(formatter);
+        Ok(Value::from(types::String::from(result)))
     }
 
     async fn eval_with_env(
@@ -549,11 +552,11 @@ impl Evaluator {
             DocComment(doc) => {
                 let mut captures = captures.subset(&doc.captures);
                 let mut val = self.evaluate_with_env(doc.value.clone(), &captures, local_env, sets);
-                let parts = doc.parts.clone();
+                let items = doc.items.clone();
                 let self_key = doc.self_capture_key.as_ref().copied().unwrap();
                 let self_val = val.clone();
                 // TODO distinguish doc comment captures from value captures?
-                let doc_deps = depends![^DocCommentPart::dependencies(&parts), ^&captures, self_val];
+                let doc_deps = depends![^ast::StringItem::dependencies(&items), ^&captures, self_val];
                 let mut doc = Value::dyn_new(move || async move {
                         Context::spawn(EVAL_TASK_PRIORITY, |_| {}, async move {
                             ergo_runtime::error_info! {
@@ -561,39 +564,7 @@ impl Evaluator {
                                 async {
                                     captures.resolve(self_key, self_val);
                                     captures.evaluate_ready(self).await;
-                                    let mut doc = std::string::String::new();
-                                    let mut formatter = traits::Formatter::new(&mut doc);
-                                    let mut local_env = LocalEnv::new();
-                                    for p in parts {
-                                        match p {
-                                            DocCommentPart::String(s) => formatter.write_str(&s)?,
-                                            DocCommentPart::ExpressionBlock(es) => {
-                                                // Evaluate as a block, displaying the final value and
-                                                // merging the scope into the doc comment scope.
-                                                let sets = Sets::new();
-                                                let (mut vals, _) = self.evaluate_block_items(es, captures.clone(), BlockItemMode::DocBlock, &sets).await?;
-                                                debug_assert!(vals.len() < 2);
-
-                                                for (cap, k, v) in sets.into_inner() {
-                                                    if let Some(cap) = cap {
-                                                        captures.resolve(cap, v.clone());
-                                                    }
-                                                    local_env.insert(k, v);
-                                                }
-                                                captures.evaluate_ready(self).await;
-
-                                                // Only add to string if the last value wasn't a bind
-                                                // expression (to support using a block to only add
-                                                // bindings).
-                                                if let Some(mut last) = vals.pop() {
-                                                    Context::eval(&mut last).await?;
-                                                    traits::display(last, &mut formatter).await?;
-                                                }
-                                            }
-                                        }
-                                    }
-                                    drop(formatter);
-                                    Result::Ok(Value::from(types::String::from(doc)))
+                                    self.evaluate_string_items(items, &captures, None, &Sets::none()).await
                                 }
                             }
                         }).await.into()
@@ -752,6 +723,19 @@ impl Evaluator {
                 Set(_) => self.eval_with_env(source.with(e), captures, local_env, sets).await,
                 _ => {
                     let mut val = crate::match_expression!(e,
+                        CompoundString(s) => {
+                            match self.evaluate_string_items(s.items.clone(), captures, local_env, sets).await {
+                                Err(ErrorOrDiagnostic::Error(e)) => return e.into(),
+                                Err(ErrorOrDiagnostic::Diagnostic(mut d)) => {
+                                    use ergo_runtime::error::DiagnosticInfo;
+                                    (&mut d).add_primary_label(source_c.with("while building this string"));
+                                    let mut error_val = types::Error::from(d).into();
+                                    Source::set_if_missing(&mut error_val, source_c);
+                                    return error_val;
+                                }
+                                Ok(v) => v
+                            }
+                        },
                         Array(arr) => {
                             let mut results = Vec::new();
                             let mut has_errors = false;
@@ -858,6 +842,11 @@ impl Evaluator {
                                     traits::bind(function, pat_args).await
                                 }
                             }
+                        },
+                        Attribute(a) => {
+                            let attr = self.eval_with_env(a.attr.clone(), &captures, None, sets).await;
+                            let value = self.eval_with_env(a.value.clone(), &captures, None, sets).await;
+                            traits::bind(attr, value).await
                         },
                         _ => panic!("unexpected expression")
                     );

@@ -14,7 +14,7 @@ mnet = ergo net
 mtest = ergo test
 mtype = ergo type
 
-## {{native-doc plugin:value:eval}}
+## ^(native-doc plugin:value:eval)
 ##
 ## Pattern Arguments: `:value`
 ##
@@ -62,7 +62,7 @@ default = matches [
 
 ## Partially apply a function.
 ##
-## Arguments: `(Function :func) ^:args`
+## Arguments: `(Function :func) ^^:args`
 ##
 ## Returns a `Function` that, when called, will call the original function with the original arguments
 ## and any extra arguments of the call.
@@ -251,7 +251,7 @@ if = fn :cond :if_true ^:rest -> {
 
 ## Create a function which takes only string arguments as interpreted by `std:getopt`.
 ##
-## Pattern Arguments: `^:args`
+## Pattern Arguments: `^^:args`
 ##
 ## Passes all positional arguments to `std:getopt` and binds the result to the pattern arguments.
 getopt-fn = :patargs -> :args -> bind :patargs <| plugin:getopt args:positional
@@ -265,7 +265,7 @@ unset-map = fn :f :v -> plugin:match :v [plugin:type:Unset -> :v, _ -> f :v]
 
 ## Bind a value to each binding provided.
 ##
-## Pattern Arguments: `^:cases`
+## Pattern Arguments: `^^:cases`
 ##
 ## When bound with a value `v`, binds each value in `cases` with `v`, failing if any encounter an
 ## error.
@@ -276,7 +276,7 @@ bind-and = pat ^:cases -> :v -> {
 
 ## Bind a value to at least one of the bindings provided.
 ##
-## Pattern Arguments: `^:cases`
+## Pattern Arguments: `^^:cases`
 ##
 ## When bound with a value `v`, binds each value in `cases` with `v` until one does not error, and
 ## produces an error if none match.
@@ -289,29 +289,29 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
 ## from the library.
 ##
 ## ## Types
-## {{(mdoc:modules :self Any Array Bool Error Function Iter Map MapEntry Number Order Path String
-##    Unit Unset)}}
+## ^(mdoc:modules :self Any Array Bool Error Function Iter Map MapEntry Number Order Path String
+##    Unit Unset)
 ##
 ## ## Modules
-## {{mdoc:modules :self bind doc dynamic env fs io json log meta net source sync test type}}
+## ^(mdoc:modules :self bind doc dynamic env fs io json log meta net source sync test type)
 ##
 ## ## Functions
-## {{(mdoc:functions :self by-content cache debug default equal ergo-remote eval exec getopt
-##    identity if import match merge optional required task variable)}}
+## ^(mdoc:functions :self by-content cache debug default equal ergo-remote eval exec getopt
+##    identity if import match merge optional required task variable)
 {
     ## The Any type.
     ##
     ## This type will evaluate values and reject Errors.
     ##
-    ## {{type-function()}}
+    ## ^(type-function())
     Any = plugin:type:Any
 
     ## The Array type and related functions.
     ##
-    ## {{type-function()}}
+    ## ^(type-function())
     ##
     ## # Functions
-    ## {{mdoc:functions :self from Values Of}}
+    ## ^(mdoc:functions :self from Values Of)
     Array = match-indices plugin:type:Array {
         import {from} = plugin:array
         Values = mtype:ArrayValues
@@ -320,29 +320,29 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
 
     ## The Bool type and related functions.
     ##
-    ## {{type-function()}}
+    ## ^(type-function())
     ##
     ## # Values
     ## The constants `true` and `false` are indices in the module.
     ##
     ## # Functions
-    ## {{mdoc:functions :self from and or not}}
+    ## ^(mdoc:functions :self from and or not)
     Bool = match-indices plugin:type:Bool plugin:bool
 
     ## The Error type.
     ##
-    ## {{type-function "(source) :message"}}
+    ## ^(type-function "(source) :message")
     ##
     ## # Functions
-    ## {{mdoc:functions :self display}}
+    ## ^(mdoc:functions :self display)
     Error = match-indices plugin:type:Error plugin:error
 
     ## The Function type and related functions.
     ##
-    ## {{type-function()}}
+    ## ^(type-function())
     ##
     ## # Functions
-    ## {{mdoc:functions :self memoize partial pass recursive}}
+    ## ^(mdoc:functions :self memoize partial pass recursive)
     Function = match-indices plugin:type:Function {memoize,partial,pass,recursive}
 
     ## The Iter type and related functions.
@@ -352,23 +352,21 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
     ## you these functions directly on arrays and maps (but you should take care to convert the
     ## resulting Iters back to arrays and maps when necessary).
     ##
-    ## {{type-function()}}
+    ## ^(type-function())
     ##
     ## # Functions
-    ## {{
-    ##   (mdoc:functions :self count from fold filter flatten map map-lazy no-errors order skip
+    ## ^(mdoc:functions :self count from fold filter flatten map map-lazy no-errors order skip
     ##    skip-while split take take-while unique zip)
-    ## }}
     Iter = match-indices plugin:type:Iter {^plugin:iter, split = :iter-split}
 
     ## The Map type and related functions.
     ##
     ## When converting a map to/from an iterator, the iterator elements will/must be `MapEntry` types.
     ##
-    ## {{type-function()}}
+    ## ^(type-function())
     ##
     ## # Functions
-    ## {{mdoc:functions :self from Values Of}}
+    ## ^(mdoc:functions :self from Values Of)
     Map = match-indices plugin:type:Map {
         import {from} = plugin:map
         Values = mtype:MapValues
@@ -379,7 +377,7 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
     ##
     ## This type supports indexing with `key` and `value`.
     ##
-    ## {{type-function ":key :value"}}
+    ## ^(type-function ":key :value")
     MapEntry = plugin:type:MapEntry
 
     ## The Number type and related functions.
@@ -387,15 +385,15 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
     ## Numbers are arbitrarily large rationals. They may be expressed as integers, decimals, or
     ## rationals such as `1/2`.
     ##
-    ## {{type-function ":number"}}
+    ## ^(type-function ":number")
     ##
     ## # Functions
-    ## {{mdoc:functions :self from compare + - * / %}}
+    ## ^(mdoc:functions :self from compare + - * / %)
     Number = match-indices plugin:type:Number plugin:number
 
     ## The Order type and related constants.
     ##
-    ## {{type-function()}}
+    ## ^(type-function())
     ##
     ## # Values
     ## The constants `less`, `equal`, and `greater` are indices in the type.
@@ -403,28 +401,28 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
 
     ## The Path type and related functions.
     ##
-    ## {{type-function()}}
+    ## ^(type-function())
     ##
     ## # Functions
-    ## {{mdoc:functions :self new from join split name or-source parent relative with-output}}
+    ## ^(mdoc:functions :self new from join split name or-source parent relative with-output)
     Path = match-indices plugin:type:Path {^plugin:path, with-output = :with-output-path, or-source = :path-or-source}
 
     ## The String type and related functions.
     ##
-    ## {{type-function()}}
+    ## ^(type-function())
     ##
     ## # Functions
-    ## {{mdoc:functions :self chars compare format from join split trim}}
+    ## ^(mdoc:functions :self chars compare format from join split trim)
     String = match-indices plugin:type:String plugin:string
 
     ## The Unit type.
     ##
-    ## {{type-function()}}
+    ## ^(type-function())
     Unit = plugin:type:Unit
 
     ## The Unset type.
     ##
-    ## {{type-function()}}
+    ## ^(type-function())
     ##
     ## If called with no arguments, returns an Unset instance.
     ##
@@ -432,13 +430,13 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
     ## To remove values from a map, you may bind them to `Unset` values.
     ##
     ## # Functions
-    ## {{mdoc:functions :self map}}
+    ## ^(mdoc:functions :self map)
     Unset = match-indices plugin:type:Unset {map = :unset-map}
 
     ## Binding helpers.
     ##
     ## # Functions
-    ## {{mdoc:functions :self and or}}
+    ## ^(mdoc:functions :self and or)
     bind = {
         and = :bind-and
         or = :bind-or
@@ -446,7 +444,7 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
 
     ## Documentation helpers.
     ##
-    ## {{mdoc:functions :self summary modules functions}}
+    ## ^(mdoc:functions :self summary modules functions)
     doc = :mdoc
 
     ## Interact with dynamic bindings.
@@ -461,25 +459,23 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
     ## Generally dynamic bindings are a bit tricky to reason about since there are no syntactic
     ## hints about when they will be present, so take this into consideration when using them.
     ##
-    ## {{mdoc:functions :self get eval}}
+    ## ^(mdoc:functions :self get eval)
     dynamic = plugin:value:dynamic
 
     ## Get values related to the program's runtime environment.
     ##
-    ## {{mdoc:functions :self get path-search home current-dir user-cache system-cache os arch}}
+    ## ^(mdoc:functions :self get path-search home current-dir user-cache system-cache os arch)
     env = plugin:env
 
     ## Interact with the local filesystem.
     ##
-    ## {{
-    ## (mdoc:functions :self append archive copy create-dir exists glob read remove sha1 track unarchive
+    ## ^(mdoc:functions :self append archive copy create-dir exists glob read remove sha1 track unarchive
     ##  write)
-    ## }}
     fs = plugin:fs
 
     ## Interact with the program's io channels.
     ##
-    ## {{mdoc:functions :self stdin stdout stderr}}
+    ## ^(mdoc:functions :self stdin stdout stderr)
     io = plugin:io
 
     ## JSON functions.
@@ -493,13 +489,13 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
     ## * array <-> `Array`
     ##
     ## # Functions
-    ## {{mdoc:functions :self parse stringify}}
+    ## ^(mdoc:functions :self parse stringify)
     json = plugin:json
 
     ## The runtime logging interface.
     ##
     ## # Functions
-    ## {{mdoc:functions :self sublog debug info warn error}}
+    ## ^(mdoc:functions :self sublog debug info warn error)
     log = plugin:log
 
     ## Manipulate value metadata.
@@ -507,12 +503,12 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
     ## Values can have arbitrary metadata attached to them at runtime. This metadata can be
     ## retrieved without evaluating the value.
     ##
-    ## {{mdoc:functions :self eval get set}}
+    ## ^(mdoc:functions :self eval get set)
     meta = plugin:value:meta
 
     ## Networking functions.
     ##
-    ## {{mdoc:functions :self download http unarchive url-encode}}
+    ## ^(mdoc:functions :self download http unarchive url-encode)
     net = {
         import {download, unarchive} = :mnet
         import { http, url-encode } = plugin:net
@@ -520,7 +516,7 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
 
     ## Value source location functions.
     ##
-    ## {{mdoc:functions :self copy dir path map}}
+    ## ^(mdoc:functions :self copy dir path map)
     source = {
         copy = plugin:value:source-copy
         ## Get the source directory of a value.
@@ -539,17 +535,17 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
 
     ## Synchronization functions.
     ##
-    ## {{mdoc:functions :self resource consume}}
+    ## ^(mdoc:functions :self resource consume)
     sync = plugin:sync
 
     ## Test helper functions.
     ##
-    ## {{mdoc:functions :self run}}
+    ## ^(mdoc:functions :self run)
     test = :mtest
 
     ## Type creation.
     ##
-    ## {{mdoc:functions :self new enum struct}}
+    ## ^(mdoc:functions :self new enum struct)
     type = {
         import {new} = plugin:type
         import {enum,struct} = :mtype
@@ -562,17 +558,17 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
     ergo-remote
     eval
     exec = plugin:exec
-    ## {{native-doc plugin:getopt}}
+    ## ^(native-doc plugin:getopt)
     ##
     ## # Functions
-    ## {{mdoc:functions :self fn}}
+    ## ^(mdoc:functions :self fn)
     getopt = match-indices plugin:getopt {fn = :getopt-fn}
     import
     if
-    ## {{native-doc plugin:match}}
+    ## ^(native-doc plugin:match)
     ##
     ## # Functions
-    ## {{mdoc:functions :self value}}
+    ## ^(mdoc:functions :self value)
     match = match-indices plugin:match {value = :matches}
     task = plugin:task
 }

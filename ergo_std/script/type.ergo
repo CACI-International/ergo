@@ -68,7 +68,7 @@ required = pat :out ^{source} -> :v -> !match :v [
 
 ## Match one of a number of types.
 ##
-## Arguments: `^:types`
+## Arguments: `^^:types`
 ##
 ## Each item in `types` should be a type capable of being called in a pattern expression with a
 ## single argument to bind.

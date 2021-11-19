@@ -77,17 +77,19 @@ impl AppErr for bool {
 }
 
 fn string_quote<S: AsRef<str>>(s: S) -> String {
-    s.as_ref()
-        .split('\'')
-        .map(|s| {
-            if s.is_empty() {
-                Default::default()
-            } else {
-                format!("'{}'", s)
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\"'\"")
+    let mut ret = String::new();
+    ret.push('"');
+    for c in s.as_ref().chars() {
+        match c {
+            '\n' => ret.push_str("\\n"),
+            '\t' => ret.push_str("\\t"),
+            '\\' => ret.push_str("\\\\"),
+            '"' => ret.push_str("\\\""),
+            c => ret.push(c),
+        }
+    }
+    ret.push('"');
+    ret
 }
 
 fn run(opts: Opts, mut output: OutputInstance) -> Result<String, String> {

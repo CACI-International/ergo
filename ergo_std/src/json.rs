@@ -121,7 +121,8 @@ async fn stringify(value: _, (pretty): [_]) -> Value {
 mod test {
     ergo_script::tests! {
         fn parse(t) {
-            t.assert_content_eq(r#"self:json:parse '{"a": null, "b": 1, "c": true, "d": ["str"]}'"#, "{
+            t.assert_content_eq(r#"self:json:parse '
+            ' {"a": null, "b": 1, "c": true, "d": ["str"]}"#, "{
                     a = (), b = self:type:Number:@ 1, c = self:bool:true, d = [str]
                 }");
         }
@@ -131,7 +132,7 @@ mod test {
                     a = (), b = self:type:Number:@ 1, c = self:bool:true, d = [str]
                 }",
                 // The actual string is subject to value identity ordering of keys.
-                r#"'{"a":null,"d":["str"],"c":true,"b":1}'"#
+                r#"' {"a":null,"d":["str"],"c":true,"b":1}"#
             );
         }
 

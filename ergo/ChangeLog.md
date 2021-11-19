@@ -34,6 +34,25 @@
   * To be idiomatic, if a function is returned as the final value of a function,
     it will be called with a `()` argument rather than with no arguments as was
     previously done.
+* Overhaul string literals.
+  * Change interpolation in strings (previously just doc strings) to use
+    `^<expr>` rather than `{{ <block> }}`.
+  * Allow quoted strings to have expression interpolation.
+    * This potentially replaces almost all cases of `std:String:format`.
+  * Remove raw quoted strings in favor of string blocks.
+    * Similar to `## ...` blocks for doc comments, string blocks look like
+    ```
+    ' multiline
+    ' string
+    ```
+    They also support string interpolation, but none of the escapes that quoted
+    strings do.
+* Add support for attributes.
+  * These look like `##<expr>`. They apply to the following value (if
+    unambiguous), and will always result in a forced expression which binds the
+    following value to the attribute value and returns the result. This is
+    especially useful for adding metadata to values in an unobtrusive way.
+
 
 ### Migration Guide
 * If you had any line comments without a space, a space will need to be added to
@@ -45,6 +64,14 @@
 * If a workspace `command` or script that was intended to be called from the
   command line returns a function, be sure that the no-argument case now is
   translated to something taking a `()` argument.
+* Doc comment strings are more strict. They must always start with `## ` (note
+  the single trailing space), and leading whitespace is no longer normalized
+  based on the first line.
+* Doc comment strings with `{{ ... }}` must instead use `^(...)`.
+* Any doc comment or quoted strings with a literal `^` will have to use `^^` to
+  escape the string interpolation.
+* Raw string literals should be replaced with either block strings or quoted
+  strings. In the latter case, be sure to properly escape the string content.
 
 ## 1.0.0-rc.0  -- 2021-08-01
 Most of the changes listed below are breaking changes, so there is no separate

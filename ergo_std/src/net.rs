@@ -318,7 +318,7 @@ mod test {
             });
             t.assert_content_eq(&format!(r#"self:net:http "{}" |>:complete"#, server.url("/hi")), "()");
             t.assert_content_eq(&format!(r#"self:net:http "{}" |>:headers:myheader | self:string:from"#, server.url("/hi")), "42");
-            t.assert_content_eq(&format!(r#"self:net:http "{}" |>:body | self:string:from"#, server.url("/hi")), "'hello world'");
+            t.assert_content_eq(&format!(r#"self:net:http "{}" |>:body | self:string:from"#, server.url("/hi")), "\"hello world\"");
             t.assert_content_eq(&format!(r#"self:net:http "{}" |>:status-code | self:string:from"#, server.url("/hi")), "200");
         }
 
