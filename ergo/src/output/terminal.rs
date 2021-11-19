@@ -62,21 +62,7 @@ impl super::Output for Output {
     }
 
     fn new_error(&mut self, err: Error) {
-        self.errors.update(err, |d| {
-            use ergo_runtime::error::Severity::*;
-            let level = match d.severity {
-                Error => LogLevel::Error,
-                Warning => LogLevel::Warn,
-                Note => LogLevel::Info,
-                Help => LogLevel::Debug,
-                Bug => LogLevel::Error,
-            };
-            self.pending_logs.push(LogEntry {
-                level,
-                context: Default::default(),
-                args: d.message.clone(),
-            });
-        });
+        self.errors.update(err, |_| ());
         self.need_update = true;
     }
 
