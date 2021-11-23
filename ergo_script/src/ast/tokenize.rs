@@ -785,9 +785,6 @@ impl<T: BlockStringPrefix> NextToken for BlockString<T> {
                 Some(mut rest) if rest.starts_with(&[' ', '\n'][..]) => {
                     // match delimiter, continue with this tokenization
 
-                    position.source.location.length += T::DELIMITER.len();
-                    position.reset_source_start();
-
                     if rest.starts_with(' ') {
                         // SAFETY: starts_with guarantees we can skip forward a space
                         rest = unsafe { rest.get_unchecked(' '.len_utf8()..) };
