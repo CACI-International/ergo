@@ -26,10 +26,11 @@ eval = :a -> !plugin:value:eval <| plugin:match :a [
 
 ## Load a remote archive.
 ##
-## Fetches the archive with `net:unarchive`, and loads the archive from the root directory.
+## Fetches the archive with `net:unarchive ^^enter`, and loads the archive from the root directory.
+## Caches the returned value.
 ##
 ## All arguments are forwarded to `std:net:http`.
-ergo-remote = fn ^:args -> ergo <| mnet:unarchive ^:args
+ergo-remote = fn ^:args -> ergo <| plugin:value:cache <| mnet:unarchive ^enter ^:args
 
 ## Return any bound value as-is.
 ##
@@ -508,11 +509,8 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
 
     ## Networking functions.
     ##
-    ## ^(mdoc:functions :self download http unarchive url-encode)
-    net = {
-        import {download, unarchive} = :mnet
-        import { http, url-encode } = plugin:net
-    }
+    ## ^(mdoc:functions :self download http http-defaults cache-dir unarchive url-encode)
+    net = :mnet
 
     ## Value source location functions.
     ##

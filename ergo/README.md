@@ -98,14 +98,12 @@ scripts reside.
     be String-typed but still have id `A` when it really should be `B`.
     Specifically, the returned value should be dynamic with id `A` but should
     evaluate (trivially) to a String with id `B`.
-
-* Add script-specified network cache locations (for local vendoring).
-* Add hostname-based(?) request parameters.
-* Improve std:doc features.
-  * Remove doc `:self` in favor of a dynamically-bound value?
-
 * Progress spinner
 * Improve sources of capture bindings.
 * Improve UI error behavior.
   * Display the aggregated errors at the end of execution (rather than the
     returned error value).
+
+* Improve std:doc features.
+  * Remove doc `:self` in favor of a dynamically-bound value?
+

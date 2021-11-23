@@ -1,30 +1,106 @@
 plugin = ergo plugin
 
+cache-name = ERGO_NET_CACHE
+
+## The cache directory specified by the `^cache-name` environment variable, if any.
+cache-dir = plugin:env:get :cache-name
+
+http-defaults-path = plugin:path:join plugin:env:config http defaults.ergo
+
+## The map of http defaults specified by the user.
+http-defaults = plugin:type:Map <| plugin:match (plugin:fs:exists :http-defaults-path) [plugin:bool:true -> ergo :http-defaults-path, _ -> {}]
+
+http-default-cases = plugin:array:from <| plugin:iter:map (fn :e -> plugin:string:format "^(e:key)/{}" _ -> e:value) <| plugin:iter:order (fn :a :b -> plugin:string:compare b:key a:key) :http-defaults
+
+## ^(doc plugin:net:http)
+##
+## ### User-specified defaults
+## A user may specify default settings for connections based on URL prefixes at
+## `^http-defaults-path`.
+##
+## The `defaults.ergo` file should evaluate to a map, where keys are URL prefixes (omitting the URI
+## scheme) and values are maps of default keyed arguments to use for any URLs which are prefixed
+## with the key. This is especially useful to configure user-specific authentication, e.g. using
+## `basic-auth` or `bearer-auth`.
+##
+## ### Network request caching
+## If the environment variable `^cache-name` is set, all network requests will be cached (based
+## _only_ on url) to the directory specified by the environment variable (creating the directory if
+## it doesn't exist), and future network requests will first check the cache for matching results
+## before going out to the network. Note that only successful response bodies are cached. Pass the
+## keyed argument `disable-net-cache` to ignore the environment variable setting.
+http = fn (plugin:type:String :url) (disable-net-cache=:disable-net-cache) ^:args -> {
+    # Apply defaults
+    without-scheme = plugin:string:split "://" :url |>:-1
+    defaults = plugin:match :without-scheme [^:http-default-cases, _ -> {}]
+    args = plugin:value:merge :defaults (plugin:map:from :args)
+
+    result = plugin:net:http :url ^:args
+
+    # Use network cache
+    cache-dir = plugin:match :disable-net-cache [plugin:type:Unset _ -> :cache-dir, _ -> :unset]
+    plugin:match :cache-dir [
+        plugin:type:Unset _ -> :result
+        :dir -> {
+            id = plugin:value:identity :url
+            final-component = plugin:string:split / :url |>:-1
+            name = "^(final-component)-^(id)"
+            plugin:fs:create-dir (plugin:path:from :dir)
+            path = plugin:path:join :dir :name
+            cached-result = { body = plugin:fs:read :path, headers = {}, complete = (), status-code = plugin:bool:true }
+            plugin:match (plugin:fs:exists :path) [
+                plugin:bool:true -> :cached-result
+                plugin:bool:false -> {
+                    plugin:match (plugin:bool:from result:status-code) [
+                        plugin:bool:false -> :result
+                        plugin:bool:true -> {
+                            plugin:fs:write :path result:body
+                            :cached-result
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}
+
 ## Download a file over HTTP or HTTPS.
 ##
 ## Arguments: `(String :url) (Path :target)`
 ##
 ## Keyed Arguments: All keyed arguments supported by `std:net:http`.
 ##
+## This forwards to `std:net:http`, so all features it has are supported.
+##
 ## Returns a Unit value, or an error if a non-successful status code is received.
 download = fn (plugin:type:String :url) (plugin:type:Path :target) ^:rest -> {
-    result = plugin:net:http :url ^:rest
+    result = http :url ^:rest
     result:complete
     plugin:fs:write :target result:body
 }
 
 ## Open a remote archive file.
 ##
-## All arguments are forwarded to `std:net:http`.
+## This forwards all arguments to `std:net:http`, so all features it has are supported.
+##
+## Additionally, the `enter` keyed argument may be specified to automatically return a path to a
+## single contained file/directory if the unarchived contents only have one top-level entry.
 ##
 ## The url can resolve to any content that `fs:unarchive` accepts.
 ##
 ## Returns the unpacked remote archive directory.
-unarchive = fn ^:args -> {
+unarchive = fn (enter=:enter) ^:args -> {
     unpacked-dir = plugin:path:new()
-    archive = plugin:net:http ^:args |>:body
+    archive = http ^:args |>:body
     plugin:fs:unarchive :unpacked-dir :archive
-    :unpacked-dir
+    plugin:match :enter [
+        plugin:type:Unset _ -> :unpacked-dir
+        _ -> plugin:match (plugin:fs:glob <| plugin:path:join :unpacked-dir *) [
+            [:inner] -> :inner
+            _ -> :unpacked-dir
+        ]
+
+    ]
 }
 
-{download, unarchive}
+{http, http-defaults, cache-dir, download, unarchive, url-encode = plugin:net:url-encode}

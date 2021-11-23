@@ -29,11 +29,16 @@
   string nicely formatted.
 * Add `std:meta:eval` to evaluate a value until a metadata key is present.
 * Add `std:env:config` which evaluates to the configuration directory.
+* Add `std:net:cache-dir` to return the specified network cache directory, if
+  any.
+* Add `std:net:http-defaults` to return the user defaults.
 
 ### Improvements
 * Improve error return values when using `std:eval`.
 * Do not cache `std:net:unarchive` results, to make the standard library purely
   functional.
+* Cache `std:ergo-remote`, as that is an appropriate place for caching of the
+  downloaded libraries and `std:net:unarchive` no longer caches things.
 * Allow all `std:net:http` arguments to be used with `std:ergo-remote`.
 * Allow `std:fs:copy` to copy symlinks rather than follow them by default.
   * Add a `follow-symlinks` keyed argument to change this behavior.
@@ -47,6 +52,12 @@
 * Add `else` keyword and `else if` additional cases to `std:if`.
 * Change `std:match` to reject Errors by default, and add an `allow-error` flag
   to allow errors (matching the old behavior).
+* Support an `enter` keyed argument to `std:net:unarchive` to return the inner
+  path if the unarchived content has exactly one top-level entry.
+* Support an `ERGO_NET_CACHE` environment variable for caching any body content (by
+  url) downloaded with `std:net:http`.
+* Support user-configurable http defaults in `std:net:http` to allow e.g.
+  user-specific per-endpoint authentication.
 
 ### Bugfixes
 * Fix the `std:fs:glob` relative directory.
