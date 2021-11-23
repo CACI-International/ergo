@@ -15,6 +15,7 @@ pub fn module() -> Value {
         "current-dir" = current_dir(),
         "user-cache" = user_cache(),
         "system-cache" = system_cache(),
+        "config" = config(),
         "os" = os(),
         "arch" = arch()
     }
@@ -99,6 +100,20 @@ fn system_cache() -> Value {
         .into(),
     };
     Doc::set_string(&mut v, "A system-level cache directory path.");
+    v
+}
+
+fn config() -> Value {
+    let path =
+        directories::ProjectDirs::from("", "", "ergo").map(|d| d.preference_dir().to_owned());
+    let mut v = match path {
+        Some(path) => types::Path::from(path).into(),
+        None => ergo_runtime::error! {
+            error: "the user configuration directory could not be retrieved"
+        }
+        .into(),
+    };
+    Doc::set_string(&mut v, "A user-level configuration directory path.");
     v
 }
 

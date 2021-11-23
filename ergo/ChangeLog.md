@@ -52,6 +52,7 @@
     unambiguous), and will always result in a forced expression which binds the
     following value to the attribute value and returns the result. This is
     especially useful for adding metadata to values in an unobtrusive way.
+* Add `user-configuration-directory/lib` folder as a load path.
 
 
 ### Migration Guide

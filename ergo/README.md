@@ -101,6 +101,8 @@ scripts reside.
 
 * Add script-specified network cache locations (for local vendoring).
 * Add hostname-based(?) request parameters.
+* Improve std:doc features.
+  * Remove doc `:self` in favor of a dynamically-bound value?
 
 * Progress spinner
 * Improve sources of capture bindings.

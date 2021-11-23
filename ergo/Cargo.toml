@@ -8,7 +8,7 @@ edition = "2021"
 atty = "^0.2"
 chrono = "^0.4"
 ctrlc = "^3.1"
-directories = "^2.0"
+directories = "4.0"
 ergo_script = { path = "../ergo_script" }
 ergo_runtime = { path = "../ergo_runtime" }
 futures = "^0.3"

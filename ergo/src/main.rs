@@ -167,7 +167,7 @@ fn run(opts: Opts, mut output: OutputInstance) -> Result<String, String> {
         let mut load_paths = Vec::new();
 
         // Add neighboring share directories when running in a [prefix]/bin directory.
-        let mut neighbor_dir = std::env::current_exe().ok().and_then(|path| {
+        let neighbor_data_dir = std::env::current_exe().ok().and_then(|path| {
             path.parent().and_then(|parent| {
                 if parent.file_name() == Some("bin".as_ref()) {
                     let path = parent
@@ -187,25 +187,25 @@ fn run(opts: Opts, mut output: OutputInstance) -> Result<String, String> {
             })
         });
 
-        // If the neighbor directory is somewhere in the home directory, it should be added prior to the local
-        // data app dir.
-        if let (Some(dir), Some(user_dirs)) = (&neighbor_dir, &directories::UserDirs::new()) {
-            if dir.starts_with(user_dirs.home_dir()) {
-                load_paths.push(neighbor_dir.take().unwrap());
-            }
+        let has_data_dir = neighbor_data_dir.is_some();
+
+        // Add the data directory prior to any user lib dir.
+        if let Some(dir) = neighbor_data_dir {
+            load_paths.push(dir);
         }
 
-        // Add local data app dir.
+        // Add local data app dir if necessary, and user lib dir.
         if let Some(proj_dirs) = constants::app_dirs() {
-            let path = proj_dirs.data_local_dir().join("lib");
+            if !has_data_dir {
+                let path = proj_dirs.data_local_dir().join("lib");
+                if path.exists() {
+                    load_paths.push(path);
+                }
+            }
+            let path = proj_dirs.preference_dir().join("lib");
             if path.exists() {
                 load_paths.push(path);
             }
-        }
-
-        // If the neighbor directory wasn't added, it should be added now, after the local data app dir.
-        if let Some(dir) = neighbor_dir {
-            load_paths.push(dir);
         }
 
         load_paths

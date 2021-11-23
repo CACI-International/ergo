@@ -28,6 +28,7 @@
 * Add a `pretty` keyed argument to `std:json:stringify` to make the output
   string nicely formatted.
 * Add `std:meta:eval` to evaluate a value until a metadata key is present.
+* Add `std:env:config` which evaluates to the configuration directory.
 
 ### Improvements
 * Improve error return values when using `std:eval`.
