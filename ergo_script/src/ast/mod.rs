@@ -381,8 +381,7 @@ expression_types! {
     pub struct Capture(CaptureKey);
 
     pub struct DocComment {
-        (pub items: Vec<StringItem>),
-        (pub self_capture_key: Option<CaptureKey>),
+        [items: StringItem],
         value
     }
 
@@ -549,7 +548,6 @@ impl Expression {
         Self::create(DocComment {
             items,
             value,
-            self_capture_key: None,
             captures: Default::default(),
         })
     }
@@ -1366,44 +1364,14 @@ impl<'a> ExpressionCompiler<'a> {
             DocComment(v) => {
                 let mut e_caps = Captures::default();
                 v.subexpressions_mut(|e| self.compile_captures(e, &mut e_caps));
-
-                self.capture_mapping.down();
-
-                // Insert special "self" binding
-                let self_id = Expression::string("self".to_owned()).id();
-                let key = self.capture_context.key();
-                let old_scope = self.capture_mapping.current_as_set_scope();
-                self.capture_mapping.insert(self_id, key);
-                self.capture_mapping.restore_set_scope(old_scope);
-                v.self_capture_key = Some(key);
-
-                for p in &mut v.items {
-                    match p {
-                        StringItem::Expression(e) => self.compile_captures(e, &mut e_caps),
-                        StringItem::String(_) => ()
-                    }
-                }
-                let in_scope = self.capture_mapping.up();
-                let in_scope_captures = in_scope.into_iter().map(|v| v.1).collect();
-
-                e_caps.free.difference_with(&in_scope_captures);
-                for c in in_scope_captures.iter() {
-                    if let Some(set) = self.needed_by.get(&c) {
-                        e_caps.free.difference_with(set);
-                    }
-                }
-
                 caps |= &e_caps;
                 v.captures = e_caps.direct;
             },
             Attribute(v) => {
                 let mut e_caps = Captures::default();
-                self.compile_captures(&mut v.attr, &mut e_caps);
-                self.compile_captures(&mut v.value, &mut e_caps);
-                v.captures = e_caps.direct.clone();
-                // Attribute expressions are always considered forced.
-                self.capture(e, src, &mut e_caps);
+                v.subexpressions_mut(|e| self.compile_captures(e, &mut e_caps));
                 caps |= &e_caps;
+                v.captures = e_caps.direct;
             },
         );
     }

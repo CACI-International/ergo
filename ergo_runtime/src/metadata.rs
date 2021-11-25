@@ -2,6 +2,7 @@
 
 use crate as ergo_runtime;
 use crate::abi_stable::{rvec, std_types::RVec, uuid::Uuid};
+use crate::context::DynamicScopeKey;
 use crate::value::{match_value, MetadataKey, Value};
 
 /// Documentation metadata key.
@@ -12,6 +13,21 @@ impl MetadataKey for Doc {
 
     fn id(&self) -> u128 {
         crate::nsid!(meta::doc).as_u128()
+    }
+}
+
+/// The dynamic scope key used to set the doc value when evaluating the doc string.
+pub struct DocValueKey;
+
+impl DynamicScopeKey for DocValueKey {
+    type Value = Value;
+
+    fn id(&self) -> u128 {
+        nsid!(doc::value).as_u128()
+    }
+
+    fn value_id(value: &Value) -> u128 {
+        value.id()
     }
 }
 
@@ -29,7 +45,14 @@ impl Doc {
 
         if let Some(v) = value.get_metadata(&Doc) {
             let mut v = v.owned();
-            crate::Context::eval(&mut v).await?;
+            crate::Context::fork(
+                |ctx| {
+                    ctx.dynamic_scope
+                        .set(&Source::get(&value).with(DocValueKey), value.clone())
+                },
+                crate::Context::eval(&mut v),
+            )
+            .await?;
 
             match_value! {v,
                 crate::types::String(s) => return Ok(s.into()),

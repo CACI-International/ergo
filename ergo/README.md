@@ -105,5 +105,3 @@ scripts reside.
     returned error value).
 
 * Improve std:doc features.
-  * Remove doc `:self` in favor of a dynamically-bound value?
-

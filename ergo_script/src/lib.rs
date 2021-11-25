@@ -372,9 +372,9 @@ mod test {
         }
 
         #[test]
-        fn expression_self() -> Result<(), String> {
+        fn expression_value() -> Result<(), String> {
             script_eval_to(
-                "## doc ^(self:v)
+                "## doc ^(doc:value () |>:v)
                 a = { v = comment }
                 doc :a",
                 SRString("doc comment"),

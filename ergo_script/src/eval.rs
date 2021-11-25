@@ -550,20 +550,16 @@ impl Evaluator {
                 panic!("unexpected force expression");
             },
             DocComment(doc) => {
-                let mut captures = captures.subset(&doc.captures);
+                let captures = captures.subset(&doc.captures);
                 let mut val = self.evaluate_with_env(doc.value.clone(), &captures, local_env, sets);
                 let items = doc.items.clone();
-                let self_key = doc.self_capture_key.as_ref().copied().unwrap();
-                let self_val = val.clone();
                 // TODO distinguish doc comment captures from value captures?
-                let doc_deps = depends![^ast::StringItem::dependencies(&items), ^&captures, self_val];
+                let doc_deps = depends![^ast::StringItem::dependencies(&items), ^&captures];
                 let mut doc = Value::dyn_new(move || async move {
                         Context::spawn(EVAL_TASK_PRIORITY, |_| {}, async move {
                             ergo_runtime::error_info! {
                                 labels: [ primary(source.with("while evaluating this doc comment")) ],
                                 async {
-                                    captures.resolve(self_key, self_val);
-                                    captures.evaluate_ready(self).await;
                                     self.evaluate_string_items(items, &captures, None, &Sets::none()).await
                                 }
                             }

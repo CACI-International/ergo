@@ -53,7 +53,8 @@
     following value to the attribute value and returns the result. This is
     especially useful for adding metadata to values in an unobtrusive way.
 * Add `user-configuration-directory/lib` folder as a load path.
-
+* Change doc comments to use a dynamic binding (returned by the `doc:value`
+  function) rather than the special `self` binding.
 
 ### Migration Guide
 * If you had any line comments without a space, a space will need to be added to
@@ -73,6 +74,7 @@
   escape the string interpolation.
 * Raw string literals should be replaced with either block strings or quoted
   strings. In the latter case, be sure to properly escape the string content.
+* Any doc comments using `self` should instead use `doc:value()`.
 
 ## 1.0.0-rc.0  -- 2021-08-01
 Most of the changes listed below are breaking changes, so there is no separate

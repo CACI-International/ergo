@@ -4,7 +4,7 @@ use ergo_runtime::{
     context::{DynamicScopeKey, DynamicScopeRef},
     depends,
     error::DiagnosticInfo,
-    metadata::{self, Doc},
+    metadata::{self, Doc, DocValueKey},
     nsid, traits, try_result, types,
     value::match_value,
     Context, Source, Value,
@@ -18,7 +18,7 @@ impl DynamicScopeKey for DocPathKey {
     type Value = DocPath;
 
     fn id(&self) -> u128 {
-        nsid!(doc::key).as_u128()
+        nsid!(doc::path).as_u128()
     }
 
     fn value_id(value: &DocPath) -> u128 {
@@ -96,6 +96,18 @@ fn write_doc(path: &std::path::Path, md: &str) -> Result<(), String> {
 
 /// The doc function, supporting a number of indexed functions as well.
 pub fn doc() -> Value {
+    let value: Value = types::ergo_fn_value! {
+        /// Get the value currently being documented, if any.
+        ///
+        /// Arguments: `()`
+        ///
+        /// Returns the value being documented, or Unset if no value is being documented.
+        async fn value(_: types::Unit) -> Value {
+            Context::with(|ctx| ctx.dynamic_scope.get(&DocValueKey).map(|v| v.as_ref().clone()))
+                .unwrap_or(types::Unset.into())
+        }
+    };
+
     let path: Value = types::ergo_fn_value! {
         /// Get the current documentation path, if any.
         ///
@@ -197,6 +209,7 @@ pub fn doc() -> Value {
 
     types::Unbound::new(
         move |v| {
+            let value = value.clone();
             let path = path.clone();
             let write = write.clone();
             let child = child.clone();
@@ -212,7 +225,9 @@ pub fn doc() -> Value {
                     types::Index(ind) => {
                         let ind = try_result!(Context::eval_as::<types::String>(ind).await);
                         let s = ind.as_ref().as_str();
-                        if s == "path" {
+                        if s == "value" {
+                            value
+                        } else if s == "path" {
                             path
                         } else if s == "child" {
                             child
@@ -236,7 +251,8 @@ Returns the documentation string.
 
 ## Functions
 * `child` - Write documentation to a relative path.
-* `path` - Get the documentation output path, if set.
+* `path` - Get the documentation output path, if any.
+* `value` - Get the value being documented, if any.
 * `write` - Write documentation to the given output path.",
     )
     .into()
