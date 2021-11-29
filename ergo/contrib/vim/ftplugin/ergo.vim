@@ -6,7 +6,8 @@ let b:did_ftplugin = 1
 let s:keepcpo= &cpo
 set cpo&vim
 
-setlocal comments=:##,:#
+" ' is not actually a comment, but we abuse vim's formatoptions to improve block strings
+setlocal comments=b:##,b:#,b:'
 setlocal commentstring=#\ %s
 setlocal formatoptions-=t formatoptions+=croqnl
 " Newer option `j` may not be present
