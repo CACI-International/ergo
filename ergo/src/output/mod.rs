@@ -13,6 +13,7 @@ pub trait Output: LogTarget {
     fn new_error(&mut self, err: Error);
     fn interrupt(&mut self);
     fn update(&mut self);
+    fn take_errors(&mut self) -> ergo_runtime::error::Diagnostics;
 }
 
 pub fn output(
@@ -62,6 +63,10 @@ impl Output for OutputInstance {
 
     fn update(&mut self) {
         self.inner.update()
+    }
+
+    fn take_errors(&mut self) -> ergo_runtime::error::Diagnostics {
+        self.inner.take_errors()
     }
 }
 

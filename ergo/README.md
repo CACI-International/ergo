@@ -100,8 +100,5 @@ scripts reside.
     evaluate (trivially) to a String with id `B`.
 * Progress spinner
 * Improve sources of capture bindings.
-* Improve UI error behavior.
-  * Display the aggregated errors at the end of execution (rather than the
-    returned error value).
 
 * Improve std:doc features.

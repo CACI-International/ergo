@@ -383,39 +383,38 @@ fn run(opts: Opts, mut output: OutputInstance) -> Result<String, String> {
     // free with the plugins still loaded.
     // Only drop when nothing else is using it (so we have reliable terminal cleanup).
     let mut logger = Some(logger);
-    loop {
+    let errors = loop {
         match std::sync::Arc::try_unwrap(logger.take().unwrap()) {
-            Ok(l) => {
-                drop(l);
-                break;
+            Ok(mut l) => {
+                break l.get_mut().unwrap().take_errors();
             }
             Err(l) => {
                 logger = Some(l);
                 std::thread::sleep(std::time::Duration::from_millis(50));
             }
         }
-    }
+    };
 
-    // Write error output to stderr.
-    // TODO get error(s) from error scope rather than return value?
-    match result {
-        Ok(v) => Ok(v),
-        Err(e) => {
-            if e.is_aborted() {
-                return Err("interrupted".into());
+    match (result, errors.len()) {
+        (Ok(v), 0) => Ok(v),
+        (o, _) => {
+            // Write error output to stderr.
+            use ergo_runtime::error::emit_diagnostics;
+
+            let mut errors = errors;
+            if let Err(e) = o {
+                errors.insert(&e);
             }
-            use ergo_runtime::error::{emit_diagnostics, Diagnostics};
+            if errors.len() == 0 {
+                Err("interrupted".into())
+            } else {
+                let err = error_output(opts.format)
+                    .app_err("could not create error output from requested format");
 
-            let err = error_output(opts.format)
-                .app_err("could not create error output from requested format");
-
-            emit_diagnostics(
-                &Diagnostics::from(&e),
-                sources.as_ref(),
-                &mut TermToTermcolor(err),
-            )
-            .map_err(|e| e.to_string())
-            .and_then(|()| Err("one or more errors occurred".into()))
+                emit_diagnostics(&errors, sources.as_ref(), &mut TermToTermcolor(err))
+                    .map_err(|e| e.to_string())
+                    .and_then(|()| Err("one or more errors occurred".into()))
+            }
         }
     }
 }

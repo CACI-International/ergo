@@ -7,6 +7,7 @@ use std::io::Write;
 pub struct Output {
     log_level: LogLevel,
     out: Box<dyn Write + Send>,
+    errors: ergo_runtime::error::Diagnostics,
 }
 
 impl Output {
@@ -14,6 +15,7 @@ impl Output {
         Output {
             log_level: LogLevel::Info,
             out,
+            errors: Default::default(),
         }
     }
 }
@@ -23,11 +25,17 @@ impl super::Output for Output {
         self.log_level = log_level;
     }
 
-    fn new_error(&mut self, _err: Error) {}
+    fn new_error(&mut self, err: Error) {
+        self.errors.insert(&err);
+    }
 
     fn interrupt(&mut self) {}
 
     fn update(&mut self) {}
+
+    fn take_errors(&mut self) -> ergo_runtime::error::Diagnostics {
+        std::mem::take(&mut self.errors)
+    }
 }
 
 impl LogTarget for Output {

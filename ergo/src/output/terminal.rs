@@ -86,6 +86,10 @@ impl super::Output for Output {
 
         self.need_update = false;
     }
+
+    fn take_errors(&mut self) -> ergo_runtime::error::Diagnostics {
+        std::mem::take(&mut self.errors.errors)
+    }
 }
 
 impl Drop for Output {

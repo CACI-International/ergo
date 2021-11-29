@@ -674,16 +674,7 @@ pub mod diagnostics {
         ///
         /// Returns whether any new diagnostics were inserted.
         pub fn insert(&mut self, err: &Error) -> bool {
-            let mut added = false;
-            match &err.inner {
-                InnerError::Errors(diagnostics) => {
-                    for d in diagnostics {
-                        added |= self.0.insert(HashByRef(d.clone()));
-                    }
-                }
-                _ => (),
-            }
-            added
+            self.insert_new(err, |_| ())
         }
 
         /// Insert all diagnostics from the given error into the set.
@@ -695,6 +686,9 @@ pub mod diagnostics {
         where
             F: FnMut(&Diagnostic),
         {
+            if err.is_aborted() {
+                return false;
+            }
             let mut added = false;
             match &err.inner {
                 InnerError::Errors(diagnostics) => {
