@@ -299,6 +299,12 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
 ## This library provides a number of submodules that group related functions, as well as some
 ## top-level functions. It is often useful to use `std:import` to import subsets of functionality
 ## from the library.
+##
+## All values considered "types" support being called on a value (which will evaluate that value and
+## check whether the type matches, returning an Error if not) or being called with a single pattern
+## in pattern calls (to check the type and bind the result to the given value). For example:
+## `std:String :s = :value` checks whether `value` is a string and binds the result (if it is a
+## string) to `s`; `std:String :value` checks `value` and returns the evaluated result.
 {
     Any = make-type plugin:type:Any {}
 
