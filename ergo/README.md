@@ -100,5 +100,3 @@ scripts reside.
     evaluate (trivially) to a String with id `B`.
 * Progress spinner
 * Improve sources of capture bindings.
-
-* Improve std:doc features.

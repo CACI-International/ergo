@@ -195,9 +195,9 @@ async fn new(id: types::String, interface: _, (bind): [_]) -> Value {
         ret_tp,
         Ok(construct),
         format!(
-            "Match a {} value.
+            "The {} type.
 
-If called with no arguments, returns a composition function:
+The `@` index is composition function:
 {}",
             id, interface_doc
         ),
@@ -234,7 +234,7 @@ fn match_any() -> Value {
             .boxed()
         },
         depends![nsid!(std::type::Any)],
-        "Matches any value (except Errors). Evaluates the value to a typed value.",
+        "Matches any type (except Errors). Evaluates the value to a typed value.",
     )
     .into()
 }
@@ -312,7 +312,10 @@ fn match_unset() -> Value {
     make_match_fn(
         types::Unset::ergo_type(),
         Err("cannot compose; use script builtin `unset`".into()),
-        "Matches an Unset value.",
+        "The Unset type.
+
+When indexing maps, `Unset` is returned if a key does not exist.
+To remove values from a map, you may bind them to `Unset` values.",
     )
 }
 
@@ -320,7 +323,7 @@ fn match_unit() -> Value {
     make_match_fn(
         types::Unit::ergo_type(),
         Err("cannot compose; use script syntax".into()),
-        "Matches a Unit value.",
+        "The Unit type.",
     )
 }
 
@@ -328,7 +331,7 @@ fn match_bool() -> Value {
     make_match_fn(
         types::Bool::ergo_type(),
         Err("cannot compose; use true and false indices".into()),
-        "Matches a Bool value.",
+        "The Bool type.",
     )
 }
 
@@ -336,7 +339,7 @@ fn match_string() -> Value {
     make_match_fn(
         types::String::ergo_type(),
         Err("cannot compose; use script syntax".into()),
-        "Matches a String value.",
+        "The String type.",
     )
 }
 
@@ -344,7 +347,9 @@ fn match_map() -> Value {
     make_match_fn(
         types::Map::ergo_type(),
         Err("cannot compose; use script syntax".into()),
-        "Matches a Map value.",
+        "The Map type.
+
+When converting a map to/from an iterator, the iterator elements will/must be `MapEntry` types.",
     )
 }
 
@@ -388,10 +393,9 @@ fn match_map_entry() -> Value {
     make_match_fn(
         types::MapEntry::ergo_type(),
         Ok(construct),
-        "Matches a MapEntry value.
+        "The MapEntry type.
 
-If called with no arguments, evaluates to a MapEntry constructor which accepts a key and value
-argument in a call or pattern call.",
+This type supports indexing with `key` and `value`.",
     )
 }
 
@@ -399,7 +403,7 @@ fn match_array() -> Value {
     make_match_fn(
         types::Array::ergo_type(),
         Err("cannot compose; use script syntax".into()),
-        "Matches an Array value.",
+        "The Array type.",
     )
 }
 
@@ -407,7 +411,12 @@ fn match_iter() -> Value {
     make_match_fn(
         types::Iter::ergo_type(),
         Err("cannot compose; convert to/from other types".into()),
-        "Matches an Iter value.",
+        "The Iter type.
+
+Iter types can be used to manipulate collections of values. All functions here (when taking an some
+iterator argument) convert the argument to an Iter if possible. So, for example, one can use these
+functions directly on arrays and maps (but you should take care to convert the resulting Iters back
+to arrays and maps when necessary).",
     )
 }
 
@@ -415,7 +424,7 @@ fn match_path() -> Value {
     make_match_fn(
         types::Path::ergo_type(),
         Err("cannot compose; convert to/from other types".into()),
-        "Matches a Path value.",
+        "The Path type.",
     )
 }
 
@@ -423,7 +432,7 @@ fn match_function() -> Value {
     make_match_fn(
         types::Unbound::ergo_type(),
         Err("cannot compose; use script syntax".into()),
-        "Matches a Function value.",
+        "The Function type.",
     )
 }
 
@@ -459,11 +468,10 @@ fn match_number() -> Value {
     make_match_fn(
         types::Number::ergo_type(),
         Ok(construct),
-        "Matches a Number value.
+        "The Number type.
 
-If called with no arguments, returns a number constructor which takes a numeric string argument.
-The string may be an integer, decimal, or ratio of integers (e.g. `1/2`) with any number of digits.
-The function can only be used in calls: you cannot destructure Numbers in pattern calls.",
+Numbers are arbitrarily large rationals. They may be expressed as integers, decimals, or
+rationals such as `1/2`.",
     )
 }
 
@@ -471,7 +479,7 @@ fn match_order() -> Value {
     make_match_fn(
         super::cmp::Order::ergo_type(),
         Err("cannot compose; use indices".into()),
-        "Matches an Order value.",
+        "The Order type.",
     )
 }
 
@@ -505,7 +513,7 @@ fn match_error() -> Value {
     make_match_fn(
         types::Error::ergo_type(),
         Ok(construct),
-        "Matches an Error value.
+        "The Error type.
 
 If called with no arguments, returns an error constructor which takes an error message and an
 optional `source` keyed argument with a value from which source information will be used for the

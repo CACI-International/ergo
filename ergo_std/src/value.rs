@@ -439,13 +439,11 @@ mod test {
         }
 
         fn dynamic_binding(t) {
-            //t.assert_eq("self:value:dynamic:get something", ":unset");
+            t.assert_eq("self:value:dynamic:get something", ":unset");
             t.assert_eq("v = self:value:dynamic:get something; self:value:dynamic:eval { something = value } :v", "value");
-            /*
             t.assert_eq("f = fn :x -> <| self:value:dynamic:get my_func |> :x
                 say_hello = fn :name -> \"hi, ^name\"
                 self:value:dynamic:eval { my_func = :say_hello } <| f dude", "\"hi, dude\"");
-            */
         }
 
         fn dynamic_binding_multiple_scopes(t) {

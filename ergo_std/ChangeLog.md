@@ -32,6 +32,8 @@
 * Add `std:net:cache-dir` to return the specified network cache directory, if
   any.
 * Add `std:net:http-defaults` to return the user defaults.
+* Rework the `std:doc` module to use attributes and automatically document
+  module contents.
 
 ### Improvements
 * Improve error return values when using `std:eval`.
@@ -84,6 +86,9 @@
 * Add an `else` keyword to `std:if` calls when necessary.
 * Add `^allow-error` to `std:match` calls where matching errors is intentional
   (there probably aren't many cases of this).
+* Any documentation using `std:doc` must change to use the new functions
+  (attributes). Existing documentation likely can take advantage of the new
+  features as well.
 
 ## 1.0.0-rc.0  -- 2021-08-01
 ### New Features
