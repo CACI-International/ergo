@@ -1,12 +1,14 @@
 plugin = ergo plugin
 
+string-summary = fn :s -> (plugin:string:split "\n\n" :s):0
+
 ## Get the summary documentation of a value.
 ##
 ## Arguments: `:value`
 ##
 ## The summary documentation is the first paragraph of documentation (where paragraphs are separated
 ## by two newlines).
-summary = fn :val -> (plugin:string:split "\n\n" (doc :val)):0
+summary = fn :val -> string-summary <| doc :val
 
 ## Convert a string to one that is safe for use as a path component (e.g. replacing `/` characters).
 path-safe = fn :v -> {
@@ -71,15 +73,14 @@ module = :v -> {
         values = (:values
             | plugin:iter:order (fn :a :b -> plugin:string:compare a:name b:name)
             | plugin:iter:map (fn :e -> {
-                first = plugin:match (doc:path()) [
-                    plugin:type:Unset -> e:name
-                    _ -> {
-                        path = doc:child (path-safe e:name) e:value
-                        url-path = plugin:path:join ^<|plugin:array:from <| plugin:iter:map plugin:net:url-encode <| plugin:path:split :path
-                        plugin:string:format "[{}]({})" e:name :url-path
+                plugin:match (doc:path()) [
+                    plugin:type:Unset -> "* ^(e:name): ^(summary e:value)"
+                    :root -> {
+                        child = doc:child (path-safe e:name) e:value
+                        url-path = plugin:path:join ^<|plugin:array:from <| plugin:iter:map plugin:net:url-encode <| plugin:path:split child:path
+                        "* [^(e:name)](^url-path): ^(string-summary child:content)"
                     }
                 ]
-                "* ^first: ^(summary e:value)"
             })
             | plugin:string:join "\n"
             )

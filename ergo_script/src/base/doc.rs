@@ -84,7 +84,10 @@ fn write_doc(path: &std::path::Path, md: &str) -> Result<(), String> {
         : doctype::HTML;
         html {
             head {
-                title: "docs";
+                meta(charset = "UTF-8");
+                meta(name = "viewport", content = "width=device-width, initial-scale=1.0");
+                title: "Documentation";
+                link(rel = "stylesheet", href = "https://cdn.jsdelivr.net/npm/@exampledev/new.css@1.1.2/new.min.css");
             }
             body {
                 : Markdown(md);
@@ -159,8 +162,10 @@ pub fn doc() -> Value {
         ///
         /// Arguments: `(Into<Path> :path) :doc-value`
         ///
-        /// Returns the `Path` to the written documentation. If no documentation path is set, returns `path`
-        /// (without writing anything).
+        /// Returns a map with:
+        /// * `path` - the `Path` to the written documentation. If no documentation path is set,
+        /// returns the `path` argument (without writing anything).
+        /// * `content` - the doc content (prior to being written).
         async fn child(path: _, value: _) -> Value {
             let path_source = metadata::Source::get(&path);
             let path = traits::into::<types::Path>(path).await?.to_owned().into_pathbuf();
@@ -201,7 +206,10 @@ pub fn doc() -> Value {
                     write_doc(&output_file, &doc)
                         .add_primary_label(path_source.with("while writing to path from this value"))
                         .add_note(format_args!("path was {}", output_file.display()))?;
-                    types::Path::from(rel_path).into()
+                    let mut m = types::Map(Default::default());
+                    m.0.insert(types::String::from("path").into(), types::Path::from(rel_path).into());
+                    m.0.insert(types::String::from("content").into(), types::String::from(doc).into());
+                    m.into()
                 }
             }
         }
