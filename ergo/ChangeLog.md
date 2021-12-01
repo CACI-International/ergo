@@ -31,7 +31,7 @@
   * `doc:path` has been changed to take a single `()` argument.
   * `workspace` and `std` no longer require binding; you can access them as if
     they were loaded values (e.g., `std:import { Path } = :std` rather than `... = std:`).
-  * To be idiomatic, if a function is returned as the final value of a function,
+  * To be idiomatic, if a function is returned as the final value of a CLI call,
     it will be called with a `()` argument rather than with no arguments as was
     previously done.
 * Overhaul string literals.
@@ -49,7 +49,7 @@
     strings do.
 * Add support for attributes.
   * These look like `##<expr>`. They apply to the following value (if
-    unambiguous), and will always result in a forced expression which binds the
+    unambiguous), and will always result in an expression which binds the
     following value to the attribute value and returns the result. This is
     especially useful for adding metadata to values in an unobtrusive way.
 * Add `user-configuration-directory/lib` folder as a load path.

@@ -36,7 +36,6 @@
   module contents.
 
 ### Improvements
-* Improve error return values when using `std:eval`.
 * Do not cache `std:net:unarchive` results, to make the standard library purely
   functional.
 * Cache `std:ergo-remote`, as that is an appropriate place for caching of the
@@ -62,6 +61,7 @@
   user-specific per-endpoint authentication.
 
 ### Bugfixes
+* Fix error return values when using `std:eval`.
 * Fix the `std:fs:glob` relative directory.
   * It was mistakenly using the call site script path rather than the parent
     directory.
