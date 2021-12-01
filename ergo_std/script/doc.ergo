@@ -75,7 +75,7 @@ module = :v -> {
             | plugin:iter:map (fn :e -> {
                 plugin:match (doc:path()) [
                     plugin:type:Unset -> "* ^(e:name): ^(summary e:value)"
-                    :root -> {
+                    _ -> {
                         child = doc:child (path-safe e:name) e:value
                         url-path = plugin:path:join ^<|plugin:array:from <| plugin:iter:map plugin:net:url-encode <| plugin:path:split child:path
                         "* [^(e:name)](^url-path): ^(string-summary child:content)"
