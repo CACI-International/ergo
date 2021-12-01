@@ -12,13 +12,13 @@ run = {
         plugin:type:Map :m -> plugin:iter:flatten <| plugin:iter:map (fn (plugin:type:MapEntry:@ :k :v) -> {
             self :self (plugin:string:format "{}:{}" :name :k) :v
         }) :m
-        plugin:type:Error :e -> [{ name, result = plugin:string:format "failed with error: {}" <| plugin:error:display :e }]
-        plugin:bool:true -> [{ name, result = success }]
-        plugin:bool:false -> [{ name, result = failed }]
-        _ -> plugin:type:Error:@ (source=:x) "invalid test result"
+        plugin:type:Error :e -> [{ name, result = plugin:string:format "\u{1b}[31mfailed with error:\u{1b}[m {}" <| plugin:error:display :e }]
+        plugin:bool:true -> [{ name, result = "\u{1b}[32msuccess\u{1b}[m" }]
+        plugin:bool:false -> [{ name, result = "\u{1b}[31mfailed\u{1b}[m" }]
+        _ -> plugin:type:Error:@ (source=:x) "\u{1b}[1;31minvalid test result\u{1b}[m"
     ]
 
-    print-result = fn {name, result} -> plugin:string:format "{}\t\t\t{}" :name :result
+    print-result = fn {name, result} -> plugin:string:format "{} ... {}" :name :result
 
     fn (plugin:type:Map :tests) -> {
         :results = plugin:iter:flatten <| plugin:iter:map (fn :e -> f :f (plugin:string:format "{}" e:key) e:value) :tests
