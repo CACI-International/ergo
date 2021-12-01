@@ -380,8 +380,8 @@ ergo_traits_fn! {
 
     impl traits::Bind for Args {
         async fn bind(&self, mut arg: Value) -> Value {
-            let src = Source::get(&arg);
             crate::try_result!(Context::eval(&mut arg).await);
+            let src = Source::get_origin(&arg);
 
             crate::value::match_value!{ arg,
                 Args { args } => {
@@ -415,8 +415,8 @@ ergo_traits_fn! {
 
     impl traits::Bind for PatternArgs {
         async fn bind(&self, mut arg: Value) -> Value {
-            let src = Source::get(&arg);
             crate::try_result!(Context::eval(&mut arg).await);
+            let src = Source::get_origin(&arg);
 
             crate::value::match_value!{ arg,
                 PatternArgs { args } => {
