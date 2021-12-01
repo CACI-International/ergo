@@ -306,7 +306,9 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
 ## `std:String :s = :value` checks whether `value` is a string and binds the result (if it is a
 ## string) to `s`; `std:String :value` checks `value` and returns the evaluated result.
 {
-    Any = make-type plugin:type:Any {}
+    Any = make-type mtype:Any {}
+
+    Typed = make-type plugin:type:Typed {}
 
     Array = make-type plugin:type:Array {
         import {from} = plugin:array

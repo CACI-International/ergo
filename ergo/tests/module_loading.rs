@@ -1,5 +1,6 @@
 use std::path::Path;
 use std::process::Command;
+use serial_test::serial;
 
 const PROGRAM: &'static str = env!("CARGO_BIN_EXE_ergo");
 const MANIFEST: &'static str = env!("CARGO_MANIFEST_DIR");
@@ -46,6 +47,7 @@ fn run(args: &[&str], word: &[u8]) -> Result<()> {
 macro_rules! typical_test {
     ( $name:ident, $arg:expr ) => {
         #[test]
+        #[serial]
         fn $name() -> Result<()> {
             run(&[$arg], concat!(stringify!($name), "\n").as_bytes())
         }

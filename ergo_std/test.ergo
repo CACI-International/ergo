@@ -27,6 +27,14 @@ type = {
         StringPair:@ {first = hello, second = world} = :pair
         std:Bool:true
     }
+
+    Any = {
+        std:Any _ = a
+        std:Any _ = std:Error:@ a
+        std:Any = a
+        a = !std:Any a
+        std:Bool:true
+    }
 }
 
 eval = {

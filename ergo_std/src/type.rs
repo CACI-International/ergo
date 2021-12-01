@@ -22,7 +22,7 @@ const TYPE_BINDING_INDEX: &'static str = "@";
 pub fn module() -> Value {
     crate::make_string_map! {
         "new" = new(),
-        "Any" = match_any(),
+        "Typed" = match_typed(),
         "Unset" = match_unset(),
         "Unit" = match_unit(),
         "Bool" = match_bool(),
@@ -204,7 +204,7 @@ The `@` index is composition function:
     )
 }
 
-fn match_any() -> Value {
+fn match_typed() -> Value {
     types::Unbound::new(
         |arg| {
             async move {
@@ -233,7 +233,7 @@ fn match_any() -> Value {
             }
             .boxed()
         },
-        depends![nsid!(std::type::Any)],
+        depends![nsid!(std::type::Typed)],
         "Matches any type (except Errors). Evaluates the value to a typed value.",
     )
     .into()
@@ -525,10 +525,10 @@ error. The function can only be used in calls: you cannot destructure Errors in 
 mod test {
     ergo_script::tests! {
         fn any(t) {
-            t.assert_eq("self:type:Any hello", "hello");
-            t.assert_eq("self:type:Any :x = hello; :x", "hello");
-            t.assert_success("!self:type:Any = hello");
-            t.assert_fail("self:type:Any :x = self:type:Error:@ err");
+            t.assert_eq("self:type:Typed hello", "hello");
+            t.assert_eq("self:type:Typed :x = hello; :x", "hello");
+            t.assert_success("!self:type:Typed = hello");
+            t.assert_fail("self:type:Typed :x = self:type:Error:@ err");
         }
 
         fn unset(t) {

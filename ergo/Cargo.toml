@@ -23,3 +23,6 @@ termimad = "0.17"
 
 [target.'cfg(unix)'.dependencies]
 termios = "0.3"
+
+[dev-dependencies]
+serial_test = "0.5"

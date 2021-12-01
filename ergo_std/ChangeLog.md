@@ -34,6 +34,7 @@
 * Add `std:net:http-defaults` to return the user defaults.
 * Rework the `std:doc` module to use attributes and automatically document
   module contents.
+* Add `std:Typed`. It will evaluate the value and reject any Errors.
 
 ### Improvements
 * Do not cache `std:net:unarchive` results, to make the standard library purely
@@ -48,8 +49,6 @@
 * No-arg functions are changed to take a single `()` argument to be idiomatic.
 * Change type functions to use the `@` index for binding
   construction/destruction.
-* Change `std:Any` to be more useful. It will evaluate the value and reject any
-  Errors.
 * Add `else` keyword and `else if` additional cases to `std:if`.
 * Change `std:match` to reject Errors by default, and add an `allow-error` flag
   to allow errors (matching the old behavior).
@@ -80,11 +79,6 @@
 * Change all type construction/destruction to use `Type:@` rather than `Type:`.
   * This includes _all_ types in `std` as well as any types created with
     `std:type` functions.
-* If `std:Any` was being used, ensure its usage aligns with the new semantics.
-  * A value matching the old semantics would be:
-  ```
-  OldAny = std:match:value [fn :x -> :x, pat :tgt -> :x -> bind :tgt :x, :x -> :x]
-  ```
 * Add an `else` keyword to `std:if` calls when necessary.
 * Add `^allow-error` to `std:match` calls where matching errors is intentional
   (there probably aren't many cases of this).

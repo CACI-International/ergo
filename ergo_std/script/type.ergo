@@ -6,6 +6,11 @@ basic-type = fn :check -> :a -> !match :a [
     (check _) -> ()
 ]
 
+## The Any type.
+##
+## This type matches any value, without evaluating it.
+Any = basic-type <| pat :x -> :x
+
 ## Match maps with specific keys and value types.
 ## 
 ## Arguments: `(Map :map)`
@@ -140,4 +145,4 @@ struct = fn (type:String :name) (type:Map :fields) -> {
     ]
 }
 
-{optional,required,MapValues,MapOf,ArrayValues,ArrayOf,Or,enum,struct}
+{optional,required,Any,MapValues,MapOf,ArrayValues,ArrayOf,Or,enum,struct}
