@@ -11,6 +11,8 @@ syn match ergoForce /!/
 syn match ergoFunc /->/
 syn match ergoBind /=/
 syn match ergoSugar /\(|>\?\|<|\)/
+syn match ergoTreeComment /#/
+syn match ergoAttribute /##/
 
 syn match ergoGetSet /:/
 
@@ -22,19 +24,21 @@ syn match ergoIndexOperator contained /:/
 syn match ergoNoArgCommandOperator /:\_s/
 
 syn match ergoDataDelimiter /[\[\]{}]/
-syn region ergoQuotedString contains=ergoStringEscape,ergoStringEscapeError start=/\(\\\)\@<!"/ skip=/\\[\\"]/ end=/"/
+syn region ergoQuotedString contains=ergoStringEscape,ergoStringEscapeError,ergoMerge start=/\(\\\)\@<!"/ skip=/\\[\\"]/ end=/"/
 syn match ergoStringEscapeError display contained /\\\(u{.*}\|.\)/
 syn match ergoStringEscape contained /\\\([\\"nt]\|u{\x\{1,6}}\)/
-syn match ergoBlockString /'\( .*\|\)$/
+syn match ergoBlockString contains=ergoMerge /'\( .*\|\)$/
 syn match ergoLineComment contains=ergoTodo /#\( .*\|\)$/
-syn match ergoDocComment contains=ergoTodo /##\( .*\|\)$/
+syn match ergoDocComment contains=ergoTodo,ergoMerge /##\( .*\|\)$/
 syn match ergoBuiltins contained /\<\(ergo\|pat\|fn\|index\|std\|workspace\|doc\|bind\|unset\)\>/
 syn keyword ergoTodo contained TODO FIXME XXX
 
 let b:current_syntax = "ergo"
 
 hi def link ergoLineComment Comment
+hi def link ergoTreeComment Comment
 hi def link ergoDocComment SpecialComment
+hi def link ergoAttribute SpecialComment
 hi def link ergoTodo Todo
 hi def link ergoQuotedString String
 hi def link ergoStringEscape Special
