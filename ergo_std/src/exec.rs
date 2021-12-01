@@ -92,8 +92,8 @@ ergo_runtime::HashAsDependency!(ExitStatus);
 ///
 /// Arguments: `:program ^:arguments`
 ///
-/// Both `program` and `arguments` must be convertible to `CommandString`. By default `String`, `Path`, and `ByteStream` satisfy
-/// this.
+/// Both `program` and `arguments` must be convertible to `CommandString`. `String`, `Path`, and
+/// `ByteStream` satisfy this. `Unset` values passed in `arguments` will be discarded.
 ///
 /// Keyed Arguments:
 /// * `Map :env`: A map of Strings to Strings where key-value pairs define the environment
@@ -123,12 +123,29 @@ pub async fn function(
     ...
 ) -> Value {
     let mut args = Vec::default();
-    args.push(traits::into::<CommandString>(cmd));
+    args.push(async move { traits::into::<CommandString>(cmd).await.map(Some) }.boxed());
     while let Some(arg) = REST.next() {
-        args.push(traits::into::<CommandString>(arg));
+        args.push(
+            async move {
+                let mut arg = arg;
+                drop(Context::eval(&mut arg).await);
+                if arg.is_type::<types::Unset>() {
+                    Ok(None)
+                } else {
+                    traits::into::<CommandString>(arg).await.map(Some)
+                }
+            }
+            .boxed(),
+        );
     }
 
-    let args: Vec<_> = Context::global().task.join_all(args).await?;
+    let args: Vec<_> = Context::global()
+        .task
+        .join_all(args)
+        .await?
+        .into_iter()
+        .filter_map(|v| v)
+        .collect();
 
     let pwd = match pwd {
         Some(v) => Some(traits::into::<types::Path>(v).await?),
@@ -634,6 +651,11 @@ mod test {
 
         fn exec_fail(t) {
             t.assert_fail("self:exec false |>:complete")
+        }
+
+        fn exec_unset_args(t) {
+            t.assert_content_eq("self:string:from <| self:exec echo :unset hello :unset world |>:stdout", "\"hello world\\n\"");
+            t.assert_fail("self:exec :unset echo |>:complete");
         }
     }
 }
