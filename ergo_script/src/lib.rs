@@ -488,6 +488,11 @@ mod test {
     }
 
     #[test]
+    fn forced_compound_string() -> Result<(), String> {
+        script_eval_id_eq(r#" !"a^"b"" "#, "ab")
+    }
+
+    #[test]
     fn quote_preserves_whitespace() -> Result<(), String> {
         script_eval_to("hi=hi, \"\n\n^hi\n\"", SRString("\n\nhi\n"))
     }
