@@ -1,30 +1,30 @@
 #!/bin/sh
 
-# This script bootstraps an ergo installation into the 'ergo-dist' folder in the current directory.
+# This script bootstraps an ergo installation into the 'dist' folder in the current directory.
+
+OUTPUT=dist
 
 set -e
 
 DIR=$(dirname $0)
 
-TYPE=release
-FLAGS=--release
+TYPE=debug
 
-if [ "$1" == "debug" ]; then
-	TYPE=debug
-	FLAGS=
+if [[ " $* "  == *\ --release\ * ]]; then
+	TYPE=release
 fi
 
-(cd $DIR; cargo build -p ergo -p ergo_std $FLAGS)
+(cd $DIR; cargo build -p ergo -p ergo_std "$@")
 
 DYEXT=so
 if [[ "$OSTYPE" == "darwin"* ]]; then
 	DYEXT=dylib
 fi
 
-rm -r dist
+rm -r $OUTPUT
 
-mkdir -p dist/bin
-mkdir -p dist/share/ergo/lib
-cp $DIR/target/$TYPE/ergo dist/bin/ergo
-cp -r $DIR/ergo_std/script dist/share/ergo/lib/std
-cp $DIR/target/$TYPE/libergo_std.$DYEXT dist/share/ergo/lib/std/plugin.ergo
+mkdir -p $OUTPUT/bin
+mkdir -p $OUTPUT/share/ergo/lib
+cp $DIR/target/$TYPE/ergo $OUTPUT/bin/ergo
+cp -r $DIR/ergo_std/script $OUTPUT/share/ergo/lib/std
+cp $DIR/target/$TYPE/libergo_std.$DYEXT $OUTPUT/share/ergo/lib/std/plugin.ergo
