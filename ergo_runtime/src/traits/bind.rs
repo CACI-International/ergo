@@ -12,7 +12,6 @@ use crate::metadata::Source;
 use crate::source::Source as Src;
 use crate::type_system::{ergo_trait, ergo_traits_fn, ErgoTrait, Trait, Type};
 use crate::{
-    source::IntoSource,
     types,
     value::{match_value, IntoValue},
     Context, Value,
@@ -121,6 +120,7 @@ where
     fn forward<'a, F>(
         to: &'a mut Iter,
         from: &'a mut Iter,
+        from_source: Src<()>,
         create_bind_rest: &'a mut F,
     ) -> BoxFuture<'a, crate::Result<()>>
     where
@@ -133,13 +133,10 @@ where
                 match_value!{t,
                     types::BindRest(rest) => {
                         back(to, from, create_bind_rest).await?;
-                        bind_no_error(rest, {
-                            Source::imbue(from
-                                .map(|v| Source::extract(v))
-                                .collect::<Vec<_>>()
-                                .into_source()
-                                .map(|f| create_bind_rest(first_rest, f.into_iter().map(Src::unwrap).collect())))
-                        }).await?;
+                        bind_no_error(
+                            rest,
+                            Source::imbue(from_source.with(create_bind_rest(first_rest, from.collect()))),
+                        ).await?;
                         first_rest = false;
                     }
                     to_v => {
@@ -166,11 +163,11 @@ where
         }.boxed()
     }
 
-    let from = from.unwrap();
+    let (from_source, from) = from.take();
     let mut to = to.into_iter();
     let mut from = from.into_iter();
 
-    forward(&mut to, &mut from, &mut create_bind_rest).await
+    forward(&mut to, &mut from, from_source, &mut create_bind_rest).await
 }
 
 /// Returns the remaining items in `from` that were not bound if `return_rest` is true and

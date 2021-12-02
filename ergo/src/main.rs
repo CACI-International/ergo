@@ -419,6 +419,16 @@ fn run(opts: Opts, mut output: OutputInstance) -> Result<String, String> {
     }
 }
 
+#[cfg(not(feature = "backtrace"))]
+fn log_panic(info: &std::panic::PanicInfo<'_>) {
+    log::error!("{}", info);
+}
+
+#[cfg(feature = "backtrace")]
+fn log_panic(info: &std::panic::PanicInfo<'_>) {
+    log::error!("{}\n{:?}", info, backtrace::Backtrace::new());
+}
+
 fn main() {
     // Install the application logger.
     //
@@ -457,7 +467,7 @@ fn main() {
     // Install a panic handler that will clean up the terminal and write the panic to the log.
     {
         std::panic::set_hook(Box::new(move |info| {
-            log::error!("{}", info);
+            log_panic(info);
             unsafe { terminal_state::restore() };
             eprintln!(
                 "A fatal error occurred in ergo. Please send the program log file ({}) and any other details to the development team.",

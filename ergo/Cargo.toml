@@ -6,6 +6,7 @@ edition = "2021"
 
 [dependencies]
 atty = "^0.2"
+backtrace = { version = "0.3", optional = true }
 chrono = "^0.4"
 ctrlc = "^3.1"
 directories = "4.0"

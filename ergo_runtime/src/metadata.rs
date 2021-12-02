@@ -108,7 +108,6 @@ impl Source {
     /// Get some source for the given value.
     ///
     /// Returns a missing source if no source is available.
-    #[cfg_attr(debug_assertions, track_caller)]
     pub fn get(value: &Value) -> crate::Source<()> {
         match Self::get_option(value) {
             Some(v) => v,
@@ -135,7 +134,6 @@ impl Source {
     }
 
     /// Extract the source of the given value and wrap the value with it.
-    #[cfg_attr(debug_assertions, track_caller)]
     pub fn extract<T>(value: T) -> crate::Source<T>
     where
         T: std::borrow::Borrow<Value>,
