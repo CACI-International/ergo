@@ -2,6 +2,7 @@ plugin = ergo plugin
 
 cache-name = ERGO_NET_CACHE
 
+##(ergo doc |>:value)
 ## The cache directory specified by the `^cache-name` environment variable, if any.
 cache-dir = plugin:env:get :cache-name
 
