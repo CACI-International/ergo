@@ -73,7 +73,7 @@ fn system_cache() -> Value {
     let mut path = if cfg!(unix) {
         Some(std::path::Path::new("/var/cache/ergo"))
     } else if cfg!(windows) {
-        Some(std::path::Path::new("C:\\Program Files\\ergo"))
+        Some(std::path::Path::new("C:\\Program Files\\ergo\\cache"))
     } else {
         None
     };
