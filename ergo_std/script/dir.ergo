@@ -185,28 +185,34 @@ import = {
     pat :descr -> inner :descr
 }
 
-match-indices = fn :fallback :from -> {
-    from-doc = plugin:match :from [
+## Create a function that also behaves as a module (with indices).
+##
+## Arguments: `(Function :function) (Map :module)`
+##
+## This will also appropriately set the documentation of the value based on the documentation of the
+## arguments.
+function-module = fn :func :module -> {
+    mod-doc = plugin:match :module [
         {} -> ""
         _ -> {
             ##mdoc:module
             ##
-            from
-            "\n\n^(doc :from)"
+            module
+            "\n\n^(doc :module)"
         }
     ]
 
-    ## ^(doc :fallback)^from-doc
+    ## ^(doc :func)^mod-doc
     :a -> !{
         { result } = plugin:match :a [
-            index :i -> !plugin:match from::i [
-                plugin:type:Unset -> !plugin:type:Error:@ (source = :from) <| plugin:string:format "missing index: {}" :i
+            index :i -> !plugin:match module::i [
+                plugin:type:Unset -> !plugin:type:Error:@ (source = :module) <| plugin:string:format "missing index: {}" :i
                 :x -> { result = :x }
             ]
             # We want the binding to occur immediately, but if there is an error we do not want to make
             # `matches` consider it a match error and move on (to improve the overall error reported in
             # this case).
-            :other -> { result = !bind :fallback :other }
+            :other -> { result = !bind :func :other }
         ]
         :result
     }
@@ -227,7 +233,7 @@ make-type = fn :tp ^{compose-args} :index-map -> {
     }
 
     ##mdoc:type
-    match-indices :tp :index-map
+    function-module :tp :index-map
 }
 
 ## Split an iterator after the first `n` elements.
@@ -320,7 +326,7 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
 
     Error = make-type plugin:type:Error plugin:error (compose-args = "^^{source} :message")
 
-    Function = make-type plugin:type:Function {memoize,partial,pass,recursive}
+    Function = make-type plugin:type:Function {memoize,partial,pass,recursive,module = :function-module}
 
     Iter = make-type plugin:type:Iter {^plugin:iter, split = :iter-split}
 
@@ -451,9 +457,9 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
     ergo-remote
     eval
     exec = plugin:exec
-    getopt = match-indices plugin:getopt {fn = :getopt-fn}
+    getopt = function-module plugin:getopt {fn = :getopt-fn}
     import
     if
-    match = match-indices plugin:match {value = :matches}
+    match = function-module plugin:match {value = :matches}
     task = plugin:task
 }

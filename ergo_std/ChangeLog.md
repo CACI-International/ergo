@@ -35,6 +35,8 @@
 * Rework the `std:doc` module to use attributes and automatically document
   module contents.
 * Add `std:Typed`. It will evaluate the value and reject any Errors.
+* Add `std:Function:module` to improve the process of creating functions that
+  also act as modules (with indices).
 
 ### Improvements
 * Do not cache `std:net:unarchive` results, to make the standard library purely
