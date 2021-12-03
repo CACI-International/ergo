@@ -160,6 +160,21 @@ impl Value {
         Err(self)
     }
 
+    /// Get this value as the given mutable type, if evaluated to that type and no other references
+    /// exist.
+    pub fn as_mut<T: ErgoType>(&mut self) -> Option<&mut T> {
+        match &mut self.data {
+            ValueData::Typed { tp, data } if tp.as_ref() == &T::ergo_type() => {
+                if let Some(data) = RArc::get_mut(data) {
+                    Some(unsafe { data.as_mut::<T>() })
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
     /// Set the dependencies of this value.
     pub fn set_dependencies<D>(&mut self, deps: D)
     where

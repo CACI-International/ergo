@@ -223,9 +223,11 @@ impl Context {
 
     /// Evaluate a value.
     pub async fn eval(value: &mut Value) -> crate::Result<()> {
+        let mut sources: Vec<crate::source::Source<()>> = Vec::new();
         if Self::with(|ctx| ctx.evaluating.deadlock_detect_enabled()) {
             let mut set = std::collections::HashSet::<u128>::default();
             while !value.is_evaluated() {
+                sources.push(crate::metadata::Source::get(&value));
                 if !set.insert(value.id()) {
                     *value = crate::error! {
                         labels: [
@@ -242,7 +244,24 @@ impl Context {
                 value.eval_once().await;
             }
         }
+        sources.dedup_by(|a, b| crate::source::Source::total_eq(a, b));
         if value.is_type::<crate::types::Error>() {
+            let source = crate::metadata::Source::get(&value);
+            if let Some(error) = value.as_mut::<crate::types::Error>() {
+                error.modify_diagnostics(|d| {
+                    use crate::error::DiagnosticInfo;
+                    if d.labels.is_empty() {
+                        d.add_primary_label(source.with("while evaluating this value"));
+                        let mut iter = sources.iter().rev().enumerate();
+                        iter.next();
+                        for (i, s) in iter {
+                            d.add_secondary_label(
+                                s.with(format!("({}) while evaluating this value", i)),
+                            );
+                        }
+                    }
+                });
+            }
             let error = value
                 .clone()
                 .as_type::<crate::types::Error>()

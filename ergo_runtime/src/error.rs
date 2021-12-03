@@ -600,6 +600,23 @@ impl Error {
             false
         }
     }
+
+    /// Call a function on all diagnostics that can be modified.
+    pub fn modify_diagnostics<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&mut Diagnostic),
+    {
+        match &mut self.inner {
+            InnerError::Errors(errs) => {
+                for e in errs {
+                    if let Some(d) = RArc::get_mut(e) {
+                        f(d);
+                    }
+                }
+            }
+            _ => (),
+        }
+    }
 }
 
 impl AsRef<ExternalError> for Error {
