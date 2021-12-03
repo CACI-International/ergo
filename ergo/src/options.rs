@@ -86,7 +86,8 @@ pub struct Opts {
     /// cases.
     pub detect_deadlock: bool,
 
-    #[structopt(long)]
+    // #[structopt(long)]
+    #[structopt(skip)]
     /// Enable evaluation backtraces on errors.
     pub backtrace: bool,
 

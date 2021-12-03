@@ -679,19 +679,9 @@ impl Evaluator {
         local_env: Option<&LocalEnv>,
         sets: &Sets,
     ) -> Value {
-        let _src = e.source();
-        let v = self
-            .evaluate_now_with_env_impl(e, captures, local_env, sets)
-            .await;
-        if self.backtrace {
-            match v.as_type::<types::Error>() {
-                // FIXME reimplement backtrace in a different way
-                Ok(err) => err.into(),
-                Err(v) => v,
-            }
-        } else {
-            v
-        }
+        // TODO backtrace logic
+        self.evaluate_now_with_env_impl(e, captures, local_env, sets)
+            .await
     }
 
     /// Evaluate the given expression immediately with an environment.
