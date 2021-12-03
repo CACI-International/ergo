@@ -9,7 +9,7 @@ use ergo_runtime::{depends, Dependencies, Error, ResultIterator};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::hash::Hasher;
+use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -38,6 +38,7 @@ pub type CaptureKey = keyset::Key;
 pub enum SubExpr<'a> {
     SubExpr(&'a Expr),
     Discriminant(u8),
+    Constant(u128),
 }
 
 pub trait Subexpressions {
@@ -60,7 +61,8 @@ pub trait IsExpression: Eraseable + Subexpressions {
     fn hash_content<H: Hasher>(&self, h: &mut H) {
         self.subexpressions(|e| match e {
             SubExpr::Discriminant(i) => h.write_u8(i),
-            SubExpr::SubExpr(e) => std::hash::Hash::hash(e, h),
+            SubExpr::SubExpr(e) => Hash::hash(e, h),
+            SubExpr::Constant(v) => h.write_u128(v),
         });
     }
 }
@@ -68,7 +70,7 @@ pub trait IsExpression: Eraseable + Subexpressions {
 macro_rules! expression_types {
     ( @imp hash [$($member:tt),*] ) => {
         fn hash_content<H: Hasher>(&self, h: &mut H) {
-            $( std::hash::Hash::hash(&self.$member, h); )*
+            $( Hash::hash(&self.$member, h); )*
         }
     };
     ( @subexpr $self:expr , $f:expr , $name:ident ) => {
@@ -202,7 +204,11 @@ impl Subexpressions for StringItem {
     {
         match self {
             StringItem::Expression(e) => f(SubExpr::SubExpr(e)),
-            StringItem::String(_) => (),
+            StringItem::String(s) => f(SubExpr::Constant({
+                let mut hasher = ergo_runtime::hash::HashFn::default();
+                s.hash(&mut hasher);
+                hasher.finish_ext()
+            })),
         }
     }
 
@@ -448,7 +454,7 @@ impl Ord for Expression {
     }
 }
 
-impl std::hash::Hash for Expression {
+impl Hash for Expression {
     fn hash<H: Hasher>(&self, h: &mut H) {
         h.write_u128(self.id());
     }
@@ -802,6 +808,7 @@ impl Expression {
         let mut changed = false;
         self.subexpressions(|e| match e {
             SubExpr::Discriminant(i) => hasher.write_u8(i),
+            SubExpr::Constant(c) => hasher.write_u128(c),
             SubExpr::SubExpr(e) => {
                 let (id, c) = e.local_capture_id();
                 changed |= c;

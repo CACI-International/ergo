@@ -493,15 +493,20 @@ mod test {
     }
 
     #[test]
+    #[should_panic]
+    fn compound_string_ids_differ() {
+        script_parse_id_eq("x = b, \"a ^x\"", "x = b, \"c ^x\"");
+    }
+
+    #[test]
     fn quote_preserves_whitespace() -> Result<(), String> {
         script_eval_to("hi=hi, \"\n\n^hi\n\"", SRString("\n\nhi\n"))
     }
 
     #[test]
-    fn basic_string_equality() -> Result<(), String> {
-        script_parse_id_eq("string", "\"string\"")?;
-        script_parse_id_eq("string", "' string")?;
-        Ok(())
+    fn basic_string_equality() {
+        script_parse_id_eq("string", "\"string\"");
+        script_parse_id_eq("string", "' string");
     }
 
     #[test]
@@ -829,12 +834,11 @@ mod test {
         Ok(())
     }
 
-    fn script_parse_id_eq(a: &str, b: &str) -> Result<(), String> {
-        let runtime = make_runtime()?;
-        let a = script_eval(&runtime, a)?;
-        let b = script_eval(&runtime, b)?;
+    fn script_parse_id_eq(a: &str, b: &str) {
+        let runtime = make_runtime().unwrap();
+        let a = script_eval(&runtime, a).unwrap();
+        let b = script_eval(&runtime, b).unwrap();
         assert!(a.id() == b.id());
-        Ok(())
     }
 
     trait ExpectOk {
