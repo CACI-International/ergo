@@ -16,7 +16,7 @@ functions:
   case of returning an output path that is created by a _function_. So we pass a
   function (described in more detail in the next section) which takes a single
   argument and returns the value which writes that argument (which will be a new
-  path). This replaces the `{out = Path:new:, ..., :out}` pattern in the
+  path). This replaces the `{out = Path:new (), ..., :out}` pattern in the
   previous version of our script.
 * `task` is our concurrency primitive; it will evaluate the argument
   concurrently.
@@ -40,12 +40,12 @@ Functions are created with `fn`. Following the keyword should be a **pattern**
 expression, indicating the expected positional and keyed arguments. Such
 expressions are similar to normal expressions, but with a few exceptional
 parsing differences. For instance `:value` indicates the binding to _set_ in the
-environment rather _get_. An arrow `->` separates this pattern expression (the
-arguments of the function) from the body. Often this body will be a map/block
-(`{...}`), but it can be any expression. When called, the function arguments
-from the pattern expression will be matched against the call site arguments, and
-if no errors occur from this, the body expression is returned (capturing the
-arguments).
+environment rather than _get_. An arrow `->` separates this pattern expression
+(the arguments of the function) from the body. Often this body will be a
+map/block (`{...}`), but it can be any expression. When called, the function
+arguments from the pattern expression will be matched against the call site
+arguments, and if no errors occur from this, the body expression is returned
+(capturing the arguments).
 
 Let's make compiling and linking into functions:
 
@@ -64,12 +64,21 @@ returned when the function is invoked.
 > command, block/map, or array. So here, `^:objs` takes all remaining arguments
 > to the function and then passes them as arguments to `exec`.
 
-We have added comments starting with `##` before the functions. These are a _doc
+We have added comments starting with `## ` before the functions. These are _doc
 comments_. You can add documentation to _any_ value (not just functions), and
 the documentation can be retrieved with the builtin `doc` function (and the
 command-line `-d`/`--doc` argument). Doc comments can also have nested
 expressions that will be evaluated to generate the content, but we won't cover
-that here.
+that here. Note that the space after `##` is required, otherwise `##` is used to
+apply attributes to values (also not covered here).
+
+We've also used a feature for the first time: composite strings. The strings
+passed to `task` have a merge operator (`^`) in them. This will use the
+following word (where a word is characters `-_A-Za-z0-9`) as a binding in scope,
+or grouped expression (parens, curly brackets, etc), and display it in the
+string. For example, `^source-file` refers to `:source-file`, and `^(Path:new
+())` would insert a random path. You can use the merge operator in quoted
+strings, block strings, and doc comments.
 
 ## Mapping over arrays
 Ideally we'd like to map the `compile` function over an array of the files;

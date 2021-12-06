@@ -1,21 +1,21 @@
 #!/usr/bin/env ergo
 
-std:import {cache, env, exec, fs, source, task, Array, Iter, Path, String} = std:
+std:import {cache, env, exec, fs, source, task, Array, Iter, Path} = :std
 
 # Convenience bindings for the following functions
 run-with-path = fn ^:args -> (exec (env = {PATH = env:get PATH}) ^:args):complete
-copy-out = fn :file :name -> fs:copy :file (Path:join (source:dir ()) :name)
+copy-out = fn :file :name -> fs:copy :file <| Path:join (source:dir ()) :name
 
 ## Compile function, taking one argument indicating the file to compile.
 compile = fn :source-file -> cache <| Path:with-output <| fn :out -> {
-    task (String:format "compiling {}" :source-file) (
+    task "compiling ^source-file" (
         run-with-path c++ -o :out -c (fs:track :source-file)
     )
 }
 
 ## Linking function, which passes all arguments to the linker.
 link = fn :name ^:args -> cache <| Path:with-output <| fn :out -> {
-    task (String:format "linking {}" :name) <| run-with-path c++ -o :out ^:args
+    task "linking ^name" <| run-with-path c++ -o :out ^:args
 }
 
 ## Executable-linking function, which links all arguments.

@@ -2,20 +2,20 @@
 
 std:import {
     cache, default, env, exec, fs, net, source, task,
-    Array, Iter, Path, String
-} = std:
+    Array, Iter, Path
+} = :std
 
 # Convenience bindings for the following functions
 run = fn ^:args -> (exec ^:args):complete
 run-with-path = fn ^:args -> run (env = {PATH = env:get PATH}) ^:args
-copy-out = fn :file :name -> fs:copy :file (Path:join (source:dir ()) :name)
+copy-out = fn :file :name -> fs:copy :file <| Path:join (source:dir ()) :name
 
 ## Compile function, taking one argument indicating the file to compile,
 ## and a non-positional `includes` argument.
 compile = fn (includes = default :includes as []) :source-file -> {
     includes = :includes | Iter:map (fn :i -> [-I,:i]) | Iter:flatten | Array:from
     cache <| Path:with-output <| fn :out -> {
-        task (String:format "compiling {}" :source-file) (
+        task "compiling ^source-file" (
             run-with-path c++ -o :out ^:includes -c (!fs:track :source-file)
         )
     }
@@ -23,7 +23,7 @@ compile = fn (includes = default :includes as []) :source-file -> {
 
 ## Linking function, which passes all arguments to the linker.
 link = fn :name ^:args -> cache <| Path:with-output <| fn :out -> {
-    task (String:format "linking {}" :name) <| run-with-path c++ -o :out ^:args
+    task "linking ^name" <| run-with-path c++ -o :out ^:args
 }
 
 ## Executable-linking function, which links all arguments.
@@ -42,7 +42,7 @@ exe = link-exe forty_two (compile main.cpp) :lib
 Catch2 = {
     catch-source = task "fetching Catch2" <| net:unarchive "https://github.com/catchorg/Catch2/archive/v2.11.1.tar.gz" 
     catch-source = Path:join :catch-source Catch2-2.11.1
-    build_dir = Path:new:
+    build_dir = Path:new ()
     # Run the test suite before returning the library path
     cache {
         task "building/running Catch2 tests" {
@@ -70,4 +70,4 @@ copy_result = [
 ]
 
 # Only copy outputs if the tests have passed.
-{ cache :test, :copy_result }
+{ cache :test, :copy_result, () }

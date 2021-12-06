@@ -1,17 +1,17 @@
 #!/usr/bin/env ergo
 
-std:import {cache, env, exec, fs, source, task, Array, Iter, Path, String} = std:
+std:import {cache, env, exec, fs, source, task, Array, Iter, Path} = :std
 
 ## Compile function, taking one argument indicating the file to compile.
 compile = fn :source-file -> cache <| Path:with-output <| fn :out -> {
-    task (String:format "compiling {}" :source-file) {
+    task "compiling ^source-file" {
         exec (env = {PATH = env:get PATH}) c++ -o :out -c (!fs:track :source-file) |>:complete
     }
 }
 
 ## Executable-linking function, which links all arguments.
 link-exe = fn :name ^:objs -> cache <| Path:with-output <| fn :exe -> {
-    task (String:format "linking executable {}" :name) {
+    task "linking executable ^name" {
         exec (env = {PATH = env:get PATH}) c++ -o :exe ^:objs |>:complete
     }
 }
@@ -25,4 +25,4 @@ files = [
 objects = Array:from <| Iter:map :compile :files
 
 # Copy to a file in the working directory.
-fs:copy (link-exe forty_two ^:objects) (Path:join (source:dir ()) forty_two)
+fs:copy (link-exe forty_two ^:objects) <| Path:join (source:dir ()) forty_two

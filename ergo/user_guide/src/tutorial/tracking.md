@@ -13,10 +13,10 @@ We made a few changes in and around our `exec c++` command, and also added a
 number of other commands from the standard library:
 
 * The `std:import ...` at the top inserts keys of the standard library into the
-  top-level environment. Specifically, `std:` returns the standard library and
+  top-level environment. Specifically, `std` loads the standard library and
   `std:import` is a function which, when bound to a value, gets keys from the
   bound value. This makes it convenient to use standard library functions
-  without always preceding them with `std:`.
+  without always preceding them with `std`.
 * `cache` is a function which persists its argument to disk in a cache based on
   the value identity (roughly speaking, a hash of the syntax and captured
   bindings). Thus, if the identity changes from dependencies or code changing,

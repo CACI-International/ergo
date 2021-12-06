@@ -1,6 +1,6 @@
 #!/usr/bin/env ergo
 
-std:import {cache, env, exec, fs, source, task, Path} = std:
+std:import {cache, env, exec, fs, source, task, Path} = :std
 
 # Compile main.cpp
 main = cache <| Path:with-output <| fn :out -> {

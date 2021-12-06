@@ -47,8 +47,10 @@ __Line 1__: The shebang at the top is optional, but with it we can make this
 script file executable and run it directly. Like any shebang, it could just be
 the direct path to the `ergo` executable, but using `/usr/bin/env` is encouraged.
 
-__Line 3__: A comment! Just like many other languages, `#` begins comments. The
-commented portion will continue until the end of the line.
+__Line 3__: A comment! Just like many other languages, `# ` begins comments. The
+commented portion will continue until the end of the line. Note that if a `#` is
+not followed by a space, it is actually a _tree comment_ which comments out the
+following expression tree.
 
 __Line 4__: A command to compile `main.cpp` and `lib.cpp` into an executable
 named `forty_two`.
@@ -97,15 +99,15 @@ get a grasp of what is supported, we'll shortly discuss syntax here.
 Like shell languages, bare text is interpreted as a string. Strings can contain
 any character except special characters used in the rest of the syntax and
 whitespace. However, you can create strings containing arbitrary characters by
-surrounding them with double quotes (supporting escape sequences) or single
-quotes (for raw strings).
+surrounding them with double quotes (supporting escape sequences) or prefixing
+them with single quotes (raw block strings).
 
 ```ergo
 this_is_a_string
 "this is a quoted {} []: \"string\"\n"
 these are each individual strings
-'this is a raw string'
-''this raw string contains a ' character''
+' this is a multiline
+' block string!
 ```
 
 ### Compound data
@@ -142,7 +144,7 @@ Evaluates to a map with `file` and `output` as keys, whereas
 }
 ```
 
-evaluates to the resulting value(s) from the `exec` command.
+evaluates to the resulting value from the `std:exec` command.
 
 Note that the bindings are done in top-to-bottom order, so later bindings can
 use earlier ones (unlike basic maps in other languages where the key-value
@@ -162,14 +164,15 @@ command1 arg1 (command2-giving-arg2 a b c) arg3
 The first value of a command, if it is a string literal, is queried in the
 lexical scope to resolve to a bound value.
 
-Commands are identified by the presence of arguments. To call a command without
-arguments, add a `:` after the value to call (e.g. `command:`).
+Commands are identified by the presence of arguments. Commands that don't take
+any arguments semantically often are written to take a single unit argument
+(e.g. `command ()`).
 
 ### Binding Retrieval
-Getting any value from the binding scope is done by using a colon. For instance,
-`:something` will retrieve the value bound to `something` in the enclosing
-scope. Similarly, indexing into a map or array also uses a colon, except prior
-to the colon the value to index is provided. Like commands, if the value to
-index is a string, it will be retrieved from the current bindings. Thus,
-`my_map:my_key:key2` and `:my_map:my_key:key2` are the same (the leading colon
-is unnecessary).
+Using any value from the binding scope is done by using a colon. For instance,
+`:something` will be the value previously bound to `something` in the enclosing
+scope or ancestor scope. Similarly, indexing into a map or array also uses a
+colon, except prior to the colon the value to index is provided. Like commands,
+if the value to index is a string, it will be retrieved from the current
+bindings. Thus, `my_map:my_key:key2` and `:my_map:my_key:key2` are the same (the
+leading colon is unnecessary).

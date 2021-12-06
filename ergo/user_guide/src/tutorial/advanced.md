@@ -22,8 +22,9 @@ As usual, there are a few things to note here:
 * Since we are just forwarding all arguments from `link-so` to `c++`, we can
   specify the SONAME for the library (`-Wl,-h`) directly.  Likewise, we can just
   pass `:lib` to `link-exe`.
-* The final value is an array. Because of this, each of the values in the array
-  are evaluated concurrently.
+* The second-to-last value is an array. Because of this, each of the values in
+  the array are evaluated concurrently. Then a unit value is returned just to
+  make the CLI nice (there's no reason to print anything).
 
 ## Testing our library
 In the C/C++ world, there's no canonical testing library. We'll use [Catch2][]
