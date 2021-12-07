@@ -1,0 +1,424 @@
+<!doctype html>
+<html>
+	<head>
+		<style>
+			* {
+				margin: 0;
+				padding: 0;
+				font-size: 1em;
+				font-family: inherit;
+				line-height: 1.3em;
+			}
+
+			html {
+				font-family: serif;
+			}
+
+			body {
+				padding: 0.5in;
+				column-gap: 0.25in;
+				column-fill: auto;
+				max-width: 800px;
+			}
+
+			@page {
+				margin: 0;
+				padding: 0;
+			}
+
+			@media print {
+				body {
+					column-count: 2;
+					width: 8.5in;
+					height: 11in;
+					box-sizing: border-box;
+					font-size: 6.5pt;
+					max-width: none;
+				}
+
+				/* min-width for chrome; it doesn't work with orientation correctly */
+				@media (orientation: landscape) and (min-width: 8in) {
+					body {
+						column-count: 3;
+						width: 11in;
+						height: 8.5in;
+						font-size: 7pt;
+					}
+				}
+			}
+
+			h1 {
+				font-style: bold;
+				font-family: sans-serif;
+				font-size: 1.7em;
+				margin-top: 0.04in 0;
+			}
+
+			h2 {
+				font-style: italic bold;
+				font-family: sans-serif;
+				font-size: 1.57em;
+			}
+
+			h3 {
+				font-style: bold;
+				font-family: serif;
+				margin: 0.25em 0;
+			}
+
+			.row {
+				border-bottom: 1px dashed #DDD;
+				display: flex;
+				flex-wrap: wrap;
+			}
+
+			.row:last-of-type {
+				border-bottom: 0px;
+			}
+
+			.row > div {
+				padding: 0.04in;
+			}
+
+			.row.subset > div:nth-child(1) {
+				border-left: 1px dashed #DDD;
+				margin-left: 0.25in
+			}
+
+			.row > div:nth-child(1) {
+				font-family: monospace;
+				color: #888;
+				white-space: pre;
+			}
+
+			.row > div:nth-child(1) > em {
+				color: #000;
+				background-color: #EEE;
+				font-style: normal;
+			}
+
+			span.pattern {
+				background-color: #FFB;
+			}
+
+			span.opt {
+				background-color: #FBF;
+			}
+
+			.row > div:nth-child(2) {
+				text-align: right;
+				flex: 1.5in;
+			}
+
+			code {
+				font-family: monospace;
+				white-space: pre;
+				color: #000;
+				background-color: #EEE;
+			}
+
+			p {
+				margin-top: 0.3em;
+			}
+
+			section {
+				border: solid black;
+				border-width: 1px 0px;
+				border-radius: 1em;
+				margin: 1em 0;
+				padding: 1em 0.25em;
+			}
+		</style>
+	</head>
+	<body>
+		<h1>Ergo Quick Reference</h1>
+		<section>
+			<h2>Syntax</h2>
+			<div class="row">
+				<div><em>()</em></div>
+				<div>unit</div>
+			</div>
+			<div class="row">
+				<div><em>abcdefg</em></div>
+				<div>string</div>
+			</div>
+			<div class="row">
+				<div><em>"</em>hello \"world\"<em>"</em></div>
+				<div>quoted string</div>
+			</div>
+			<div class="row">
+				<div><em>' </em>multine block<br><em>' </em>string</div>
+				<div>block string</div>
+			</div>
+			<div class="row">
+				<div><em>[</em>a<em>,</em>b<em>,</em>c<em>]</em></div>
+				<div>array</div>
+			</div>
+			<div class="row subset">
+				<div><em>^</em>:value</div>
+				<div>merge array</div>
+			</div>
+			<div class="row">
+				<div><em>{</em>a=1<em>,</em>cmd arg<em>,</em>c=3<em>}</em></div>
+				<div>map or block</div>
+			</div>
+			<div class="row subset">
+				<div><span class="pattern">a</span> <em>=</em> 1</div>
+				<div>binding (left is a pattern expression)</div>
+			</div>
+			<div class="row subset">
+				<div><em>^</em>:value</div>
+				<div>merge array (sequence values)<br>merge map (keys)<br>merge string (as key)</div>
+			</div>
+			<div class="row">
+				<div><em>(</em>cmd a b c<em>)</em></div>
+				<div>group (subexpression)</div>
+			</div>
+			<div class="row">
+				<div><em>:</em>a</div>
+				<div>get<br><span class="pattern">set</span></div>
+			</div>
+			<div class="row">
+				<div>a<em>:</em>b</div>
+				<div>index</div>
+			</div>
+			<div class="row">
+				<div>cmd<em> </em>a<em> </em>b</div>
+				<div>command<br><span class="pattern">pattern command</span></div>
+			</div>
+			<div class="row subset">
+				<div><em>(</em><span class="pattern">key</span> <em>=</em> value<em>)</em></div>
+				<div>keyed argument</div>
+			</div>
+			<div class="row subset">
+				<div><em>^</em>:value</div>
+				<div>merge array (args)<br>merge map (keyed args)<br>merge string (as key)</div>
+			</div>
+			<div class="row">
+				<div><span class="pattern">:a</span> <em>-></em> cmd :a</div>
+				<div>unbound (left is a pattern expression)</div>
+			</div>
+			<div class="row">
+				<div><em>!</em>cmd arg</div>
+				<div>force<br><span class="pattern">interpret as expression</span></div>
+			</div>
+			<div class="row">
+				<div><em># </em>my comment</div>
+				<div>line comment</div>
+			</div>
+			<div class="row">
+				<div>cmd <em>#</em>a <em>#</em>(b {c=1}) d</div>
+				<div>tree comment</div>
+			</div>
+			<div class="row">
+				<div><em>## </em>my documentation<br>value = a b c</div>
+				<div>doc comment</div>
+			</div>
+			<div class="row">
+				<div><em>##</em>std:doc:module<br>value = a b c</div>
+				<div>attribute</div>
+			</div>
+			<div class="row">
+				<h3>In quoted strings, block strings, and doc comments:</h3>
+			</div>
+			<div class="row subset">
+				<div>"hello <em>^</em>name"<br>## document <em>^</em>(a b c)</div>
+				<div>insert value as string</div>
+			</div>
+			<div class="row">
+				<h3>Syntax sugar</h3>
+			</div>
+			<div class="row">
+				<div>a b <em>&lt;|</em> c d</div>
+				<div>same as <code>a b (c d)</code></div>
+			</div>
+			<div class="row">
+				<div>a b <em>|></em> c d</div>
+				<div>same as <code>(a b) c d</code></div>
+			</div>
+			<div class="row">
+				<div>a b <em>|</em> c d</div>
+				<div>same as <code>c d (a b)</code></div>
+			</div>
+			<div class="row">
+				<div>{<em>abc</em>}</div>
+				<div>same as <code>{:abc = :abc}</code><br>(binding an outer value into scope)</div>
+			</div>
+			<div class="row">
+				<div><em>a</em>:b:c</div>
+				<div>same as <code>:a:b:c</code></div>
+			</div>
+			<div class="row">
+				<div><em>cmd</em> a b c</div>
+				<div>same as <code>:cmd a b c</code></div>
+			</div>
+			<div class="row">
+				<div><em>a</em> = 1</div>
+				<div>same as <code>:a = 1</code></div>
+			</div>
+			<div class="row">
+				<div>"hello ^(<em>name</em>)"</div>
+				<div>same as <code>"hello ^(:name)"</code></div>
+			</div>
+			<p>Commas are interchangeable with semicolons and newlines.</p>
+			<p>Spaces in groups are interchangeable with newlines.</p>
+			<p>Within <span class="pattern">pattern expressions</span> a <code>_</code> string will match any value.</p>
+		</section>
+		<section>
+			<h2>Builtin Bindings</h2>
+			<div class="row">
+				<div><em>fn</em> :x -> :x</div>
+				<div>match command arguments</div>
+			</div>
+			<div class="row">
+				<div><em>pat</em> :x -> :x</div>
+				<div>match pattern command arguments</div>
+			</div>
+			<div class="row">
+				<div><em>index</em> :i -> :i</div>
+				<div>match index operation</div>
+			</div>
+			<div class="row">
+				<div><em>index</em> :v :i</div>
+				<div>index operation (as a function)</div>
+			</div>
+			<div class="row">
+				<div><em>bind</em> :target :v</div>
+				<div>bind operation (as a function)</div>
+			</div>
+			<div class="row">
+				<div>:<em>unset</em></div>
+				<div>an unset value</div>
+			</div>
+			<div class="row">
+				<div><em>ergo</em> path/to/file <span class="opt">arg</span></div>
+				<div>load a file<br><span class="opt">call result with extra arguments</span></div>
+			</div>
+			<div class="row">
+				<div><em>doc</em> :v</div>
+				<div>get documentation for a value</div>
+			</div>
+			<div class="row">
+				<div><em>doc:path</em> ()</div>
+				<div>get the current doc path</div>
+			</div>
+			<div class="row">
+				<div><em>doc:write</em> path :v</div>
+				<div>write docs to the path</div>
+			</div>
+			<div class="row">
+				<div><em>doc:child</em> path :v</div>
+				<div>write child docs to the subpath</div>
+			</div>
+			<div class="row">
+				<div><em>doc:value</em> ()</div>
+				<div>get the value being documented</div>
+			</div>
+			<div class="row">
+				<div><em>std</em>:String</div>
+				<div>load the standard library</div>
+			</div>
+			<div class="row">
+				<div><em>workspace</em>:value</div>
+				<div>load the first ancestor workspace.ergo</div>
+			</div>
+		</section>
+		<section>
+			<h2>Loading Files</h2>
+			<p>
+				The path given to the <code>ergo</code> function may resolve to
+				files installed with ergo (like <code>std</code>), files in
+				<code>"^(std:env:config)/lib"</code>, or files relative to the
+				script being executed. The path may resolve to a directory (in
+				which case an inner <code>dir.ergo</code> file is loaded) or a
+				path with the <code>.ergo</code> extension added.
+			</p>
+			<p>
+				The <code>workspace.ergo</code> name is special. Whether a file
+				or a directory, it allows <code>workspace</code> to load the
+				contents of this script. From a <code>workspace.ergo</code>
+				script you may load other ancestor workspaces.
+			</p>
+		</section>
+		<section>
+			<h2>Documentation</h2>
+			<p>
+				From the command-line, you can get documentation for any value
+				with the <code>--doc</code>/<code>-d</code> flag. You can use
+				the <code>-e</code> flag if you want to document the result of
+				a specific value (rather than loading the first argument). For
+				example:
+			</p>
+			<div class="row">
+				<div><em>ergo -d std</em></div>
+				<div>document the standard library</div>
+			</div>
+			<div class="row">
+				<div><em>ergo -d std:fs:read</em></div>
+				<div>document the read function</div>
+			</div>
+			<div class="row">
+				<div><em>ergo -de :ergo</em></div>
+				<div>document the ergo function</div>
+			</div>
+			<div class="row">
+				<div><em>ergo -de :fn</em></div>
+				<div>document the fn function</div>
+			</div>
+			<div class="row">
+				<div><em>ergo -de doc:child</em></div>
+				<div>document the doc child function</div>
+			</div>
+			<p>
+				Use the <code>--doc-write</code> flag (which implies
+				<code>--doc</code>) to write a full tree of html documentation.
+			</p>
+		</section>
+		<section>
+			<h2>Common <code>std</code> Functions</h2>
+			<div class="row">
+				<div><em>std:exec</em> binary arg1 arg2</div>
+				<div>execute an external program</div>
+			</div>
+			<div class="row">
+				<div><em>std:cache</em> :value</div>
+				<div>persistently cache a value's result</div>
+			</div>
+			<div class="row long">
+				<div><em>std:if</em> :condition :value <em>else</em> :otherwise</div>
+				<div>conditionally evaluate to one value or another</div>
+			</div>
+			<div class="row long">
+				<div><em>std:import</em> {Path = {new}, if} = :std</div>
+				<div>evaluate and bind values from a map into scope</div>
+			</div>
+			<div class="row">
+				<div><em>std:match</em> :value [<br>  std:String :str -> :str<br>  :else -> :else<br>]</div>
+				<div>evaluate a value and match to the first case that successfully binds the value</div>
+			</div>
+			<div class="row">
+				<div><em>std:task</em> "my task" :value</div>
+				<div>concurrently evaluate a value as a task</div>
+			</div>
+		</section>
+		<section>
+			<h2>Values</h2>
+			<p>
+				Values are lazily evaluated (unless <code>!</code> is used) and
+				automatically calculate an identity based on the values they
+				use and their syntactic content. This identity is what e.g.
+				<code>std:cache</code> uses as a cache key without evaluating
+				the value at all.
+			</p>
+			<p>
+				Values which use dynamic bindings (<code>std:dynamic</code>)
+				should be used carefully. Because of the use of dynamic
+				bindings, <em>where</em> the values are evaluated becomes
+				important. Dynamic bindings are accessed through the call
+				(runtime) scope rather than through the lexical scope; this
+				makes them convenient to add external context but more
+				difficult to reason about.
+			</p>
+		</section>
+	</body>
+</html>

@@ -15,7 +15,4 @@
     - [Type System](details/runtime/type_system.md)
     - [Builtin Functions](details/runtime/builtin_functions.md)
 - [Standard Library](std.md)
-
----
-
-- [RFC](rfc/intro.md)
+- [Quick Reference](quick_ref.md)

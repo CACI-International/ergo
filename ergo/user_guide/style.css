@@ -8,3 +8,9 @@
 .function > *:first-child {
 	margin-top: 0px;
 }
+
+@media print {
+	.noprint {
+		display: none;
+	}
+}
