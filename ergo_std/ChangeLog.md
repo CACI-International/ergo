@@ -60,8 +60,8 @@
   url) downloaded with `std:net:http`.
 * Support user-configurable http defaults in `std:net:http` to allow e.g.
   user-specific per-endpoint authentication.
-* Allow `Unset` values to be passed as arguments to `std:exec`. They will be
-  ignored.
+* Allow `Unset` and `Unit` values to be passed as arguments to `std:exec`. They
+  will be ignored.
 
 ### Bugfixes
 * Fix error return values when using `std:eval`.

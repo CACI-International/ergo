@@ -93,7 +93,7 @@ ergo_runtime::HashAsDependency!(ExitStatus);
 /// Arguments: `:program ^:arguments`
 ///
 /// Both `program` and `arguments` must be convertible to `CommandString`. `String`, `Path`, and
-/// `ByteStream` satisfy this. `Unset` values passed in `arguments` will be discarded.
+/// `ByteStream` satisfy this. `Unset` and `Unit` values passed in `arguments` will be discarded.
 ///
 /// Keyed Arguments:
 /// * `Map :env`: A map of Strings to Strings where key-value pairs define the environment
@@ -129,7 +129,7 @@ pub async fn function(
             async move {
                 let mut arg = arg;
                 drop(Context::eval(&mut arg).await);
-                if arg.is_type::<types::Unset>() {
+                if arg.is_type::<types::Unset>() || arg.is_type::<types::Unit>() {
                     Ok(None)
                 } else {
                     traits::into::<CommandString>(arg).await.map(Some)
@@ -656,6 +656,11 @@ mod test {
         fn exec_unset_args(t) {
             t.assert_content_eq("self:string:from <| self:exec echo :unset hello :unset world |>:stdout", "\"hello world\\n\"");
             t.assert_fail("self:exec :unset echo |>:complete");
+        }
+
+        fn exec_unit_args(t) {
+            t.assert_content_eq("self:string:from <| self:exec echo () hello () world |>:stdout", "\"hello world\\n\"");
+            t.assert_fail("self:exec () echo |>:complete");
         }
     }
 }
