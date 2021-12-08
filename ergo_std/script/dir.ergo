@@ -259,7 +259,7 @@ if = fn :cond :if_true ^:rest -> {
                 [else,if,:cond2,:if_true2,^:rest] -> self :self :cond2 :if_true2 :rest
                 [else,:if_false] -> :if_false
                 [] -> :unset
-                :other -> plugin:type:Error:@ (source=:other) "unrecognized arguments supplied to `if`"
+                [:other,^_] -> plugin:type:Error:@ (source=:other) "expected `else` or `else if`"
             ]
         ]
     }
