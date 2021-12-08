@@ -345,6 +345,11 @@ async fn archive(archive: types::Path, source: types::Path, (format): [types::St
         Some(format) => Source::extract(format).map(|v| v.to_owned().0.into()),
         None => {
             let path = archive.as_ref().as_ref();
+            if path.starts_with(source.as_ref().as_ref()) {
+                Err(archive_source
+                    .with("archive path lies within archive source path")
+                    .into_error())?;
+            }
             match path.file_name() {
                 None => Err(archive_source.with("invalid archive path").into_error())?,
                 Some(f) => match f.to_str() {
