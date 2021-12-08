@@ -1,6 +1,6 @@
 # ergo_std changelog
 
-## Unreleased
+## 1.0.0-rc.1  -- 2021-12-08
 ### New Features
 * Add `std:Error:display` to convert Errors into Strings.
 * Add `std:test` module.

@@ -1,6 +1,6 @@
 # ergo changelog
 
-## Unreleased
+## 1.0.0-rc.1  -- 2021-12-08
 * Parallelize store implementations for Array, Map, and Iter.
 * Improve type errors that involve an Error type.
   * Previously these would mention the type error and then the error itself, but
