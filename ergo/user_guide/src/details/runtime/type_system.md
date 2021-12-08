@@ -23,6 +23,8 @@ special rules around void types).
 ```ergo
 mystring
 "my string"
+' multiline block
+' string
 ```
 The string type, for strings of utf-8 characters.
 
@@ -58,7 +60,7 @@ argument).
 
 ### PatternArgs
 ```ergo
-f a b c (k=1) = 1
+f a b c (k=1) = some-value
 ```
 The pattern argument type, which is implicitly created in pattern command
 expressions to group arguments to a pattern command (in the above, `a`, `b`,

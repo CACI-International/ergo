@@ -10,8 +10,9 @@
 * [unset](#unset) - An `Unset`-typed value
 * [doc](#doc) - Document values.
   * [doc:write](#doc-write) - Write documentation for a value to the filesystem.
-  * [doc:path](#doc-path) - Get the current documentation path, if any.
   * [doc:child](#doc-child) - Write child documentation.
+  * [doc:path](#doc-path) - Get the current documentation path, if any.
+  * [doc:value](#doc-value) - Get the current value being documented, if any.
 
 
 <div class="function">
@@ -28,14 +29,12 @@ immediately call the resulting value as a command.
 <div class="function">
 
 ## `std`
-The `std` function loads the `std` library as if `ergo std` was called when
-bound. If called as a command with no arguments (`std:`), returns the result of
-`ergo std`. If bound (with an index, for example), it will bind the value to the
-result of `ergo std`. Thus, you can access values in the `std` library directly:
+The `std` value loads the `std` library as if `ergo std` was called. Thus, you
+can access values in the `std` library directly:
 
 ```ergo
 std:String:format
-std:Path:new
+:std
 std:exec
 ```
 
@@ -44,24 +43,15 @@ std:exec
 <div class="function">
 
 ## `workspace`
-The `workspace` function finds the first ancestor `workspace.ergo`, and loads it
-as if `ergo path/to/ancestor/workspace.ergo` was called when bound. If called as
-a command with no arguments (`workspace:`), returns the loaded value. If bound
-(with an index, command `Args`, etc), it will bind to the loaded value. Thus,
-you can access the `workspace` directly:
+The `workspace` value finds the first ancestor `workspace.ergo`, and loads it as
+if `ergo path/to/ancestor/workspace.ergo` was called. Thus, you can access the
+`workspace` directly:
 
 ```ergo
 workspace:something a b c
-workspace:
+:workspace
 workspace a b c
 ```
-
-*Note*: `workspace` only retrieves the workspace when bound, so if you want to
-use workspace values in a function that may be called from outside the
-workspace, those values should be bound and captured separately (i.e. call
-`workspace:` to get the workspace value immediately and then use the result in
-the function body). This is similar to how some of the the standard library
-`script` functions behave.
 
 </div>
 
@@ -96,7 +86,7 @@ f :x :y = 1
 The `index` function is used to match the `Index` value when binding.
 
 ```ergo
-v = index :a -> std:String:format "index={}" :a
+v = index :a -> "index=^a"
 v:my-ind # evaluates to "index=my-ind"
 ```
 
@@ -164,14 +154,6 @@ doc:write my/doc/output :v
 
 <div class="function">
 
-<a name="doc-path"></a>
-#### `path`
-Get the current documentation path, if set. Returns `Unset` if not set.
-
-</div>
-
-<div class="function">
-
 <a name="doc-child"></a>
 #### `child`
 Write child documentaation of a value to the filesystem. This uses the given
@@ -180,7 +162,7 @@ returns the generated path.
 
 ```ergo
 ## Some map containing:
-## [some value]({{doc:child some-value self:v}})
+## [some value](^(doc:child some-value (doc:value () |>:v)))
 m = {
     ## Some value.
     v = val
@@ -188,5 +170,30 @@ m = {
 ```
 
 </div>
+
+<div class="function">
+
+<a name="doc-path"></a>
+#### `path`
+Get the current documentation path, if set. Returns `Unset` if not set.
+
+```ergo
+doc:path ()
+```
+
+</div>
+
+<div class="function">
+
+<a name="doc-value"></a>
+#### `value`
+Get the current value being documented, if any. Returns `Unset` if not set.
+
+```ergo
+doc:value ()
+```
+
+</div>
+
 
 </div>

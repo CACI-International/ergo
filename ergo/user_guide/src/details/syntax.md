@@ -8,20 +8,26 @@ The next 2 stages are tree parsing and expression parsing, which do load all
 tree-tokens into memory and recursively parse the structures.
 
 ## Tokenization
-Script tokenization is very straighforward, and occurs according to the
-following rules:
-* A single `#` will cause any following characters until a newline or end of
-  stream to be ignored (comments).
-* Two `##` will parse the remaining characters as a doc comment.
-  * Within doc comments, `{{` and `}}` are parsed as doc comment expression
-    tokens, and within them any tokens are parsed as below.
-* Symbolic tokens are always parsed as such (`-> { } [ ] ( ) : ! = ^ | |> <| ,
-  ;`), unless in a quoted/raw string.
-* Sequences of non-newline whitespace are parsed as a single whitespace token
+Script tokenization is contextual, producing a stream of tokens which can be
+used to build a syntax tree. The resulting stream of tokens contains no
+whitespace. It occurs according to the following rules:
+
+Within a normal context (e.g. not a string):
+* Symbolic tokens are always read as such (`-> : ! = ^ | |> <|`).
+* Paired tokens (`{ } [ ] ( )`) are read and verified to be correctly paired. 
+* Sequences of non-newline whitespace are read as a single whitespace token
   (additional whitespace does not matter to parsing).
-* Newlines are parsed as such.
+* Newlines, commas, and semicolons are read as such and emit child separator
+  tokens when appropriate (within curly brackets and square brackets).
+* A `#` (no following space) will be read as a tree comment token.
+* A `# ` will cause any following characters until a newline or end of
+  stream to be ignored (line comments).
+* A `##` (no following space) will be read as an attribute token.
+* `## ` or `' ` will be read in a contiguous block over subsequent lines and
+  emit virtual paired tokens at the beginning and end. Everything from the
+  leading characters to the newline is tokenized as a quoted string context.
 * If a `"` is read, all characters (including whitespace, newlines, etc) until
-  another `"` are parsed into a string. A `\` may be used to escape the
+  the matching `"` are read as a string. A `\` may be used to escape the
   following characters:
   * `"`: double quote character
   * `\`: backslash character
@@ -29,35 +35,24 @@ following rules:
   * `t`: tab character
   * `\u{xxxxxx}`: an arbitrary unicode character, with 1-6 hex digits
     identifying the code point
-* If a `'` is read, the number of `'` until a non-`'` is noted and all
-  characters until the next sequence of that many `'` characters are read
-  literaly as a string (a "raw" string). Example: `'my raw string'` or `''this
-  one has a ' character''`.
-* Any sequences of characters that don't match the above are parsed as a string.
-* Any strings, quoted strings, or raw strings that are adjacent to each other
-  (without any other separating tokens) are combined into a single string.
+  The interior of the `"` characters is tokenized as a quoted string context.
+* Any sequences of characters that don't match the above are read as a string.
 
-## Tree Tokenization
-Tree tokenization iterates over the tokens from the previous step, ensuring that
-all paired tokens are matched and emitting a token stream of events, including
-the normal symbolic tokens and strings, start/end nested groups, next child for
-groups, and colons disambiguated based on whitespace.
-
-This tokenization step removes all whitespace, semicolons, and commas, as once
-the tree is tokenized these are no longer needed to disambiguate parsing.
-
-Note that children of curly brackets and square brackets are separated by
-semicolon, comma, or newline, whereas children of parentheses are separate by
-whitespace and newlines.
+Within a quoted string context:
+* A `^` followed by a paired token will read until the matching paired token
+  using a normal tokenizing context.
+* A `^` followed by `[-_A-Za-z0-9]+` will read the single word using a normal
+  tokenizing context.
+* A `^` following by a `^` will read as if a single `^` string were in that
+  location (to insert a literal `^`).
 
 ## Tree Parsing
-Tree parsing ingests the tree tokens from the previous step and builds a parsed
-tree of items, where the pipe operators (`|`, `|>`, and `<|`) are desugared. It
-also disambiguates infix operators using rules of precedence, where the
-precedence of operators is as follows (descending):
+Tree parsing ingests the tokens from the previous step and builds a parsed tree
+of items, where the pipe operators (`|`, `|>`, and `<|`) are desugared. It also
+disambiguates infix operators using rules of precedence, where the precedence of
+operators is as follows (descending):
 * `:` (prefix)
 * `:` (left associative)
-* `:` (suffix)
 * `!`/`^` (prefix)
 * `!` (prefix of an entire expression)
 * `->` (right associative)
@@ -78,7 +73,8 @@ is the same as
 ```ergo
 :a = 1
 ```
-This is generally just a convenient behavior for the common case.
+This is generally just a convenient behavior for the common case of creating a
+single binding.
 
 #### Unquoted block strings
 Tree parsing elaborates an unquoted string literal within curly brackets to a
@@ -127,22 +123,33 @@ is the same as
 The resulting AST tree is composed of operations, strings, doc comments, and
 groupings.
 
+#### String expressions
+If a string is the lone value being merged into a quoted string, it will desugar
+to a get expression:
+```ergo
+"hello ^name"
+## Arguments: ^(args)
+```
+is the same as
+```ergo
+"hello ^(:name)"
+## Arguments: ^(:args)
+```
+
 ## Expression Parsing
 Finally, the parsed trees from the previous step are parsed into script
 expressions. This step:
-* groups doc comments and applies them to appropriate values (the following
-  expression, or the expression being bound if the following expression is a
-  bind expression) and errors if a doc comment is in an invalid position, 
 * ensures `^` is applied in valid expressions (within
   blocks/arrays/commands),
 * ensures `=` is applied in valid expressions (within blocks/commands), and
+* removes any tree-commented (`#`) expressions, and
 * parses the colon operators, the string `_`, and commands differently based on
   whether the expression is a pattern expression (left of a `=` or `->`) or a
   normal expression.
 
 Below are examples of the valid expressions in the language:
 
-### Empty
+### Unit
 ```ergo
 ()
 ```
@@ -162,10 +169,20 @@ this-is-a-string
 "this is a string"
 "quote:symbols"
 "quote\nescaped\t\"things\""
-''raw strings are 'cool' too''
-concatenate" "these" "'strings together'
+' multiline strings
+' are combined together
 ```
 Strings evaluates to literal string values.
+
+### Compound String
+```ergo
+"compound ^string"
+' ^(doc :value)
+' some additional info over
+' multiple lines
+```
+Compound strings are any quoted strings with at least one `^` expression within.
+The value parsed by the `^` will be displayed in the string at that location.
 
 ### Array
 ```ergo
@@ -281,16 +298,17 @@ my-fn (kwarg=123) a b c
 f a b (c d e)
 ```
 A command expression is any group in a normal expression (where parentheses can
-be used to create groups) that has more than one child. If you need to call a
-command with no arguments, add a `:` suffix (e.g. `my-function:`). A command
-expression will evaluate the first child and bind it to an `Args`-typed value
-that contains the remaining children as positional arguments. Any bind
+be used to create groups) that has more than one child. If you need to create or
+call a command with no arguments, technically you can use `f ^[]`, however
+idiomatically functions should take a single `()` argument (e.g. `f ()`). A
+command expression will evaluate the first child and bind it to an `Args`-typed
+value that contains the remaining children as positional arguments. Any bind
 statements or map merge statements will set the keyed arguments in `Args`.
 
 The expression evaluates to the result of binding the first child with the
 `Args` value. One can match such a binding with the builtin `fn` function:
 ```ergo
-pair = fn :x :y (extra = :z) -> std:if :z [:x,:y,:z] [:x,:y]
+pair = fn :x :y (extra = :z) -> std:if :z [:x,:y,:z] else [:x,:y]
 pair 1 2 # evaluates to [1,2]
 pair (extra=3) 1 2 # evaluates to [1,2,3]
 ```
@@ -325,7 +343,6 @@ value that will then be bound to whatever value is bound subsequently (e.g.,
 
 ### Force Expression
 ```ergo
-!:value
 !std:string:format "{}" :a
 std:string:format "{}" !(f :a)
 ```
@@ -359,35 +376,47 @@ concatenated in-place.
 
 In blocks, you may merge a map, and all keys in the map will become bindings in
 the block. You may merge an array to sequentially insert the values of the array
-as expressions in the block.
+as expressions in the block. You may merge a string to insert that string as a
+key with a unit value.
 
-In command and pattern command expressions, anywhere following the first child a
-map (for keyed arguments), array (for positional arguments), or Args/PatternArgs
-can be merged. 
+In command and pattern command expressions, in any position following the first
+child a map (for keyed arguments), array (for positional arguments), string (for
+a keyed argument with no value, useful for flags) or Args/PatternArgs can be
+merged. 
+
+In quoted strings, you can merge any value which can be displayed.
 
 ### Doc Comments
 ```ergo
 ## Provide a friendly greeting.
-hello = fn :name -> std:String:format "Hello, {}!" :name
+hello = fn :name -> "Hello, ^name!"
 
-## {{doc :hello}} But not too friendly.
-warn-of-fire = fn :name -> std:String:format "{} Your pants are on fire." <| hello :name
+## ^(doc :hello) But not too friendly.
+warn-of-fire = fn :name -> "^(hello :name) Your pants are on fire."
 
 ## A map containing:
-## {{doc self:something}}
+## ^(doc (doc:value()):something)
 map = {
     something = my-value
 }
 ```
-Doc comments are identified by two `#` characters. Doc comments may only be
-present in groups where newlines separate items (i.e. blocks and arrays; _not_
-simply parentheses). Multiple lines of doc comments are merged together into a
-single comment on the first non-doc-comment expression that follows them.  The
-first line of a doc comment (if not empty) determines how much leading
-whitespace is stripped from all subsequent lines.
+Doc comments are identified by two `#` characters followed by a space. Doc
+comments may only be present when unambiguous: in groups where newlines separate
+items (i.e. blocks and arrays) and within parentheses prior to exactly one
+expression. Multiple lines of doc comments are merged together into a single
+comment on the first non-doc-comment expression that follows them.
 
-Doc comments may contain `{{ ... }}` blocks, which will evaluate the contents as
-a normal block expression. The resulting value of the block will be displayed
-inline in the doc comment when rendered. Within these blocks, the string `self`
-is bound to the value being documented. These blocks share an environment scope
-across the entire doc comment.
+Doc comments may contain `^` just like quoted strings, which will evaluate the
+value and display it at that location within the string.
+
+### Attributes
+```ergo
+##std:doc:module
+value = a b c
+```
+Attributes may precede values in the same way that doc comments do (and can be
+combined with doc comments and other attributes). They simply evaluate the value
+of the attribute and then bind the value to which they are applied to that
+result, returning the result of binding. They are most useful and recommended
+for making changes to metadata, where the changes don't affect the immediate
+functionality of the code.
