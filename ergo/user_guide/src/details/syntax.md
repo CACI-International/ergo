@@ -43,8 +43,10 @@ Within a quoted string context:
   using a normal tokenizing context.
 * A `^` followed by `[-_A-Za-z0-9]+` will read the single word using a normal
   tokenizing context.
-* A `^` following by a `^` will read as if a single `^` string were in that
+* A `^` folowed by a `^` will read as if a single `^` string were in that
   location (to insert a literal `^`).
+* Any sequences of characters (including whitespace) that don't match the above
+  are read as a string.
 
 ## Tree Parsing
 Tree parsing ingests the tokens from the previous step and builds a parsed tree
