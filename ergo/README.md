@@ -102,3 +102,6 @@ scripts reside.
 * Improve sources of capture bindings.
 * Add `std:io:tty` to indicate if stdout is a tty.
 * Maybe don't have a fallback doc string if there is no documentation set.
+* Handle shebang better?
+* Error caching should be opt-in.
+* Remove `Unset` keyed arguments.
