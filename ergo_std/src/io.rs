@@ -6,7 +6,8 @@ pub fn module() -> Value {
     crate::make_string_map! {
         "stdin" = stdin(),
         "stdout" = stdout(),
-        "stderr" = stderr()
+        "stderr" = stderr(),
+        "is-terminal" = is_terminal()
     }
 }
 
@@ -91,4 +92,29 @@ async fn stderr(bytes: _) -> Value {
     )
     .await?;
     types::Unit.into()
+}
+
+#[types::ergo_fn]
+/// Return whether an io stream is connected to a terminal.
+///
+/// Arguments: `()`
+///
+/// Keyed arguments:
+/// `:stream` (optional) - the stream to check. May be `stdout` (default), `stdin`, or `stderr`.
+///
+/// Returns a Bool indicating whether the stream is connected to a terminal.
+async fn is_terminal(_: types::Unit, (stream): [types::String]) -> Value {
+    let stream = match stream {
+        None => atty::Stream::Stdout,
+        Some(s) => match s.as_ref().as_str() {
+            "stdout" => atty::Stream::Stdout,
+            "stderr" => atty::Stream::Stderr,
+            "stdin" => atty::Stream::Stdin,
+            other => Err(ergo_runtime::metadata::Source::get(&s)
+                .with(format!("invalid stream: {}", other))
+                .into_error())?,
+        },
+    };
+
+    types::Bool(atty::is(stream)).into()
 }

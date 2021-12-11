@@ -1012,6 +1012,7 @@ name = "ergo_std"
 version = "1.0.0-rc.2"
 dependencies = [
  "abi_stable",
+ "atty",
  "bincode",
  "bzip2",
  "directories",

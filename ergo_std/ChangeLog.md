@@ -1,5 +1,8 @@
 # ergo_std changelog
 
+## Unreleased
+* Add `std:io:is-terminal` to check whether a stream is connected to a terminal.
+
 ## 1.0.0-rc.1  -- 2021-12-08
 ### New Features
 * Add `std:Error:display` to convert Errors into Strings.

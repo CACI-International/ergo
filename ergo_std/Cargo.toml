@@ -8,6 +8,7 @@ edition = "2021"
 
 [dependencies]
 abi_stable = "0.9"
+atty = "^0.2"
 bincode = "^1.2"
 bzip2 = "0.4"
 ergo_runtime = { path = "../ergo_runtime" }
