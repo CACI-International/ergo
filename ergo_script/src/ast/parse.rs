@@ -1083,6 +1083,11 @@ mod test {
         assert_err("!#hi", Error::BadComment);
     }
 
+    #[test]
+    fn shebang() {
+        assert_single("#!/usr/bin/env ergo\n()", E::unit());
+    }
+
     fn assert_single(s: &str, expected: Expression) {
         let expr = single(s);
         dbg!(&expr);

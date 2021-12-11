@@ -372,7 +372,7 @@ mod next_token {
             Ok(total)
         }
 
-        fn push<T: NextToken>(&mut self, next: T) {
+        pub fn push<T: NextToken>(&mut self, next: T) {
             self.0.push(Impl::new(next));
         }
 
@@ -840,6 +840,24 @@ impl<T: BlockStringPrefix> NextToken for BlockString<T> {
     }
 }
 
+/// A tokenization context which reads a string until (and including) the next newline.
+struct LineString;
+
+impl NextToken for LineString {
+    fn next<'a, 'tok>(
+        this: &mut next_token::Ref<'a, Self>,
+        position: &mut TokenPosition<'tok>,
+    ) -> Option<Result<Source<Token<'tok>>, Source<Error>>> {
+        let ret = token_else_string(this, position, |_, _, _| TokenElseString::String);
+        this.finish();
+        ret
+    }
+
+    fn close(self) -> Result<usize, Source<Error>> {
+        panic!("line string closing");
+    }
+}
+
 /// A tokenization context which reads a quoted string, with similar tokenization to block strings.
 struct QuoteString {
     start: Source<()>,
@@ -925,15 +943,30 @@ pub struct Tokens<'a> {
 impl<'a> From<Source<&'a str>> for Tokens<'a> {
     fn from(s: Source<&'a str>) -> Self {
         let (source, remaining) = s.take();
-        Tokens {
-            position: TokenPosition {
-                remaining,
-                source,
-                line_start: true,
-                next_line_start: false,
-            },
-            next: Next::new(Normal::new(FinishAtNone)),
+        let mut position = TokenPosition {
+            remaining,
+            source,
+            line_start: true,
+            next_line_start: false,
+        };
+        let mut next = Next::new(Normal::new(FinishAtNone));
+
+        // Check for shebang at beginning of script and handle it specially.
+        if position.remaining.starts_with("#!") {
+            position.next_char().unwrap();
+            let hash = ImmediateResult(Ok(position.source(Token::hash())));
+            position.reset_source_start();
+            position.next_char().unwrap();
+            let bang = ImmediateResult(Ok(position.source(Token::bang())));
+            position.reset_source_start();
+            // Emit hash+bang+string, which will be ignored as a tree comment (but can be preserved
+            // if rewriting the token stream).
+            next.push(LineString);
+            next.push(bang);
+            next.push(hash);
         }
+
+        Tokens { position, next }
     }
 }
 
@@ -1571,6 +1604,21 @@ mod test {
             Error::UnmatchedClosingToken(PairedToken::Paren, None),
         );
         assert_err("## ^(\na", Error::UnmatchedOpeningToken(PairedToken::Paren));
+    }
+
+    #[test]
+    fn shebang() {
+        assert_tokens(
+            "#!/usr/bin/env ergo\na b c",
+            &[
+                Token::hash(),
+                Token::bang(),
+                Token::string("/usr/bin/env ergo\n"),
+                Token::string("a"),
+                Token::string("b"),
+                Token::string("c"),
+            ],
+        );
     }
 
     fn assert_tokens(s: &str, expected: &[Token]) {

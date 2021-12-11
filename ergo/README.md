@@ -103,5 +103,4 @@ scripts reside.
     evaluate (trivially) to a String with id `B`.
 * Add `std:io:tty` to indicate if stdout is a tty.
 * Add `std:fs:file-type` to get path types.
-* Handle shebang better?
 * Error caching should be opt-in.

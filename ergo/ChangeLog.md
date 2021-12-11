@@ -3,6 +3,11 @@
 ## Unreleased
 * Remove `Unset` keyed arguments to commands just like they are removed from
   maps.
+* Ensure shebangs will parse correctly. They used to parse correctly when `#`
+  was a line comment. Now with `#` being a tree comment, they actually do
+  generally parse such that they won't fail, however to be fully correct we now
+  have a special case to tokenize shebangs at the start of a file. Tokenizing
+  them is useful to fully preserve the content of the source script.
 
 ## 1.0.0-rc.1  -- 2021-12-08
 * Parallelize store implementations for Array, Map, and Iter.
