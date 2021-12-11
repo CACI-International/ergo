@@ -468,6 +468,14 @@ mod test {
     }
 
     #[test]
+    fn function_unset_keyed_argument() -> Result<(), String> {
+        script_eval_to(
+            "f = fn ^:args -> args:keyed; f (a = value) (blah = :unset)",
+            SRMap(&[("a", SRString("value"))]),
+        )
+    }
+
+    #[test]
     fn forced_function_capture() -> Result<(), String> {
         script_eval_to("b = {a = 1}; f = !(fn :x -> b::x); f a", SRString("1"))
     }

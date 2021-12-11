@@ -479,7 +479,9 @@ impl Evaluator {
                     for (cap, k, mut v) in new_sets {
                         Context::eval_once(&mut v).await;
 
-                        env.insert(k, v.clone());
+                        if !v.is_type::<types::Unset>() {
+                            env.insert(k, v.clone());
+                        }
                         if let Some(cap) = cap {
                             captures.resolve(cap, v);
                         }
@@ -766,10 +768,7 @@ impl Evaluator {
                                     debug_assert!(vals.len() < 2);
                                     match vals.pop() {
                                         Some(last) => last,
-                                        None => {
-                                            // Remove any Unset values
-                                            types::Map(env.into_iter().filter(|(_,v)| !v.is_type::<types::Unset>()).collect()).into()
-                                        }
+                                        None => types::Map(env.into()).into()
                                     }
                                 }
                             }

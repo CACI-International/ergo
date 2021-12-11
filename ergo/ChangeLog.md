@@ -1,5 +1,9 @@
 # ergo changelog
 
+## Unreleased
+* Remove `Unset` keyed arguments to commands just like they are removed from
+  maps.
+
 ## 1.0.0-rc.1  -- 2021-12-08
 * Parallelize store implementations for Array, Map, and Iter.
 * Improve type errors that involve an Error type.
