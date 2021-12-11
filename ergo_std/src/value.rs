@@ -68,6 +68,8 @@ impl Default for Cached {
 ///
 /// Keyed Arguments:
 /// * `:no-persist`: If present, the caching will not be persisted (only runtime caching will occur).
+/// * `:allow-error`: If present, an Error result will be persistently cached (as opposed to being
+/// propagated without persisting).
 ///
 /// Caches the given value both at runtime and to persistent storage (to be cached across invocations).
 ///
@@ -80,10 +82,11 @@ impl Default for Cached {
 /// evaluated and stored for future calls.
 ///
 /// Multiple values with the same id will be deduplicated to the same single runtime value.
-async fn cache(value: _, (no_persist): [_]) -> Value {
+async fn cache(value: _, (no_persist): [_], (allow_error): [_]) -> Value {
     let id = value.id();
 
     let no_persist = no_persist.is_some();
+    let allow_error = allow_error.is_some();
 
     let cached = Context::global()
         .shared_state
@@ -114,7 +117,13 @@ async fn cache(value: _, (no_persist): [_]) -> Value {
                         "failed to read cache value for {}, (re)caching: {}",
                         id, err
                     ));
-                    if let Err(e) = traits::write_to_store(&store, value.clone()).await {
+                    let mut value = value.clone();
+                    // Copy the value before evaluating to retain the identity for write_to_store.
+                    let orig_value = value.clone();
+                    if !allow_error {
+                        Context::eval(&mut value).await?;
+                    }
+                    if let Err(e) = traits::write_to_store(&store, orig_value).await {
                         log.warn(format!("failed to cache value for {}: {}", id, e));
                     } else {
                         log.debug(format!("wrote cache value for {}", id));
