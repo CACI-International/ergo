@@ -23,7 +23,7 @@ pub fn module() -> Value {
         "archive" = archive(),
         "copy" = copy(),
         "create-dir" = create_dir(),
-        "exists" = exists(),
+        "file-type" = file_type(),
         "glob" = glob_(),
         "read" = read(),
         "remove" = remove(),
@@ -295,13 +295,32 @@ async fn copy(from: types::Path, to: types::Path, (shallow): [_], (follow_symlin
 }
 
 #[types::ergo_fn]
-/// Check whether a path exists.
+/// Return the file type of the given path.
 ///
-/// Arguments: `(Path :path)`
+/// Arugments: `(Path :path)`
 ///
-/// Returns a `Bool` indicating whether the path exists as a file or directory.
-async fn exists(path: types::Path) -> Value {
-    types::Bool(path.as_ref().0.as_ref().exists()).into()
+/// Returns a String with the file type:
+/// * `file` - a normal file
+/// * `directory` - a directory
+/// * `symlink` - a symbolic link
+/// * `other` - the file is none of the above (but exists)
+///
+/// If the path does not exist or the user does not have permission to the path, returns `Unset`.
+async fn file_type(path: types::Path) -> Value {
+    std::fs::symlink_metadata(path.as_ref().0.as_ref())
+        .map(|m| {
+            types::String::from(if m.file_type().is_dir() {
+                "directory"
+            } else if m.file_type().is_file() {
+                "file"
+            } else if m.file_type().is_symlink() {
+                "symlink"
+            } else {
+                "other"
+            })
+            .into()
+        })
+        .unwrap_or(types::Unset.into())
 }
 
 #[types::ergo_fn]

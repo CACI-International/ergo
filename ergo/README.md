@@ -101,5 +101,4 @@ scripts reside.
     be String-typed but still have id `A` when it really should be `B`.
     Specifically, the returned value should be dynamic with id `A` but should
     evaluate (trivially) to a String with id `B`.
-* Add `std:fs:file-type` to get path types.
 * Error caching should be opt-in.

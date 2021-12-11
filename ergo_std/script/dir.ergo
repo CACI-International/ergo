@@ -185,6 +185,13 @@ import = {
     pat :descr -> inner :descr
 }
 
+## Check whether a path exists.
+##
+## Arguments: `(Path :path)`
+##
+## Returns a `Bool` indicating whether the path exists and is accessible to the user.
+file-exists = fn :p -> plugin:bool:from <| plugin:fs:file-type :p
+
 ## Create a function that also behaves as a module (with indices).
 ##
 ## Arguments: `(Function :function) (Map :module)`
@@ -381,7 +388,7 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
 
     ##mdoc:module
     ## Interact with the local filesystem.
-    fs = plugin:fs
+    fs = { ^plugin:fs, exists = :file-exists }
 
     ##mdoc:module
     ## Interact with the program's io channels.

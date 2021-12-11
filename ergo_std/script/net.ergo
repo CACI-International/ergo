@@ -9,7 +9,7 @@ cache-dir = plugin:env:get :cache-name
 http-defaults-path = plugin:path:join plugin:env:config http defaults.ergo
 
 ## The map of http defaults specified by the user.
-http-defaults = plugin:type:Map <| plugin:match (plugin:fs:exists :http-defaults-path) [plugin:bool:true -> ergo :http-defaults-path, _ -> {}]
+http-defaults = plugin:type:Map <| plugin:match (plugin:bool:from <| plugin:fs:file-type :http-defaults-path) [plugin:bool:true -> ergo :http-defaults-path, _ -> {}]
 
 http-default-cases = plugin:array:from <| plugin:iter:map (fn :e -> plugin:string:format "^(e:key)/{}" _ -> e:value) <| plugin:iter:order (fn :a :b -> plugin:string:compare b:key a:key) :http-defaults
 
@@ -49,7 +49,7 @@ http = fn (plugin:type:String :url) (disable-net-cache=:disable-net-cache) ^:arg
             plugin:fs:create-dir (plugin:path:from :dir)
             path = plugin:path:join :dir :name
             cached-result = { body = plugin:fs:read :path, headers = {}, complete = (), status-code = plugin:bool:true }
-            plugin:match (plugin:fs:exists :path) [
+            plugin:match (plugin:bool:from <| plugin:fs:file-type :path) [
                 plugin:bool:true -> :cached-result
                 plugin:bool:false -> {
                     plugin:match (plugin:bool:from result:status-code) [
