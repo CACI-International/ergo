@@ -6,6 +6,7 @@
 * Change `std:cache` to not cache errors by default.
   * One can use the `allow-error` flag to cache errors if that behavior is
     intended.
+* Change `std:net:unarchive` to show network errors prior to unarchiving.
 
 ## 1.0.0-rc.1  -- 2021-12-08
 ### New Features
