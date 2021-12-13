@@ -11,6 +11,7 @@
 * Change storage behavior to store value identities with values. This ensures
   that deserialized values have the same identities as the original values that
   were serialized.
+* Improve diagnostic aggregation to properly remove duplicates.
 
 ## 1.0.0-rc.1  -- 2021-12-08
 * Parallelize store implementations for Array, Map, and Iter.

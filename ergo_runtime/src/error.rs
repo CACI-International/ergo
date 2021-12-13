@@ -15,7 +15,7 @@ use crate::type_system::ErgoType;
 use codespan_reporting::{diagnostic as csd, term as cst};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::hash::{Hash, Hasher};
+use std::hash::Hash;
 
 pub use codespan_reporting::term::termcolor;
 
@@ -39,7 +39,7 @@ pub struct Error {
 }
 
 /// The severity of a diagnostic.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, StableAbi, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, StableAbi, Serialize, Deserialize, Hash)]
 #[repr(u8)]
 pub enum Severity {
     Bug,
@@ -50,11 +50,17 @@ pub enum Severity {
 }
 
 /// A label (with source information) for a diagnostic.
-#[derive(Clone, Debug, StableAbi, Serialize, Deserialize)]
+#[derive(Clone, Debug, StableAbi, Serialize, Deserialize, Hash, Eq)]
 #[repr(C)]
 pub struct Label {
     pub label: crate::Source<RString>,
     pub secondary: bool,
+}
+
+impl PartialEq for Label {
+    fn eq(&self, other: &Self) -> bool {
+        crate::Source::total_eq(&self.label, &other.label) && self.secondary == other.secondary
+    }
 }
 
 impl Label {
@@ -76,7 +82,7 @@ impl Label {
 }
 
 /// A diagnostic to display to the user.
-#[derive(Clone, Debug, StableAbi, Serialize, Deserialize)]
+#[derive(Clone, Debug, StableAbi, Serialize, Deserialize, Hash, PartialEq, Eq)]
 #[repr(C)]
 pub struct Diagnostic {
     pub severity: Severity,
@@ -654,32 +660,9 @@ impl std::iter::FromIterator<Error> for Error {
 pub mod diagnostics {
     use super::*;
 
-    #[derive(Clone, Debug)]
-    struct HashByRef(RArc<Diagnostic>);
-
-    impl HashByRef {
-        fn as_ptr(&self) -> *const Diagnostic {
-            self.0.as_ref() as *const Diagnostic
-        }
-    }
-
-    impl Hash for HashByRef {
-        fn hash<H: Hasher>(&self, h: &mut H) {
-            self.as_ptr().hash(h)
-        }
-    }
-
-    impl PartialEq for HashByRef {
-        fn eq(&self, other: &Self) -> bool {
-            self.as_ptr() == other.as_ptr()
-        }
-    }
-
-    impl Eq for HashByRef {}
-
     /// A set of unique diagnostics.
     #[derive(Clone, Default, Debug)]
-    pub struct Diagnostics(HashSet<HashByRef>);
+    pub struct Diagnostics(HashSet<RArc<Diagnostic>>);
 
     impl Diagnostics {
         /// Create an empty set.
@@ -710,7 +693,7 @@ pub mod diagnostics {
             match &err.inner {
                 InnerError::Errors(diagnostics) => {
                     for d in diagnostics {
-                        let is_new = self.0.insert(HashByRef(d.clone()));
+                        let is_new = self.0.insert(d.clone());
                         if is_new {
                             new(d.as_ref());
                         }
@@ -739,13 +722,13 @@ pub mod diagnostics {
     }
 
     /// Diagnostics reference iterator.
-    pub struct Iter<'a>(<&'a HashSet<HashByRef> as IntoIterator>::IntoIter);
+    pub struct Iter<'a>(<&'a HashSet<RArc<Diagnostic>> as IntoIterator>::IntoIter);
 
     impl<'a> Iterator for Iter<'a> {
         type Item = &'a Diagnostic;
 
         fn next(&mut self) -> Option<Self::Item> {
-            self.0.next().map(|h| h.0.as_ref())
+            self.0.next().map(|h| h.as_ref())
         }
     }
 
