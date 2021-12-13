@@ -11,6 +11,7 @@ use crate::context::{Context, Item, ItemContent};
 use crate::metadata::Source;
 use crate::type_system::{ergo_trait, Type};
 use crate::{Result, Value};
+use std::io::{Read, Write};
 
 /// Context passed to Stored traits.
 #[derive(StableAbi)]
@@ -51,6 +52,9 @@ pub async fn read_from_store(store_item: &Item, id: u128) -> Result<Value> {
         async {
             let item = store_item.value_id(id);
             let mut content = item.read_existing().await?;
+            let mut id_bytes = [0; 16];
+            content.read_exact(&mut id_bytes)?;
+            let id = u128::from_be_bytes(id_bytes);
             let tp: Type = ErasedTrivial::deserialize(&mut content)?.into();
             if let Some(s) = Context::get_trait_for_type::<Stored>(&tp) {
                 let stored_ctx = StoredContext::new(store_item.clone());
@@ -84,6 +88,8 @@ pub async fn write_to_store(store_item: &Item, mut v: Value) -> Result<()> {
                 .ok_or_else(|| format!("no stored trait for {}", type_name(&v)))?;
 
             let mut content = item.write().await?;
+
+            content.write_all(&v.id().to_be_bytes())?;
 
             let tp: ErasedTrivial = v.ergo_type().unwrap().clone().into();
             tp.serialize(&mut content)?;
