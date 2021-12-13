@@ -1,6 +1,6 @@
 # ergo changelog
 
-## Unreleased
+## 1.0.0-rc.2  -- 2021-12-13
 * Remove `Unset` keyed arguments to commands just like they are removed from
   maps.
 * Ensure shebangs will parse correctly. They used to parse correctly when `#`
