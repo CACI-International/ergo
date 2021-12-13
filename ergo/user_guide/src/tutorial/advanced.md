@@ -5,7 +5,7 @@ Let's look at some more advanced usage. In particular, let's produce both a
 shared library and an executable, and write/run some unit tests for the library.
 
 ## Splitting our application
-Splitting up our application to used a shared library is as simple as you might
+Splitting up our application to use a shared library is as simple as you might
 expect, except we need to have a separate link step for the library:
 
 ```ergo
