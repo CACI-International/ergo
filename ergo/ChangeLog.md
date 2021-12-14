@@ -1,5 +1,10 @@
 # ergo changelog
 
+## 1.0.0-rc.3  -- 2021-12-14
+* Properly remove previously-set keys when a key is set to `unset`.
+  * With the recent modification to how unset values are removed this case was
+    missed.
+
 ## 1.0.0-rc.2  -- 2021-12-13
 * Remove `Unset` keyed arguments to commands just like they are removed from
   maps.

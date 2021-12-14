@@ -1,6 +1,6 @@
 [package]
 name = "ergo_script"
-version = "1.0.0-rc.2"
+version = "1.0.0-rc.3"
 authors = ["Alex Franchuk <afranchuk@caci.com>"]
 edition = "2021"
 

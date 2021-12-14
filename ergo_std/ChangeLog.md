@@ -1,5 +1,8 @@
 # ergo_std changelog
 
+## 1.0.0-rc.3  -- 2021-12-14
+* No changes.
+
 ## 1.0.0-rc.2  -- 2021-12-13
 * Add `std:io:is-terminal` to check whether a stream is connected to a terminal.
 * Add `std:fs:file-type` to get the file type of a path.

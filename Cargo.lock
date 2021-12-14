@@ -925,7 +925,7 @@ dependencies = [
 
 [[package]]
 name = "ergo"
-version = "1.0.0-rc.2"
+version = "1.0.0-rc.3"
 dependencies = [
  "atty",
  "backtrace",
@@ -966,7 +966,7 @@ dependencies = [
 
 [[package]]
 name = "ergo_runtime"
-version = "1.0.0-rc.2"
+version = "1.0.0-rc.3"
 dependencies = [
  "abi_stable",
  "abi_stable_ext",
@@ -987,7 +987,7 @@ dependencies = [
 
 [[package]]
 name = "ergo_runtime_macro"
-version = "1.0.0-rc.2"
+version = "1.0.0-rc.3"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -996,7 +996,7 @@ dependencies = [
 
 [[package]]
 name = "ergo_script"
-version = "1.0.0-rc.2"
+version = "1.0.0-rc.3"
 dependencies = [
  "ergo_runtime",
  "futures 0.3.18",
@@ -1009,7 +1009,7 @@ dependencies = [
 
 [[package]]
 name = "ergo_std"
-version = "1.0.0-rc.2"
+version = "1.0.0-rc.3"
 dependencies = [
  "abi_stable",
  "atty",

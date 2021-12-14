@@ -481,6 +481,8 @@ impl Evaluator {
 
                         if !v.is_type::<types::Unset>() {
                             env.insert(k, v.clone());
+                        } else {
+                            env.remove(&k);
                         }
                         if let Some(cap) = cap {
                             captures.resolve(cap, v);

@@ -476,6 +476,16 @@ mod test {
     }
 
     #[test]
+    fn set_and_unset() -> Result<(), String> {
+        script_eval_to("{a = 1, a = :unset}", SRMap(&[]))
+    }
+
+    #[test]
+    fn merge_and_unset() -> Result<(), String> {
+        script_eval_to("m = {a = 1}, {^:m, a = :unset}", SRMap(&[]))
+    }
+
+    #[test]
     fn forced_function_capture() -> Result<(), String> {
         script_eval_to("b = {a = 1}; f = !(fn :x -> b::x); f a", SRString("1"))
     }

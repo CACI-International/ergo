@@ -94,3 +94,4 @@ scripts reside.
 * Maybe don't have a fallback doc string if there is no documentation set.
 * Progress spinner
 * Improve sources of capture bindings.
+* `std:Iter:partition`
