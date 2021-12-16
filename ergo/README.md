@@ -95,3 +95,5 @@ scripts reside.
 * Progress spinner
 * Improve sources of capture bindings.
 * `std:Iter:partition`
+* Show full command on exec falure.
+* Store `Unset`.

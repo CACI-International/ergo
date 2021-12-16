@@ -248,7 +248,7 @@ fn recursive_link<F: AsRef<Path>, T: AsRef<Path>>(
 /// All destination directories are automatically created.
 /// If `from` is a directory, it is recursively copied.
 async fn copy(from: types::Path, to: types::Path, (shallow): [_], (follow_symlinks): [_]) -> Value {
-    let log = Context::global().log.sublog("fs::copy");
+    let log = Context::global().log.sublog("fs:copy");
 
     log.debug(format!(
         "copying {} to {}",
