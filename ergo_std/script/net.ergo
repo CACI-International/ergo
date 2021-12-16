@@ -52,6 +52,7 @@ http = fn (plugin:type:String :url) (disable-net-cache=:disable-net-cache) ^:arg
             plugin:match (plugin:bool:from <| plugin:fs:file-type :path) [
                 plugin:bool:true -> :cached-result
                 plugin:bool:false -> {
+                    result
                     plugin:match (plugin:bool:from result:status-code) [
                         plugin:bool:false -> :result
                         plugin:bool:true -> {

@@ -1,5 +1,9 @@
 # ergo_std changelog
 
+## Unreleased
+* Fix a bug where `std:net:http` would still try to download the file when
+  present in the `ERGO_NET_CACHE` (but would still return the cached result).
+
 ## 1.0.0-rc.3  -- 2021-12-14
 * No changes.
 
