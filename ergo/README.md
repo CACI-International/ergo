@@ -97,3 +97,4 @@ scripts reside.
 * `std:Iter:partition`
 * Show full command on exec falure.
 * Store `Unset`.
+* Improve CLI markdown rendering.
