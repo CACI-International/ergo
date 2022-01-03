@@ -106,7 +106,7 @@ pub fn doc() -> Value {
         ///
         /// Returns the value being documented, or Unset if no value is being documented.
         async fn value(_: types::Unit) -> Value {
-            Context::with(|ctx| ctx.dynamic_scope.get(&DocValueKey).map(|v| v.as_ref().clone()))
+            Context::with(|ctx| ctx.dynamic_scope.get(&DocValueKey).map(|v| v.as_ref().clone().into()))
                 .unwrap_or(types::Unset.into())
         }
     };

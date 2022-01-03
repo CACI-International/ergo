@@ -5,7 +5,7 @@ use crate::abi_stable::{std_types::RString, type_erase::Erased, StableAbi};
 use crate::metadata::Source;
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
-use crate::{depends, Dependencies, TypedValue};
+use crate::{depends, DependenciesConstant, GetDependenciesConstant, TypedValue};
 use bincode;
 
 /// Script string type.
@@ -13,7 +13,7 @@ use bincode;
 #[repr(C)]
 pub struct String(pub RString);
 
-crate::HashAsDependency!(String);
+crate::ConstantDependency!(String);
 
 impl std::fmt::Display for String {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -59,9 +59,9 @@ impl From<String> for TypedValue<String> {
     }
 }
 
-impl From<&'_ String> for Dependencies {
-    fn from(s: &'_ String) -> Self {
-        depends![String::ergo_type(), s]
+impl GetDependenciesConstant for String {
+    fn get_depends(&self) -> DependenciesConstant {
+        depends![String::ergo_type(), self]
     }
 }
 

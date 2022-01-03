@@ -20,7 +20,7 @@ impl ValueByContent {
         traits.add_impl_for_type::<T, ValueByContent>(ergo_trait_impl! {
             impl<T: ErgoType + GetDependencies + Eraseable + Clone> ValueByContent for T {
                 async fn value_by_content(self, _deep: bool) -> Value {
-                    Value::constant(self.to_owned())
+                    Value::evaluated(self.to_owned())
                 }
             }
         });
@@ -41,7 +41,7 @@ impl ValueByContent {
                             Ok(())
                         })).await.unwrap();
                     }
-                    Value::constant(v)
+                    Value::evaluated(v)
                 }
             }
         });

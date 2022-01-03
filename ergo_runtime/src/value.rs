@@ -9,7 +9,9 @@ use crate::abi_stable::{
     u128::U128,
     StableAbi,
 };
-use crate::dependency::{Dependencies, GetDependencies};
+use crate::dependency::{
+    Dependencies, DependenciesConstant, GetDependencies, GetDependenciesConstant,
+};
 use crate::hash::HashFn;
 use crate::type_system::{ErgoType, Type};
 use crate::Context;
@@ -21,88 +23,200 @@ use crate::Context;
 #[derive(Clone, StableAbi)]
 #[repr(C)]
 pub struct Value {
-    id: U128,
+    id: RArc<ValueId>,
     metadata: BstMap<U128, RArc<Erased>>,
     data: ValueData,
 }
 
-/// Calculate the value id for a value given the dependencies.
-pub fn value_id(deps: &Dependencies) -> u128 {
-    use std::hash::Hash;
-    let mut h = HashFn::default();
-    deps.hash(&mut h);
-    h.finish_ext().into()
+// TODO replace with method from std
+trait UnwrapUnchecked {
+    type Output;
+    unsafe fn unwrap_unchecked_(self) -> Self::Output;
 }
+
+impl<T> UnwrapUnchecked for Option<T> {
+    type Output = T;
+
+    unsafe fn unwrap_unchecked_(self) -> T {
+        match self {
+            Some(v) => v,
+            None => std::hint::unreachable_unchecked(),
+        }
+    }
+}
+
+mod value_id {
+    use super::*;
+    use std::sync::atomic::{AtomicU8, Ordering};
+
+    #[derive(StableAbi)]
+    #[repr(C)]
+    union ValueIdState {
+        id: U128,
+        deps: std::mem::ManuallyDrop<Dependencies>,
+    }
+
+    #[derive(Debug, StableAbi)]
+    #[repr(C)]
+    pub struct ValueId {
+        state: std::cell::UnsafeCell<ValueIdState>,
+        // Zeroth bit indicates whether the value has ever been accessed before.
+        // First bit indicates whether `state` has `id` (and implies the zeroth bit).
+        tag: AtomicU8,
+    }
+
+    unsafe impl Sync for ValueId {}
+
+    // Box this future to break the async loop between Dependencies.hash and Value.hash
+    fn calc_id(deps: &Dependencies) -> futures::future::BoxFuture<u128> {
+        futures::future::FutureExt::boxed(async move {
+            let mut h = HashFn::default();
+            deps.hash(&mut h).await;
+            h.finish_ext()
+        })
+    }
+
+    impl ValueId {
+        pub fn new(deps: Dependencies) -> Self {
+            ValueId {
+                state: std::cell::UnsafeCell::new(ValueIdState {
+                    deps: std::mem::ManuallyDrop::new(deps),
+                }),
+                tag: AtomicU8::new(0b00),
+            }
+        }
+
+        pub fn constant(deps: DependenciesConstant) -> Self {
+            Self::id({
+                let mut h = HashFn::default();
+                std::hash::Hash::hash(&deps, &mut h);
+                h.finish_ext()
+            })
+        }
+
+        pub async fn immediate(deps: Dependencies) -> Self {
+            Self::id(calc_id(&deps).await)
+        }
+
+        pub fn id(id: u128) -> Self {
+            ValueId {
+                state: std::cell::UnsafeCell::new(ValueIdState { id: id.into() }),
+                tag: AtomicU8::new(0b11),
+            }
+        }
+
+        pub fn try_get(&self) -> Option<&u128> {
+            (self.tag.load(Ordering::Acquire) == 0b11).then(|| {
+                // Safety: if the tag is 0b11, the state _must_ be a U128
+                unsafe { self.state.get().as_ref().unwrap_unchecked_().id.as_ref() }
+            })
+        }
+
+        pub async fn get(&self) -> u128 {
+            let mut spins = 0;
+            loop {
+                match self.tag.fetch_or(0b01, Ordering::Acquire) {
+                    0b00 => {
+                        // Safety: if the tag is 0b00, the state must be deps
+                        let state = unsafe { self.state.get().as_mut().unwrap_unchecked_() };
+                        let deps = unsafe { std::mem::ManuallyDrop::take(&mut state.deps) };
+                        let id = calc_id(&deps).await;
+                        state.id = id.into();
+                        self.tag.store(0b11, Ordering::Release);
+                        break;
+                    }
+                    0b01 => {
+                        std::hint::spin_loop();
+                        spins += 1;
+                        if spins == 50 {
+                            std::thread::yield_now();
+                            spins = 0;
+                        }
+                    }
+                    0b11 => break,
+                    _ => panic!("invalid value id state"),
+                }
+            }
+            // Safety: the tag must be 0b11, so the state _must_ be a U128
+            unsafe { self.state.get().as_ref().unwrap_unchecked_().id }.into()
+        }
+    }
+
+    impl Drop for ValueId {
+        fn drop(&mut self) {
+            if self.tag.load(Ordering::Acquire) == 0b00 {
+                // Safety: if the tag is 0b00, the state must be deps
+                unsafe { std::mem::ManuallyDrop::drop(&mut self.state.get_mut().deps) };
+            }
+        }
+    }
+
+    impl From<u128> for ValueId {
+        fn from(id: u128) -> Self {
+            Self::id(id)
+        }
+    }
+
+    impl From<Dependencies> for ValueId {
+        fn from(deps: Dependencies) -> Self {
+            Self::new(deps)
+        }
+    }
+
+    impl From<DependenciesConstant> for ValueId {
+        fn from(deps: DependenciesConstant) -> Self {
+            Self::constant(deps)
+        }
+    }
+}
+
+use value_id::ValueId;
 
 impl Value {
     /// Create a new evaluated Value with the given identity.
     ///
     /// ### Safety
     /// The caller must ensure the data corresponds to the type.
-    pub unsafe fn with_id(tp: RArc<Type>, data: RArc<Erased>, id: u128) -> Self {
+    pub unsafe fn new<T>(tp: RArc<Type>, data: RArc<Erased>, id: T) -> Self
+    where
+        T: Into<ValueId>,
+    {
         Value {
-            id: id.into(),
+            id: RArc::new(id.into()),
             metadata: Default::default(),
             data: ValueData::Typed { tp, data },
         }
     }
 
-    /// Create a new evaluated Value with the given dependencies.
-    ///
-    /// ### Safety
-    /// The caller must ensure the data corresponds to the type.
-    pub unsafe fn new<D>(tp: RArc<Type>, data: RArc<Erased>, deps: D) -> Self
-    where
-        D: Into<Dependencies>,
-    {
-        let deps = deps.into();
-        let id = value_id(&deps);
-        Self::with_id(tp, data, id)
-    }
-
-    /// Create a constant (typed, evaluated) value.
-    pub fn constant<T: ErgoType + Eraseable>(value: T) -> Self
-    where
-        T: GetDependencies,
-    {
+    /// Create a typed, evaluated value.
+    pub fn evaluated<T: ErgoType + Eraseable + GetDependencies>(value: T) -> Self {
         let deps = value.get_depends();
-        Self::constant_deps(value, deps)
+        Self::with_id(value, deps)
     }
 
-    /// Create a constant (typed, evaluated) value with the given dependencies.
-    pub fn constant_deps<T: ErgoType + Eraseable, D>(value: T, deps: D) -> Self
-    where
-        D: Into<Dependencies>,
-    {
-        unsafe {
-            Self::new(
-                RArc::new(T::ergo_type()),
-                RArc::new(Erased::new(value)),
-                deps.into(),
-            )
-        }
+    /// Create a constant (typed, evaluated, identified) value.
+    pub fn constant<T: ErgoType + Eraseable + GetDependenciesConstant>(value: T) -> Self {
+        let deps = value.get_depends();
+        Self::with_id(value, deps)
     }
 
-    /// Create a dynamically-typed (unevaluated) value with the given dependencies.
-    ///
-    /// `FnOnce + Clone` is used rather than `Fn` because this is more convenient for callers when
-    /// moving values into the returned Future.
-    pub fn dyn_new<F, Fut, D>(f: F, deps: D) -> Self
+    /// Create a typed, evaluated value with the given identity.
+    pub fn with_id<T: ErgoType + Eraseable, D>(value: T, id: D) -> Self
     where
-        F: FnOnce() -> Fut + Clone + Send + Sync + 'static,
-        Fut: std::future::Future<Output = Value> + Send,
-        D: Into<Dependencies>,
+        D: Into<ValueId>,
     {
-        let deps = deps.into();
-        let id = value_id(&deps);
-        Self::dyn_with_id(f, id)
+        unsafe { Self::new(RArc::new(T::ergo_type()), RArc::new(Erased::new(value)), id) }
     }
 
     /// Create a dynamically-typed (unevaluated) value with the given identity.
-    pub fn dyn_with_id<F, Fut>(func: F, id: u128) -> Self
+    ///
+    /// `FnOnce + Clone` is used rather than `Fn` because this is more convenient for callers when
+    /// moving values into the returned Future.
+    pub fn dynamic<F, Fut, D>(func: F, id: D) -> Self
     where
         F: FnOnce() -> Fut + Clone + Send + Sync + 'static,
         Fut: std::future::Future<Output = Value> + Send,
+        D: Into<ValueId>,
     {
         let next = DynamicNext_TO::from_value(
             std::sync::Arc::new(futures::lock::Mutex::new(DynamicNextState::Pending(
@@ -112,15 +226,26 @@ impl Value {
             TU_Opaque,
         );
         Value {
-            id: id.into(),
+            id: RArc::new(id.into()),
             metadata: Default::default(),
             data: ValueData::Dynamic { next },
         }
     }
 
     /// Get the value's identity.
-    pub fn id(&self) -> u128 {
-        *self.id
+    pub async fn id(&self) -> u128 {
+        self.id.get().await
+    }
+
+    /// Try to get the value's identity, if immediately available.
+    pub fn try_id(&self) -> Option<&u128> {
+        self.id.try_get()
+    }
+
+    /// Hash the value based on identity.
+    pub async fn hash<H: std::hash::Hasher>(&self, hasher: &mut H) {
+        use std::hash::Hash;
+        self.id().await.hash(hasher);
     }
 
     /// Get the value's type, if evaluated.
@@ -160,6 +285,11 @@ impl Value {
         Err(self)
     }
 
+    /// Get an IdentifiedValue from this value.
+    pub async fn as_identified(self) -> IdentifiedValue {
+        IdentifiedValue::from_value(self).await
+    }
+
     /// Get this value as the given mutable type, if evaluated to that type and no other references
     /// exist.
     pub fn as_mut<T: ErgoType>(&mut self) -> Option<&mut T> {
@@ -178,9 +308,9 @@ impl Value {
     /// Set the dependencies of this value.
     pub fn set_dependencies<D>(&mut self, deps: D)
     where
-        D: Into<Dependencies>,
+        D: Into<ValueId>,
     {
-        self.id = value_id(&deps.into()).into();
+        self.id = RArc::new(deps.into());
     }
 
     /// Set a metadata entry for this value.
@@ -260,7 +390,7 @@ pub use ergo_runtime_macro::match_value;
 pub type Ref<T> = crate::abi_stable::type_erase::Ref<T, RArc<Erased>>;
 
 /// A value with a known rust type.
-#[derive(PartialEq, Eq, PartialOrd, Ord, StableAbi)]
+#[derive(StableAbi)]
 #[repr(C)]
 #[sabi(phantom_field = "phantom: RArc<T>")]
 pub struct TypedValue<T> {
@@ -282,20 +412,25 @@ impl<T> TypedValue<T> {
 }
 
 impl<T: ErgoType + Eraseable> TypedValue<T> {
-    /// Create a constant value.
-    pub fn constant(data: T) -> Self
+    /// Create a typed value.
+    pub fn new(data: T) -> Self
     where
         T: GetDependencies,
+    {
+        unsafe { TypedValue::from_value(Value::evaluated(data)) }
+    }
+
+    /// Create a value with constant dependencies.
+    pub fn constant(data: T) -> Self
+    where
+        T: GetDependenciesConstant,
     {
         unsafe { TypedValue::from_value(Value::constant(data)) }
     }
 
-    /// Create a constant value with the given dependencies.
-    pub fn constant_deps<D>(data: T, deps: D) -> Self
-    where
-        D: Into<Dependencies>,
-    {
-        unsafe { TypedValue::from_value(Value::constant_deps(data, deps)) }
+    /// Create a value with the given identity.
+    pub fn with_id<D: Into<ValueId>>(data: T, id: D) -> Self {
+        unsafe { TypedValue::from_value(Value::with_id(data, id)) }
     }
 
     /// Extract the Value's type as an owned value.
@@ -511,29 +646,69 @@ impl<T> std::fmt::Debug for TypedValue<T> {
     }
 }
 
-impl PartialEq for Value {
-    fn eq(&self, other: &Value) -> bool {
-        self.id == other.id
+/// A value with an immediately-available identity.
+#[derive(Clone, Debug, StableAbi)]
+#[repr(C)]
+pub struct IdentifiedValue(Value);
+
+impl IdentifiedValue {
+    pub async fn from_value(v: Value) -> Self {
+        v.id().await;
+        IdentifiedValue(v)
+    }
+
+    pub fn id(&self) -> &u128 {
+        // Safety: you cannot construct this type without first fetching the id
+        unsafe { self.0.try_id().unwrap_unchecked_() }
     }
 }
 
-impl Eq for Value {}
+impl std::ops::Deref for IdentifiedValue {
+    type Target = Value;
 
-impl PartialOrd for Value {
-    fn partial_cmp(&self, other: &Value) -> Option<std::cmp::Ordering> {
-        self.id.partial_cmp(&other.id)
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
-impl Ord for Value {
-    fn cmp(&self, other: &Value) -> std::cmp::Ordering {
-        self.id.cmp(&other.id)
+// IdentifiedValue is not DerefMut because this may invalidate the id state (e.g. if a value has
+// its identity changed).
+
+impl From<IdentifiedValue> for Value {
+    fn from(v: IdentifiedValue) -> Self {
+        v.0
     }
 }
 
-impl std::borrow::Borrow<u128> for Value {
+impl std::borrow::Borrow<Value> for IdentifiedValue {
+    fn borrow(&self) -> &Value {
+        &self.0
+    }
+}
+
+impl PartialEq for IdentifiedValue {
+    fn eq(&self, other: &IdentifiedValue) -> bool {
+        self.id() == other.id()
+    }
+}
+
+impl Eq for IdentifiedValue {}
+
+impl PartialOrd for IdentifiedValue {
+    fn partial_cmp(&self, other: &IdentifiedValue) -> Option<std::cmp::Ordering> {
+        self.id().partial_cmp(&other.id())
+    }
+}
+
+impl Ord for IdentifiedValue {
+    fn cmp(&self, other: &IdentifiedValue) -> std::cmp::Ordering {
+        self.id().cmp(&other.id())
+    }
+}
+
+impl std::borrow::Borrow<u128> for IdentifiedValue {
     fn borrow(&self) -> &u128 {
-        self.id.as_ref()
+        self.id()
     }
 }
 
@@ -557,5 +732,16 @@ where
 {
     fn from(v: T) -> Value {
         v.into_value()
+    }
+}
+
+impl<T> From<T> for IdentifiedValue
+where
+    T: GetDependenciesConstant + IntoValue,
+{
+    fn from(v: T) -> IdentifiedValue {
+        let val = v.into_value();
+        assert!(val.try_id().is_some());
+        IdentifiedValue(val)
     }
 }

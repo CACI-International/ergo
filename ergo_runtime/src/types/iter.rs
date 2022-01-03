@@ -9,7 +9,7 @@ use crate::metadata::Source;
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
 use crate::value::match_value;
-use crate::{depends, Dependencies, TypedValue, Value};
+use crate::{depends, Dependencies, GetDependencies, TypedValue, Value};
 use bincode;
 use futures::stream::{Stream, StreamExt};
 
@@ -56,22 +56,22 @@ struct Streamed(SharedAsyncStream<futures::stream::BoxStream<'static, Value>>);
 
 ImplGenerator!(Streamed => |self| Ok(self.0.next().await));
 
-impl From<&'_ Next> for Dependencies {
-    fn from(n: &'_ Next) -> Self {
-        depends![Next::ergo_type(), n.value, n.iter.next]
+impl GetDependencies for Next {
+    fn get_depends(&self) -> Dependencies {
+        depends![Next::ergo_type(), self.value, self.iter.next]
     }
 }
 
 impl From<Next> for TypedValue<Next> {
     fn from(n: Next) -> Self {
-        Self::constant(n)
+        Self::new(n)
     }
 }
 
 impl Iter {
     /// Create a new Iter value with the given dependencies.
     pub fn new<G: Generator>(g: G, deps: Dependencies) -> TypedValue<Self> {
-        TypedValue::constant_deps(Self::from_generator(g), depends![Self::ergo_type(), ^deps])
+        TypedValue::with_id(Self::from_generator(g), depends![Self::ergo_type(), ^deps])
     }
 
     /// Create a new Iter value from an Iterator with the given dependencies.
@@ -79,7 +79,7 @@ impl Iter {
     where
         I: Iterator<Item = Value> + Send + Sync + 'static,
     {
-        TypedValue::constant_deps(Self::from_iter(iter), depends![Self::ergo_type(), ^deps])
+        TypedValue::with_id(Self::from_iter(iter), depends![Self::ergo_type(), ^deps])
     }
 
     /// Create a new Iter value from a Stream with the given dependencies.
@@ -87,7 +87,7 @@ impl Iter {
     where
         S: Stream<Item = Value> + Send + 'static,
     {
-        TypedValue::constant_deps(
+        TypedValue::with_id(
             Self::from_stream(stream),
             depends![Self::ergo_type(), ^deps],
         )
@@ -113,7 +113,7 @@ impl Iter {
     /// Create an Iter from a generator.
     pub fn from_generator<G: Generator>(mut generator: G) -> Self {
         Iter {
-            next: Value::dyn_new(
+            next: Value::dynamic(
                 move || async move {
                     match generator.next().await {
                         Err(e) => e.into(),
@@ -125,7 +125,7 @@ impl Iter {
                         .into(),
                     }
                 },
-                depends![Next::ergo_type()],
+                depends![Next::ergo_type()] as crate::dependency::DependenciesConstant,
             ),
         }
     }
@@ -225,6 +225,7 @@ ergo_traits_fn! {
             for v in vals {
                 crate::value::match_value! { v,
                     super::MapEntry { key, value } => {
+                        let key = key.as_identified().await;
                         // Remove Unset values.
                         if value.is_type::<super::Unset>() {
                             ret.remove(&key);
@@ -259,7 +260,7 @@ ergo_traits_fn! {
                     let vals: Vec<_> = self.clone().collect().await?;
                     let mut writes = Vec::new();
                     for v in vals {
-                        ids.push(v.id());
+                        ids.push(v.id().await);
                         writes.push(stored_ctx.write_to_store(v));
                     }
                     crate::Context::global().task.join_all(writes).await?;

@@ -5,23 +5,23 @@ use crate::abi_stable::{std_types::RVec, type_erase::Erased, StableAbi};
 use crate::metadata::Source;
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
-use crate::{depends, Dependencies, TypedValue, Value};
+use crate::{depends, Dependencies, GetDependencies, TypedValue, Value};
 use bincode;
 
 /// Script array type.
-#[derive(Clone, Debug, ErgoType, PartialEq, StableAbi)]
+#[derive(Clone, Debug, ErgoType, StableAbi)]
 #[repr(C)]
 pub struct Array(pub RVec<Value>);
 
-impl From<&'_ Array> for Dependencies {
-    fn from(a: &'_ Array) -> Self {
-        depends![Array::ergo_type(), ^@a.0]
+impl GetDependencies for Array {
+    fn get_depends(&self) -> Dependencies {
+        depends![Array::ergo_type(), ^@self.0]
     }
 }
 
 impl From<Array> for TypedValue<Array> {
     fn from(v: Array) -> Self {
-        Self::constant(v)
+        Self::new(v)
     }
 }
 
@@ -78,7 +78,7 @@ ergo_traits_fn! {
                     let mut ids: Vec<u128> = Vec::new();
                     let mut writes = Vec::new();
                     for v in self.0.iter().cloned() {
-                        ids.push(v.id());
+                        ids.push(v.id().await);
                         writes.push(stored_ctx.write_to_store(v));
                     }
                     crate::Context::global().task.join_all(writes).await?;

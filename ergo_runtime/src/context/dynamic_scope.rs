@@ -7,7 +7,7 @@ use crate::abi_stable::{
     u128::U128,
     StableAbi,
 };
-use crate::{Source, Value};
+use crate::{IdentifiedValue, Source};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Types which can be used as a key in a dynamic scope.
@@ -29,15 +29,15 @@ pub trait DynamicScopeKey {
     }
 }
 
-impl DynamicScopeKey for Value {
-    type Value = Value;
+impl DynamicScopeKey for IdentifiedValue {
+    type Value = IdentifiedValue;
 
     fn id(&self) -> u128 {
-        self.id()
+        *self.id()
     }
 
     fn value_id(value: &Self::Value) -> u128 {
-        value.id()
+        *value.id()
     }
 }
 

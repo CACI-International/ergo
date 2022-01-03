@@ -5,26 +5,26 @@ use crate::abi_stable::{type_erase::Erased, StableAbi};
 use crate::metadata::Source;
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
-use crate::{depends, Dependencies, TypedValue, Value};
+use crate::{depends, Dependencies, GetDependencies, TypedValue, Value};
 use bincode;
 
 /// Type for an individual Map entry.
-#[derive(Clone, Debug, ErgoType, PartialEq, StableAbi)]
+#[derive(Clone, Debug, ErgoType, StableAbi)]
 #[repr(C)]
 pub struct MapEntry {
     pub key: Value,
     pub value: Value,
 }
 
-impl From<&'_ MapEntry> for Dependencies {
-    fn from(m: &'_ MapEntry) -> Self {
-        depends![MapEntry::ergo_type(), m.key, m.value]
+impl GetDependencies for MapEntry {
+    fn get_depends(&self) -> Dependencies {
+        depends![MapEntry::ergo_type(), self.key, self.value]
     }
 }
 
 impl From<MapEntry> for TypedValue<MapEntry> {
     fn from(v: MapEntry) -> Self {
-        Self::constant(v)
+        Self::new(v)
     }
 }
 
@@ -60,7 +60,7 @@ ergo_traits_fn! {
             crate::error_info!(
                 labels: [ primary(Source::get(SELF_VALUE).with("while storing this value")) ],
                 async {
-                    let ids = (self.key.id(), self.value.id());
+                    let ids = (self.key.id().await, self.value.id().await);
                     stored_ctx.write_to_store(self.key.clone()).await?;
                     stored_ctx.write_to_store(self.value.clone()).await?;
                     bincode::serialize_into(item, &ids)

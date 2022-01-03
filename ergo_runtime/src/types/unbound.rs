@@ -52,7 +52,7 @@ impl Unbound {
         F: Fn(Value) -> Fut + Clone + Send + Sync + 'static,
         Fut: std::future::Future<Output = Value> + Send,
     {
-        TypedValue::constant_deps(
+        TypedValue::with_id(
             Unbound(UnboundAbi_TO::from_value(bind, TU_Opaque)),
             crate::depends![Self::ergo_type(), ^deps],
         )

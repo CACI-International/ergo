@@ -6,7 +6,6 @@ use crate as ergo_runtime;
 use crate::abi_stable::{future::BoxFuture, std_types::ROption, type_erase::Erased, StableAbi};
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
-use crate::{depends, Dependencies};
 
 /// A stream type.
 ///

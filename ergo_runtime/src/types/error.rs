@@ -2,14 +2,16 @@
 
 use crate as ergo_runtime;
 use crate::type_system::{ergo_traits_fn, ErgoType};
-use crate::{depends, metadata::Source, traits, Dependencies, TypedValue};
+use crate::{
+    depends, metadata::Source, traits, DependenciesConstant, GetDependenciesConstant, TypedValue,
+};
 
 /// Script error type.
 pub use crate::Error;
 
-impl From<&'_ Error> for Dependencies {
-    fn from(e: &'_ Error) -> Self {
-        depends![Error::ergo_type(), e.to_string()]
+impl GetDependenciesConstant for Error {
+    fn get_depends(&self) -> DependenciesConstant {
+        depends![Error::ergo_type(), self.to_string()]
     }
 }
 

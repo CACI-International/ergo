@@ -128,7 +128,7 @@ ergo_traits_fn! {
                     h.write(&buf[..size]);
                 }
             }
-            let deps = crate::depends![h.finish_ext()];
+            let deps = h.finish_ext();
             let mut v = Value::from(self);
             v.set_dependencies(deps);
             v

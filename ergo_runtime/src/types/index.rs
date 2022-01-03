@@ -4,22 +4,22 @@ use crate as ergo_runtime;
 use crate::abi_stable::StableAbi;
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
-use crate::{depends, Dependencies, TypedValue, Value};
+use crate::{depends, Dependencies, GetDependencies, TypedValue, Value};
 
 /// The value in an index operation.
 #[derive(Clone, ErgoType, StableAbi)]
 #[repr(C)]
 pub struct Index(pub Value);
 
-impl From<&'_ Index> for Dependencies {
-    fn from(i: &'_ Index) -> Self {
-        depends![Index::ergo_type(), i.0]
+impl GetDependencies for Index {
+    fn get_depends(&self) -> Dependencies {
+        depends![Index::ergo_type(), self.0]
     }
 }
 
 impl From<Index> for TypedValue<Index> {
     fn from(v: Index) -> Self {
-        Self::constant(v)
+        Self::new(v)
     }
 }
 

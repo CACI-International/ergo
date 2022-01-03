@@ -1,6 +1,8 @@
 //! Testing helpers.
 
-use ergo_runtime::{traits, type_system::ErgoType, Context, RResult, Result, Value};
+use ergo_runtime::{
+    traits, type_system::ErgoType, Context, IdentifiedValue, RResult, Result, Value,
+};
 use std::collections::BTreeMap;
 
 pub struct Test {
@@ -28,14 +30,24 @@ impl Test {
         Test { env, runtime: rt }
     }
 
-    pub fn eval(&self, script: &str) -> Result<Value> {
+    pub fn eval(&self, script: &str) -> Result<IdentifiedValue> {
         let mut script = self.runtime.load_string("test", script)?;
         script.extend_top_level_env(self.env.clone());
-        dbg!(self.block_on(script.evaluate()))
+        dbg!(self.block_on(async move {
+            let v = script.evaluate().await;
+            match v {
+                Ok(v) => Ok(v.as_identified().await),
+                Err(e) => Err(e),
+            }
+        }))
     }
 
-    pub fn eval_success(&self, script: &str) -> Value {
+    pub fn eval_success(&self, script: &str) -> IdentifiedValue {
         self.eval(script).expect("expected successful eval")
+    }
+
+    pub fn eval_success_v(&self, script: &str) -> Value {
+        self.eval_success(script).into()
     }
 
     pub fn assert_value_eq<T: ErgoType + std::fmt::Debug + Sync + PartialEq + 'static>(
@@ -45,7 +57,7 @@ impl Test {
     ) {
         let val = self.eval_success(script);
         let val = self
-            .block_on(Context::eval_as::<T>(val))
+            .block_on(Context::eval_as::<T>(val.into()))
             .expect("type mismatch");
         assert_eq!(val.as_ref(), v);
     }
@@ -59,57 +71,75 @@ impl Test {
     }
 
     pub fn assert_success(&self, script: &str) {
-        let mut v = self.eval_success(script);
+        let mut v = self.eval_success_v(script);
         self.block_on(Context::eval(&mut v)).expect("value failed");
     }
 
     pub fn assert_fail(&self, script: &str) {
-        let mut v = self.eval_success(script);
+        let mut v = self.eval_success_v(script);
         self.block_on(Context::eval(&mut v))
             .expect_err("value succeeded");
     }
 
     pub fn assert_script_eq(&self, a: &str, b: &str) {
-        let a = self.eval(a).expect("eval error");
-        let b = self.eval(b).expect("eval error");
+        let a = self.eval_success(a);
+        let b = self.eval_success(b);
         self.dbg(&a);
         self.dbg(&b);
         assert_eq!(a, b);
     }
 
     pub fn assert_script_ne(&self, a: &str, b: &str) {
-        let a = self.eval(a).expect("eval error");
-        let b = self.eval(b).expect("eval error");
+        let a = self.eval_success(a);
+        let b = self.eval_success(b);
         self.dbg(&a);
         self.dbg(&b);
         assert_ne!(a, b);
     }
 
     pub fn assert_eq(&self, a: &str, b: &str) {
-        let mut a = self.eval(a).expect("eval error");
-        let mut b = self.eval(b).expect("eval error");
-        drop(self.block_on(Context::eval(&mut a)));
-        drop(self.block_on(Context::eval(&mut b)));
+        let mut a = self.eval_success_v(a);
+        let mut b = self.eval_success_v(b);
+        let a = self.block_on(async {
+            drop(Context::eval(&mut a).await);
+            a.as_identified().await
+        });
+        let b = self.block_on(async {
+            drop(Context::eval(&mut b).await);
+            b.as_identified().await
+        });
         self.dbg(&a);
         self.dbg(&b);
         assert_eq!(a, b);
     }
 
     pub fn assert_ne(&self, a: &str, b: &str) {
-        let mut a = self.eval(a).expect("eval error");
-        let mut b = self.eval(b).expect("eval error");
-        drop(self.block_on(Context::eval(&mut a)));
-        drop(self.block_on(Context::eval(&mut b)));
+        let mut a = self.eval_success_v(a);
+        let mut b = self.eval_success_v(b);
+        let a = self.block_on(async {
+            drop(Context::eval(&mut a).await);
+            a.as_identified().await
+        });
+        let b = self.block_on(async {
+            drop(Context::eval(&mut b).await);
+            b.as_identified().await
+        });
         self.dbg(&a);
         self.dbg(&b);
         assert_ne!(a, b);
     }
 
     pub fn assert_content_eq(&self, a: &str, b: &str) {
-        let a = self.eval(a).expect("eval error");
-        let b = self.eval(b).expect("eval error");
-        let a = self.block_on(traits::value_by_content(a, true));
-        let b = self.block_on(traits::value_by_content(b, true));
+        let a = self.eval_success(a);
+        let b = self.eval_success(b);
+        let a = self.block_on(async move {
+            let v = traits::value_by_content(a.into(), true).await;
+            v.as_identified().await
+        });
+        let b = self.block_on(async move {
+            let v = traits::value_by_content(b.into(), true).await;
+            v.as_identified().await
+        });
         self.dbg(&a);
         self.dbg(&b);
         assert_eq!(a, b);

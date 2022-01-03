@@ -60,7 +60,7 @@ pub async fn read_from_store(store_item: &Item, id: u128) -> Result<Value> {
                 let stored_ctx = StoredContext::new(store_item.clone());
                 let data = s.get(&stored_ctx, content).await.into_result()?;
                 // TODO revisit metadata
-                Ok(unsafe { Value::with_id(RArc::new(tp), RArc::new(data), id) })
+                Ok(unsafe { Value::new(RArc::new(tp), RArc::new(data), id) })
             } else {
                 Err(format!("no stored trait for {}", type_name_for(&tp)))
             }
@@ -81,7 +81,7 @@ pub async fn write_to_store(store_item: &Item, mut v: Value) -> Result<()> {
             primary(source.with("while writing this value"))
         ],
         async {
-            let item = store_item.value(&v);
+            let item = store_item.value_id(v.id().await);
             // TODO should this not eval (relying on the caller to eval)?
             drop(Context::eval(&mut v).await);
             let t = Context::get_trait::<Stored>(&v)
@@ -89,7 +89,7 @@ pub async fn write_to_store(store_item: &Item, mut v: Value) -> Result<()> {
 
             let mut content = item.write().await?;
 
-            content.write_all(&v.id().to_be_bytes())?;
+            content.write_all(&v.id().await.to_be_bytes())?;
 
             let tp: ErasedTrivial = v.ergo_type().unwrap().clone().into();
             tp.serialize(&mut content)?;

@@ -5,7 +5,7 @@ use crate::abi_stable::{path::PathBuf, type_erase::Erased, StableAbi};
 use crate::metadata::Source;
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
-use crate::{depends, Dependencies, TypedValue};
+use crate::{depends, DependenciesConstant, GetDependenciesConstant, TypedValue};
 use bincode;
 
 /// Script string type.
@@ -13,7 +13,7 @@ use bincode;
 #[repr(C)]
 pub struct Path(pub PathBuf);
 
-crate::HashAsDependency!(Path);
+crate::ConstantDependency!(Path);
 
 impl std::fmt::Display for Path {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -47,6 +47,12 @@ impl std::ops::DerefMut for Path {
     }
 }
 
+impl GetDependenciesConstant for Path {
+    fn get_depends(&self) -> DependenciesConstant {
+        depends![Path::ergo_type(), self]
+    }
+}
+
 impl From<Path> for TypedValue<Path> {
     fn from(v: Path) -> Self {
         Self::constant(v)
@@ -57,12 +63,6 @@ impl Path {
     /// Convert this value into a std::path::PathBuf.
     pub fn into_pathbuf(self) -> std::path::PathBuf {
         self.0.into_pathbuf()
-    }
-}
-
-impl From<&'_ Path> for Dependencies {
-    fn from(p: &'_ Path) -> Self {
-        depends![Path::ergo_type(), p]
     }
 }
 

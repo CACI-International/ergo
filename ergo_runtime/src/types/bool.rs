@@ -7,7 +7,7 @@ use crate::abi_stable::{
 use crate::metadata::Source;
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
-use crate::{depends, Dependencies, TypedValue};
+use crate::{depends, DependenciesConstant, GetDependenciesConstant, TypedValue};
 use bincode;
 
 /// Script bool type.
@@ -15,11 +15,11 @@ use bincode;
 #[repr(C)]
 pub struct Bool(pub bool);
 
-crate::HashAsDependency!(Bool);
+crate::ConstantDependency!(Bool);
 
-impl From<&'_ Bool> for Dependencies {
-    fn from(b: &'_ Bool) -> Self {
-        depends![Bool::ergo_type(), b]
+impl GetDependenciesConstant for Bool {
+    fn get_depends(&self) -> DependenciesConstant {
+        depends![Bool::ergo_type(), self]
     }
 }
 

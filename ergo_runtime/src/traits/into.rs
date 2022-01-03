@@ -37,7 +37,7 @@ impl<T: ErgoType + StableAbi + Eraseable> IntoTyped<T> {
                       U: ErgoType + Eraseable + Clone,
             {
                 async fn into_typed(self) -> Value {
-                    Value::constant(T::from(self.to_owned()))
+                    Value::evaluated(T::from(self.to_owned()))
                 }
             }
         });
@@ -56,8 +56,8 @@ impl<T: ErgoType + StableAbi + Eraseable> IntoTyped<T> {
                       U: ErgoType + Eraseable + Clone,
             {
                 async fn into_typed(self) -> Value {
-                    let deps = depends![self];
-                    Value::constant_deps(T::from(self.to_owned()), deps)
+                    let deps: crate::Dependencies = depends![self];
+                    Value::with_id(T::from(self.to_owned()), deps)
                 }
             }
         });

@@ -1,9 +1,9 @@
 //! Dependency tracking.
 
-use crate::abi_stable::{bst::BstSet, std_types::RVec, u128::U128, StableAbi};
+use crate::abi_stable::{std_types::RVec, u128::U128, StableAbi};
 use crate::hash::HashFn;
 use crate::type_system::{Trait, Type};
-use crate::value::{TypedValue, Value};
+use crate::value::{IdentifiedValue, TypedValue, Value};
 use std::hash::{Hash, Hasher};
 use std::iter::FromIterator;
 
@@ -12,11 +12,23 @@ use std::iter::FromIterator;
 /// A single dependency is either a hash digest from arbitrary data or a `Value`. The `Value`
 /// identifier is used later as the dependency, but the `Value` is stored so that a tree of
 /// dependencies may be retrieved. The `Value` is stored as an unevaluated form.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, StableAbi)]
+#[derive(Clone, Debug, StableAbi)]
 #[repr(u8)]
 pub enum Dependency {
     Value(Value),
-    Hashed(U128),
+    Constant(Constant),
+}
+
+#[derive(Clone, Debug, PartialOrd, Ord, PartialEq, Eq, Hash, StableAbi)]
+#[repr(C)]
+pub struct Constant(U128);
+
+impl<T: Hash> From<&'_ T> for Constant {
+    fn from(v: &'_ T) -> Self {
+        let mut hfn = HashFn::default();
+        v.hash(&mut hfn);
+        Constant(hfn.finish_ext().into())
+    }
 }
 
 impl<T: AsDependency> From<T> for Dependency {
@@ -30,39 +42,45 @@ pub trait AsDependency {
     fn as_dependency(&self) -> Dependency;
 }
 
-/// Use Dependency::hashed to implement `AsDependency` for the given type.
+/// Use Dependency::Constant to implement `AsDependency` for the given type.
 #[macro_export]
-macro_rules! HashAsDependency {
+macro_rules! ConstantDependency {
     ( $t:ty ) => {
         impl $crate::dependency::AsDependency for $t {
             fn as_dependency(&self) -> $crate::dependency::Dependency {
-                $crate::dependency::Dependency::hashed(self)
+                $crate::dependency::Dependency::Constant(self.into())
             }
         }
     };
 }
 
-HashAsDependency!(crate::abi_stable::uuid::Uuid);
-HashAsDependency!(String);
-HashAsDependency!(&'_ str);
-HashAsDependency!(std::path::PathBuf);
-HashAsDependency!(&'_ std::path::Path);
-HashAsDependency!(u32);
-HashAsDependency!(i32);
-HashAsDependency!(u64);
-HashAsDependency!(i64);
-HashAsDependency!(usize);
-HashAsDependency!(isize);
-HashAsDependency!(u128);
-HashAsDependency!(i128);
-HashAsDependency!(Type);
-HashAsDependency!(Trait);
+ConstantDependency!(crate::abi_stable::uuid::Uuid);
+ConstantDependency!(String);
+ConstantDependency!(&'_ str);
+ConstantDependency!(std::path::PathBuf);
+ConstantDependency!(&'_ std::path::Path);
+ConstantDependency!(u32);
+ConstantDependency!(i32);
+ConstantDependency!(u64);
+ConstantDependency!(i64);
+ConstantDependency!(usize);
+ConstantDependency!(isize);
+ConstantDependency!(u128);
+ConstantDependency!(i128);
+ConstantDependency!(Type);
+ConstantDependency!(Trait);
 
 impl AsDependency for Value {
     fn as_dependency(&self) -> Dependency {
         let mut v = self.clone();
         v.unevaluated();
         Dependency::Value(v)
+    }
+}
+
+impl AsDependency for IdentifiedValue {
+    fn as_dependency(&self) -> Dependency {
+        (**self).as_dependency()
     }
 }
 
@@ -87,38 +105,43 @@ impl<T: AsDependency> AsDependency for &'_ mut T {
 impl<T: AsDependency> AsDependency for Option<T> {
     fn as_dependency(&self) -> Dependency {
         match self {
-            None => Dependency::Hashed(0.into()),
+            None => Dependency::Constant((&0).into()),
             Some(v) => v.as_dependency(),
         }
     }
 }
 
-impl Hash for Dependency {
-    fn hash<H: Hasher>(&self, state: &'_ mut H) {
-        match self {
-            Dependency::Value(v) => v.id().hash(state),
-            Dependency::Hashed(v) => v.hash(state),
-        }
-    }
-}
-
 impl Dependency {
-    /// Create a dependency from a Hash value.
-    pub fn hashed<T: Hash>(v: &T) -> Self {
-        let mut hfn = HashFn::default();
-        v.hash(&mut hfn);
-        Dependency::Hashed(hfn.finish_ext().into())
+    /// Hash the dependency.
+    pub async fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            Dependency::Value(v) => v.hash(state).await,
+            Dependency::Constant(v) => v.hash(state),
+        }
     }
 }
 
 /// A set of dependencies.
 ///
 /// The set tracks unordered and ordered dependencies independently.
-#[derive(Clone, Debug, Default, Hash, StableAbi)]
+#[derive(Clone, Debug, StableAbi)]
 #[repr(C)]
-pub struct Dependencies {
-    unordered: BstSet<Dependency>,
-    ordered: RVec<Dependency>,
+pub struct Dependencies<Dep = Dependency> {
+    // The unordered/ordered distinction is used in `hash()`, but otherwise they are identical
+    // because we cannot order Dependency alone.
+    unordered: RVec<Dep>,
+    ordered: RVec<Dep>,
+}
+
+pub type DependenciesConstant = Dependencies<Constant>;
+
+impl<D> Default for Dependencies<D> {
+    fn default() -> Self {
+        Dependencies {
+            unordered: Default::default(),
+            ordered: Default::default(),
+        }
+    }
 }
 
 /// Helper trait for implementations of Into<Dependencies> for references.
@@ -126,6 +149,25 @@ pub trait GetDependencies {
     fn get_depends(&self) -> Dependencies;
 }
 
+pub trait GetDependenciesConstant {
+    fn get_depends(&self) -> DependenciesConstant;
+}
+
+impl<T: GetDependenciesConstant> GetDependencies for T {
+    fn get_depends(&self) -> Dependencies {
+        let deps = GetDependenciesConstant::get_depends(self);
+        Dependencies {
+            unordered: deps
+                .unordered
+                .into_iter()
+                .map(Dependency::Constant)
+                .collect(),
+            ordered: deps.ordered.into_iter().map(Dependency::Constant).collect(),
+        }
+    }
+}
+
+/*
 impl<T> GetDependencies for T
 where
     for<'a> &'a T: Into<Dependencies>,
@@ -134,38 +176,70 @@ where
         self.into()
     }
 }
+*/
 
-impl Dependencies {
+impl<Dep> Dependencies<Dep> {
     /// Create a new group of dependencies.
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Create a new group of unordered dependencies from a dependency source.
-    pub fn unordered<I: IntoIterator<Item = Dependency>>(deps: I) -> Self {
+    pub fn unordered<I: IntoIterator<Item = Dep>>(deps: I) -> Self {
         Dependencies {
-            unordered: BstSet::from_iter(deps),
+            unordered: RVec::from_iter(deps),
             ordered: Default::default(),
         }
     }
 
     /// Create a new group of ordered depedencies from a dependency source.
-    pub fn ordered<I: IntoIterator<Item = Dependency>>(deps: I) -> Self {
+    pub fn ordered<I: IntoIterator<Item = Dep>>(deps: I) -> Self {
         Dependencies {
             unordered: Default::default(),
             ordered: RVec::from_iter(deps),
         }
     }
 
+    /*
     /// Return an iterator over the dependencies.
     ///
-    /// Unordered dependencies precede ordered ones.
+    /// Unordered dependencies precede ordered ones. Note that the order of the unordered
+    /// dependencies may be inconsistent.
     pub fn iter<'a>(&'a self) -> Iter<'a> {
         Iter(Box::new(self.unordered.iter().chain(self.ordered.iter())))
     }
+    */
 }
 
-impl std::ops::Add for Dependencies {
+impl<Dep: Hash + Ord> Hash for Dependencies<Dep> {
+    fn hash<H: Hasher>(&self, h: &mut H) {
+        let mut set = std::collections::BTreeSet::default();
+        for d in self.unordered.iter() {
+            set.insert(d);
+        }
+        set.hash(h);
+        self.ordered.hash(h);
+    }
+}
+
+impl Dependencies {
+    /// Hash the dependencies.
+    pub async fn hash<H: Hasher>(&self, state: &mut H) {
+        let mut set = std::collections::BTreeSet::default();
+        for d in self.unordered.iter() {
+            match d {
+                Dependency::Value(v) => set.insert(v.id().await),
+                Dependency::Constant(i) => set.insert(i.0.value()),
+            };
+        }
+        set.hash(state);
+        for d in self.ordered.iter() {
+            d.hash(state).await;
+        }
+    }
+}
+
+impl<Dep> std::ops::Add for Dependencies<Dep> {
     type Output = Self;
 
     /// Combine two Dependencies into one. The order matters with respect
@@ -176,14 +250,14 @@ impl std::ops::Add for Dependencies {
     }
 }
 
-impl std::ops::AddAssign for Dependencies {
+impl<Dep> std::ops::AddAssign for Dependencies<Dep> {
     fn add_assign(&mut self, other: Self) {
         self.unordered.extend(other.unordered);
         self.ordered.extend(other.ordered);
     }
 }
 
-impl std::iter::Sum for Dependencies {
+impl<Dep> std::iter::Sum for Dependencies<Dep> {
     fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
         let mut deps = Dependencies::new();
         for d in iter {
@@ -193,6 +267,7 @@ impl std::iter::Sum for Dependencies {
     }
 }
 
+/*
 pub struct Iter<'a>(Box<dyn Iterator<Item = &'a Dependency> + 'a>);
 
 impl<'a> Iterator for Iter<'a> {
@@ -202,11 +277,12 @@ impl<'a> Iterator for Iter<'a> {
         self.0.next()
     }
 }
+*/
 
-impl<T> From<T> for Dependencies
+impl<T, Dep> From<T> for Dependencies<Dep>
 where
     T: IntoIterator,
-    <T as IntoIterator>::Item: Into<Dependencies>,
+    <T as IntoIterator>::Item: Into<Dependencies<Dep>>,
 {
     fn from(v: T) -> Self {
         use std::iter::Sum;
@@ -225,22 +301,23 @@ where
 /// Example usage:
 /// ```
 /// # #[macro_use] extern crate ergo_runtime;
+/// # use ergo_runtime::dependency::Dependencies;
 /// // Create ordered dependencies
-/// let deps = depends!["a","b"];
+/// let deps: Dependencies = depends!["a","b"];
 /// // Merge dependencies from deps, and add another ordered dependency (after those in deps)
-/// let deps2 = depends![^deps,"c"];
+/// let deps2: Dependencies = depends![^deps,"c"];
 /// // Convert each item in vals to `Dependency` and merge them.
 /// let vals = vec!["hello", "goodbye"];
-/// let deps3 = depends![^deps2, ^@vals];
+/// let deps3: Dependencies = depends![^deps2, ^@vals];
 /// // Add unordered dependencies (1, 2, "3", and 4), and more ordered dependencies.
-/// let deps_unordered = depends![{1,2,"3"},^deps3,{4},"d"];
+/// let deps_unordered: Dependencies = depends![{1,2,"3"},^deps3,{4},"d"];
 /// ```
 #[macro_export]
 macro_rules! depends {
     // Unordered items
     // Create unordered dependencies from single items
     ( @item { $( $exp:expr ),* } ) => {
-        $crate::dependency::Dependencies::unordered(vec![$( $crate::dependency::Dependency::from(&$exp) ),*])
+        $crate::dependency::Dependencies::unordered(vec![$( (&$exp).into() ),*])
     };
 
     // Merge item
@@ -250,13 +327,13 @@ macro_rules! depends {
 
     // Merge and convert item
     ( @item ^ @ $exp:expr ) => {
-        $crate::dependency::Dependencies::ordered($exp.iter().map($crate::dependency::Dependency::from))
+        $crate::dependency::Dependencies::ordered($exp.iter().map(|v| v.into()))
     };
 
     // Basic item
     // Add as single (ordered) dependency.
     ( @item $exp:expr ) => {
-        $crate::dependency::Dependencies::ordered(vec![$crate::dependency::Dependency::from(&$exp)])
+        $crate::dependency::Dependencies::ordered(vec![(&$exp).into()])
     };
 
     // End of items and input tokens

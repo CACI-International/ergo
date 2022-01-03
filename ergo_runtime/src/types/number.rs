@@ -5,7 +5,7 @@ use crate::abi_stable::{std_types::RVec, type_erase::Erased, StableAbi};
 use crate::metadata::Source;
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
-use crate::{depends, Dependencies, TypedValue};
+use crate::{depends, DependenciesConstant, GetDependenciesConstant, TypedValue};
 use bincode;
 use num::{bigint::BigInt, rational::Ratio, BigRational, FromPrimitive, ToPrimitive};
 
@@ -22,7 +22,7 @@ pub struct Number {
     neg: bool,
 }
 
-crate::HashAsDependency!(Number);
+crate::ConstantDependency!(Number);
 
 impl From<BigRational> for Number {
     fn from(n: BigRational) -> Self {
@@ -203,9 +203,9 @@ impl From<Number> for TypedValue<Number> {
     }
 }
 
-impl From<&'_ Number> for Dependencies {
-    fn from(n: &'_ Number) -> Self {
-        depends![Number::ergo_type(), n]
+impl GetDependenciesConstant for Number {
+    fn get_depends(&self) -> DependenciesConstant {
+        depends![Number::ergo_type(), self]
     }
 }
 

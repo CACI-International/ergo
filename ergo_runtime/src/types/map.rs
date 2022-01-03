@@ -5,45 +5,54 @@ use crate::abi_stable::{bst::BstMap, type_erase::Erased, StableAbi};
 use crate::metadata::Source;
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
-use crate::{depends, Dependencies, TypedValue, Value};
+use crate::{depends, Dependencies, GetDependencies, IdentifiedValue, TypedValue, Value};
 use bincode;
 use std::collections::BTreeMap;
 
 /// Script map type.
-#[derive(Clone, Debug, ErgoType, PartialEq, StableAbi)]
+#[derive(Clone, Debug, ErgoType, StableAbi)]
 #[repr(C)]
-pub struct Map(pub BstMap<Value, Value>);
+pub struct Map(pub BstMap<IdentifiedValue, Value>);
 
-impl From<&'_ Map> for Dependencies {
-    fn from(m: &'_ Map) -> Self {
-        depends![Map::ergo_type(), ^m.0.iter().map(|(k, v)| depends![k, v])]
+impl GetDependencies for Map {
+    fn get_depends(&self) -> Dependencies {
+        depends![Map::ergo_type(), ^self.0.iter().map(|(k, v)| depends![k, v])]
     }
 }
 
 impl From<Map> for TypedValue<Map> {
     fn from(m: Map) -> Self {
-        Self::constant(m)
+        Self::new(m)
     }
 }
 
 impl From<Map> for super::Iter {
     fn from(v: Map) -> Self {
         super::Iter::from_iter(v.0.into_iter().map(|(key, value)| {
-            Source::imbue(Source::get(&key).with(super::MapEntry { key, value }.into()))
+            Source::imbue(
+                Source::get(&key).with(
+                    super::MapEntry {
+                        key: key.into(),
+                        value,
+                    }
+                    .into(),
+                ),
+            )
         }))
     }
 }
 
 impl traits::NestedValues for Map {
     fn nested_values(&self) -> Vec<&Value> {
-        self.0.iter().map(|(k, v)| vec![k, v]).flatten().collect()
-    }
-    fn nested_values_mut(&mut self) -> Vec<&mut Value> {
         self.0
-            .iter_mut()
-            .map(|(k, v)| vec![k, v])
+            .iter()
+            .map(|(k, v)| vec![&**k, v])
             .flatten()
             .collect()
+    }
+    // XXX not entirely correct, skips keys
+    fn nested_values_mut(&mut self) -> Vec<&mut Value> {
+        self.0.iter_mut().map(|(_, v)| v).collect()
     }
 }
 
@@ -58,14 +67,14 @@ ergo_traits_fn! {
                     let mut iter = self.0.iter();
                     write!(f, "{{")?;
                     if let Some((k,v)) = iter.next() {
-                        traits::display(k.clone(), f).await?;
+                        traits::display(k.clone().into(), f).await?;
                         write!(f, " = ")?;
                         traits::display(v.clone(), f).await?;
                     }
 
                     for (k,v) in iter {
                         write!(f, ", ")?;
-                        traits::display(k.clone(), f).await?;
+                        traits::display(k.clone().into(), f).await?;
                         write!(f, " = ")?;
                         traits::display(v.clone(), f).await?;
                     }
@@ -92,8 +101,8 @@ ergo_traits_fn! {
                     for (k, v) in self.0.iter() {
                         let k = k.clone();
                         let v = v.clone();
-                        ids.insert(k.id(), v.id());
-                        writes.push(stored_ctx.write_to_store(k));
+                        ids.insert(*k.id(), v.id().await);
+                        writes.push(stored_ctx.write_to_store(k.into()));
                         writes.push(stored_ctx.write_to_store(v));
                     }
                     crate::Context::global().task.join_all(writes).await?;
@@ -119,7 +128,7 @@ ergo_traits_fn! {
                     let values = read.next().unwrap();
 
                     for (k, v) in keys.into_iter().zip(values) {
-                        vals.insert(k, v);
+                        vals.insert(k.as_identified().await, v);
                     }
                     crate::Result::Ok(Erased::new(Map(vals)))
                 }
@@ -135,7 +144,7 @@ ergo_traits_fn! {
 
             crate::value::match_value! { arg,
                 super::Index(index) => {
-                    self.0.get(&index).cloned().unwrap_or(super::Unset.into())
+                    self.0.get(&index.as_identified().await).cloned().unwrap_or(super::Unset.into())
                 },
                 Map(map) => {
                     crate::try_result!(traits::bind_map(self.0.clone(), source.with(map.clone()), false).await);

@@ -5,7 +5,10 @@ use crate::abi_stable::{bst::BstMap, std_types::RVec, StableAbi};
 use crate::metadata::Source;
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
-use crate::{depends, Context, Dependencies, Error, Source as Src, TypedValue, Value};
+use crate::{
+    depends, Context, Dependencies, Error, GetDependencies, IdentifiedValue, Source as Src,
+    TypedValue, Value,
+};
 use std::collections::BTreeMap;
 
 /// Arguments in a function call.
@@ -22,27 +25,27 @@ pub struct PatternArgs {
     pub args: UncheckedArguments,
 }
 
-impl From<&'_ Args> for Dependencies {
-    fn from(a: &'_ Args) -> Self {
-        depends![Args::ergo_type(), ^&a.args]
+impl GetDependencies for Args {
+    fn get_depends(&self) -> Dependencies {
+        depends![Args::ergo_type(), ^&self.args]
     }
 }
 
 impl From<Args> for TypedValue<Args> {
     fn from(v: Args) -> Self {
-        Self::constant(v)
+        Self::new(v)
     }
 }
 
-impl From<&'_ PatternArgs> for Dependencies {
-    fn from(a: &'_ PatternArgs) -> Self {
-        depends![PatternArgs::ergo_type(), ^&a.args]
+impl GetDependencies for PatternArgs {
+    fn get_depends(&self) -> Dependencies {
+        depends![PatternArgs::ergo_type(), ^&self.args]
     }
 }
 
 impl From<PatternArgs> for TypedValue<PatternArgs> {
     fn from(v: PatternArgs) -> Self {
-        Self::constant(v)
+        Self::new(v)
     }
 }
 
@@ -52,11 +55,11 @@ impl From<PatternArgs> for TypedValue<PatternArgs> {
 pub struct UncheckedArguments {
     /// Positional arguments in this vec are in reverse order; use Iterator to access them.
     pub positional: RVec<Value>,
-    pub keyed: BstMap<Value, Value>,
+    pub keyed: BstMap<IdentifiedValue, Value>,
 }
 
 impl UncheckedArguments {
-    fn new(positional: Vec<Value>, keyed: BTreeMap<Value, Value>) -> Self {
+    fn new(positional: Vec<Value>, keyed: BTreeMap<IdentifiedValue, Value>) -> Self {
         UncheckedArguments {
             positional: positional.into_iter().rev().collect(),
             keyed: keyed.into_iter().collect(),
@@ -75,7 +78,7 @@ impl UncheckedArguments {
         self.kw_value(&super::String::from(key).into())
     }
 
-    pub fn kw_value(&mut self, key: &Value) -> Option<Value> {
+    pub fn kw_value(&mut self, key: &IdentifiedValue) -> Option<Value> {
         self.keyed.remove(key)
     }
 
@@ -205,7 +208,7 @@ pub struct Arguments {
 }
 
 impl Arguments {
-    pub fn new(positional: Vec<Value>, keyed: BTreeMap<Value, Value>) -> Self {
+    pub fn new(positional: Vec<Value>, keyed: BTreeMap<IdentifiedValue, Value>) -> Self {
         Arguments {
             inner: UncheckedArguments::new(positional, keyed),
         }
@@ -331,20 +334,15 @@ impl traits::NestedValues for PatternArgs {
         self.args
             .positional
             .iter()
-            .chain(self.args.keyed.iter().map(|(k, v)| vec![k, v]).flatten())
+            .chain(self.args.keyed.iter().map(|(k, v)| vec![&**k, v]).flatten())
             .collect()
     }
+    // XXX not entirely correct, skips keys
     fn nested_values_mut(&mut self) -> Vec<&mut Value> {
         self.args
             .positional
             .iter_mut()
-            .chain(
-                self.args
-                    .keyed
-                    .iter_mut()
-                    .map(|(k, v)| vec![k, v])
-                    .flatten(),
-            )
+            .chain(self.args.keyed.iter_mut().map(|(_, v)| v))
             .collect()
     }
 }
@@ -354,20 +352,15 @@ impl traits::NestedValues for Args {
         self.args
             .positional
             .iter()
-            .chain(self.args.keyed.iter().map(|(k, v)| vec![k, v]).flatten())
+            .chain(self.args.keyed.iter().map(|(k, v)| vec![&**k, v]).flatten())
             .collect()
     }
+    // XXX not entirely correct, skips keys
     fn nested_values_mut(&mut self) -> Vec<&mut Value> {
         self.args
             .positional
             .iter_mut()
-            .chain(
-                self.args
-                    .keyed
-                    .iter_mut()
-                    .map(|(k, v)| vec![k, v])
-                    .flatten(),
-            )
+            .chain(self.args.keyed.iter_mut().map(|(_, v)| v))
             .collect()
     }
 }

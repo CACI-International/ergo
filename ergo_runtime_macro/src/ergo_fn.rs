@@ -237,7 +237,7 @@ impl Parser for ErgoFnLike {
                     ergo_runtime::future::FutureExt::boxed(async move {
                         let __ergo_fn_args = ergo_runtime::try_result!(ergo_runtime::Context::eval_as::<#which>(__ergo_fn_arg).await);
                         let ARGS_SOURCE = ergo_runtime::metadata::Source::get(&__ergo_fn_args);
-                        let CALL_DEPENDS = ergo_runtime::depends![fn_id, __ergo_fn_args.id()];
+                        let CALL_DEPENDS: ergo_runtime::dependency::Dependencies = ergo_runtime::depends![fn_id, __ergo_fn_args];
                         let mut __ergo_fn_args = __ergo_fn_args.to_owned().args;
                         #(#args)*
                         #rest_or_check

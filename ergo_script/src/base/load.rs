@@ -95,7 +95,7 @@ impl LoadData {
         {
             let ld = self.clone();
             let working_dir = script_file.and_then(|p| p.parent()).map(|p| p.to_owned());
-            let mut std = Value::dyn_new(
+            let mut std = Value::dynamic(
                 move || async move {
                     let wd = working_dir.clone();
                     let path = match ld.resolve_script_path(working_dir, "std".as_ref()) {
@@ -115,7 +115,7 @@ impl LoadData {
 
                     ld.load_script(&path).await
                 },
-                depends![nsid!(func::std)],
+                depends![nsid!(func::std)] as ergo_runtime::DependenciesConstant,
             );
             metadata::Doc::set_string(&mut std, "Get the value as if `ergo std` were run.");
             env.insert("std".into(), std);
@@ -131,7 +131,7 @@ impl LoadData {
                     false,
                 ),
             };
-            let mut workspace = Value::dyn_new(
+            let mut workspace = Value::dynamic(
                 move || async move {
                     let resolved = Context::global()
                         .shared_state
@@ -179,7 +179,7 @@ impl LoadData {
 
                     ld.load_script(&path).await
                 },
-                depends![nsid!(func::workspace)],
+                depends![nsid!(func::workspace)] as ergo_runtime::DependenciesConstant,
             );
             metadata::Doc::set_string(
                 &mut workspace,
@@ -204,8 +204,8 @@ impl LoadData {
             .entry(path.clone())
             .or_insert_with(|| {
                 let me = self.clone();
-                let deps = depends![nsid!(load), path];
-                Value::dyn_new(
+                let deps: ergo_runtime::DependenciesConstant = depends![nsid!(load), path];
+                Value::dynamic(
                     move || async move {
                         let sources = Context::global().diagnostic_sources();
 

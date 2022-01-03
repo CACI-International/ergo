@@ -8,7 +8,7 @@ use crate::abi_stable::{
     type_erase::Erased,
     StableAbi,
 };
-use crate::Value;
+use crate::IdentifiedValue;
 use cachemap::CacheMap;
 use std::convert::TryFrom;
 use std::ffi::OsString;
@@ -201,8 +201,8 @@ impl Item {
     }
 
     /// Get the sub-item for the given value.
-    pub fn value(&self, v: &Value) -> Item {
-        self.value_id(v.id())
+    pub fn value(&self, v: &IdentifiedValue) -> Item {
+        self.value_id(*v.id())
     }
 
     /// Get the sub-item for the given value id.

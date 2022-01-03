@@ -460,7 +460,7 @@ impl Hash for Expression {
     }
 }
 
-ergo_runtime::HashAsDependency!(Expression);
+ergo_runtime::ConstantDependency!(Expression);
 
 impl Expression {
     pub fn unit() -> Self {

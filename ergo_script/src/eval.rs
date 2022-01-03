@@ -13,7 +13,7 @@ use ergo_runtime::{
     metadata::{self, Source},
     nsid, traits, try_result, types,
     value::match_value,
-    Context, Dependencies, Value,
+    Context, Dependencies, IdentifiedValue, Value,
 };
 use futures::future::{join_all, BoxFuture, FutureExt};
 use log::error;
@@ -255,7 +255,7 @@ impl Captures {
     }
 }
 
-type LocalEnv = BTreeMap<Value, Value>;
+type LocalEnv = BTreeMap<IdentifiedValue, Value>;
 type SetsItem = (Option<CaptureKey>, Value, Value);
 
 #[derive(Clone)]
@@ -396,7 +396,7 @@ impl Evaluator {
                     drop(Context::eval(&mut val).await);
                     match_value! { val.clone(),
                         s@types::String(_) => {
-                            env.insert(Source::imbue(val_source.clone().with(s.into())), Source::imbue(val_source.with(types::Unit.into())));
+                            env.insert(Source::imbue(val_source.clone().with(s.into())).as_identified().await, Source::imbue(val_source.with(types::Unit.into())));
                         }
                         types::Array(arr) => {
                             // TODO should this implicitly evaluate to a unit type when the array is
@@ -418,7 +418,7 @@ impl Evaluator {
                                     has_errors = true;
                                     errs.push(val_source.with("cannot have multiple unbound merges").into_error());
                                 } else {
-                                    env.insert(Source::imbue(val_source.clone().with(types::BindRestKey.into())), val);
+                                    env.insert(Source::imbue(val_source.clone().with(types::BindRestKey.into())).as_identified().await, val);
                                     had_unbound = true;
                                 }
                             }
@@ -478,6 +478,7 @@ impl Evaluator {
 
                     for (cap, k, mut v) in new_sets {
                         Context::eval_once(&mut v).await;
+                        let k = k.as_identified().await;
 
                         if !v.is_type::<types::Unset>() {
                             env.insert(k, v.clone());
@@ -559,7 +560,7 @@ impl Evaluator {
                 let items = doc.items.clone();
                 // TODO distinguish doc comment captures from value captures?
                 let doc_deps = depends![^ast::StringItem::dependencies(&items), ^&captures];
-                let mut doc = Value::dyn_new(move || async move {
+                let mut doc = Value::dynamic(move || async move {
                         Context::spawn(EVAL_TASK_PRIORITY, |_| {}, async move {
                             ergo_runtime::error_info! {
                                 labels: [ primary(source.with("while evaluating this doc comment")) ],
@@ -609,9 +610,13 @@ impl Evaluator {
                             Ok(())
                         })).await.unwrap();
 
-                        let (new_captures, local_env): (Vec<_>, LocalEnv) = sets.into_iter().map(|(cap, k, v)| {
+                        let (new_captures, local_env_v): (Vec<_>, Vec<_>) = sets.into_iter().map(|(cap, k, v)| {
                             (cap.map(|c| (c, v.clone())), (k, v))
                         }).unzip();
+                        let mut local_env = LocalEnv::new();
+                        for (k, v) in local_env_v {
+                            local_env.insert(k.as_identified().await, v);
+                        }
                         for (cap, v) in new_captures.into_iter().filter_map(|o| o) {
                             captures.resolve(cap, v);
                         }
@@ -621,25 +626,18 @@ impl Evaluator {
                     }.boxed()
                 }, deps).into()
             },
-            Get(get) => {
-                let k = self.evaluate_with_env(get.value.clone(), captures, local_env, sets);
-                match local_env.and_then(|env| env.get(&k)) {
-                    None => Source::get(&k).with("missing binding").into_error().into(),
-                    Some(v) => v.clone()
-                }
-            },
             Set(set) => {
                 let k = self.evaluate_with_env(set.value.clone(), captures, local_env, sets);
                 let (send_result, receive_result) = futures::channel::oneshot::channel::<Value>();
 
                 let receive_result = receive_result.shared();
 
-                let mut v = Value::dyn_new(|| async move {
+                let mut v = Value::dynamic(|| async move {
                     match receive_result.await {
                         Ok(v) => v,
                         Err(_) => types::Unset.into()
                     }
-                }, depends![nsid!(ergo::get), k]);
+                }, depends![nsid!(ergo::get), k] as Dependencies);
                 Source::set(&mut v, Source::get(&k));
                 sets.add(set.capture_key.clone(), k.clone(), v);
 
@@ -664,7 +662,7 @@ impl Evaluator {
                 let deps = depends![e, ^&val_captures];
                 let e = source.clone().with(e);
                 let sets = sets.clone();
-                Value::dyn_new(move || async move {
+                Value::dynamic(move || async move {
                     Context::spawn(EVAL_TASK_PRIORITY, |_| {}, async move {
                         Ok(self.evaluate_now_with_env(e, &val_captures, None, &sets).await)
                     }).await.into()
@@ -713,6 +711,13 @@ impl Evaluator {
                 Set(_) => self.eval_with_env(source.with(e), captures, local_env, sets).await,
                 _ => {
                     let mut val = crate::match_expression!(e,
+                        Get(get) => {
+                            let k = self.eval_with_env(get.value.clone(), captures, local_env, sets).await.as_identified().await;
+                            match local_env.and_then(|env| env.get(&k)) {
+                                None => Source::get(&k).with("missing binding").into_error().into(),
+                                Some(v) => v.clone()
+                            }
+                        },
                         CompoundString(s) => {
                             match self.evaluate_string_items(s.items.clone(), captures, local_env, sets).await {
                                 Err(ErrorOrDiagnostic::Error(e)) => return e.into(),

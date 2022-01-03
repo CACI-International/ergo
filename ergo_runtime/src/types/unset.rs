@@ -5,15 +5,15 @@ use crate::abi_stable::StableAbi;
 use crate::metadata::Source;
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
-use crate::{depends, Dependencies, TypedValue};
+use crate::{depends, DependenciesConstant, GetDependenciesConstant, TypedValue};
 
 /// The type indicating a value is unset.
 #[derive(Clone, Copy, Debug, ErgoType, PartialEq, Hash, Eq, StableAbi)]
 #[repr(C)]
 pub struct Unset;
 
-impl From<&'_ Unset> for Dependencies {
-    fn from(_: &'_ Unset) -> Self {
+impl GetDependenciesConstant for Unset {
+    fn get_depends(&self) -> DependenciesConstant {
         depends![Unset::ergo_type()]
     }
 }
