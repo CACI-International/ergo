@@ -337,6 +337,14 @@ mod test {
         )
     }
 
+    // For this to work, block eval needs the `eval_with_env` to change to `evaluate_now_with_env`,
+    // but that changes the semantics of blocks.
+    #[test]
+    #[ignore = "implementation up in the air"]
+    fn block_indirect_get() -> Result<(), String> {
+        script_eval_to(":a = name, ::a = b, ::a", SRString("b"))
+    }
+
     mod doc_comment {
         use super::*;
 
@@ -846,8 +854,14 @@ mod test {
         let runtime = make_runtime()?;
         let mut a = script_eval(&runtime, a)?;
         let mut b = script_eval(&runtime, b)?;
-        runtime.block_on(Context::eval(&mut a)).unwrap();
-        runtime.block_on(Context::eval(&mut b)).unwrap();
+        let a = runtime.block_on(async {
+            Context::eval(&mut a).await.unwrap();
+            a.as_identified().await
+        });
+        let b = runtime.block_on(async {
+            Context::eval(&mut b).await.unwrap();
+            b.as_identified().await
+        });
         assert!(a.id() == b.id());
         Ok(())
     }
@@ -856,6 +870,8 @@ mod test {
         let runtime = make_runtime().unwrap();
         let a = script_eval(&runtime, a).unwrap();
         let b = script_eval(&runtime, b).unwrap();
+        let a = runtime.block_on(a.as_identified());
+        let b = runtime.block_on(b.as_identified());
         assert!(a.id() == b.id());
     }
 
@@ -922,7 +938,8 @@ mod test {
                             Err("map length mismatch".into())
                         } else {
                             for (k, e) in entries.iter() {
-                                let k: Value = types::String::from(*k).into();
+                                let k: ergo_runtime::IdentifiedValue =
+                                    types::String::from(*k).into();
                                 let v = map.remove(&k).ok_or("missing expected key")?;
                                 val_match(v, e.clone()).await?;
                             }

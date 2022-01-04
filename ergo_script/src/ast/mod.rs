@@ -1023,7 +1023,7 @@ struct ExpressionCompiler<'a> {
 //    _cannot_ rely on `:x` nor `y::x`.
 //
 // 2. We need to be able to select the subset of captures needed for a subexpression. This is
-//    essential to correctly (and efficiently) calculating the identities of subexpressions, taking
+//    essential to correctly (and efficiently) calculate the identities of subexpressions, taking
 //    into account the captured (possibly evaluated) values. Importantly, if a capture _is_
 //    evaluated, any sub-captures of that capture should not be included. For example, in `hello
 //    (!something (!a b c))`, if `!something (!a b c)` has been evaluated to a value, the identity
@@ -1041,7 +1041,7 @@ struct ExpressionCompiler<'a> {
 // introduced captures. The set of free captures are stored with the expression when a new capture
 // is created.
 //
-// To satisfy (2), it is best to keep a tree structure to captures (so we can implicitly disregard
+// To satisfy (2), it is best to keep a tree structure of captures (so we can implicitly disregard
 // sub-captures when a particular capture has been evaluated), so we also must track the set of
 // direct captures of each _expression_ (not capture), since we must use them to determine which
 // captures should be retained as we evaluate expressions. When a new capture is introduced, the

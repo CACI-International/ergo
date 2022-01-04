@@ -69,7 +69,7 @@ impl PartialEq for KeySet {
     }
 }
 
-const BITS: KeyType = Storage::MIN.count_zeros() as KeyType;
+const BITS: KeyType = Storage::BITS as KeyType;
 
 impl KeySet {
     pub fn clear(&mut self) {

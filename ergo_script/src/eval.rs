@@ -707,7 +707,6 @@ impl Evaluator {
                 DocComment(_) => self.eval_with_env(source.with(e), captures, local_env, sets).await,
                 Capture(_) => self.eval_with_env(source.with(e), captures, local_env, sets).await,
                 Function(_) => self.eval_with_env(source.with(e), captures, local_env, sets).await,
-                Get(_) => self.eval_with_env(source.with(e), captures, local_env, sets).await,
                 Set(_) => self.eval_with_env(source.with(e), captures, local_env, sets).await,
                 _ => {
                     let mut val = crate::match_expression!(e,
