@@ -31,9 +31,24 @@ impl Context {
 ///
 /// # Safety
 /// It is up to the programmer to ensure that the keys used are from a single Context.
-#[derive(Debug, Default, Clone, Eq)]
+#[derive(Default, Clone, Eq)]
 pub struct KeySet {
     contains: Vec<Storage>,
+}
+
+impl std::fmt::Debug for KeySet {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "KeySet {{")?;
+        let mut first = true;
+        for k in self.iter() {
+            if !first {
+                write!(f, ",")?;
+            }
+            first = false;
+            k.0.fmt(f)?;
+        }
+        write!(f, "}}")
+    }
 }
 
 struct ZipSetIter<'a> {
@@ -69,8 +84,29 @@ impl PartialEq for KeySet {
     }
 }
 
+impl PartialOrd for KeySet {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for KeySet {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.iter().cmp(other.iter())
+    }
+}
+
+impl std::hash::Hash for KeySet {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        for k in self.iter() {
+            k.hash(h);
+        }
+    }
+}
+
 const BITS: KeyType = Storage::BITS as KeyType;
 
+#[allow(dead_code)]
 impl KeySet {
     pub fn clear(&mut self) {
         self.contains.clear()
@@ -148,6 +184,18 @@ impl KeySet {
         for (offset, val) in other.contains.iter().take(self.contains.len()).enumerate() {
             self.contains[offset] &= !val;
         }
+    }
+}
+
+impl std::ops::BitOrAssign<&'_ Self> for KeySet {
+    fn bitor_assign(&mut self, other: &'_ Self) {
+        self.union_with(other);
+    }
+}
+
+impl std::ops::BitOrAssign<&'_ KeySet> for &'_ mut KeySet {
+    fn bitor_assign(&mut self, other: &'_ KeySet) {
+        self.union_with(other);
     }
 }
 

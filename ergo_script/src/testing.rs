@@ -3,10 +3,10 @@
 use ergo_runtime::{
     traits, type_system::ErgoType, Context, IdentifiedValue, RResult, Result, Value,
 };
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 pub struct Test {
-    env: BTreeMap<String, Value>,
+    env: HashMap<String, Value>,
     runtime: crate::Runtime,
 }
 

@@ -28,19 +28,95 @@ pub struct Value {
     data: ValueData,
 }
 
-// TODO replace with method from std
-trait UnwrapUnchecked {
-    type Output;
-    unsafe fn unwrap_unchecked_(self) -> Self::Output;
+/// A value's identity information with accompanying evaluation marker.
+#[derive(Debug, Clone, Copy, Eq, StableAbi)]
+#[repr(C)]
+pub struct EvalForId<T> {
+    pub id: T,
+    pub should_eval: bool,
 }
 
-impl<T> UnwrapUnchecked for Option<T> {
-    type Output = T;
+impl<T> EvalForId<T> {
+    pub fn set(id: T) -> Self {
+        EvalForId {
+            id,
+            should_eval: true,
+        }
+    }
 
-    unsafe fn unwrap_unchecked_(self) -> T {
-        match self {
-            Some(v) => v,
-            None => std::hint::unreachable_unchecked(),
+    pub fn clear(id: T) -> Self {
+        EvalForId {
+            id,
+            should_eval: false,
+        }
+    }
+
+    pub fn map<U, F: FnOnce(T) -> U>(self, f: F) -> EvalForId<U> {
+        EvalForId {
+            id: f(self.id),
+            should_eval: self.should_eval,
+        }
+    }
+}
+
+impl<T> std::borrow::Borrow<T> for EvalForId<T> {
+    fn borrow(&self) -> &T {
+        &self.id
+    }
+}
+
+impl<T: PartialEq> PartialEq for EvalForId<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl<T: Ord> Ord for EvalForId<T> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.id.cmp(&other.id)
+    }
+}
+
+impl<T: PartialOrd> PartialOrd for EvalForId<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.id.partial_cmp(&other.id)
+    }
+}
+
+impl<T: std::hash::Hash> std::hash::Hash for EvalForId<T> {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        self.id.hash(h);
+    }
+}
+
+pub type Identity = EvalForId<u128>;
+
+impl std::iter::Sum for Identity {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+        let mut h = HashFn::default();
+        let mut should_eval = false;
+        for i in iter {
+            std::hash::Hash::hash(&i.id, &mut h);
+            should_eval |= i.should_eval;
+        }
+        Identity {
+            id: h.finish_ext(),
+            should_eval,
+        }
+    }
+}
+
+impl<'a> std::iter::Sum<&'a Self> for Identity {
+    fn sum<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
+        let mut h = HashFn::default();
+        let mut should_eval = false;
+        for i in iter {
+            std::hash::Hash::hash(&i.id, &mut h);
+            should_eval |= i.should_eval;
+        }
+        Identity {
+            id: h.finish_ext(),
+            should_eval,
         }
     }
 }
@@ -51,42 +127,64 @@ mod value_id {
 
     #[derive(StableAbi)]
     #[repr(C)]
-    union ValueIdState {
+    union State {
         id: U128,
-        deps: std::mem::ManuallyDrop<Dependencies>,
+        deps: std::mem::ManuallyDrop<future::BoxFuture<'static, EvalForId<U128>>>,
     }
 
-    #[derive(Debug, StableAbi)]
+    const ACCESSED: u8 = 1 << 0;
+    const ID_SET: u8 = 1 << 1;
+    const EVAL_ID: u8 = 1 << 2;
+
+    const MASK_STATE: u8 = ACCESSED | ID_SET;
+
+    #[derive(StableAbi)]
     #[repr(C)]
     pub struct ValueId {
-        state: std::cell::UnsafeCell<ValueIdState>,
+        state: std::cell::UnsafeCell<State>,
         // Zeroth bit indicates whether the value has ever been accessed before.
         // First bit indicates whether `state` has `id` (and implies the zeroth bit).
+        // Second bit indicates whether the value should be evaluated to get an identity.
         tag: AtomicU8,
+    }
+
+    impl std::fmt::Debug for ValueId {
+        fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            let v = self.tag.load(Ordering::Acquire);
+            match v & MASK_STATE {
+                0 => write!(f, "<unaccessed>"),
+                ACCESSED => write!(f, "<evaluating>"),
+                MASK_STATE => write!(f, "{:032x}", unsafe {
+                    self.state.get().as_ref().unwrap_unchecked().id.as_ref()
+                }),
+                _ => panic!("invalid value id state"),
+            }?;
+            if v & EVAL_ID != 0 {
+                write!(f, " (should_eval)")?;
+            }
+            Ok(())
+        }
     }
 
     unsafe impl Sync for ValueId {}
 
-    // Box this future to break the async loop between Dependencies.hash and Value.hash
-    fn calc_id(deps: &Dependencies) -> futures::future::BoxFuture<u128> {
-        futures::future::FutureExt::boxed(async move {
-            let mut h = HashFn::default();
-            deps.hash(&mut h).await;
-            h.finish_ext()
-        })
-    }
-
     impl ValueId {
-        pub fn new(deps: Dependencies) -> Self {
+        pub fn new<Fut: std::future::Future<Output = Identity> + Send + 'static>(id: Fut) -> Self {
             ValueId {
-                state: std::cell::UnsafeCell::new(ValueIdState {
-                    deps: std::mem::ManuallyDrop::new(deps),
+                state: std::cell::UnsafeCell::new(State {
+                    deps: std::mem::ManuallyDrop::new(future::BoxFuture::new(async move {
+                        id.await.map(|v| v.into())
+                    })),
                 }),
-                tag: AtomicU8::new(0b00),
+                tag: AtomicU8::new(0),
             }
         }
 
-        pub fn constant(deps: DependenciesConstant) -> Self {
+        pub fn from_deps(deps: Dependencies) -> Self {
+            Self::new(async move { deps.id().await })
+        }
+
+        pub fn from_constant_deps(deps: DependenciesConstant) -> Self {
             Self::id({
                 let mut h = HashFn::default();
                 std::hash::Hash::hash(&deps, &mut h);
@@ -95,37 +193,57 @@ mod value_id {
         }
 
         pub async fn immediate(deps: Dependencies) -> Self {
-            Self::id(calc_id(&deps).await)
+            let id = deps.id().await;
+            let mut ret = Self::id(id.id);
+            ret.set_eval_id(id.should_eval);
+            ret
         }
 
         pub fn id(id: u128) -> Self {
             ValueId {
-                state: std::cell::UnsafeCell::new(ValueIdState { id: id.into() }),
-                tag: AtomicU8::new(0b11),
+                state: std::cell::UnsafeCell::new(State { id: id.into() }),
+                tag: AtomicU8::new(ID_SET | ACCESSED),
             }
         }
 
         pub fn try_get(&self) -> Option<&u128> {
-            (self.tag.load(Ordering::Acquire) == 0b11).then(|| {
-                // Safety: if the tag is 0b11, the state _must_ be a U128
-                unsafe { self.state.get().as_ref().unwrap_unchecked_().id.as_ref() }
+            (self.tag.load(Ordering::Acquire) & ID_SET != 0).then(|| {
+                // Safety: if the tag has ID_SET, the state _must_ be a U128
+                unsafe { self.state.get().as_ref().unwrap_unchecked().id.as_ref() }
             })
         }
 
-        pub async fn get(&self) -> u128 {
+        pub fn set_eval_id(&mut self, eval_id: bool) {
+            if eval_id {
+                *self.tag.get_mut() |= EVAL_ID;
+            } else {
+                *self.tag.get_mut() &= !EVAL_ID;
+            }
+        }
+
+        fn eval_id(&self) -> bool {
+            self.tag.load(Ordering::Relaxed) & EVAL_ID != 0
+        }
+
+        /// Returns the id as well as a bool indicating whether the value should be evaluated to
+        /// get a more accurate id.
+        pub async fn get(&self) -> Identity {
             let mut spins = 0;
             loop {
-                match self.tag.fetch_or(0b01, Ordering::Acquire) {
-                    0b00 => {
+                match self.tag.fetch_or(ACCESSED, Ordering::Acquire) & MASK_STATE {
+                    0 => {
                         // Safety: if the tag is 0b00, the state must be deps
-                        let state = unsafe { self.state.get().as_mut().unwrap_unchecked_() };
+                        let state = unsafe { self.state.get().as_mut().unwrap_unchecked() };
                         let deps = unsafe { std::mem::ManuallyDrop::take(&mut state.deps) };
-                        let id = calc_id(&deps).await;
-                        state.id = id.into();
-                        self.tag.store(0b11, Ordering::Release);
+                        let id = deps.await;
+                        state.id = id.id;
+                        if id.should_eval {
+                            self.tag.fetch_or(EVAL_ID, Ordering::Relaxed);
+                        }
+                        self.tag.fetch_or(ID_SET, Ordering::Release);
                         break;
                     }
-                    0b01 => {
+                    ACCESSED => {
                         std::hint::spin_loop();
                         spins += 1;
                         if spins == 50 {
@@ -133,18 +251,23 @@ mod value_id {
                             spins = 0;
                         }
                     }
-                    0b11 => break,
+                    MASK_STATE => break,
                     _ => panic!("invalid value id state"),
                 }
             }
-            // Safety: the tag must be 0b11, so the state _must_ be a U128
-            unsafe { self.state.get().as_ref().unwrap_unchecked_().id }.into()
+            debug_assert!(self.tag.load(Ordering::Relaxed) & MASK_STATE == MASK_STATE);
+            // Safety: the tag must have ID_SET, so the state _must_ be a U128
+            let id = unsafe { self.state.get().as_ref().unwrap_unchecked().id }.into();
+            Identity {
+                id,
+                should_eval: self.eval_id(),
+            }
         }
     }
 
     impl Drop for ValueId {
         fn drop(&mut self) {
-            if self.tag.load(Ordering::Acquire) == 0b00 {
+            if self.tag.load(Ordering::Acquire) & MASK_STATE == 0 {
                 // Safety: if the tag is 0b00, the state must be deps
                 unsafe { std::mem::ManuallyDrop::drop(&mut self.state.get_mut().deps) };
             }
@@ -159,18 +282,26 @@ mod value_id {
 
     impl From<Dependencies> for ValueId {
         fn from(deps: Dependencies) -> Self {
-            Self::new(deps)
+            Self::from_deps(deps)
         }
     }
 
     impl From<DependenciesConstant> for ValueId {
         fn from(deps: DependenciesConstant) -> Self {
-            Self::constant(deps)
+            Self::from_constant_deps(deps)
+        }
+    }
+
+    impl<T: Into<ValueId>> From<EvalForId<T>> for ValueId {
+        fn from(s: EvalForId<T>) -> Self {
+            let mut v = s.id.into();
+            v.set_eval_id(s.should_eval);
+            v
         }
     }
 }
 
-use value_id::ValueId;
+pub use value_id::ValueId;
 
 impl Value {
     /// Create a new evaluated Value with the given identity.
@@ -232,20 +363,30 @@ impl Value {
         }
     }
 
-    /// Get the value's identity.
-    pub async fn id(&self) -> u128 {
+    /// Get the value's immediate identity.
+    pub async fn immediate_id(&self) -> Identity {
         self.id.get().await
     }
 
-    /// Try to get the value's identity, if immediately available.
-    pub fn try_id(&self) -> Option<&u128> {
+    /// Try to get the value's immediate identity, if available.
+    pub fn try_immediate_id(&self) -> Option<&u128> {
         self.id.try_get()
     }
 
-    /// Hash the value based on identity.
-    pub async fn hash<H: std::hash::Hasher>(&self, hasher: &mut H) {
-        use std::hash::Hash;
-        self.id().await.hash(hasher);
+    /// Get the value's identity, evaluating the value as necessary to get a more accurate
+    /// identity.
+    pub async fn eval_id(&mut self) -> Identity {
+        while self.immediate_id().await.should_eval && !self.is_evaluated() {
+            self.eval_once().await;
+        }
+        self.immediate_id().await
+    }
+
+    /// Get the value's identity, evaluating a clone of the value as necessary to get a more
+    /// accurate identity.
+    pub async fn id(&self) -> u128 {
+        let mut v = self.clone();
+        v.eval_id().await.id
     }
 
     /// Get the value's type, if evaluated.
@@ -355,11 +496,6 @@ impl Value {
             ValueData::Typed { .. } => true,
             _ => false,
         }
-    }
-
-    /// Cause an error to occur if this value is ever evaluated.
-    pub fn unevaluated(&mut self) {
-        self.data = ValueData::None;
     }
 }
 
@@ -652,14 +788,19 @@ impl<T> std::fmt::Debug for TypedValue<T> {
 pub struct IdentifiedValue(Value);
 
 impl IdentifiedValue {
-    pub async fn from_value(v: Value) -> Self {
-        v.id().await;
+    pub async fn from_value(mut v: Value) -> Self {
+        v.eval_id().await;
+        IdentifiedValue(v)
+    }
+
+    pub async fn from_value_immediate(v: Value) -> Self {
+        v.immediate_id().await;
         IdentifiedValue(v)
     }
 
     pub fn id(&self) -> &u128 {
         // Safety: you cannot construct this type without first fetching the id
-        unsafe { self.0.try_id().unwrap_unchecked_() }
+        unsafe { self.0.try_immediate_id().unwrap_unchecked() }
     }
 }
 
@@ -741,7 +882,7 @@ where
 {
     fn from(v: T) -> IdentifiedValue {
         let val = v.into_value();
-        assert!(val.try_id().is_some());
+        assert!(val.try_immediate_id().is_some());
         IdentifiedValue(val)
     }
 }

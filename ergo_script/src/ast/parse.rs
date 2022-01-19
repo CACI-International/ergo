@@ -96,6 +96,8 @@ pub enum Error<TreeError> {
     BadAttribute,
     /// A comment was in an invalid position.
     BadComment,
+    /// A bang was in an invalid position.
+    BadBang,
 }
 
 impl<E: fmt::Display> fmt::Display for Error<E> {
@@ -109,6 +111,7 @@ impl<E: fmt::Display> fmt::Display for Error<E> {
                 "attributes and doc comments can only be within blocks or brackets preceding an expression or binding, or directly preceding a single expression"
             ),
             Error::BadComment => write!(f, "comments are not valid in this context"),
+            Error::BadBang => write!(f, "not a pattern expression"),
         }
     }
 }
@@ -378,7 +381,7 @@ fn to_expression<E>(
                 // Bang in a pattern interprets as a non-pattern expression
                 to_expression(ctx.pattern(false), *t)
             } else {
-                Ok(source.with(Expression::force(to_expression(ctx, *t)?)))
+                Err(vec![source.with(Error::BadBang)])
             }
         }
         Tree::Caret(_) => {
@@ -737,35 +740,6 @@ mod test {
     }
 
     #[test]
-    fn force_command() {
-        assert_single(
-            "!echo howdy",
-            E::force(src(E::command(
-                src(E::get(s("echo"))),
-                command_items![s("howdy")],
-            ))),
-        );
-        assert_single(
-            "! echo howdy",
-            E::force(src(E::command(
-                src(E::get(s("echo"))),
-                command_items![s("howdy")],
-            ))),
-        );
-    }
-
-    #[test]
-    fn force_arg() {
-        assert_single(
-            "echo !howdy",
-            E::command(
-                src(E::get(s("echo"))),
-                command_items![src(E::force(s("howdy")))],
-            ),
-        );
-    }
-
-    #[test]
     fn command_eq() {
         assert_single(
             "hello (name=world)",
@@ -1075,12 +1049,12 @@ mod test {
 
     #[test]
     fn bad_caret() {
-        assert_err("!^hi", Error::BadCaret);
+        assert_err("^^hi", Error::BadCaret);
     }
 
     #[test]
     fn bad_comment() {
-        assert_err("!#hi", Error::BadComment);
+        assert_err("^#hi", Error::BadComment);
     }
 
     #[test]
@@ -1091,7 +1065,6 @@ mod test {
     fn assert_single(s: &str, expected: Expression) {
         let expr = single(s);
         dbg!(&expr);
-        assert!(expr.id_eq(&expected));
         assert!(expr == expected);
     }
 

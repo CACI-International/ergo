@@ -2,7 +2,7 @@
 
 pub use ergo_runtime::source::Source;
 use ergo_runtime::{Context, Error, Value};
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 mod ast;
 mod base;
@@ -47,6 +47,7 @@ impl Runtime {
             ("doc", base::doc()),
             ("bind", base::bind()),
             ("unset", base::unset()),
+            ("force", base::force()),
         ]
         .into_iter()
         .map(|(k, v)| (k.into(), v))
@@ -172,7 +173,7 @@ impl Drop for Runtime {
 pub struct Script {
     ast: ast::Expr,
     captures: eval::Captures,
-    top_level_env: BTreeMap<String, Value>,
+    top_level_env: HashMap<String, Value>,
     lint_messages: Vec<Source<String>>,
     backtrace: bool,
 }
@@ -194,12 +195,12 @@ impl Script {
     }
 
     /// Set the top-level environment.
-    pub fn top_level_env(&mut self, env: BTreeMap<String, Value>) {
+    pub fn top_level_env(&mut self, env: HashMap<String, Value>) {
         self.top_level_env = env;
     }
 
     /// Extend the top-level environment.
-    pub fn extend_top_level_env(&mut self, env: BTreeMap<String, Value>) {
+    pub fn extend_top_level_env(&mut self, env: HashMap<String, Value>) {
         self.top_level_env.extend(env);
     }
 
@@ -239,8 +240,7 @@ impl Script {
         }
 
         let evaluator = Evaluator { backtrace };
-        captures.resolve_string_gets(top_level_env)?;
-        captures.evaluate_ready(evaluator).await;
+        captures.resolve_string_gets(&top_level_env)?;
         Ok(evaluator.evaluate(ast, &captures))
     }
 }
@@ -494,19 +494,6 @@ mod test {
     }
 
     #[test]
-    fn forced_function_capture() -> Result<(), String> {
-        script_eval_to("b = {a = 1}; f = !(fn :x -> b::x); f a", SRString("1"))
-    }
-
-    #[test]
-    fn forced_expr_capture() -> Result<(), String> {
-        script_eval_to(
-            "b = {a = 1}; q = fn :p -> :p; f = !q (fn :x -> b::x); f a",
-            SRString("1"),
-        )
-    }
-
-    #[test]
     fn quote_compound_string() -> Result<(), String> {
         script_eval_to("x = b, \"a ^x\"", SRString("a b"))?;
         script_eval_to("x = b, y = c, \"a^x^y\"", SRString("abc"))?;
@@ -514,14 +501,8 @@ mod test {
     }
 
     #[test]
-    fn forced_compound_string() -> Result<(), String> {
-        script_eval_id_eq(r#" !"a^"b"" "#, "ab")
-    }
-
-    #[test]
-    #[should_panic]
     fn compound_string_ids_differ() {
-        script_parse_id_eq("x = b, \"a ^x\"", "x = b, \"c ^x\"");
+        script_parse_id_ne("x = b, \"a ^x\"", "x = b, \"c ^x\"");
     }
 
     #[test]
@@ -774,18 +755,18 @@ mod test {
         #[test]
         fn bind_command() -> Result<(), String> {
             script_eval_to(
-                ":keyto = pat :key -> :v -> { !bind :key v:key }; :m = {:key = hi}; fn (keyto hi) -> () |> :m",
+                ":keyto = pat :key -> {key = !:key} -> (); :m = {:key = hi}; fn (keyto hi) -> () |> :m",
                 SRUnit,
             )?;
             script_eval_to(
-                ":keyto = pat :key -> :v -> { !bind :key v:key }; :m = {:key = hi}; keyto :b = :m; :b",
+                ":keyto = pat :key -> {key = !:key} -> (); :m = {:key = hi}; keyto :b = :m; :b",
                 SRString("hi"),
             )?;
             script_fail(
-                ":keyto = pat :key -> :v -> { !bind :key v:key }; :m = {:key = hi}; fn (keyto bye) -> () |> :m",
+                ":keyto = pat :key -> {key = !:key} -> (); :m = {:key = hi}; fn (keyto bye) -> () |> :m",
             )?;
             script_fail(
-                ":keyto = pat :key -> :v -> { !bind :key v:key }; :m = {:notkey = hi}; fn (keyto hi) -> () |> :m",
+                ":keyto = pat :key -> {key = !:key} -> (); :m = {:notkey = hi}; fn (keyto hi) -> () |> :m",
             )?;
             Ok(())
         }
@@ -810,12 +791,12 @@ mod test {
         #[test]
         fn function_with_captures() -> Result<(), String> {
             script_eval_id_eq(
-                "k = fn :b -> :b; fn :x -> !k :x",
-                "k = fn :b -> :b; hi = !k hi; fn :x -> !k :x",
+                "k = fn :b -> :b; fn :x -> k :x",
+                "k = fn :b -> :b; hi = k hi; fn :x -> k :x",
             )?;
             script_eval_id_eq(
                 "k = fn :b -> :b; r = fn :x -> :x; fn :x -> r :x",
-                "k = fn :b -> :b; hi = !k hi; r = fn :x -> :x; fn :x -> r :x",
+                "k = fn :b -> :b; hi = k hi; r = fn :x -> :x; fn :x -> r :x",
             )?;
             Ok(())
         }
@@ -823,9 +804,54 @@ mod test {
         #[test]
         fn same_capture_expressions() -> Result<(), String> {
             script_eval_to(
-                "k = fn :a -> :a; p = fn :x -> !k :x; q = fn :x -> !k :x; [p hi, q hi]",
+                "k = fn :a -> :a; p = fn :x -> k :x; q = fn :x -> k :x; [p hi, q hi]",
                 SRArray(&[SRString("hi"), SRString("hi")]),
             )
+        }
+    }
+
+    mod force {
+        use super::*;
+
+        #[test]
+        fn value_eval() -> Result<(), String> {
+            script_eval_id_eq("force my-string", "my-string")
+        }
+
+        #[test]
+        fn value_id() {
+            // Once is a String value, the other is a syntax string
+            script_parse_id_ne("force my-string", "my-string");
+        }
+
+        #[test]
+        fn equivalent_value() {
+            script_parse_id_eq("force { x = a; :x }", "force a");
+        }
+
+        #[test]
+        fn fn_inherit() {
+            script_parse_id_eq(
+                "f = fn :x -> force :x; f a",
+                "f = fn :x -> force :x; force a",
+            );
+        }
+
+        #[test]
+        fn fn_no_inherit() {
+            script_parse_id_ne("f = fn _ -> force a; f ()", "f = fn _ -> force a; force a");
+        }
+
+        #[test]
+        fn block_dependency() {
+            script_parse_id_eq("force a; ()", "force a; ()");
+            script_parse_id_ne("force a; ()", "force b; ()");
+        }
+
+        #[test]
+        fn map_dependency() {
+            script_parse_id_eq("force a; x = x", "force a; x = x");
+            script_parse_id_ne("force a; x = x", "force b; x = x");
         }
     }
 
@@ -862,7 +888,7 @@ mod test {
             Context::eval(&mut b).await.unwrap();
             b.as_identified().await
         });
-        assert!(a.id() == b.id());
+        assert_eq!(a.id(), b.id());
         Ok(())
     }
 
@@ -872,7 +898,16 @@ mod test {
         let b = script_eval(&runtime, b).unwrap();
         let a = runtime.block_on(a.as_identified());
         let b = runtime.block_on(b.as_identified());
-        assert!(a.id() == b.id());
+        assert_eq!(a.id(), b.id());
+    }
+
+    fn script_parse_id_ne(a: &str, b: &str) {
+        let runtime = make_runtime().unwrap();
+        let a = script_eval(&runtime, a).unwrap();
+        let b = script_eval(&runtime, b).unwrap();
+        let a = runtime.block_on(a.as_identified());
+        let b = runtime.block_on(b.as_identified());
+        assert_ne!(a.id(), b.id());
     }
 
     trait ExpectOk {

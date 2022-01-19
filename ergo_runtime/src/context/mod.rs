@@ -228,7 +228,7 @@ impl Context {
             let mut set = std::collections::HashSet::<u128>::default();
             while !value.is_evaluated() {
                 sources.push(crate::metadata::Source::get(&value));
-                if !set.insert(value.id().await) {
+                if !set.insert(value.immediate_id().await.id) {
                     *value = crate::error! {
                         labels: [
                             primary(crate::metadata::Source::get(&value).with("while evaluating this value"))

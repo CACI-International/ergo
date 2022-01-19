@@ -4,7 +4,7 @@
 //! tracks source locations for values so that when an error occurs, useful error information can
 //! be provided.
 
-use crate::ast::{self, CaptureKey, CaptureSet, Expr};
+use crate::ast::{self, CaptureKey, CaptureSet, Expr, Subexpressions};
 use ergo_runtime::abi_stable::external_types::RMutex;
 use ergo_runtime::Result;
 use ergo_runtime::{
@@ -12,13 +12,12 @@ use ergo_runtime::{
     error::ErrorOrDiagnostic,
     metadata::{self, Source},
     nsid, traits, try_result, types,
-    value::match_value,
-    Context, Dependencies, IdentifiedValue, Value,
+    value::{match_value, ValueId},
+    Context, IdentifiedValue, Value,
 };
-use futures::future::{join_all, BoxFuture, FutureExt};
+use futures::future::{BoxFuture, FutureExt};
 use log::error;
-use std::collections::BTreeMap;
-use std::sync::atomic::AtomicUsize;
+use std::collections::{BTreeMap, HashMap};
 
 pub const EVAL_TASK_PRIORITY: u32 = 100;
 
@@ -27,136 +26,32 @@ pub struct Evaluator {
     pub backtrace: bool,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Capture {
-    Expr {
-        expression: Expr,
-        captures_left: AtomicUsize,
-        needed_by: CaptureSet,
-    },
-    Needed {
-        needed_by: CaptureSet,
-    },
+    Expr(Expr),
     Evaluated(Value),
-}
-
-impl Clone for Capture {
-    fn clone(&self) -> Self {
-        match self {
-            Capture::Expr {
-                expression,
-                captures_left,
-                needed_by,
-            } => Capture::Expr {
-                expression: expression.clone(),
-                captures_left: AtomicUsize::new(
-                    captures_left.load(std::sync::atomic::Ordering::Relaxed),
-                ),
-                needed_by: needed_by.clone(),
-            },
-            Capture::Needed { needed_by } => Capture::Needed {
-                needed_by: needed_by.clone(),
-            },
-            Capture::Evaluated(v) => Capture::Evaluated(v.clone()),
-        }
-    }
-}
-
-impl Default for Capture {
-    fn default() -> Self {
-        Capture::Needed {
-            needed_by: Default::default(),
-        }
-    }
-}
-
-impl Capture {
-    fn add_needed(&mut self, key: CaptureKey) {
-        match self {
-            Capture::Expr { needed_by, .. } | Capture::Needed { needed_by } => {
-                needed_by.insert(key)
-            }
-            _ => (),
-        }
-    }
-
-    pub fn needs(&self) -> Option<&CaptureSet> {
-        match self {
-            Capture::Expr { expression, .. } => expression.captures(),
-            _ => None,
-        }
-    }
-}
-
-impl From<&Capture> for Dependencies {
-    fn from(capture: &Capture) -> Self {
-        match capture {
-            Capture::Expr { expression, .. } => depends![expression],
-            Capture::Evaluated(v) => depends![v],
-            Capture::Needed { .. } => depends![],
-        }
-    }
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct Captures {
-    // The use of a BTreeMap is important so that dependencies can incorporate the relative capture key
-    // order such that dependencies that swap values will end up differently (without depending on the
-    // capture key values themselves, which may change from unrelated code).
-    inner: BTreeMap<CaptureKey, Capture>,
-    ready: CaptureSet,
+    inner: HashMap<CaptureKey, Capture>,
 }
 
-impl std::iter::FromIterator<(CaptureKey, (Expr, CaptureSet))> for Captures {
+impl std::iter::FromIterator<(CaptureKey, Expr)> for Captures {
     fn from_iter<T>(iter: T) -> Self
     where
-        T: IntoIterator<Item = (CaptureKey, (Expr, CaptureSet))>,
+        T: IntoIterator<Item = (CaptureKey, Expr)>,
     {
-        let mut ready = CaptureSet::default();
-
-        let (mut inner, needs): (BTreeMap<_, _>, Vec<_>) = iter
-            .into_iter()
-            .map(|(k, (expression, needs))| {
-                let captures_left = needs.len();
-                if captures_left == 0 {
-                    ready.insert(k);
-                }
-                let entry = (
-                    k,
-                    Capture::Expr {
-                        expression,
-                        captures_left: captures_left.into(),
-                        needed_by: Default::default(),
-                    },
-                );
-                (entry, (k, needs))
-            })
-            .unzip();
-        // Add backward needs
-        for (k, needs) in needs {
-            for n in needs.iter() {
-                inner.entry(n).or_default().add_needed(k);
-            }
+        Captures {
+            inner: iter
+                .into_iter()
+                .map(|(k, e)| (k, Capture::Expr(e)))
+                .collect(),
         }
-        Captures { inner, ready }
-    }
-}
-
-impl From<&Captures> for Dependencies {
-    fn from(captures: &Captures) -> Dependencies {
-        depends![^captures.values()]
     }
 }
 
 impl Captures {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn values(&self) -> std::collections::btree_map::Values<'_, CaptureKey, Capture> {
-        self.inner.values()
-    }
-
     pub fn get(&self, key: CaptureKey) -> Option<&Value> {
         self.inner.get(&key).and_then(|cap| match cap {
             Capture::Evaluated(val) => Some(val),
@@ -165,49 +60,37 @@ impl Captures {
     }
 
     pub fn subset(&self, subset: &CaptureSet) -> Self {
-        let mut ret = Captures::new();
-        let mut to_check: CaptureSet = self
-            .inner
-            .keys()
-            .filter(|k| subset.contains(**k))
-            .copied()
-            .collect();
-        while let Some(k) = to_check.pop() {
-            if !ret.inner.contains_key(&k) {
-                if let Some(v) = self.inner.get(&k) {
-                    ret.inner.insert(k.clone(), v.clone());
-                    if let Some(set) = v.needs() {
-                        to_check.union_with(set);
+        Captures {
+            inner: self
+                .inner
+                .iter()
+                .filter_map(|(k, v)| {
+                    if subset.contains(*k) {
+                        Some((*k, v.clone()))
+                    } else {
+                        None
                     }
-                }
-            }
+                })
+                .collect(),
         }
-        ret
+    }
+
+    pub fn ready(&self, subset: &CaptureSet) -> bool {
+        subset.iter().all(|k| self.get(k).is_some())
     }
 
     pub fn resolve(&mut self, key: CaptureKey, value: Value) {
         if let Some(v) = self.inner.insert(key, Capture::Evaluated(value)) {
-            match v {
-                Capture::Evaluated(_) => panic!("capture resolved more than once"),
-                Capture::Expr { needed_by, .. } | Capture::Needed { needed_by, .. } => {
-                    for key in needed_by.iter() {
-                        if let Some(Capture::Expr { captures_left, .. }) = self.inner.get_mut(&key)
-                        {
-                            if captures_left.fetch_sub(1, std::sync::atomic::Ordering::Relaxed) == 1
-                            {
-                                self.ready.insert(key);
-                            }
-                        }
-                    }
-                }
+            if let Capture::Evaluated(_) = v {
+                panic!("capture resolved more than once");
             }
         }
     }
 
-    pub fn resolve_string_gets(&mut self, with: BTreeMap<String, Value>) -> Result<()> {
+    pub fn resolve_string_gets(&mut self, with: &HashMap<String, Value>) -> Result<()> {
         let mut resolves = vec![];
         for (k, c) in self.inner.iter_mut() {
-            if let Capture::Expr { expression, .. } = c {
+            if let Capture::Expr(expression) = c {
                 if let Some(get) = expression.value().as_ref::<ast::Get>() {
                     if let Some(s) = (*get.value).as_ref::<ast::String>() {
                         match with.get(s.0.as_str()) {
@@ -226,32 +109,6 @@ impl Captures {
             self.resolve(k, r);
         }
         Ok(())
-    }
-
-    pub fn evaluate_ready<'a>(&'a mut self, eval: Evaluator) -> BoxFuture<'a, ()> {
-        async move {
-            while self.ready.len() > 0 {
-                let ready = std::mem::take(&mut self.ready);
-                let results =
-                    {
-                        let me: &Self = self;
-                        join_all(ready.iter().filter_map(|key| {
-                            if let Some(Capture::Expr { expression, .. }) = me.inner.get(&key) {
-                                Some(async move {
-                                    (key, eval.evaluate_now(expression.clone(), me).await)
-                                })
-                            } else {
-                                None
-                            }
-                        }))
-                        .await
-                    };
-                for (k, r) in results {
-                    self.resolve(k, r);
-                }
-            }
-        }
-        .boxed()
     }
 }
 
@@ -489,7 +346,6 @@ impl Evaluator {
                             captures.resolve(cap, v);
                         }
                     }
-                    captures.evaluate_ready(self).await;
                 }
             }
         }
@@ -533,6 +389,57 @@ impl Evaluator {
         self.evaluate_with_env(e, captures, local_env, sets)
     }
 
+    fn expression_id<'a>(
+        self,
+        e: &'a Expr,
+        captures: &'a Captures,
+        can_eval: bool,
+    ) -> BoxFuture<'a, ergo_runtime::value::Identity> {
+        async move {
+            if let Some(cap) = e.value().as_ref::<ast::Capture>() {
+                if let Some(v) = captures.get(cap.0.into()) {
+                    return v.clone().eval_id().await;
+                }
+            }
+
+            let mut exprs = Vec::new();
+
+            enum IdType {
+                Expr(Expr),
+                Constant(u128),
+            }
+
+            e.subexpressions(|e| {
+                exprs.push(match e {
+                    ast::SubExpr::SubExpr(e) => IdType::Expr(e.clone()),
+                    ast::SubExpr::Discriminant(u) => IdType::Constant(u as u128),
+                    ast::SubExpr::Constant(v) => IdType::Constant(v),
+                })
+            });
+            let mut ids = vec![ergo_runtime::value::Identity::clear(e.expr_type() as u128)];
+            for e in exprs {
+                ids.push(match e {
+                    IdType::Expr(e) => self.expression_id(&e, captures, true).await,
+                    IdType::Constant(v) => ergo_runtime::value::Identity::clear(v),
+                });
+            }
+
+            let mut id: ergo_runtime::value::Identity = ids.into_iter().sum();
+
+            if id.should_eval && can_eval && e.captures().map(|c| captures.ready(c)).unwrap_or(true)
+            {
+                id = self.evaluate_now(e.clone(), captures).await.eval_id().await;
+            }
+
+            id
+        }
+        .boxed()
+    }
+
+    fn expression_deps(self, e: Expr, captures: Captures, can_eval: bool) -> ValueId {
+        ValueId::new(async move { self.expression_id(&e, &captures, can_eval).await })
+    }
+
     /// Evaluate the given expression with an environment.
     fn evaluate_with_env(
         self,
@@ -547,19 +454,15 @@ impl Evaluator {
             Unit(_) => types::Unit.into(),
             BindAny(_) => types::Unbound::new_no_doc(
                             |_| async { types::Unit.into() }.boxed(),
-                            depends![nsid!(expr::any)],
+                            depends![const nsid!(expr::any)],
                         )
                         .into(),
             String(s) => types::String::from(s.0.clone()).into(),
-            Force(_) => {
-                panic!("unexpected force expression");
-            },
             DocComment(doc) => {
                 let captures = captures.subset(&doc.captures);
                 let mut val = self.evaluate_with_env(doc.value.clone(), &captures, local_env, sets);
                 let items = doc.items.clone();
-                // TODO distinguish doc comment captures from value captures?
-                let doc_deps = depends![^ast::StringItem::dependencies(&items), ^&captures];
+                let deps = self.expression_deps(source.clone().with(e.clone()), captures.clone(), false);
                 let mut doc = Value::dynamic(move || async move {
                         Context::spawn(EVAL_TASK_PRIORITY, |_| {}, async move {
                             ergo_runtime::error_info! {
@@ -569,12 +472,12 @@ impl Evaluator {
                                 }
                             }
                         }).await.into()
-                    }, doc_deps);
+                    }, deps);
                 Source::set(&mut doc, source.clone());
                 metadata::Doc::set(&mut val, doc);
                 val
             },
-            Capture(capture) => match captures.get(capture.0) {
+            Capture(capture) => match captures.get(capture.0.into()) {
                 None => {
                     if cfg!(debug_assertions) {
                         use ergo_runtime::error::{Diagnostic, DiagnosticInfo, diagnostics_to_string};
@@ -589,7 +492,7 @@ impl Evaluator {
             },
             Function(func) => {
                 let captures = captures.subset(&func.captures);
-                let deps = depends![e, ^&captures];
+                let deps = self.expression_deps(source.clone().with(e.clone()), captures.clone(), false);
                 let bind = func.bind.clone();
                 let body = func.body.clone();
                 types::Unbound::new_no_doc(move |v| {
@@ -620,7 +523,6 @@ impl Evaluator {
                         for (cap, v) in new_captures.into_iter().filter_map(|o| o) {
                             captures.resolve(cap, v);
                         }
-                        captures.evaluate_ready(self).await;
 
                         self.eval_with_env(body, &captures, Some(&local_env), &Sets::none()).await
                     }.boxed()
@@ -637,7 +539,7 @@ impl Evaluator {
                         Ok(v) => v,
                         Err(_) => types::Unset.into()
                     }
-                }, depends![nsid!(ergo::get), k] as Dependencies);
+                }, depends![dyn nsid!(ergo::get), k]);
                 Source::set(&mut v, Source::get(&k));
                 sets.add(set.capture_key.clone(), k.clone(), v);
 
@@ -652,15 +554,18 @@ impl Evaluator {
                             Source::get(&v).with("cannot bind a setter more than once").into_error().into()
                         }
                     }.boxed()
-                }, depends![nsid!(ergo::set), k]).into()
+                }, depends![dyn nsid!(ergo::set), k]).into()
             },
             _ => {
+                // Take the subset of captures in this expression and set the dependencies such
+                // that, when needed, they will minimally evaluate expressions until the captures
+                // are satisfied.
                 let val_captures = e
                     .captures()
                     .map(|caps| captures.subset(caps))
                     .unwrap_or_default();
-                let deps = depends![e, ^&val_captures];
                 let e = source.clone().with(e);
+                let deps = self.expression_deps(e.clone(), val_captures.clone(), true);
                 let sets = sets.clone();
                 Value::dynamic(move || async move {
                     Context::spawn(EVAL_TASK_PRIORITY, |_| {}, async move {
@@ -703,7 +608,6 @@ impl Evaluator {
                 Unit(_) => self.eval_with_env(source.with(e), captures, local_env, sets).await,
                 BindAny(_) => self.eval_with_env(source.with(e), captures, local_env, sets).await,
                 String(_) => self.eval_with_env(source.with(e), captures, local_env, sets).await,
-                Force(_) => self.eval_with_env(source.with(e), captures, local_env, sets).await,
                 DocComment(_) => self.eval_with_env(source.with(e), captures, local_env, sets).await,
                 Capture(_) => self.eval_with_env(source.with(e), captures, local_env, sets).await,
                 Function(_) => self.eval_with_env(source.with(e), captures, local_env, sets).await,

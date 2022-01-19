@@ -71,7 +71,7 @@ impl Doc {
 
     /// Set a documentation string for the given value.
     pub fn set_string<S: Into<crate::types::String>>(v: &mut Value, s: S) {
-        Self::set(v, crate::types::String::new_no_doc(s.into()).into());
+        Self::set(v, s.into().into());
     }
 
     /// Set documentation for the given value.

@@ -250,7 +250,7 @@ pub fn doc() -> Value {
             }
             .boxed()
         },
-        depends![nsid!(ergo::doc)],
+        depends![const nsid!(ergo::doc)],
         "Get the documentation for a value.
 
 Arguments: `:value`

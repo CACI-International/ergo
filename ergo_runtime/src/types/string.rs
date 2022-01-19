@@ -75,11 +75,6 @@ impl String {
     pub fn into_string(self) -> std::string::String {
         self.0.into_string()
     }
-
-    /// Create a new string without documentation.
-    pub fn new_no_doc<T: Into<Self>>(v: T) -> TypedValue<Self> {
-        TypedValue::constant(v.into())
-    }
 }
 
 ergo_traits_fn! {

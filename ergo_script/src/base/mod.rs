@@ -44,7 +44,7 @@ pub fn index() -> Value {
                 v => traits::type_error(v, "function call or pattern function call").into_error().into()
             }
         },
-        depends![nsid!(ergo::index)],
+        depends![const nsid!(ergo::index)],
         "Match an index binding or index a value.
 
 Arguments: `:value :index`
@@ -68,4 +68,16 @@ pub async fn bind(to: _, from: _) -> Value {
 /// An `Unset` value.
 pub fn unset() -> Value {
     types::Unset.into()
+}
+
+#[types::ergo_fn]
+#[forced]
+/// Mark the given value as pertinent to the identity of the result.
+///
+/// Arguments: `:value`
+///
+/// This means that the given value will be evaluated when the identity is needed.
+pub async fn force(mut v: _) -> Value {
+    drop(ergo_runtime::Context::eval(&mut v).await);
+    v
 }

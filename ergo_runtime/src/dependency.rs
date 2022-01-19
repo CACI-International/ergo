@@ -3,7 +3,7 @@
 use crate::abi_stable::{std_types::RVec, u128::U128, StableAbi};
 use crate::hash::HashFn;
 use crate::type_system::{Trait, Type};
-use crate::value::{IdentifiedValue, TypedValue, Value};
+use crate::value::{IdentifiedValue, Identity, TypedValue, Value};
 use std::hash::{Hash, Hasher};
 use std::iter::FromIterator;
 
@@ -11,7 +11,7 @@ use std::iter::FromIterator;
 ///
 /// A single dependency is either a hash digest from arbitrary data or a `Value`. The `Value`
 /// identifier is used later as the dependency, but the `Value` is stored so that a tree of
-/// dependencies may be retrieved. The `Value` is stored as an unevaluated form.
+/// dependencies may be retrieved.
 #[derive(Clone, Debug, StableAbi)]
 #[repr(u8)]
 pub enum Dependency {
@@ -72,9 +72,7 @@ ConstantDependency!(Trait);
 
 impl AsDependency for Value {
     fn as_dependency(&self) -> Dependency {
-        let mut v = self.clone();
-        v.unevaluated();
-        Dependency::Value(v)
+        Dependency::Value(self.clone())
     }
 }
 
@@ -112,11 +110,11 @@ impl<T: AsDependency> AsDependency for Option<T> {
 }
 
 impl Dependency {
-    /// Hash the dependency.
-    pub async fn hash<H: Hasher>(&self, state: &mut H) {
+    /// Get the dependency identity.
+    pub async fn id(&self) -> Identity {
         match self {
-            Dependency::Value(v) => v.hash(state).await,
-            Dependency::Constant(v) => v.hash(state),
+            Dependency::Value(v) => v.clone().eval_id().await,
+            Dependency::Constant(v) => Identity::clear(v.0.into()),
         }
     }
 }
@@ -223,19 +221,19 @@ impl<Dep: Hash + Ord> Hash for Dependencies<Dep> {
 }
 
 impl Dependencies {
-    /// Hash the dependencies.
-    pub async fn hash<H: Hasher>(&self, state: &mut H) {
-        let mut set = std::collections::BTreeSet::default();
+    /// Get the identity of the dependencies.
+    pub async fn id(&self) -> Identity {
+        let mut unordered = Vec::with_capacity(self.unordered.len());
         for d in self.unordered.iter() {
-            match d {
-                Dependency::Value(v) => set.insert(v.id().await),
-                Dependency::Constant(i) => set.insert(i.0.value()),
-            };
+            unordered.push(d.id().await);
         }
-        set.hash(state);
+        unordered.sort_unstable();
+
+        let mut ordered = Vec::with_capacity(self.ordered.len());
         for d in self.ordered.iter() {
-            d.hash(state).await;
+            ordered.push(d.id().await);
         }
+        unordered.iter().chain(ordered.iter()).sum()
     }
 }
 
@@ -366,8 +364,28 @@ macro_rules! depends {
         $crate::depends!(@toks expressions { $e $( $res )* } next_item { $( $tok )* $next } tokens $( $rest )*)
     };
 
-    // Entry
+    // Entries
     // Pass tokens into stateful expansion with initial state
+
+    // Force creation of Dependencies<Constant>
+    ( const $( $tok:tt )* ) => {
+        {
+            let mut deps = $crate::dependency::DependenciesConstant::new();
+            $crate::depends!(@toks expressions { deps } next_item { } tokens $( $tok )*);
+            deps
+        }
+    };
+
+    // Force creation of Dependencies<Dependency>
+    ( dyn $( $tok:tt )* ) => {
+        {
+            let mut deps = $crate::dependency::Dependencies::<$crate::dependency::Dependency>::new();
+            $crate::depends!(@toks expressions { deps } next_item { } tokens $( $tok )*);
+            deps
+        }
+    };
+
+    // Infer Dependencies<>
     ( $( $tok:tt )* ) => {
         {
             let mut deps = $crate::dependency::Dependencies::new();

@@ -7,8 +7,8 @@ use crate::abi_stable::{
 use crate::metadata::Doc;
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
-use crate::value::TypedValue;
-use crate::{Dependencies, Value};
+use crate::value::{TypedValue, ValueId};
+use crate::Value;
 
 /// Script type for values that require a single value to produce a new value.
 ///
@@ -36,26 +36,27 @@ where
 
 impl Unbound {
     /// Create a new unbound value with the given implementation and documentation.
-    pub fn new<F, Fut, S: Into<String>>(bind: F, deps: Dependencies, doc: S) -> TypedValue<Self>
+    pub fn new<F, Fut, D: Into<ValueId>, S: Into<String>>(
+        bind: F,
+        id: D,
+        doc: S,
+    ) -> TypedValue<Self>
     where
         F: Fn(Value) -> Fut + Clone + Send + Sync + 'static,
         Fut: std::future::Future<Output = Value> + Send,
     {
-        let mut v = Self::new_no_doc(bind, deps);
+        let mut v = Self::new_no_doc(bind, id);
         Doc::set_string(&mut v, doc.into());
         v
     }
 
     /// Create a new unbound value with the given implementation.
-    pub fn new_no_doc<F, Fut>(bind: F, deps: Dependencies) -> TypedValue<Self>
+    pub fn new_no_doc<F, Fut, D: Into<ValueId>>(bind: F, id: D) -> TypedValue<Self>
     where
         F: Fn(Value) -> Fut + Clone + Send + Sync + 'static,
         Fut: std::future::Future<Output = Value> + Send,
     {
-        TypedValue::with_id(
-            Unbound(UnboundAbi_TO::from_value(bind, TU_Opaque)),
-            crate::depends![Self::ergo_type(), ^deps],
-        )
+        TypedValue::with_id(Unbound(UnboundAbi_TO::from_value(bind, TU_Opaque)), id)
     }
 
     /// Bind the value.

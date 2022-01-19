@@ -1,5 +1,19 @@
 # ergo changelog
 
+## Unreleased
+* Remove the force operator (`!`) and change evaluation semantics.
+  * Value identities are no longer eagerly computed, but instead are delayed.
+    * Changing to non-eager identities removes a lot of pitfalls with forced
+      expressions, particularly with regard to recursively-defined modules which
+      access each other's entries with an index operator.
+  * It is now possible in the runtime to indicate that a value should be
+    evaluated to compute an accurate identity (thus using the _result_ of
+    evaluation, like `!` used to do).
+    * This is how the features that used to be achieved with `!` will be able to
+      be implemented. While reasoning about evaluation may be a little more
+      difficult, this ensures the _correctness_ of identities and so generally
+      users won't _need_ to reason about things as much.
+
 ## 1.0.0-rc.3  -- 2021-12-14
 * Properly remove previously-set keys when a key is set to `unset`.
   * With the recent modification to how unset values are removed this case was

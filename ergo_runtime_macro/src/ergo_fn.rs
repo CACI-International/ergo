@@ -76,6 +76,19 @@ impl Parser for ErgoFnLike {
             docstr.trim().to_owned()
         };
 
+        let forced = {
+            match f.attrs.iter().position(|a| match a.parse_meta() {
+                Ok(syn::Meta::Path(l)) if l.is_ident("forced") => true,
+                _ => false,
+            }) {
+                Some(ind) => {
+                    f.attrs.swap_remove(ind);
+                    true
+                }
+                None => false,
+            }
+        };
+
         let clones = {
             let ind = f.attrs.iter().position(|a| match a.parse_meta() {
                 Ok(syn::Meta::List(l)) => l.path.is_ident("cloning"),
@@ -229,6 +242,15 @@ impl Parser for ErgoFnLike {
 
         let which = self.0;
 
+        let deps = {
+            let deps = quote! { ergo_runtime::depends![const fn_id] };
+            if forced {
+                quote! { ergo_runtime::value::EvalForId::set(#deps) }
+            } else {
+                deps
+            }
+        };
+
         f.block = Box::new(parse_quote! {
             {
                 let fn_id = ergo_runtime::nsid!(function, std::concat!(std::module_path!(),"::",std::stringify!(#id)).as_bytes());
@@ -251,7 +273,7 @@ impl Parser for ErgoFnLike {
                         ).into()
                     })
                 },
-                ergo_runtime::depends![fn_id],
+                #deps,
                 #doc
                 ).into()
             }

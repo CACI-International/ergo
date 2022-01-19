@@ -10,7 +10,7 @@ use ergo_runtime::{
     types, Context, Source, Value,
 };
 use libloading as dl;
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -18,9 +18,9 @@ use std::sync::Arc;
 pub struct LoadData {
     // The load cache `Value` is always a dynamic value which (when evaluated once) will do the
     // actual loading of the script/plugin to take advantage of evaluation caching.
-    pub load_cache: Arc<RMutex<BTreeMap<PathBuf, Value>>>,
+    pub load_cache: Arc<RMutex<HashMap<PathBuf, Value>>>,
     pub load_path: Arc<Vec<PathBuf>>,
-    top_level_env: Arc<RMutex<BTreeMap<String, Value>>>,
+    top_level_env: Arc<RMutex<HashMap<String, Value>>>,
     pub ast_context: Arc<RMutex<crate::ast::Context>>,
     pub lint: Arc<RMutex<crate::ast::LintLevel>>,
     pub backtrace: Arc<std::sync::atomic::AtomicBool>,
@@ -29,7 +29,7 @@ pub struct LoadData {
 impl LoadData {
     fn new(load_path: Vec<PathBuf>) -> Self {
         LoadData {
-            load_cache: Arc::new(RMutex::new(BTreeMap::default())),
+            load_cache: Arc::new(RMutex::new(HashMap::default())),
             load_path: Arc::new(load_path),
             top_level_env: Arc::new(RMutex::new(Default::default())),
             ast_context: Arc::new(RMutex::new(Default::default())),
@@ -46,7 +46,7 @@ impl LoadData {
     }
 
     /// Set the top-level environment used when loading scripts.
-    pub fn set_top_level_env(&self, env: BTreeMap<String, Value>) {
+    pub fn set_top_level_env(&self, env: HashMap<String, Value>) {
         *self.top_level_env.lock() = env;
     }
 
@@ -88,7 +88,7 @@ impl LoadData {
     }
 
     /// Create the top-level env for the given script file.
-    pub fn script_top_level_env(&self, script_file: Option<&Path>) -> BTreeMap<String, Value> {
+    pub fn script_top_level_env(&self, script_file: Option<&Path>) -> HashMap<String, Value> {
         let mut env = self.top_level_env.lock().clone();
 
         // Add `std`, which will act like `ergo std` relative to the path.
@@ -408,7 +408,7 @@ fn is_plugin(f: &Path) -> bool {
 
 #[derive(ErgoType)]
 struct ResolvedWorkspaces {
-    map: Arc<RMutex<BTreeMap<PathBuf, Option<PathBuf>>>>,
+    map: Arc<RMutex<HashMap<PathBuf, Option<PathBuf>>>>,
 }
 
 impl Default for ResolvedWorkspaces {
