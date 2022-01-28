@@ -35,25 +35,6 @@ mod tokenize;
 pub type CaptureSet = keyset::KeySet;
 pub type CaptureKey = keyset::Key;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct NoHashCaptureKey(CaptureKey);
-
-impl Hash for NoHashCaptureKey {
-    fn hash<H: Hasher>(&self, _h: &mut H) {}
-}
-
-impl From<CaptureKey> for NoHashCaptureKey {
-    fn from(c: CaptureKey) -> Self {
-        NoHashCaptureKey(c)
-    }
-}
-
-impl From<NoHashCaptureKey> for CaptureKey {
-    fn from(n: NoHashCaptureKey) -> Self {
-        n.0
-    }
-}
-
 pub enum SubExpr<'a> {
     SubExpr(&'a Expr),
     Discriminant(u8),
@@ -349,7 +330,10 @@ expression_types! {
 
     pub struct Function { bind, body }
 
-    pub struct Get { value }
+    pub struct Get {
+        (pub capture_key: Option<CaptureKey>),
+        value
+    }
 
     pub struct Set {
         (pub capture_key: Option<CaptureKey>),
@@ -361,8 +345,6 @@ expression_types! {
     pub struct Command { function, [args: CommandItem] }
 
     pub struct PatternCommand { function, [args: CommandItem] }
-
-    pub struct Capture(NoHashCaptureKey);
 
     pub struct DocComment {
         [items: StringItem],
@@ -389,7 +371,6 @@ pub enum ExpressionType {
     PatternCommand,
     DocComment,
     Attribute,
-    Capture,
 }
 
 struct ExpressionInner {
@@ -442,7 +423,6 @@ macro_rules! match_all {
             Index($e) => $body,
             Command($e) => $body,
             PatternCommand($e) => $body,
-            Capture($e) => $body,
             DocComment($e) => $body,
             Attribute($e) => $body,
         )
@@ -461,7 +441,6 @@ macro_rules! match_all {
             Index($e) => { type $t = Index; $body },
             Command($e) => { type $t = Command; $body },
             PatternCommand($e) => { type $t = PatternCommand; $body },
-            Capture($e) => { type $t = Capture; $body },
             DocComment($e) => { type $t = DocComment; $body },
             Attribute($e) => { type $t = Attribute; $body },
         )
@@ -480,7 +459,6 @@ macro_rules! match_all {
             Index($e) => $body,
             Command($e) => $body,
             PatternCommand($e) => $body,
-            Capture($e) => $body,
             DocComment($e) => $body,
             Attribute($e) => $body,
         )
@@ -519,8 +497,6 @@ impl Hash for Expression {
         match_all!(self, v => v.hash(h));
     }
 }
-
-// ergo_runtime::ConstantDependency!(Expression);
 
 impl Expression {
     pub fn unit() -> Self {
@@ -566,6 +542,7 @@ impl Expression {
 
     pub fn get(value: Expr) -> Self {
         Self::create(Get {
+            capture_key: None,
             value,
             captures: Default::default(),
         })
@@ -617,10 +594,6 @@ impl Expression {
             value,
             captures: Default::default(),
         })
-    }
-
-    fn capture(key: CaptureKey) -> Self {
-        Self::create(Capture(key.into()))
     }
 
     fn create<T: IsExpression>(t: T) -> Self {
@@ -771,8 +744,11 @@ impl Expression {
             PatternCommand(v) => Some(&v.captures),
             DocComment(v) => Some(&v.captures),
             Attribute(v) => Some(&v.captures),
-            Capture(_) => None,
         )
+    }
+
+    pub fn instance_key(&self) -> usize {
+        Arc::as_ptr(&self.inner) as usize
     }
 }
 
@@ -794,6 +770,14 @@ impl Subexpressions for Expression {
 
 #[cfg(test)]
 impl Expression {
+    pub fn get_with_capture(value: Expr, key: CaptureKey) -> Self {
+        Self::create(Get {
+            capture_key: Some(key),
+            value,
+            captures: vec![key].into_iter().collect(),
+        })
+    }
+
     pub fn set_with_capture(value: Expr, key: CaptureKey) -> Self {
         Self::create(Set {
             capture_key: Some(key),
@@ -823,7 +807,6 @@ impl Expression {
             PatternCommand(v) => v.captures = captures,
             DocComment(v) => v.captures = captures,
             Attribute(v) => v.captures = captures,
-            Capture(_) => (),
         );
         self
     }
@@ -872,7 +855,7 @@ pub fn load(
     compiler.enable_lint(lint);
     compiler.compile_captures(&mut expr, &mut Default::default());
     let lint_messages = compiler.lint_messages();
-    Ok((expr, compiler.into_captures(), lint_messages))
+    Ok((expr, compiler.into_free_captures(), lint_messages))
 }
 
 /// Global context for compilation.
@@ -925,7 +908,7 @@ impl Lint {
 
 struct ExpressionCompiler<'a> {
     capture_context: &'a mut Context,
-    captures: HashMap<Expr, CaptureKey>,
+    string_gets: HashMap<Expr, CaptureKey>,
     capture_mapping: ScopeMap<Expression, CaptureKey>,
     lint: Option<Lint>,
 }
@@ -934,7 +917,7 @@ impl<'a> ExpressionCompiler<'a> {
     pub fn with_context(ctx: &'a mut Context) -> Self {
         ExpressionCompiler {
             capture_context: ctx,
-            captures: Default::default(),
+            string_gets: Default::default(),
             capture_mapping: Default::default(),
             lint: Default::default(),
         }
@@ -989,22 +972,6 @@ impl<'a> ExpressionCompiler<'a> {
         }
     }
 
-    fn capture(&mut self, e: &mut Expression, source: Source<()>, caps: &mut CaptureSet) {
-        // Temporarily replace the expression with a unit type until we determine
-        // the capture key.
-        let old_e = std::mem::replace(e, Expression::unit());
-        let ExpressionCompiler {
-            captures,
-            capture_context,
-            ..
-        } = self;
-        let key = *captures
-            .entry(source.with(old_e))
-            .or_insert_with(|| capture_context.key());
-        caps.insert(key);
-        *e = Expression::capture(key);
-    }
-
     pub fn lint_messages(&mut self) -> Vec<Source<std::string::String>> {
         self.lint
             .take()
@@ -1018,8 +985,8 @@ impl<'a> ExpressionCompiler<'a> {
             .unwrap_or_default()
     }
 
-    pub fn into_captures(self) -> HashMap<CaptureKey, Expr> {
-        self.captures.into_iter().map(|(k, v)| (v, k)).collect()
+    pub fn into_free_captures(self) -> HashMap<CaptureKey, Expr> {
+        self.string_gets.into_iter().map(|(k, v)| (v, k)).collect()
     }
 
     pub fn compile_captures(&mut self, e: &mut Expr, mut caps: &mut CaptureSet) {
@@ -1087,29 +1054,37 @@ impl<'a> ExpressionCompiler<'a> {
 
                 e_caps.difference_with(&in_scope_captures);
             }),
+            Get(v) => {
+                // Any gets of a string constant are captures.
+                if v.value.expr_type() == ExpressionType::String {
+                    // String gets will always result in a capture key
+                    do_captures!(v, |e_caps| {
+                        let key = self.capture_mapping.get(&v.value).map(|v| *v);
+                        match key {
+                            Some(key) => {
+                                self.used_binding(key);
+                                v.capture_key = Some(key);
+                                e_caps.insert(key);
+                            }
+                            None => {
+                                let key = *self.string_gets
+                                    .entry(v.value.clone())
+                                    .or_insert_with(|| self.capture_context.key());
+                                v.capture_key = Some(key);
+                                e_caps.insert(key);
+                            }
+                        }
+                    });
+                } else {
+                    do_captures!(subexpr v);
+                }
+            },
             Set(v) => {
                 if v.value.expr_type() == ExpressionType::String {
                     let key = self.capture_context.key();
                     self.capture_mapping.insert(v.value.value().clone(), key);
                     self.unused_binding(src.with(key));
                     v.capture_key = Some(key);
-                } else {
-                    do_captures!(subexpr v);
-                }
-            },
-            Get(v) => {
-                // Any gets of a string constant are captures.
-                if v.value.expr_type() == ExpressionType::String {
-                    // If the id is in the capture environment, use it directly
-                    let key = self.capture_mapping.get(&v.value).map(|v| *v);
-                    match key {
-                        Some(key) => {
-                            self.used_binding(key);
-                            *e = Expression::capture(key);
-                            caps.insert(key);
-                        }
-                        None => self.capture(e, src, &mut caps),
-                    }
                 } else {
                     do_captures!(subexpr v);
                 }
@@ -1150,7 +1125,6 @@ impl<'a> ExpressionCompiler<'a> {
                     }
                 }
             }),
-            Capture(_) => panic!("unexpected capture"),
             DocComment(v) => do_captures!(subexpr v),
             Attribute(v) => do_captures!(subexpr v),
         );
@@ -1189,7 +1163,7 @@ mod test {
             "a = 5\n:a",
             E::block(vec![
                 BI::Bind(src(E::set_with_capture(s("a"), a_key)), s("5")),
-                BI::Expr(src(E::capture(a_key))),
+                BI::Expr(src(E::get_with_capture(s("a"), a_key))),
             ]),
         );
     }
@@ -1206,8 +1180,8 @@ mod test {
                 BI::Expr(src(E::block(vec![
                     BI::Bind(src(E::set_with_capture(s("b"), b_key)), s("1")),
                     BI::Expr(src(E::array(vec![
-                        AI::Expr(src(E::capture(a_key))),
-                        AI::Expr(src(E::capture(b_key))),
+                        AI::Expr(src(E::get_with_capture(s("a"), a_key))),
+                        AI::Expr(src(E::get_with_capture(s("b"), b_key))),
                     ])
                     .set_captures(vec![a_key, b_key]))),
                 ])
@@ -1227,7 +1201,7 @@ mod test {
                 BI::Bind(src(E::set_with_capture(s("a"), a_key)), s("5")),
                 BI::Expr(src(E::block(vec![
                     BI::Bind(src(E::set_with_capture(s("b"), b_key)), s("1")),
-                    BI::Expr(src(E::capture(b_key))),
+                    BI::Expr(src(E::get_with_capture(s("b"), b_key))),
                 ]))),
             ]),
         );
@@ -1244,7 +1218,7 @@ mod test {
                 BI::Bind(src(E::set_with_capture(s("a"), a_key)), s("5")),
                 BI::Expr(src(E::block(vec![
                     BI::Bind(src(E::set_with_capture(s("a"), a2_key)), s("1")),
-                    BI::Expr(src(E::capture(a2_key))),
+                    BI::Expr(src(E::get_with_capture(s("a"), a2_key))),
                 ]))),
             ]),
         );
@@ -1261,7 +1235,7 @@ mod test {
                 BI::Bind(src(E::set_with_capture(s("a"), a_key)), s("1")),
                 BI::Expr(src(E::function(
                     src(E::set_with_capture(s("b"), b_key)),
-                    src(E::capture(a_key)),
+                    src(E::get_with_capture(s("a"), a_key)),
                 )
                 .set_captures(vec![a_key]))),
             ]),
@@ -1279,7 +1253,7 @@ mod test {
                 BI::Bind(src(E::set_with_capture(s("a"), a_key)), s("1")),
                 BI::Expr(src(E::function(
                     src(E::set_with_capture(s("b"), b_key)),
-                    src(E::capture(b_key)),
+                    src(E::get_with_capture(s("b"), b_key)),
                 ))),
             ]),
         );
@@ -1296,7 +1270,7 @@ mod test {
                 BI::Bind(src(E::set_with_capture(s("a"), a_key)), s("1")),
                 BI::Expr(src(E::function(
                     src(E::set_with_capture(s("a"), a2_key)),
-                    src(E::capture(a2_key)),
+                    src(E::get_with_capture(s("a"), a2_key)),
                 ))),
             ]),
         );
@@ -1312,7 +1286,8 @@ mod test {
             E::block(vec![BI::Expr(src(E::function(
                 src(E::pat_command(
                     src(E::index(
-                        src(E::index(src(E::capture(a_key)), s("b")).set_captures(vec![a_key])),
+                        src(E::index(src(E::get_with_capture(s("a"), a_key)), s("b"))
+                            .set_captures(vec![a_key])),
                         s("c"),
                     )
                     .set_captures(vec![a_key])),
@@ -1321,17 +1296,18 @@ mod test {
                 .set_captures(vec![a_key])),
                 src(E::command(
                     src(E::index(
-                        src(E::index(src(E::capture(a_key)), s("b")).set_captures(vec![a_key])),
+                        src(E::index(src(E::get_with_capture(s("a"), a_key)), s("b"))
+                            .set_captures(vec![a_key])),
                         s("e"),
                     )
                     .set_captures(vec![a_key])),
-                    vec![CI::Expr(src(E::capture(d_key)))],
+                    vec![CI::Expr(src(E::get_with_capture(s("d"), d_key)))],
                 )
                 .set_captures(vec![a_key, d_key])),
             )
             .set_captures(vec![a_key])))])
             .set_captures(vec![a_key]),
-            vec![(a_key, E::get(s("a")))],
+            vec![(a_key, E::string("a".into()))],
         )
     }
 
@@ -1342,12 +1318,12 @@ mod test {
         assert_captures(
             "a b c",
             E::block(vec![BI::Expr(src(E::command(
-                src(E::capture(a_key)),
+                src(E::get_with_capture(s("a"), a_key)),
                 vec![CI::Expr(s("b")), CI::Expr(s("c"))],
             )
             .set_captures(vec![a_key])))])
             .set_captures(vec![a_key]),
-            vec![(a_key, E::get(s("a")))],
+            vec![(a_key, E::string("a".into()))],
         );
     }
 
@@ -1359,12 +1335,15 @@ mod test {
         assert_captures(
             "a :b",
             E::block(vec![BI::Expr(src(E::command(
-                src(E::capture(a_key)),
-                vec![CI::Expr(src(E::capture(b_key)))],
+                src(E::get_with_capture(s("a"), a_key)),
+                vec![CI::Expr(src(E::get_with_capture(s("b"), b_key)))],
             )
             .set_captures(vec![a_key, b_key])))])
             .set_captures(vec![a_key, b_key]),
-            vec![(a_key, E::get(s("a"))), (b_key, E::get(s("b")))],
+            vec![
+                (a_key, E::string("a".into())),
+                (b_key, E::string("b".into())),
+            ],
         );
     }
 
@@ -1380,7 +1359,8 @@ mod test {
                     src(E::block(vec![])),
                 ),
                 BI::Expr(src(E::index(
-                    src(E::index(src(E::capture(a_key)), s("b")).set_captures(vec![a_key])),
+                    src(E::index(src(E::get_with_capture(s("a"), a_key)), s("b"))
+                        .set_captures(vec![a_key])),
                     s("c"),
                 )
                 .set_captures(vec![a_key]))),
@@ -1395,25 +1375,25 @@ mod test {
         assert_captures(
             "std:String:format\nstd:String:from",
             E::block(vec![
-                BI::Expr(src(
-                    E::index(
-                        src(E::index(src(E::capture(std_key)), s("String"))
-                            .set_captures(vec![std_key])),
-                        s("format"),
-                    )
-                    .set_captures(vec![std_key]),
-                )),
-                BI::Expr(src(
-                    E::index(
-                        src(E::index(src(E::capture(std_key)), s("String"))
-                            .set_captures(vec![std_key])),
-                        s("from"),
-                    )
-                    .set_captures(vec![std_key]),
-                )),
+                BI::Expr(src(E::index(
+                    src(
+                        E::index(src(E::get_with_capture(s("std"), std_key)), s("String"))
+                            .set_captures(vec![std_key]),
+                    ),
+                    s("format"),
+                )
+                .set_captures(vec![std_key]))),
+                BI::Expr(src(E::index(
+                    src(
+                        E::index(src(E::get_with_capture(s("std"), std_key)), s("String"))
+                            .set_captures(vec![std_key]),
+                    ),
+                    s("from"),
+                )
+                .set_captures(vec![std_key]))),
             ])
             .set_captures(vec![std_key]),
-            vec![(std_key, E::get(s("std")))],
+            vec![(std_key, E::string("std".into()))],
         );
     }
 
@@ -1431,11 +1411,11 @@ mod test {
                 BI::Bind(src(E::set_with_capture(s("a"), a1)), s("1")),
                 BI::Bind(
                     src(E::pat_command(
-                        src(E::capture(f)),
+                        src(E::get_with_capture(s("f"), f)),
                         vec![
                             CI::Expr(src(E::set_with_capture(s("a"), a2))),
                             CI::Expr(src(E::command(
-                                src(E::capture(a1)),
+                                src(E::get_with_capture(s("a"), a1)),
                                 vec![CI::Expr(src(E::unit()))],
                             )
                             .set_captures(vec![a1]))),
@@ -1446,7 +1426,7 @@ mod test {
                 ),
             ])
             .set_captures(vec![f]),
-            vec![(f, E::get(s("f")))],
+            vec![(f, E::string("f".into()))],
         );
     }
 

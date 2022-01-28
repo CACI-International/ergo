@@ -645,6 +645,7 @@ async fn sha1(file: types::Path, sum: types::String) -> Value {
 }
 
 #[types::ergo_fn]
+#[forced]
 /// Make a Path depend on the contents of the file to which it refers.
 ///
 /// Arguments: `(Into<Path> :file)`
@@ -705,7 +706,7 @@ async fn track(file: _, (force_check): [_]) -> Value {
     };
 
     let mut v: Value = types::Path::from(file).into();
-    v.set_dependencies(depends![v.id(), hash]);
+    v.set_dependencies(depends![dyn v, hash]);
     v
 }
 
@@ -834,9 +835,9 @@ async fn read(file: types::Path) -> Value {
     // TODO don't hash here, leave that to the script writer?
     ergo_runtime::error_info!(notes: [format_args!("path was {}", path.display())], {
         let hash = ergo_runtime::hash::hash_read(std::fs::File::open(&path)?)?;
-        ergo_runtime::Result::Ok(Value::constant_deps(
+        ergo_runtime::Result::Ok(Value::with_id(
             types::ByteStream::new(io::Blocking::new(std::fs::File::open(&path)?)),
-            depends![hash],
+            depends![const hash],
         ))
     })?
 }

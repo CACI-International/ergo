@@ -16,6 +16,7 @@ pub struct Map(pub BstMap<IdentifiedValue, Value>);
 
 impl GetDependencies for Map {
     fn get_depends(&self) -> Dependencies {
+        // TODO should be unordered dependencies
         depends![Map::ergo_type(), ^self.0.iter().map(|(k, v)| depends![k, v])]
     }
 }

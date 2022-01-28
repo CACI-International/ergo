@@ -102,7 +102,7 @@ fn logger(log: Log) -> Value {
             }
             .boxed()
         },
-        depends![nsid!(std::log)],
+        depends![const nsid!(std::log)],
     )
     .into()
 }

@@ -241,7 +241,7 @@ impl Script {
 
         let evaluator = Evaluator { backtrace };
         captures.resolve_string_gets(&top_level_env)?;
-        Ok(evaluator.evaluate(ast, &captures))
+        Ok(evaluator.evaluate(ast, captures).await)
     }
 }
 
@@ -337,10 +337,7 @@ mod test {
         )
     }
 
-    // For this to work, block eval needs the `eval_with_env` to change to `evaluate_now_with_env`,
-    // but that changes the semantics of blocks.
     #[test]
-    #[ignore = "implementation up in the air"]
     fn block_indirect_get() -> Result<(), String> {
         script_eval_to(":a = name, ::a = b, ::a", SRString("b"))
     }
@@ -808,6 +805,83 @@ mod test {
                 SRArray(&[SRString("hi"), SRString("hi")]),
             )
         }
+
+        #[test]
+        fn basic_value() {
+            script_eval_semantics("*id -");
+        }
+
+        #[test]
+        fn forced_value() {
+            script_eval_semantics("*id <| force +");
+        }
+
+        #[test]
+        fn array() {
+            script_eval_semantics("*id [-,-,-]");
+            script_eval_semantics("*id [force +,-,force +,-]");
+        }
+
+        #[test]
+        fn block() {
+            script_eval_semantics("*id { -; -; - }");
+            script_eval_semantics("*id { force +; -; - }");
+            script_eval_semantics("*id { -; -; force + }");
+        }
+
+        #[test]
+        fn unused_block_bind() {
+            // No way to know that `b` is unused without static verification, which we don't
+            // consider part of the runtime.
+            script_eval_semantics("*id { a = -, b = force :a, +, - }");
+        }
+
+        #[test]
+        fn used_block_bind() {
+            script_eval_semantics("*id { a = +, b = force :a, :b, +, - }");
+        }
+
+        #[test]
+        fn unused_block_fn() {
+            script_eval_semantics("*id { f = fn :x -> force :x, -, - }");
+        }
+
+        #[test]
+        fn used_block_fn() {
+            script_eval_semantics("*id { f = fn :x -> force :x, f +, - }");
+        }
+
+        #[test]
+        fn map_bind() {
+            script_eval_semantics("*id { a = -, b = force + }");
+        }
+
+        #[test]
+        fn used_map_bind() {
+            script_eval_semantics("*id { a = +, b = force :a, c = - }");
+        }
+
+        #[test]
+        fn unused_map_fn_bind() {
+            script_eval_semantics("*id { f = fn :x -> force :x, -, b = - }");
+        }
+
+        #[test]
+        fn used_map_fn_bind() {
+            script_eval_semantics("*id { f = fn :x -> force :x, b = f +, +, c = - }");
+        }
+
+        #[test]
+        fn fn_creation() {
+            script_eval_semantics("*id <| fn :x -> { -; force + }");
+            script_eval_semantics("*id <| fn :x -> { -; force :x }");
+        }
+
+        #[test]
+        fn fn_call() {
+            script_eval_semantics("*id <| fn :x -> { -; force + } |> -");
+            script_eval_semantics("*id <| fn :x -> { -; force :x } |> +");
+        }
     }
 
     mod force {
@@ -820,7 +894,7 @@ mod test {
 
         #[test]
         fn value_id() {
-            // Once is a String value, the other is a syntax string
+            // One is a String value, the other is a syntax string
             script_parse_id_ne("force my-string", "my-string");
         }
 
@@ -831,6 +905,9 @@ mod test {
 
         #[test]
         fn fn_inherit() {
+            // Add the first `f a` to force both cases to evaluate the whole block (since otherwise
+            // the first case will evaluate the whole block to bind `f` whereas the second case
+            // will not).
             script_parse_id_eq(
                 "f = fn :x -> force :x; f a",
                 "f = fn :x -> force :x; force a",
@@ -908,6 +985,100 @@ mod test {
         let a = runtime.block_on(a.as_identified());
         let b = runtime.block_on(b.as_identified());
         assert_ne!(a.id(), b.id());
+    }
+
+    #[ergo_runtime::types::ergo_fn]
+    async fn t_id(v: _) -> Value {
+        v.id().await;
+        ergo_runtime::types::Unit.into()
+    }
+
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+
+    #[derive(Clone)]
+    struct Check(Arc<AtomicBool>);
+
+    impl Check {
+        fn new() -> Self {
+            Check(Arc::new(AtomicBool::new(false)))
+        }
+
+        fn is_evaluated(&self) -> bool {
+            self.0.load(Ordering::Relaxed)
+        }
+
+        fn has_evaluated(&mut self) {
+            self.0.store(true, Ordering::Relaxed)
+        }
+    }
+
+    fn check_eval() -> (Value, Check) {
+        let c = Check::new();
+
+        let mut v_c = c.clone();
+
+        (
+            Value::dynamic(
+                move || async move {
+                    v_c.has_evaluated();
+                    ergo_runtime::types::Unit.into()
+                },
+                ergo_runtime::depends![const ergo_runtime::nsid!(test::musteval)],
+            ),
+            c,
+        )
+    }
+
+    fn script_eval_semantics(a: &str) {
+        let mut musteval_checks = Vec::new();
+        let mut noeval_checks = Vec::new();
+        let mut script = String::new();
+        let mut env = HashMap::new();
+
+        env.insert("*id".to_string(), t_id());
+
+        let mut iter = a.chars().peekable();
+        while let Some(c) = iter.next() {
+            match c {
+                '+' | '-' if iter.peek() != Some(&'>') => {
+                    let (v, check) = check_eval();
+                    let ind = musteval_checks.len() + noeval_checks.len();
+                    let name = format!("*{}", ind);
+                    script.push_str(&format!(":{}", &name));
+                    env.insert(name, v);
+                    if c == '+' {
+                        &mut musteval_checks
+                    } else {
+                        &mut noeval_checks
+                    }
+                    .push((check, ind));
+                }
+                c => script.push(c),
+            }
+        }
+
+        let runtime = make_runtime().unwrap();
+        let mut script = runtime.load_string("<test>", &script).unwrap();
+        script.extend_top_level_env(env);
+        let mut v = runtime.block_on(script.evaluate()).unwrap();
+        runtime
+            .block_on(async { Context::eval(&mut v).await })
+            .unwrap();
+
+        for (c, name) in musteval_checks {
+            if !c.is_evaluated() {
+                panic!("expr {} not evaluated", name);
+            }
+        }
+
+        for (c, name) in noeval_checks {
+            if c.is_evaluated() {
+                panic!("expr {} evaluated", name);
+            }
+        }
     }
 
     trait ExpectOk {

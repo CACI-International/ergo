@@ -354,8 +354,67 @@ mod map {
         }
     }
 
+    const LARGE_PRIME: usize = 8191;
+
+    struct Visitor<T> {
+        items: std::mem::ManuallyDrop<Box<[T]>>,
+        remaining: usize,
+        index: usize,
+    }
+
+    impl<T> Visitor<T> {
+        pub fn new(items: impl Into<Box<[T]>>) -> Self {
+            let items = items.into();
+            let remaining = items.len();
+            Visitor {
+                items: std::mem::ManuallyDrop::new(items),
+                remaining,
+                index: 0,
+            }
+        }
+    }
+
+    impl<T> Iterator for Visitor<T> {
+        type Item = T;
+
+        fn next(&mut self) -> Option<T> {
+            if self.remaining == 0 {
+                None
+            } else {
+                self.remaining -= 1;
+                self.index += LARGE_PRIME;
+                self.index %= self.items.len();
+                // Safety: self.index is guaranteed to be in bounds.
+                let r = unsafe { self.items.get_unchecked(self.index) };
+                // Safety: the iterator consumes the storage.
+                Some(unsafe { (r as *const T).read() })
+            }
+        }
+    }
+
+    impl<T> Drop for Visitor<T> {
+        fn drop(&mut self) {
+            while let Some(_) = self.next() {}
+            let p = Box::into_raw(unsafe { std::mem::ManuallyDrop::take(&mut self.items) });
+            unsafe { std::alloc::dealloc(p as *mut u8, std::alloc::Layout::for_value(&*p)) };
+        }
+    }
+
     impl<K: Ord, V> Extend<(K, V)> for BstMap<K, V> {
         fn extend<T: IntoIterator<Item = (K, V)>>(&mut self, iter: T) {
+            let iter = iter.into_iter();
+            // To prevent a common case (sorted subsets) from creating poor trees, insert in a
+            // non-linear pattern.
+            if let Some(size) = iter.size_hint().1 {
+                if size > 3 && size < LARGE_PRIME {
+                    let entries = Visitor::new(iter.collect::<Vec<_>>());
+                    for (k, v) in entries {
+                        self.insert(k, v);
+                    }
+                    return;
+                }
+            }
+
             for (k, v) in iter {
                 self.insert(k, v);
             }
@@ -392,9 +451,7 @@ mod map {
     {
         fn from_iter<T: IntoIterator<Item = (K, V)>>(iter: T) -> Self {
             let mut ret = Self::default();
-            for (k, v) in iter {
-                ret.insert(k, v);
-            }
+            ret.extend(iter);
             ret
         }
     }

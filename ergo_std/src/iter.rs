@@ -59,7 +59,7 @@ async fn no_errors(iter: _) -> Value {
 
     if errs.is_empty() {
         let mut iter = iter;
-        let deps = depends![nsid!(std::iter::no_errors::result), iter];
+        let deps = depends![dyn nsid!(std::iter::no_errors::result), iter];
         iter.set_dependencies(deps);
         iter.into()
     } else {
@@ -123,7 +123,7 @@ async fn unique(iter: _) -> Value {
 
     ergo_runtime::ImplGenerator!(Unique => |self| {
         while let Some(v) = self.iter.next().await? {
-            if self.seen.insert(v.id()) {
+            if self.seen.insert(v.id().await) {
                 return Ok(Some(v));
             }
         }
@@ -209,7 +209,7 @@ fn zip() -> Value {
                             iters.into_iter().map(|i| traits::into::<types::Iter>(i))
                         ).await);
 
-                    let deps = depends![nsid!(std::iter::zip), ^@iters_typed];
+                    let deps = depends![dyn nsid!(std::iter::zip), ^@iters_typed];
 
                     let new_iter = if iters_typed.is_empty() {
                         types::Iter::from_iter(std::iter::empty())
@@ -237,21 +237,21 @@ fn zip() -> Value {
                         })
                     };
 
-                    Value::constant_deps(new_iter, deps)
+                    Value::with_id(new_iter, deps)
                 },
                 types::PatternArgs { mut args } => {
                     let iter_outs: Vec<_> = (&mut args).collect();
 
                     try_result!(args.unused_arguments());
 
-                    let deps = depends![nsid!(std::iter::zip::pattern), ^@iter_outs];
+                    let deps = depends![dyn nsid!(std::iter::zip::pattern), ^@iter_outs];
 
                     types::Unbound::new_no_doc(move |arg| {
                         let iter_outs = iter_outs.clone();
                         async move {
                             let arg = try_result!(Context::eval_as::<types::Iter>(arg).await);
                             let arg_source = Source::get(&arg);
-                            let iter_id = arg.id();
+                            let iter_id = arg.id().await;
                             let iter = arg.to_owned();
 
                             let items: Vec<_> = try_result!(iter.collect().await);
@@ -289,7 +289,7 @@ fn zip() -> Value {
                 v => traits::bind_error(v).into()
             }
         }.boxed()
-    }, depends![nsid!(std::iter::zip)],
+    }, depends![const nsid!(std::iter::zip)],
         r"Zip the values of iterators together.
 
 Arguments: `^((Array:Of Into<Iter>) :iters)`

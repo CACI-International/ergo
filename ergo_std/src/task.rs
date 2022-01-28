@@ -73,8 +73,8 @@ pub async fn function(
     priority += SCRIPT_TASK_PRIORITY_OFFSET;
 
     let work_id = match track_work_by {
-        Some(v) => v.id(),
-        None => value.id(),
+        Some(v) => v.id().await,
+        None => value.id().await,
     };
 
     let description = description.to_owned().0;

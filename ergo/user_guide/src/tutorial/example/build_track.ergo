@@ -5,8 +5,9 @@ std:import { Path, cache, env, exec, fs, source } = :std
 # Compile our code, specifying an output file binding, and caching the result.
 exe = cache {
     file = Path:new ()
-    exec (env = {PATH = env:get PATH}) c++ -o :file (!fs:track main.cpp) (!fs:track lib.cpp) |>:complete
+    exec (env = {PATH = env:get PATH}) c++ -o :file (fs:track main.cpp) (fs:track lib.cpp) |>:complete
     :file
 }
+
 # Copy the output to a file in the current directory.
 fs:copy :exe (Path:join (source:dir ()) forty_two)

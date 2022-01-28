@@ -5,7 +5,7 @@ plugin = ergo plugin
 ## Arguments: `(Array :cases)`
 ##
 ## This is a shortcut for `:a -> match :a :cases`.
-matches = fn :cases -> :a -> !plugin:match :a :cases
+matches = fn :cases -> :a -> plugin:match :a :cases
 
 mdoc = ergo doc
 mnet = ergo net
@@ -17,9 +17,9 @@ mtype = ergo type
 ## Pattern Arguments: `:value`
 ##
 ## When used in a pattern, evaluates the bound value before binding to the argument.
-eval = :a -> !plugin:value:eval <| plugin:match :a [
-    fn :x -> { !plugin:value:eval :x }
-    pat :out -> :x -> bind :out (!plugin:value:eval :x)
+eval = :a -> plugin:value:eval <| plugin:match :a [
+    fn :x -> { plugin:value:eval :x }
+    pat :out -> :x -> bind :out (force <| plugin:value:eval :x)
 ]
 
 ## Load a remote archive.
@@ -51,11 +51,9 @@ pass = :v -> :v
 ## func = fn (opt-arg = default :arg as []) -> {...}
 ## ```
 default = matches [
-    fn :v as :default-value -> {
-        !plugin:match :v [plugin:type:Unset -> :default-value, :pass]
-    }
+    fn :v as :default-value -> plugin:match :v [plugin:type:Unset -> :default-value, :pass]
     pat :out as :default-value -> :v -> {
-        bind :out <| !plugin:match :v [plugin:type:Unset -> :default-value, :pass]
+        bind :out <| plugin:match :v [plugin:type:Unset -> :default-value, :pass]
     }
 ]
 
@@ -89,7 +87,7 @@ partial = fn :f ^:args -> fn ^:args2 -> f ^:args ^:args2
 ## ```
 with-output-path = fn :f -> {
     file = plugin:path:new()
-    { !f :file, :file }
+    { f :file, :file }
 }
 
 ## Match a path value or bind the source path of the value.
@@ -210,16 +208,16 @@ function-module = fn :func :module -> {
     ]
 
     ## ^(doc :func)^mod-doc
-    :a -> !{
+    :a -> {
         { result } = plugin:match :a [
-            index :i -> !plugin:match module::i [
-                plugin:type:Unset -> !plugin:type:Error:@ (source = :module) <| plugin:string:format "missing index: {}" :i
+            index :i -> plugin:match module::i [
+                plugin:type:Unset -> plugin:type:Error:@ (source = :module) <| plugin:string:format "missing index: {}" :i
                 :x -> { result = :x }
             ]
             # We want the binding to occur immediately, but if there is an error we do not want to make
             # `matches` consider it a match error and move on (to improve the overall error reported in
             # this case).
-            :other -> { result = !bind :func :other }
+            :other -> { result = bind :func :other }
         ]
         :result
     }
@@ -388,7 +386,7 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
 
     ##mdoc:module
     ## Interact with the local filesystem.
-    fs = { ^plugin:fs, exists = :file-exists }
+    fs = force { ^plugin:fs, exists = :file-exists }
 
     ##mdoc:module
     ## Interact with the program's io channels.

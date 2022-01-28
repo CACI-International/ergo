@@ -262,7 +262,7 @@ mod task_priority {
         fn drop(self: Pin<&mut Self>) {
             let proj = self.project();
             match &proj.registration.wait_state {
-                WaitState::Done => return,
+                WaitState::Done | WaitState::FuturePending => return,
                 _ => (),
             }
             let ptr = NonNull::from(&*proj.registration);
@@ -349,8 +349,7 @@ impl SemaphoreInterface for tokio::sync::Semaphore {
             if count == 0 {
                 SemaphorePermit::new(())
             } else {
-                let ret = SemaphorePermit::new(self.acquire_many(count).await);
-                ret
+                SemaphorePermit::new(self.acquire_many(count).await)
             }
         })
     }

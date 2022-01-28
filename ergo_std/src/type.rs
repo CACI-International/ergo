@@ -121,7 +121,7 @@ async fn new(id: types::String, interface: _, (bind): [_]) -> Value {
     // Make type depend on interface identity, so if the interface changes the type will be
     // considered a new type. This may be very relevant if/when support for storing custom
     // types is added.
-    tp.data = ErasedTrivial::new(interface.id());
+    tp.data = ErasedTrivial::new(interface.id().await);
     Context::global()
         .traits
         .add_impl::<traits::TypeName>(tp.clone(), {
@@ -148,7 +148,7 @@ async fn new(id: types::String, interface: _, (bind): [_]) -> Value {
             }
         });
 
-    let deps = depends![tp];
+    let deps = depends![const tp];
     let ret_tp = tp.clone();
     let construct: Value = types::Unbound::new_no_doc(move |arg| {
         let interface = interface.clone();
@@ -165,14 +165,14 @@ async fn new(id: types::String, interface: _, (bind): [_]) -> Value {
                     };
                     let inner_value = result;
                     let data = ScriptTypeData { inner_value, bind_impl };
-                    let deps = depends![data.inner_value];
+                    let deps = depends![dyn data.inner_value];
                     unsafe {
                         Value::new(RArc::new(tp), RArc::new(Erased::new::<ScriptTypeData>(data)), deps)
                     }
                 },
                 a@types::PatternArgs { .. } => {
                     let to_bind = traits::bind(interface, Source::imbue(arg_source.with(a.into()))).await;
-                    let deps = depends![tp, to_bind];
+                    let deps = depends![dyn tp, to_bind];
                     types::Unbound::new_no_doc(move |mut arg| {
                         let to_bind = to_bind.clone();
                         let tp = tp.clone();
@@ -219,7 +219,7 @@ fn match_typed() -> Value {
                     types::PatternArgs { mut args } => {
                         let v = try_result!(args.next_or_error("value pattern", source));
                         try_result!(args.unused_arguments());
-                        let deps = depends![v];
+                        let deps = depends![dyn v];
                         types::Unbound::new_no_doc(move |mut arg| {
                             let v = v.clone();
                             async move {
@@ -233,7 +233,7 @@ fn match_typed() -> Value {
             }
             .boxed()
         },
-        depends![nsid!(std::type::Typed)],
+        depends![const nsid!(std::type::Typed)],
         "Matches any type (except Errors). Evaluates the value to a typed value.",
     )
     .into()
@@ -244,7 +244,7 @@ fn make_match_fn<S: Into<String>>(
     constructor: Result<Value, ergo_runtime::error::Diagnostic>,
     doc: S,
 ) -> Value {
-    let deps = depends![nsid!(type), tp];
+    let deps = depends![const nsid!(type), tp];
     types::Unbound::new(
         move |arg| {
             let tp = tp.clone();
@@ -264,7 +264,7 @@ fn make_match_fn<S: Into<String>>(
                     types::PatternArgs { mut args } => {
                         let v = try_result!(args.next_or_error("binding", source));
                         try_result!(args.unused_arguments());
-                        let deps = depends![v];
+                        let deps = depends![dyn v];
                         types::Unbound::new_no_doc(move |mut arg| {
                             let v = v.clone();
                             let tp = tp.clone();
@@ -370,7 +370,7 @@ fn match_map_entry() -> Value {
                             let key = try_result!(args.next_or_error("key pattern", source));
                             let value = try_result!(args.next_or_error("value pattern", source));
                             try_result!(args.unused_arguments());
-                            let deps = depends![key, value];
+                            let deps = depends![dyn key, value];
                             types::Unbound::new_no_doc(move |arg| {
                                 let key = key.clone();
                                 let value = value.clone();
@@ -387,7 +387,7 @@ fn match_map_entry() -> Value {
                 }
                 .boxed()
             },
-            depends![nsid!(std::type::MapEntry::construct)],
+            depends![const nsid!(std::type::MapEntry::construct)],
         )
         .into();
     make_match_fn(
@@ -462,7 +462,7 @@ fn match_number() -> Value {
                 }
                 .boxed()
             },
-            depends![nsid!(std::type::Number::construct)],
+            depends![const nsid!(std::type::Number::construct)],
     ).into();
 
     make_match_fn(
@@ -507,7 +507,7 @@ fn match_error() -> Value {
             }
             .boxed()
         },
-        depends![nsid!(std::type::Error::construct)],
+        depends![const nsid!(std::type::Error::construct)],
     )
     .into();
     make_match_fn(
@@ -596,7 +596,7 @@ mod test {
         // omit map/array/path/etc, they use the same macro so should be fundamentally the same
 
         fn new(t) {
-            t.assert_content_eq("my_type = self:type:new \"scoped:my_type\" (:a -> !self:match :a [
+            t.assert_content_eq("my_type = self:type:new \"scoped:my_type\" (:a -> self:match :a [
                 fn (self:type:String :a) (self:type:Unit :b) -> [:a,:b]
                 pat :a :b -> [:a2,:b2] -> { bind :a :a2; bind :b :b2 }
             ])
@@ -607,7 +607,7 @@ mod test {
             [:x,:y]",
                 "[str,()]"
             );
-            t.assert_fail("my_type = self:type:new \"scoped:my_type\" (:a -> !self:match :a [
+            t.assert_fail("my_type = self:type:new \"scoped:my_type\" (:a -> self:match :a [
                 fn (self:type:String :a) (self:type:Unit :b) -> [:a,:b]
                 pat :a :b -> [:a2,:b2] -> { bind :a :a2; bind :b :b2 }
             ])
@@ -615,7 +615,7 @@ mod test {
         }
 
         fn new_bind(t) {
-            t.assert_content_eq("my_type = self:type:new \"scoped:my_type\" (:a -> !self:match :a [
+            t.assert_content_eq("my_type = self:type:new \"scoped:my_type\" (:a -> self:match :a [
                 fn (self:type:String :a) (self:type:Unit :b) -> [:a,:b]
                 pat :a :b -> [:a2,:b2] -> { bind :a :a2; bind :b :b2 }
             ])
@@ -624,7 +624,7 @@ mod test {
                 "str"
             );
             t.assert_content_eq("my_type_bind = [:a,:b] -> index string -> :a
-            my_type = self:type:new (bind = :my_type_bind) \"scoped:my_type\" (:a -> !self:match :a [
+            my_type = self:type:new (bind = :my_type_bind) \"scoped:my_type\" (:a -> self:match :a [
                 fn (self:type:String :a) (self:type:Unit :b) -> [:a,:b]
                 pat :a :b -> [:a2,:b2] -> { bind :a :a2; bind :b :b2 }
             ])

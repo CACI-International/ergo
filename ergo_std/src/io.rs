@@ -51,9 +51,9 @@ static STDIN_ID: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize
 async fn stdin(_: types::Unit) -> Value {
     let id = STDIN_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let guard = STDIN_MUTEX.lock().await;
-    Value::constant_deps(
+    Value::with_id(
         types::ByteStream::new(Stdin::new(guard)),
-        depends![nsid!(io::stdin), id],
+        depends![const nsid!(io::stdin), id],
     )
 }
 

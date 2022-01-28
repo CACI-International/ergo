@@ -21,7 +21,7 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
 	DYEXT=dylib
 fi
 
-rm -r $OUTPUT
+rm -fr $OUTPUT
 
 mkdir -p $OUTPUT/bin
 mkdir -p $OUTPUT/share/ergo/lib

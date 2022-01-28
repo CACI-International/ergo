@@ -46,7 +46,7 @@ async fn chars(s: types::String) -> Value {
 }
 
 fn format() -> Value {
-    #[derive(Debug)]
+    #[derive(Debug, Clone, PartialEq, Eq, Hash)]
     enum FormatPart {
         String(String),
         Positional(usize),
@@ -194,17 +194,18 @@ fn format() -> Value {
 
                     let (source, parts) = try_result!(Source::extract(format_string).map(|s| format_parts(s.as_ref().as_str()))
                                                                     .transpose().map_err(|e| e.into_error())).take();
+
                     #[derive(Debug, Clone)]
                     enum FormatBind {
                         String(String),
-                        Value(Value),
+                        Value(FormatPart, Value),
                     }
 
                     impl AsDependency for FormatBind {
                         fn as_dependency(&self) -> Dependency {
                             match self {
-                                FormatBind::String(s) => Dependency::hashed(&s),
-                                FormatBind::Value(v) => Dependency::Value(v.clone())
+                                FormatBind::String(s) => Dependency::Constant(s.into()),
+                                FormatBind::Value(_, v) => Dependency::Value(v.clone())
                             }
                         }
                     }
@@ -217,25 +218,27 @@ fn format() -> Value {
                                 binds.push(FormatBind::String(s));
                                 last_was_bind = false;
                             }
-                            other => {
+                            part => {
                                 if std::mem::replace(&mut last_was_bind, true) {
                                     return source.with("format string is undecidable: cannot have format arguments without a string literal between them")
                                         .into_error().into();
                                 }
-                                let (val, disp) = match other {
+                                let (val, disp) = match part.clone() {
                                     FormatPart::Positional(p) => (pos_args.get(p), p.to_string()),
                                     FormatPart::Keyed(k) => (keyed_args.get(&crate::make_string(k.as_str())), k),
                                     _ => panic!("invalid format part")
                                 };
                                 match val {
                                     None => return source.with(format!("format string argument '{}' not found", disp)).into_error().into(),
-                                    Some(v) => binds.push(FormatBind::Value(v.clone()))
+                                    Some(v) => {
+                                        binds.push(FormatBind::Value(part, v.clone()));
+                                    }
                                 }
                             }
                         }
                     }
 
-                    let deps = depends![nsid!(std::string::format::pattern), ^@binds];
+                    let deps = depends![dyn nsid!(std::string::format::pattern), ^@binds];
 
                     types::Unbound::new_no_doc(move |arg| {
                         let binds = binds.clone();
@@ -243,7 +246,7 @@ fn format() -> Value {
                             let s = try_result!(Context::eval_as::<types::String>(arg).await);
                             let s_source = Source::get(&s);
 
-                            let mut bind_strings: std::collections::BTreeMap<Value, Vec<String>> = Default::default();
+                            let mut bind_strings: std::collections::HashMap<FormatPart, (Value, Vec<String>)> = Default::default();
 
                             let mut s = s.as_ref().as_str();
                             let mut binds = binds.into_iter();
@@ -256,19 +259,19 @@ fn format() -> Value {
                                             return s_source.with(format!("substring missing: {}", string_literal)).into_error().into();
                                         };
                                     }
-                                    FormatBind::Value(v) => {
+                                    FormatBind::Value(part, v) => {
                                         match binds.next() {
                                             Some(FormatBind::String(string_literal)) => {
                                                 if let Some(n) = s.find(&string_literal) {
-                                                    bind_strings.entry(v).or_default().push(s[..n].to_owned());
+                                                    bind_strings.entry(part).or_insert_with(|| (v, vec![])).1.push(s[..n].to_owned());
                                                     s = &s[n+string_literal.len()..];
                                                 } else {
                                                     return s_source.with(format!("substring missing: {}", string_literal)).into_error().into();
                                                 }
                                             }
-                                            Some(FormatBind::Value(_)) => panic!("invalid format bind state"),
+                                            Some(FormatBind::Value(..)) => panic!("invalid format bind state"),
                                             None => {
-                                                bind_strings.entry(v).or_default().push(s.to_owned());
+                                                bind_strings.entry(part).or_insert_with(|| (v, vec![])).1.push(s.to_owned());
                                                 s = &s[s.len()..];
                                             }
                                         }
@@ -280,11 +283,12 @@ fn format() -> Value {
                                 return s_source.with(format!("string had characters remaining after matching: {}", s)).into_error().into();
                             }
 
-                            for (k,v) in bind_strings {
+                            for (k,v) in bind_strings.into_values() {
                                 if v.len() == 1 {
-                                    try_result!(traits::bind_no_error(k, Source::imbue(s_source.clone().with(crate::make_string(&v.into_iter().next().unwrap())))).await);
+                                    let v = crate::make_string_src(s_source.clone().with(&v.into_iter().next().unwrap()));
+                                    try_result!(traits::bind_no_error(k, v.into()).await);
                                 } else {
-                                    let v = Source::imbue(s_source.clone().with(types::Array(v.into_iter().map(|s| Source::imbue(s_source.clone().with(crate::make_string(&s)))).collect()).into()));
+                                    let v = Source::imbue(s_source.clone().with(types::Array(v.into_iter().map(|s| crate::make_string_src(s_source.clone().with(&s)).into()).collect()).into()));
                                     try_result!(traits::bind_no_error(k, v).await);
                                 }
                             }
@@ -296,7 +300,7 @@ fn format() -> Value {
                 v => traits::bind_error(v).into()
             }
         }.boxed()
-    }, depends![nsid!(std::string::format)],
+    }, depends![const nsid!(std::string::format)],
     r#"Create or deconstruct a string based on a format specification.
 
 Format strings may contain curly brackets to indicate arguments to insert/retrieve in the string.

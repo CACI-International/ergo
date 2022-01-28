@@ -3,7 +3,6 @@
 use ergo_runtime::abi_stable::external_types::RMutex;
 use ergo_runtime::{
     context::item_name,
-    depends,
     metadata::{Runtime, Source},
     traits,
     type_system::ErgoType,
@@ -83,7 +82,7 @@ impl Default for Cached {
 ///
 /// Multiple values with the same id will be deduplicated to the same single runtime value.
 async fn cache(value: _, (no_persist): [_], (allow_error): [_]) -> Value {
-    let id = value.id();
+    let id = value.id().await;
 
     let no_persist = no_persist.is_some();
     let allow_error = allow_error.is_some();
@@ -162,13 +161,12 @@ async fn cache(value: _, (no_persist): [_], (allow_error): [_]) -> Value {
 /// Returns a value identical to the argument, but with a different identity. If `depends` is not set, the value will have
 /// a fixed identity derived from nothing else.
 async fn variable(mut value: _, (depends): [_]) -> Value {
-    let deps = if let Some(v) = depends {
-        depends![v]
+    if let Some(v) = depends {
+        value.set_dependencies(v);
     } else {
-        Default::default()
+        value.set_dependencies(0);
     };
 
-    value.set_dependencies(deps);
     value
 }
 
@@ -199,7 +197,12 @@ async fn debug(value: _) -> Value {
 
     Context::global().log.debug(
         Source::get(&value)
-            .with(format!("type: {}{}, id: {:032x}", name, rest, value.id()))
+            .with(format!(
+                "type: {}{}, id: {:032x}",
+                name,
+                rest,
+                value.id().await
+            ))
             .to_string(),
     );
 
@@ -213,7 +216,7 @@ async fn debug(value: _) -> Value {
 ///
 /// Returns the identity as a 32-character hex string.
 async fn identity(value: _) -> Value {
-    types::String::from(format!("{:032x}", value.id())).into()
+    types::String::from(format!("{:032x}", value.id().await)).into()
 }
 
 #[types::ergo_fn]
@@ -233,13 +236,8 @@ async fn eval(mut value: _) -> Value {
 /// Returns the value which had the metadata, or the final value resulting from evaluation if no
 /// matching metadata was found.
 async fn meta_eval(metadata_key: _, mut value: _) -> Value {
-    while !value.is_evaluated()
-        && value
-            .get_metadata(&Runtime {
-                key: metadata_key.id(),
-            })
-            .is_none()
-    {
+    let key = metadata_key.id().await;
+    while !value.is_evaluated() && value.get_metadata(&Runtime { key }).is_none() {
         Context::eval_once(&mut value).await;
     }
     value
@@ -252,9 +250,8 @@ async fn meta_eval(metadata_key: _, mut value: _) -> Value {
 ///
 /// Returns the metadata value or `Unset` if no key is set.
 async fn meta_get(metadata_key: _, value: _) -> Value {
-    match value.get_metadata(&Runtime {
-        key: metadata_key.id(),
-    }) {
+    let key = metadata_key.id().await;
+    match value.get_metadata(&Runtime { key }) {
         Some(v) => v.as_ref().clone(),
         None => types::Unset.into(),
     }
@@ -268,7 +265,7 @@ async fn meta_get(metadata_key: _, value: _) -> Value {
 /// You may have an `Unset` `metadata-value` to remove a metadata key.
 async fn meta_set(metadata_key: _, metadata_value: _, mut value: _) -> Value {
     let key = Runtime {
-        key: metadata_key.id(),
+        key: metadata_key.id().await,
     };
 
     if metadata_value.is_type::<types::Unset>() {
@@ -315,9 +312,10 @@ async fn source_copy(from: _, mut to: _) -> Value {
 ///
 /// Returns the dynamic binding corresponding to `key`, or `Unset` if none exists.
 async fn dynamic_binding_get(key: _) -> Value {
+    let key = key.as_identified().await;
     match Context::with(|ctx| ctx.dynamic_scope.get(&key)) {
         None => types::Unset.into(),
-        Some(r) => (*r).clone(),
+        Some(r) => (*r).clone().into(),
     }
 }
 
@@ -328,9 +326,14 @@ async fn dynamic_binding_get(key: _) -> Value {
 ///
 /// Returns the result of evaluating `eval` with all `bindings` set in the dynamic scope.
 async fn dynamic_binding_set(bindings: types::Map, mut eval: _) -> Value {
+    let mut entries = Vec::new();
+    for (k, v) in bindings.to_owned().0 {
+        let v = v.as_identified().await;
+        entries.push((k, v));
+    }
     Context::fork(
         |ctx| {
-            for (k, v) in bindings.to_owned().0 {
+            for (k, v) in entries {
                 ctx.dynamic_scope.set(&Source::extract(k), v);
             }
         },
@@ -428,7 +431,7 @@ async fn equal(mut a: _, mut b: _, (exact): [_]) -> Value {
         drop(Context::eval(&mut a).await);
         drop(Context::eval(&mut b).await);
     }
-    types::Bool(a.id() == b.id()).into()
+    types::Bool(a.id().await == b.id().await).into()
 }
 
 #[cfg(test)]

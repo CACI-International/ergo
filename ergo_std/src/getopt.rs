@@ -46,11 +46,11 @@ pub async fn function(args: types::Array, (consecutive): [_]) -> Value {
                 let src = Source::get(&s);
                 match rest.split_once("=") {
                     None => keyed.insert(
-                        Source::imbue(src.clone().with(types::String::from(rest).into())),
+                        crate::make_string_src(src.clone().with(rest)),
                         Source::imbue(src.with(types::Unit.into())),
                     ),
                     Some((a, b)) => keyed.insert(
-                        Source::imbue(src.clone().with(types::String::from(a).into())),
+                        crate::make_string_src(src.clone().with(a)),
                         Source::imbue(src.with(types::String::from(b).into())),
                     ),
                 };

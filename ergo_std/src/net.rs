@@ -9,7 +9,7 @@ use ergo_runtime::{
     metadata::Source,
     nsid, traits, try_result,
     type_system::ErgoType,
-    types, Context, Dependencies, Value,
+    types, Context, Value,
 };
 use reqwest::{
     blocking::Client,
@@ -113,7 +113,7 @@ async fn http(
         if let Some(headers) = headers {
             drop(traits::eval_nested(headers.clone().into()).await); // Eval in parallel
             for (k, v) in headers.to_owned().0.into_iter() {
-                let k = Context::eval_as::<types::String>(k).await?;
+                let k = Context::eval_as::<types::String>(k.into()).await?;
                 let v = Context::eval_as::<types::String>(v).await?;
 
                 let k = HeaderName::try_from(k.as_ref().as_str()).add_primary_label(
@@ -159,21 +159,18 @@ async fn http(
 
     let mut headers = BstMap::new();
     for (key, value) in response.headers() {
-        let key: Value = types::String::from(key.as_str()).into();
-        let value = Value::constant_deps(
+        let key = crate::make_string_src(ARGS_SOURCE.clone().with(key.as_str()));
+        let value = Value::with_id(
             types::ByteStream::from(value.as_bytes().to_vec()),
-            depends![^CALL_DEPENDS.clone(), nsid!(net::http::headers), key],
+            depends![dyn ^CALL_DEPENDS.clone(), nsid!(net::http::headers), key],
         );
-        headers.insert(
-            Source::imbue(ARGS_SOURCE.clone().with(key)),
-            Source::imbue(ARGS_SOURCE.clone().with(value)),
-        );
+        headers.insert(key, Source::imbue(ARGS_SOURCE.clone().with(value)));
     }
     let headers = types::Map(headers);
 
-    let body = Value::constant_deps(
+    let body = Value::with_id(
         types::ByteStream::new(io::Blocking::new(response)),
-        depends![^CALL_DEPENDS.clone(), nsid!(net::http::body)],
+        depends![dyn ^CALL_DEPENDS.clone(), nsid!(net::http::body)],
     );
 
     let complete = if err_status.is_success() {
@@ -182,7 +179,7 @@ async fn http(
         let src = ARGS_SOURCE.clone();
         let body = body.clone();
         // TODO should this just immediately be an Error type?
-        Value::dyn_new(
+        Value::dynamic(
             move || async move {
                 src.with(format!(
                     "{}: {}",
@@ -192,7 +189,7 @@ async fn http(
                 .into_error()
                 .into()
             },
-            depends![^CALL_DEPENDS.clone(), nsid!(net::http::complete)],
+            depends![dyn ^CALL_DEPENDS.clone(), nsid!(net::http::complete)],
         )
     };
 
@@ -244,19 +241,19 @@ impl From<HttpStatus> for types::String {
     }
 }
 
+ergo_runtime::ConstantDependency!(HttpStatus);
+
+impl ergo_runtime::GetDependenciesConstant for HttpStatus {
+    fn get_depends(&self) -> ergo_runtime::DependenciesConstant {
+        depends![HttpStatus::ergo_type(), self]
+    }
+}
+
 impl From<HttpStatus> for ergo_runtime::TypedValue<HttpStatus> {
     fn from(e: HttpStatus) -> Self {
-        ergo_runtime::TypedValue::constant(e)
+        Self::constant(e)
     }
 }
-
-impl From<&'_ HttpStatus> for Dependencies {
-    fn from(e: &'_ HttpStatus) -> Self {
-        depends![HttpStatus::ergo_type(), e]
-    }
-}
-
-ergo_runtime::HashAsDependency!(HttpStatus);
 
 ergo_runtime::type_system::ergo_traits_fn! {
     traits::IntoTyped::<types::Bool>::add_impl::<HttpStatus>(traits);

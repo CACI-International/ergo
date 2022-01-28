@@ -9,7 +9,7 @@ use ergo_runtime::{
     metadata::Source,
     nsid, traits, try_result,
     type_system::ErgoType,
-    types, Context, Dependencies, Error, Value,
+    types, Context, Error, Value,
 };
 use futures::channel::oneshot::channel;
 use futures::future::{FutureExt, TryFutureExt};
@@ -33,13 +33,13 @@ impl From<types::Path> for CommandString {
     }
 }
 
-impl From<&'_ CommandString> for Dependencies {
-    fn from(c: &'_ CommandString) -> Self {
-        depends![CommandString::ergo_type(), c]
+ergo_runtime::ConstantDependency!(CommandString);
+
+impl ergo_runtime::GetDependenciesConstant for CommandString {
+    fn get_depends(&self) -> ergo_runtime::DependenciesConstant {
+        depends![CommandString::ergo_type(), self]
     }
 }
-
-ergo_runtime::HashAsDependency!(CommandString);
 
 /// The exit status of a command.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, ErgoType, StableAbi)]
@@ -73,19 +73,19 @@ impl From<ExitStatus> for types::Bool {
     }
 }
 
+ergo_runtime::ConstantDependency!(ExitStatus);
+
+impl ergo_runtime::GetDependenciesConstant for ExitStatus {
+    fn get_depends(&self) -> ergo_runtime::DependenciesConstant {
+        depends![ExitStatus::ergo_type(), self]
+    }
+}
+
 impl From<ExitStatus> for ergo_runtime::TypedValue<ExitStatus> {
-    fn from(e: ExitStatus) -> Self {
-        ergo_runtime::TypedValue::constant(e)
+    fn from(b: ExitStatus) -> Self {
+        Self::constant(b)
     }
 }
-
-impl From<&'_ ExitStatus> for Dependencies {
-    fn from(e: &'_ ExitStatus) -> Self {
-        depends![ExitStatus::ergo_type(), e]
-    }
-}
-
-ergo_runtime::HashAsDependency!(ExitStatus);
 
 #[types::ergo_fn]
 /// Execute an external program.
@@ -176,7 +176,7 @@ pub async fn function(
     if let Some(v) = env {
         let types::Map(env) = v.to_owned();
         for (k, v) in env {
-            let k = Context::eval_as::<types::String>(k)
+            let k = Context::eval_as::<types::String>(k.into())
                 .await?
                 .to_owned()
                 .into_string();
@@ -340,33 +340,33 @@ pub async fn function(
     // Create output values
     let complete = {
         let run_command = run_command.clone();
-        Value::dyn_new(
+        Value::dynamic(
             || async move {
                 try_result!(run_command.await);
                 types::Unit.into()
             },
-            depends![^CALL_DEPENDS.clone(), nsid!(exec::complete)],
+            depends![dyn ^CALL_DEPENDS.clone(), nsid!(exec::complete)],
         )
     };
 
-    let stdout = Value::constant_deps(
+    let stdout = Value::with_id(
         types::ByteStream::new(ReadWhile::new(
             ChannelRead::new(rcv_stdout),
             run_command.clone(),
         )),
-        depends![^CALL_DEPENDS.clone(), nsid!(exec::stdout)],
+        depends![dyn ^CALL_DEPENDS.clone(), nsid!(exec::stdout)],
     );
 
-    let stderr = Value::constant_deps(
+    let stderr = Value::with_id(
         types::ByteStream::new(ReadWhile::new(
             ChannelRead::new(rcv_stderr),
             run_command.clone(),
         )),
-        depends![^CALL_DEPENDS.clone(), nsid!(exec::stderr)],
+        depends![dyn ^CALL_DEPENDS.clone(), nsid!(exec::stderr)],
     );
 
     let rcv_status = rcv_status.shared();
-    let exit_status = Value::dyn_new(
+    let exit_status = Value::dynamic(
         move || async move {
             try_result!(run_command.await);
             ExitStatus::from(try_result!(rcv_status.await.add_primary_label(
@@ -374,7 +374,7 @@ pub async fn function(
             )))
             .into()
         },
-        depends![^CALL_DEPENDS, nsid!(exec::exit_status)],
+        depends![dyn ^CALL_DEPENDS, nsid!(exec::exit_status)],
     );
 
     crate::make_string_map! { source ARGS_SOURCE,

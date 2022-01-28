@@ -39,15 +39,15 @@ impl From<Order> for std::cmp::Ordering {
     }
 }
 
-impl From<Order> for ergo_runtime::TypedValue<Order> {
-    fn from(e: Order) -> Self {
-        ergo_runtime::TypedValue::constant(e)
+impl ergo_runtime::GetDependenciesConstant for Order {
+    fn get_depends(&self) -> ergo_runtime::DependenciesConstant {
+        ergo_runtime::depends![Order::ergo_type(), self]
     }
 }
 
-impl From<&'_ Order> for ergo_runtime::Dependencies {
-    fn from(o: &'_ Order) -> Self {
-        ergo_runtime::depends![Order::ergo_type(), o]
+impl From<Order> for ergo_runtime::TypedValue<Order> {
+    fn from(e: Order) -> Self {
+        Self::constant(e)
     }
 }
 
@@ -61,7 +61,7 @@ impl std::fmt::Display for Order {
     }
 }
 
-ergo_runtime::HashAsDependency!(Order);
+ergo_runtime::ConstantDependency!(Order);
 
 ergo_runtime::type_system::ergo_traits_fn! {
     ergo_runtime::ergo_type_name!(traits, Order);

@@ -89,7 +89,6 @@ impl SyncResource {
 ///
 /// Returns a SyncResource with the given count.
 async fn resource(id: _, count: _) -> Value {
-    let id = id.id();
     let count = traits::into::<types::Number>(count).await?;
 
     let count = count
@@ -97,7 +96,7 @@ async fn resource(id: _, count: _) -> Value {
         .to_usize()
         .add_primary_label(Source::get(&count).with("expected this to be unsigned integer"))?;
 
-    Value::constant_deps(SyncResource::new(count), ergo_runtime::depends![id])
+    Value::with_id(SyncResource::new(count), id)
 }
 
 #[types::ergo_fn]

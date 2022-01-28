@@ -41,7 +41,7 @@ async fn parse(json: types::String) -> Value {
                 o.iter()
                     .map(|(k, v)| {
                         (
-                            Source::imbue(src.clone().with(types::String::from(k).into())),
+                            crate::make_string_src(src.clone().with(k)),
                             Source::imbue(src.clone().with(json_to_val(src, v.clone()))),
                         )
                     })
@@ -83,7 +83,7 @@ async fn stringify(value: _, (pretty): [_]) -> Value {
                 types::Map(m) => {
                     let mut entries = Vec::new();
                     for (k,v) in m {
-                        let k = Context::eval_as::<types::String>(k).await;
+                        let k = Context::eval_as::<types::String>(k.into()).await;
                         let v = val_to_json(v).await;
                         entries.push(match (k,v) {
                             (Err(ke), Err(ve)) => Err(ergo_runtime::Error::aggregate(vec![ke,ve])),
@@ -132,7 +132,7 @@ mod test {
                     a = (), b = self:type:Number:@ 1, c = self:bool:true, d = [str]
                 }",
                 // The actual string is subject to value identity ordering of keys.
-                r#"' {"a":null,"d":["str"],"c":true,"b":1}"#
+                r#"' {"d":["str"],"a":null,"b":1,"c":true}"#
             );
         }
 
