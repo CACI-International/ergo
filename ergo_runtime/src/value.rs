@@ -282,11 +282,14 @@ mod value_id {
             }
         }
 
+        const MAX_SPINS: usize = 20;
+
         impl<'a> Future for Get<'a> {
             type Output = Identity;
 
             fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
                 let proj = self.project();
+                let mut spins = 0;
                 loop {
                     if let Some(fut) = proj.to_poll {
                         match Pin::new(fut).poll(cx) {
@@ -297,7 +300,12 @@ mod value_id {
                                 while proj.value_id.tag.load(Ordering::Acquire) & USING_WAKERS != 0
                                 {
                                     // Should be a fairly short wait.
-                                    std::hint::spin_loop();
+                                    spins += 1;
+                                    if spins > MAX_SPINS {
+                                        std::thread::yield_now();
+                                    } else {
+                                        std::hint::spin_loop();
+                                    }
                                 }
                                 // Safety: the state must be wakers, not accessed by anything else
                                 let state = unsafe {
@@ -351,14 +359,17 @@ mod value_id {
                             } else {
                                 // There are three cases:
                                 // 1. deps -> wakers transition (WAKERS_SET unset), which is pretty
-                                //    quick (moving RBox, creating RMutex<RVec>).
+                                //    quick (moving RBox, creating RVec).
                                 // 2. wakers -> id transition (WAKERS_SET unset), which is pretty
-                                //    quick (moving RMutex<RVec>, copying Identity).
+                                //    quick (moving RVec, copying Identity).
                                 // 3. USING_WAKERS set, which will usually be fast though the
                                 //    vector growing may be slow.
-                                //
-                                // TODO might want to yield the thread sometimes
-                                std::hint::spin_loop();
+                                spins += 1;
+                                if spins > MAX_SPINS {
+                                    std::thread::yield_now();
+                                } else {
+                                    std::hint::spin_loop();
+                                }
                             }
                         }
                         MASK_STATE => break,
