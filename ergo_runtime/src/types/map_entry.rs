@@ -100,5 +100,4 @@ ergo_traits_fn! {
     }
 
     crate::ergo_type_name!(traits, MapEntry);
-    traits::ValueByContent::add_nested_impl::<MapEntry>(traits);
 }

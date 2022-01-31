@@ -406,14 +406,14 @@ mod test {
 
     ergo_script::tests! {
         fn chars(t) {
-            t.assert_content_eq("self:array:from <| self:string:chars hello", "[h,e,l,l,o]");
+            t.assert_eq("self:array:from <| self:string:chars hello", "[h,e,l,l,o]");
         }
 
         fn compare(t) {
-            t.assert_content_eq("self:string:compare a b", "self:cmp:less");
-            t.assert_content_eq("self:string:compare world hello", "self:cmp:greater");
-            t.assert_content_eq("self:string:compare all allow", "self:cmp:less");
-            t.assert_content_eq("self:string:compare hi hi", "self:cmp:equal");
+            t.assert_eq("self:string:compare a b", "self:cmp:less");
+            t.assert_eq("self:string:compare world hello", "self:cmp:greater");
+            t.assert_eq("self:string:compare all allow", "self:cmp:less");
+            t.assert_eq("self:string:compare hi hi", "self:cmp:equal");
         }
 
         fn format_create(t) {
@@ -432,10 +432,10 @@ mod test {
         }
 
         fn format_match(t) {
-            t.assert_content_eq(r#"self:string:format "hello {}" :world = "hello world""#, "{ world = world }");
-            t.assert_content_eq(r#"self:string:format "{1} {} {2} {0}" :a :b :c = "1 2 3 4""#, "{a = [2,4], b = 1, c = 3}");
-            t.assert_content_eq(r#"self:string:format "{named} {}" ^{named} :pos = "howdy pardner""#, "{ named = howdy, pos = pardner }");
-            t.assert_content_eq(r#"self:string:format "{{ {} }}" :v = "{ hi }""#, "{ v = hi }");
+            t.assert_eq(r#"self:string:format "hello {}" :world = "hello world""#, "{ world = world }");
+            t.assert_eq(r#"self:string:format "{1} {} {2} {0}" :a :b :c = "1 2 3 4""#, "{a = force [2,4], b = 1, c = 3}");
+            t.assert_eq(r#"self:string:format "{named} {}" ^{named} :pos = "howdy pardner""#, "{ named = howdy, pos = pardner }");
+            t.assert_eq(r#"self:string:format "{{ {} }}" :v = "{ hi }""#, "{ v = hi }");
             t.assert_fail(r#"bind (self:string:format "no match {}" :v -> :v) match"#);
             t.assert_fail(r#"bind (self:string:format "{} no" :v -> :v) str"#);
             t.assert_fail(r#"self:string:format "{}c" _ = abcd"#);
@@ -448,20 +448,20 @@ mod test {
         }
 
         fn split(t) {
-            t.assert_content_eq(r#"self:string:split l "hello world""#, r#"[he,"","o wor",d]"#);
-            t.assert_content_eq(r#"self:string:split the "the fox jumps over the fence""#, r#"[""," fox jumps over "," fence"]"#);
-            t.assert_content_eq(r#"self:string:split " " "the fox jumps over the fence""#, "[the,fox,jumps,over,the,fence]");
-            t.assert_content_eq("self:string:split t tttt", r#"["","","","",""]"#);
+            t.assert_eq(r#"self:string:split l "hello world""#, r#"[he,"","o wor",d]"#);
+            t.assert_eq(r#"self:string:split the "the fox jumps over the fence""#, r#"[""," fox jumps over "," fence"]"#);
+            t.assert_eq(r#"self:string:split " " "the fox jumps over the fence""#, "[the,fox,jumps,over,the,fence]");
+            t.assert_eq("self:string:split t tttt", r#"["","","","",""]"#);
         }
 
         fn join(t) {
-            t.assert_content_eq(r#"self:string:join l [he,"","o wor",d]"#, r#""hello world""#);
-            t.assert_content_eq(r#"self:string:join " " [the,fox,jumps,over,the,fence]"#, r#""the fox jumps over the fence""#);
-            t.assert_content_eq(r#"self:string:join v ["","","","",""]"#, "vvvv");
+            t.assert_eq(r#"self:string:join l [he,"","o wor",d]"#, r#""hello world""#);
+            t.assert_eq(r#"self:string:join " " [the,fox,jumps,over,the,fence]"#, r#""the fox jumps over the fence""#);
+            t.assert_eq(r#"self:string:join v ["","","","",""]"#, "vvvv");
         }
 
         fn trim(t) {
-            t.assert_content_eq(r#"self:string:trim "
+            t.assert_eq(r#"self:string:trim "
             something
 
             ""#, "something");

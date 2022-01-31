@@ -155,15 +155,15 @@ mod test {
         }
 
         fn parent(t) {
-            t.assert_content_eq("self:path:parent (self:path:join a b c)", "self:path:join a b");
+            t.assert_eq("self:path:parent (self:path:join a b c)", "self:path:join a b");
         }
 
         fn relative(t) {
-            t.assert_content_eq("self:path:relative (self:path:join a b) (self:path:join a b c d)", "self:path:join c d");
+            t.assert_eq("self:path:relative (self:path:join a b) (self:path:join a b c d)", "self:path:join c d");
         }
 
         fn split(t) {
-            t.assert_content_eq("self:path:split (self:path:join a b c)", "[a,b,c]");
+            t.assert_eq("self:path:split (self:path:join a b c)", "[a,b,c]");
         }
     }
 }

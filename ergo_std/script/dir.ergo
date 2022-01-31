@@ -456,7 +456,7 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
     }
 
     # Functions
-    import {by-content,cache,debug,equal,identity,merge,variable} = plugin:value
+    import {cache,debug,equal,identity,merge,variable} = plugin:value
     import {optional,required} = :mtype
     default
     ergo-remote

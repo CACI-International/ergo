@@ -99,5 +99,4 @@ ergo_traits_fn! {
     traits::IntoTyped::<super::String>::add_impl::<Path>(traits);
     traits::IntoTyped::<Path>::add_impl::<super::String>(traits);
     crate::ergo_type_name!(traits, Path);
-    traits::ValueByContent::add_impl::<Path>(traits);
 }

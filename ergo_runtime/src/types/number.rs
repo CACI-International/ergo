@@ -257,6 +257,4 @@ ergo_traits_fn! {
             ).into()
         }
     }
-
-    traits::ValueByContent::add_impl::<Number>(traits);
 }

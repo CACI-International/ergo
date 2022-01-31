@@ -20,7 +20,7 @@ async fn from(value: _) -> Value {
 mod test {
     ergo_script::tests! {
         fn from(t) {
-            t.assert_content_eq("self:array:from <| self:iter:from [1,2,3]", "[1,2,3]");
+            t.assert_eq("self:array:from <| self:iter:from [1,2,3]", "[1,2,3]");
         }
 
         fn from_args(t) {

@@ -17,11 +17,13 @@ mod ergo_trait;
 /// it must be a borrowing reference.
 ///
 /// ```
+/// # mod m {
 /// # use ergo_runtime::type_system::ergo_trait;
 /// #[ergo_trait]
 /// pub trait Something {
 ///     async fn my_something(&self) -> bool;
 /// }
+/// # }
 /// ```
 pub use ergo_runtime_macro::ergo_trait;
 
@@ -31,6 +33,7 @@ pub use ergo_runtime_macro::ergo_trait;
 /// keyword `CONTEXT`, which will be a reference to the `ergo_runtime::Context`.
 ///
 /// ```
+/// # mod m {
 /// # use ergo_runtime::type_system::{ergo_trait, ergo_trait_impl};
 /// # #[ergo_trait]
 /// # pub trait Something {
@@ -46,6 +49,7 @@ pub use ergo_runtime_macro::ergo_trait;
 ///         }
 ///     }
 /// }
+/// # }
 /// ```
 pub use ergo_runtime_macro::ergo_trait_impl;
 
@@ -55,6 +59,7 @@ pub use ergo_runtime_macro::ergo_trait_impl;
 /// `ergo_trait_impl!`), and there will be a `traits: &mut ergo_runtime::context::Traits` in scope.
 ///
 /// ```
+/// # mod m {
 /// use ergo_runtime::abi_stable::{
 ///     std_types::ROption,
 ///     closure::FnPtr,
@@ -93,6 +98,7 @@ pub use ergo_runtime_macro::ergo_trait_impl;
 ///         }
 ///     }
 /// }
+/// # }
 /// ```
 pub use ergo_runtime_macro::ergo_traits_fn;
 

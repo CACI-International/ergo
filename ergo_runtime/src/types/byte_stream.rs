@@ -103,38 +103,6 @@ ergo_traits_fn! {
 
     traits::IntoTyped::<ByteStream>::add_depending_impl::<super::String>(traits);
 
-    impl traits::ValueByContent for ByteStream {
-        async fn value_by_content(self, _deep: bool) -> Value {
-            let data = self.clone().to_owned();
-            let mut reader = data.read();
-            let mut buf: [u8; BYTE_STREAM_BLOCK_LIMIT] =
-                unsafe { std::mem::MaybeUninit::uninit().assume_init() };
-            use crate::hash::HashFn;
-            use std::hash::Hasher;
-            let mut h = HashFn::default();
-            loop {
-                let size = match reader.read(&mut buf).await {
-                    Err(e) => return crate::error!{
-                        labels: [
-                            secondary(Source::get(&self).with("while reading this ByteStream"))
-                        ],
-                        error: e
-                    }.into(),
-                    Ok(v) => v
-                };
-                if size == 0 {
-                    break
-                } else {
-                    h.write(&buf[..size]);
-                }
-            }
-            let deps = h.finish_ext();
-            let mut v = Value::from(self);
-            v.set_dependencies(deps);
-            v
-        }
-    }
-
     crate::ergo_type_name!(traits, ByteStream);
 
     impl traits::Stored for ByteStream {

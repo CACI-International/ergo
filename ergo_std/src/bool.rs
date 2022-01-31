@@ -73,8 +73,8 @@ async fn not(v: _) -> Value {
 mod test {
     ergo_script::tests! {
         fn from(t) {
-            t.assert_content_eq("self:bool:false", "self:bool:from :unset");
-            t.assert_content_eq("self:bool:true", "self:bool:from hello");
+            t.assert_eq("self:bool:false", "self:bool:from :unset");
+            t.assert_eq("self:bool:true", "self:bool:from hello");
             t.assert_ne("self:bool:false", "self:bool:from ()"); // () is true, too
         }
     }

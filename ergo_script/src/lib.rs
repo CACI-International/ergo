@@ -843,7 +843,7 @@ mod test {
 
         #[test]
         fn unused_block_fn() {
-            script_eval_semantics("*id { f = fn :x -> force :x, -, - }");
+            script_eval_semantics("*id { f = fn :x -> force :x, +, - }");
         }
 
         #[test]
@@ -863,7 +863,7 @@ mod test {
 
         #[test]
         fn unused_map_fn_bind() {
-            script_eval_semantics("*id { f = fn :x -> force :x, -, b = - }");
+            script_eval_semantics("*id { f = fn :x -> force :x, +, b = - }");
         }
 
         #[test]

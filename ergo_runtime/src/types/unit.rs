@@ -48,5 +48,4 @@ ergo_traits_fn! {
     }
 
     crate::ergo_type_name!(traits, Unit);
-    traits::ValueByContent::add_impl::<Unit>(traits);
 }

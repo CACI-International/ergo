@@ -144,15 +144,15 @@ async fn modulus(a: _, b: _) -> Value {
 mod test {
     ergo_script::tests! {
         fn from(t) {
-            t.assert_content_eq("self:type:Number:@ 1/4", "self:number:from 0.25");
+            t.assert_eq("self:type:Number:@ 1/4", "self:number:from 0.25");
             t.assert_ne("self:type:Number:@ 1/3", "self:number:from 0.333333333333333333333333");
             t.assert_fail("self:type:Number:@ 1/0");
         }
 
         fn compare(t) {
-            t.assert_content_eq("self:number:compare (self:number:from -1) (self:number:from 200)", "self:cmp:less");
-            t.assert_content_eq("self:number:compare (self:number:from 0.25) (self:number:from 0.125)", "self:cmp:greater");
-            t.assert_content_eq("self:number:compare (self:number:from 100/4) (self:number:from 25)", "self:cmp:equal");
+            t.assert_eq("self:number:compare (self:number:from -1) (self:number:from 200)", "self:cmp:less");
+            t.assert_eq("self:number:compare (self:number:from 0.25) (self:number:from 0.125)", "self:cmp:greater");
+            t.assert_eq("self:number:compare (self:number:from 100/4) (self:number:from 25)", "self:cmp:equal");
         }
 
         fn math(t) {

@@ -121,26 +121,26 @@ async fn stringify(value: _, (pretty): [_]) -> Value {
 mod test {
     ergo_script::tests! {
         fn parse(t) {
-            t.assert_content_eq(r#"self:json:parse '
+            t.assert_eq(r#"self:json:parse '
             ' {"a": null, "b": 1, "c": true, "d": ["str"]}"#, "{
-                    a = (), b = self:type:Number:@ 1, c = self:bool:true, d = [str]
+                    a = (), b = force <| self:type:Number:@ 1, c = force self:bool:true, d = force [str]
                 }");
         }
 
         fn stringify(t) {
-            t.assert_content_eq("self:json:stringify {
+            t.assert_eq("self:json:parse <| self:json:stringify {
                     a = (), b = self:type:Number:@ 1, c = self:bool:true, d = [str]
                 }",
-                // The actual string is subject to value identity ordering of keys.
-                r#"' {"d":["str"],"a":null,"b":1,"c":true}"#
-            );
+                "{
+                    a = (), b = force <| self:type:Number:@ 1, c = force self:bool:true, d = force [str]
+                }");
         }
 
         fn stringify_pretty(t) {
-            t.assert_content_eq("self:json:parse <| self:json:stringify ^pretty {
+            t.assert_eq("self:json:parse <| self:json:stringify ^pretty {
                     a = (), b = self:type:Number:@ 1, c = self:bool:true, d = [str]
                 }",
-                "{ a = (), b = self:type:Number:@ 1, c = self:bool:true, d = [str] }"
+                "{ a = (), b = force <| self:type:Number:@ 1, c = force self:bool:true, d = force [str] }"
             );
         }
     }

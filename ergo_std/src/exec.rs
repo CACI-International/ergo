@@ -412,7 +412,6 @@ ergo_runtime::type_system::ergo_traits_fn! {
     traits::IntoTyped::<types::Bool>::add_impl::<ExitStatus>(traits);
     ergo_runtime::ergo_display_basic!(traits, ExitStatus);
     ergo_runtime::ergo_type_name!(traits, ExitStatus);
-    traits::ValueByContent::add_impl::<ExitStatus>(traits);
 
     impl traits::Stored for ExitStatus {
         async fn put(&self, _ctx: &traits::StoredContext, mut into: ItemContent) -> ergo_runtime::RResult<()> {
@@ -654,12 +653,12 @@ mod test {
         }
 
         fn exec_unset_args(t) {
-            t.assert_content_eq("self:string:from <| self:exec echo :unset hello :unset world |>:stdout", "\"hello world\\n\"");
+            t.assert_eq("self:string:from <| self:exec echo :unset hello :unset world |>:stdout", "\"hello world\\n\"");
             t.assert_fail("self:exec :unset echo |>:complete");
         }
 
         fn exec_unit_args(t) {
-            t.assert_content_eq("self:string:from <| self:exec echo () hello () world |>:stdout", "\"hello world\\n\"");
+            t.assert_eq("self:string:from <| self:exec echo () hello () world |>:stdout", "\"hello world\\n\"");
             t.assert_fail("self:exec () echo |>:complete");
         }
     }

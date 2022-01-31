@@ -74,5 +74,4 @@ ergo_traits_fn! {
     }
 
     crate::ergo_type_name!(traits, Bool);
-    traits::ValueByContent::add_impl::<Bool>(traits);
 }

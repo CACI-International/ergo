@@ -214,11 +214,10 @@ mod value_id {
         }
 
         pub fn from_constant_deps(deps: DependenciesConstant) -> Self {
-            Self::id({
-                let mut h = HashFn::default();
-                std::hash::Hash::hash(&deps, &mut h);
-                h.finish_ext()
-            })
+            let id = deps.id();
+            let mut ret = Self::id(id.id);
+            ret.set_eval_id(id.should_eval);
+            ret
         }
 
         pub async fn immediate(deps: Dependencies) -> Self {

@@ -194,21 +194,6 @@ ergo_traits_fn! {
         }
     }
 
-    impl traits::ValueByContent for Iter {
-        async fn value_by_content(self, deep: bool) -> Value {
-            let mut vals: Vec<_> = crate::try_result!(self.to_owned().collect().await);
-            if deep {
-                crate::Context::global().task.join_all(vals.iter_mut().map(|v| async move {
-                    let old_v = std::mem::replace(v, super::Unset.into());
-                    *v = traits::value_by_content(old_v, deep).await;
-                    Ok(())
-                })).await.unwrap();
-            }
-            let deps = depends![^@vals];
-            Iter::new_iter(vals.into_iter(), deps).into()
-        }
-    }
-
     impl traits::IntoTyped<super::Array> for Iter {
         async fn into_typed(self) -> Value {
             super::Array(crate::try_result!(self.to_owned().collect().await)).into()

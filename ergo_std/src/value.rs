@@ -14,7 +14,6 @@ use std::sync::Arc;
 
 pub fn module() -> Value {
     crate::make_string_map! {
-        "by-content" = by_content(),
         "cache" = cache(),
         "debug" = debug(),
         "dynamic" = crate::make_string_map! {
@@ -34,17 +33,6 @@ pub fn module() -> Value {
         "source-path" = source_path(),
         "variable" = variable()
     }
-}
-
-#[types::ergo_fn]
-/// Identify a value by its content.
-///
-/// Arguments: `:value`
-///
-/// Returns a new value which has the same type and result as the given value, but has an identity
-/// derived from the result (typically by forcing the value and any inner values).
-async fn by_content(value: _) -> Value {
-    traits::value_by_content(value, true).await
 }
 
 #[derive(ErgoType)]
@@ -437,10 +425,6 @@ async fn equal(mut a: _, mut b: _, (exact): [_]) -> Value {
 #[cfg(test)]
 mod test {
     ergo_script::tests! {
-        fn by_content(t) {
-            t.assert_eq("self:value:by-content [a,b,c]:2", "c");
-        }
-
         fn eval(t) {
             t.assert_script_ne("fn :a -> :a |> str", "str");
             t.assert_eq("self:value:eval <| fn :a -> :a |> str", "str");
@@ -459,17 +443,17 @@ mod test {
         }
 
         fn dynamic_binding_multiple_scopes(t) {
-            t.assert_content_eq("the-value = self:value:dynamic:get the-value
-                [self:value:dynamic:eval {the-value = 10} :the-value, self:value:dynamic:eval {the-value = hi} :the-value]", "[10,hi]");
+            t.assert_eq("the-value = self:value:dynamic:get the-value
+                [force <| self:value:dynamic:eval {the-value = 10} :the-value, force <| self:value:dynamic:eval {the-value = hi} :the-value]", "[10,hi]");
         }
 
         fn merge(t) {
-            t.assert_content_eq("self:value:merge [1,2] [3,4]", "[1,2,3,4]");
-            t.assert_content_eq("self:value:merge hi ()", "()");
-            t.assert_content_eq("self:value:merge {a = [1,2,3], b = { x = 1, y = 2 }, c = hi} {a = [4], b = { x = 42, z = 3 }}",
-                "{a = [1,2,3,4], b = { x = 42, y = 2, z = 3 }, c = hi}");
-            t.assert_content_eq("self:value:merge ^array-merge {a = [{z=1},2,3], b = [1]} {a = [{y=4}], b = [4,5,6]}",
-                "{a = [{y=4,z=1},2,3], b = [4,5,6]}");
+            t.assert_eq("self:value:merge [1,2] [3,4]", "[1,2,3,4]");
+            t.assert_eq("self:value:merge hi ()", "()");
+            t.assert_eq("self:value:merge {a = [1,2,3], b = { x = 1, y = 2 }, c = hi} {a = [4], b = { x = 42, z = 3 }}",
+                "{a = force [1,2,3,4], b = force { x = 42, y = 2, z = 3 }, c = hi}");
+            t.assert_eq("self:value:merge ^array-merge {a = [{z=1},2,3], b = [1]} {a = [{y=4}], b = [4,5,6]}",
+                "{a = force [force {y=4,z=1},2,3], b = force [4,5,6]}");
         }
 
         fn equal(t) {

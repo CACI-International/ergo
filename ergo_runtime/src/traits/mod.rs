@@ -6,7 +6,6 @@ mod into;
 mod nested;
 mod stored;
 mod type_name;
-mod value_by_content;
 
 use crate as ergo_runtime;
 pub use bind::{bind, bind_error, bind_no_error, Bind, BindImpl};
@@ -20,7 +19,6 @@ pub use stored::{
 pub use type_name::{
     type_error, type_error_for, type_error_for_t, type_name, type_name_for, TypeName, TypeNameImpl,
 };
-pub use value_by_content::{value_by_content, ValueByContent, ValueByContentImpl};
 
 // Add trait implementations to the runtime.
 crate::type_system::ergo_traits_fn! {

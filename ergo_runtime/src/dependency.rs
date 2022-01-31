@@ -4,7 +4,7 @@ use crate::abi_stable::{std_types::RVec, u128::U128, StableAbi};
 use crate::hash::HashFn;
 use crate::type_system::{Trait, Type};
 use crate::value::{IdentifiedValue, Identity, TypedValue, Value};
-use std::hash::{Hash, Hasher};
+use std::hash::Hash;
 use std::iter::FromIterator;
 
 /// A dependency of a Value.
@@ -165,17 +165,6 @@ impl<T: GetDependenciesConstant> GetDependencies for T {
     }
 }
 
-/*
-impl<T> GetDependencies for T
-where
-    for<'a> &'a T: Into<Dependencies>,
-{
-    fn get_depends(&self) -> Dependencies {
-        self.into()
-    }
-}
-*/
-
 impl<Dep> Dependencies<Dep> {
     /// Create a new group of dependencies.
     pub fn new() -> Self {
@@ -197,43 +186,34 @@ impl<Dep> Dependencies<Dep> {
             ordered: RVec::from_iter(deps),
         }
     }
-
-    /*
-    /// Return an iterator over the dependencies.
-    ///
-    /// Unordered dependencies precede ordered ones. Note that the order of the unordered
-    /// dependencies may be inconsistent.
-    pub fn iter<'a>(&'a self) -> Iter<'a> {
-        Iter(Box::new(self.unordered.iter().chain(self.ordered.iter())))
-    }
-    */
 }
 
-impl<Dep: Hash + Ord> Hash for Dependencies<Dep> {
-    fn hash<H: Hasher>(&self, h: &mut H) {
-        let mut set = std::collections::BTreeSet::default();
+impl DependenciesConstant {
+    pub fn id(&self) -> Identity {
+        let mut items = Vec::with_capacity(self.unordered.len() + self.ordered.len());
         for d in self.unordered.iter() {
-            set.insert(d);
+            items.push(Identity::clear(d.0.into()));
         }
-        set.hash(h);
-        self.ordered.hash(h);
+        items.sort_unstable();
+        for d in self.ordered.iter() {
+            items.push(Identity::clear(d.0.into()));
+        }
+        items.iter().sum()
     }
 }
 
 impl Dependencies {
     /// Get the identity of the dependencies.
     pub async fn id(&self) -> Identity {
-        let mut unordered = Vec::with_capacity(self.unordered.len());
+        let mut items = Vec::with_capacity(self.unordered.len() + self.ordered.len());
         for d in self.unordered.iter() {
-            unordered.push(d.id().await);
+            items.push(d.id().await);
         }
-        unordered.sort_unstable();
-
-        let mut ordered = Vec::with_capacity(self.ordered.len());
+        items.sort_unstable();
         for d in self.ordered.iter() {
-            ordered.push(d.id().await);
+            items.push(d.id().await);
         }
-        unordered.iter().chain(ordered.iter()).sum()
+        items.iter().sum()
     }
 }
 
@@ -264,18 +244,6 @@ impl<Dep> std::iter::Sum for Dependencies<Dep> {
         deps
     }
 }
-
-/*
-pub struct Iter<'a>(Box<dyn Iterator<Item = &'a Dependency> + 'a>);
-
-impl<'a> Iterator for Iter<'a> {
-    type Item = &'a Dependency;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.0.next()
-    }
-}
-*/
 
 impl<T, Dep> From<T> for Dependencies<Dep>
 where

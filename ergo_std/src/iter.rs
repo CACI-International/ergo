@@ -726,72 +726,80 @@ async fn order(func: _, iter: _) -> Value {
 mod test {
     ergo_script::tests! {
         fn count(t) {
-            t.assert_content_eq("self:iter:count [a,b,1,2]", "self:number:from 4");
-            t.assert_content_eq("self:iter:count []", "self:number:from 0");
+            t.assert_eq("self:iter:count [a,b,1,2]", "self:number:from 4");
+            t.assert_eq("self:iter:count []", "self:number:from 0");
         }
 
         fn fold(t) {
-            t.assert_content_eq("self:iter:fold (fn :r :a -> [:a,^:r]) [init] [a,b,c]", "[c,b,a,init]");
+            t.assert_eq("self:iter:fold (fn :r :a -> [:a,^:r]) [init] [a,b,c]", "[c,b,a,init]");
         }
 
         fn filter(t) {
-            t.assert_content_eq("self:iter:filter (fn :v -> self:match :v [self:type:String -> self:bool:true, _ -> self:bool:false]) [a,b,[],c,(),(),d,e]", "self:iter:from [a,b,c,d,e]");
+            t.assert_eq("self:array:from <| self:iter:filter (fn :v -> self:match :v [self:type:String -> self:bool:true, _ -> self:bool:false]) [a,b,[],c,(),(),d,e]", "[a,b,c,d,e]");
         }
 
         fn flatten(t) {
-            t.assert_content_eq("self:iter:flatten [[a,b],[],[],[c,d,e,f],[g]]", "self:iter:from [a,b,c,d,e,f,g]");
+            t.assert_eq("self:array:from <| self:iter:flatten [[a,b],[],[],[c,d,e,f],[g]]", "[a,b,c,d,e,f,g]");
         }
 
         fn map(t) {
-            t.assert_content_eq("self:iter:map (fn :a -> { mapped = :a }) [2,3]", "self:iter:from [{mapped = 2},{mapped = 3}]");
+            t.assert_eq("self:array:from <| self:iter:map (fn :a -> { mapped = :a }) [2,3]", "[{mapped = force 2},{mapped = force 3}]");
         }
 
         fn map_lazy(t) {
-            t.assert_content_eq("self:iter:map-lazy (fn :a -> { mapped = :a }) [2,3]", "self:iter:from [{mapped = 2},{mapped = 3}]");
+            t.assert_eq("self:array:from <| self:iter:map-lazy (fn :a -> { mapped = :a }) [2,3]", "[{mapped = force 2},{mapped = force 3}]");
         }
 
         fn order(t) {
-            t.assert_content_eq("self:iter:order self:string:compare [b,c,w,d,g,a]", "self:iter:from [a,b,c,d,g,w]");
-            t.assert_content_eq("self:iter:order self:string:compare [b,a,a,b,c]", "self:iter:from [a,a,b,b,c]");
-            t.assert_content_eq("self:iter:order self:string:compare []", "self:iter:from []");
+            t.assert_eq("self:array:from <| self:iter:order self:string:compare [b,c,w,d,g,a]", "[a,b,c,d,g,w]");
+            t.assert_eq("self:array:from <| self:iter:order self:string:compare [b,a,a,b,c]", "[a,a,b,b,c]");
+            t.assert_eq("self:array:from <| self:iter:order self:string:compare []", "[]");
         }
 
         fn skip(t) {
-            t.assert_content_eq("self:iter:skip 5 [a,b,c,d,e,f,g]", "self:iter:from [f,g]");
-            t.assert_content_eq("self:iter:skip 5 [a,b]", "self:iter:from []");
+            t.assert_eq("self:array:from <| self:iter:skip 5 [a,b,c,d,e,f,g]", "[f,g]");
+            t.assert_eq("self:array:from <| self:iter:skip 5 [a,b]", "[]");
         }
 
         fn skip_while(t) {
-            t.assert_content_eq("self:iter:skip-while (fn :v -> self:match :v [self:type:String -> self:bool:true, _ -> self:bool:false]) [a,b,c,d,(),e,f,g]", "self:iter:from [(),e,f,g]");
-            t.assert_content_eq("self:iter:skip-while (fn :v -> self:match :v [self:type:String -> self:bool:true, _ -> self:bool:false]) [a,b,c,d]", "self:iter:from []");
+            t.assert_eq("self:array:from <| self:iter:skip-while (fn :v -> self:match :v [self:type:String -> self:bool:true, _ -> self:bool:false]) [a,b,c,d,(),e,f,g]", "[(),e,f,g]");
+            t.assert_eq("self:array:from <| self:iter:skip-while (fn :v -> self:match :v [self:type:String -> self:bool:true, _ -> self:bool:false]) [a,b,c,d]", "[]");
         }
 
         fn take(t) {
-            t.assert_content_eq("self:iter:take 4 [a,b,c,d,e,f,g]", "self:iter:from [a,b,c,d]");
-            t.assert_content_eq("self:iter:take 4 [a]", "self:iter:from [a]");
+            t.assert_eq("self:array:from <| self:iter:take 4 [a,b,c,d,e,f,g]", "[a,b,c,d]");
+            t.assert_eq("self:array:from <| self:iter:take 4 [a]", "[a]");
         }
 
         fn take_while(t) {
-            t.assert_content_eq("self:iter:take-while (fn :v -> self:match :v [self:type:String -> self:bool:true, _ -> self:bool:false]) [a,b,c,d,(),e,f,g]", "self:iter:from [a,b,c,d]");
-            t.assert_content_eq("self:iter:take-while (fn :v -> self:match :v [self:type:String -> self:bool:true, _ -> self:bool:false]) [(),e]", "self:iter:from []");
-            t.assert_content_eq("self:iter:take-while (fn :v -> self:match :v [self:type:String -> self:bool:true, _ -> self:bool:false]) [a,b]", "self:iter:from [a,b]");
+            t.assert_eq("self:array:from <| self:iter:take-while (fn :v -> self:match :v [self:type:String -> self:bool:true, _ -> self:bool:false]) [a,b,c,d,(),e,f,g]", "[a,b,c,d]");
+            t.assert_eq("self:array:from <| self:iter:take-while (fn :v -> self:match :v [self:type:String -> self:bool:true, _ -> self:bool:false]) [(),e]", "[]");
+            t.assert_eq("self:array:from <| self:iter:take-while (fn :v -> self:match :v [self:type:String -> self:bool:true, _ -> self:bool:false]) [a,b]", "[a,b]");
         }
 
         fn unique(t) {
-            t.assert_content_eq("self:iter:unique [1,2,3,2,40,5,6,5]", "self:iter:from [1,2,3,40,5,6]");
+            t.assert_eq("self:array:from <| self:iter:unique [1,2,3,2,40,5,6,5]", "[1,2,3,40,5,6]");
         }
 
         fn zip(t) {
-            t.assert_content_eq("self:iter:zip [a,b,c,d] [1,2,3,4]", "self:iter:from [[a,1],[b,2],[c,3],[d,4]]");
-            t.assert_content_eq("self:iter:zip [a,b,c,d] [1,2]", "self:iter:from [[a,1],[b,2]]");
-            t.assert_content_eq("self:iter:zip [a,b] [1,2,3,4]", "self:iter:from [[a,1],[b,2]]");
-            t.assert_content_eq("self:iter:zip ^[]", "self:iter:from []");
-            t.assert_content_eq("self:iter:zip [a,b,c]", "self:iter:from [[a],[b],[c]]");
-            t.assert_content_eq("self:iter:zip [a,b] [1,2] [x,y,z]", "self:iter:from [[a,1,x],[b,2,y]]");
-            t.assert_content_eq("self:iter:zip :x :y = self:iter:from [[a,1],[b,2]]; [:x, :y]", "[self:iter:from [a,b],self:iter:from [1,2]]");
-            t.assert_content_eq(
-                "self:iter:zip :x :y :z = self:iter:from [[a,1,x],[b,2],[c,3,y,q],[d,:unset,z]]; [:x, :y, :z]",
-                "[self:iter:from [a,b,c,d],self:iter:from [1,2,3],self:iter:from [x,y,z]]"
+            t.assert_eq("self:array:from <| self:iter:zip [a,b,c,d] [1,2,3,4]", "[force [a,1],force [b,2],force [c,3],force [d,4]]");
+            t.assert_eq("self:array:from <| self:iter:zip [a,b,c,d] [1,2]", "[force [a,1],force [b,2]]");
+            t.assert_eq("self:array:from <| self:iter:zip [a,b] [1,2,3,4]", "[force [a,1],force [b,2]]");
+            t.assert_eq("self:array:from <| self:iter:zip ^[]", "[]");
+            t.assert_eq("self:array:from <| self:iter:zip [a,b,c]", "[force [a],force [b],force [c]]");
+            t.assert_eq("self:array:from <| self:iter:zip [a,b] [1,2] [x,y,z]", "[force [a,1,x],force [b,2,y]]");
+            t.assert_eq(
+                "self:iter:zip :x :y = self:iter:from [[a,1],[b,2]]
+                 x = force <| self:array:from :x
+                 y = force <| self:array:from :y",
+                "{x = force [a,b], y = force [1,2]}"
+            );
+            t.assert_eq(
+                "self:iter:zip :x :y :z = self:iter:from [[a,1,x],[b,2],[c,3,y,q],[d,:unset,z]]
+                 x = force <| self:array:from :x
+                 y = force <| self:array:from :y
+                 z = force <| self:array:from :z",
+                "{x = force [a,b,c,d], y = force [1,2,3], z = force [x,y,z]}"
             );
         }
     }

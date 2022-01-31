@@ -129,22 +129,6 @@ impl Test {
         assert_ne!(a, b);
     }
 
-    pub fn assert_content_eq(&self, a: &str, b: &str) {
-        let a = self.eval_success(a);
-        let b = self.eval_success(b);
-        let a = self.block_on(async move {
-            let v = traits::value_by_content(a.into(), true).await;
-            v.as_identified().await
-        });
-        let b = self.block_on(async move {
-            let v = traits::value_by_content(b.into(), true).await;
-            v.as_identified().await
-        });
-        self.dbg(&a);
-        self.dbg(&b);
-        assert_eq!(a, b);
-    }
-
     fn dbg(&self, v: &Value) {
         dbg!(self.block_on(async move { traits::type_name(v) }));
         match self.block_on(traits::to_string(v.clone())) {

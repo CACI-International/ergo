@@ -596,7 +596,7 @@ mod test {
         // omit map/array/path/etc, they use the same macro so should be fundamentally the same
 
         fn new(t) {
-            t.assert_content_eq("my_type = self:type:new \"scoped:my_type\" (:a -> self:match :a [
+            t.assert_eq("my_type = self:type:new \"scoped:my_type\" (:a -> self:match :a [
                 fn (self:type:String :a) (self:type:Unit :b) -> [:a,:b]
                 pat :a :b -> [:a2,:b2] -> { bind :a :a2; bind :b :b2 }
             ])
@@ -615,7 +615,7 @@ mod test {
         }
 
         fn new_bind(t) {
-            t.assert_content_eq("my_type = self:type:new \"scoped:my_type\" (:a -> self:match :a [
+            t.assert_eq("my_type = self:type:new \"scoped:my_type\" (:a -> self:match :a [
                 fn (self:type:String :a) (self:type:Unit :b) -> [:a,:b]
                 pat :a :b -> [:a2,:b2] -> { bind :a :a2; bind :b :b2 }
             ])
@@ -623,7 +623,7 @@ mod test {
             val:0",
                 "str"
             );
-            t.assert_content_eq("my_type_bind = [:a,:b] -> index string -> :a
+            t.assert_eq("my_type_bind = [:a,:b] -> index string -> :a
             my_type = self:type:new (bind = :my_type_bind) \"scoped:my_type\" (:a -> self:match :a [
                 fn (self:type:String :a) (self:type:Unit :b) -> [:a,:b]
                 pat :a :b -> [:a2,:b2] -> { bind :a :a2; bind :b :b2 }

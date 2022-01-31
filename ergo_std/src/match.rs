@@ -117,14 +117,14 @@ pub async fn function(
 mod test {
     ergo_script::tests! {
         fn match_expr(t) {
-            t.assert_content_eq("self:match [1,2,3] [{^:keys} -> :keys, [:a,:b] -> :a, [:a,:b,:c] -> :c]", "3");
-            t.assert_content_eq("self:match [1,2,3] [:a -> :a, [:a,:b,:c] -> :b]", "[1,2,3]");
-            t.assert_content_eq("self:match str [a -> a, str -> success]", "success");
+            t.assert_eq("self:match [1,2,3] [{^:keys} -> :keys, [:a,:b] -> :a, [:a,:b,:c] -> :c]", "3");
+            t.assert_eq("self:match [1,2,3] [:a -> :a, [:a,:b,:c] -> :b]", "[1,2,3]");
+            t.assert_eq("self:match str [a -> a, str -> success]", "success");
         }
 
         fn match_error(t) {
             t.assert_fail("self:match (self:type:Error:@ doh) [a -> a]");
-            t.assert_content_eq("self:match ^allow-error (self:type:Error:@ doh) [self:type:Error _ -> error]", "error");
+            t.assert_eq("self:match ^allow-error (self:type:Error:@ doh) [self:type:Error _ -> error]", "error");
         }
 
         fn match_failure(t) {
@@ -140,7 +140,7 @@ mod test {
         }
 
         fn match_fallback(t) {
-            t.assert_content_eq("a = _ -> self:type:Error:@ doh; self:type:Error _ = self:match (fallback=:a) hi [p -> ()]; ()", "()");
+            t.assert_eq("a = _ -> self:type:Error:@ doh; self:type:Error _ = self:match (fallback=:a) hi [p -> ()]; ()", "()");
         }
     }
 }

@@ -96,5 +96,4 @@ ergo_traits_fn! {
     }
 
     crate::ergo_type_name!(traits, String);
-    traits::ValueByContent::add_impl::<String>(traits);
 }

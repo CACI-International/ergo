@@ -260,7 +260,6 @@ ergo_runtime::type_system::ergo_traits_fn! {
     traits::IntoTyped::<types::String>::add_impl::<HttpStatus>(traits);
     ergo_runtime::ergo_display_basic!(traits, HttpStatus);
     ergo_runtime::ergo_type_name!(traits, HttpStatus);
-    traits::ValueByContent::add_impl::<HttpStatus>(traits);
 
     impl traits::Stored for HttpStatus {
         async fn put(&self, _ctx: &traits::StoredContext, mut into: ItemContent) -> ergo_runtime::RResult<()> {
@@ -313,10 +312,10 @@ mod test {
                     .header("myheader", "42")
                     .body("hello world");
             });
-            t.assert_content_eq(&format!(r#"self:net:http "{}" |>:complete"#, server.url("/hi")), "()");
-            t.assert_content_eq(&format!(r#"self:net:http "{}" |>:headers:myheader | self:string:from"#, server.url("/hi")), "42");
-            t.assert_content_eq(&format!(r#"self:net:http "{}" |>:body | self:string:from"#, server.url("/hi")), "\"hello world\"");
-            t.assert_content_eq(&format!(r#"self:net:http "{}" |>:status-code | self:string:from"#, server.url("/hi")), "200");
+            t.assert_eq(&format!(r#"self:net:http "{}" |>:complete"#, server.url("/hi")), "()");
+            t.assert_eq(&format!(r#"self:net:http "{}" |>:headers:myheader | self:string:from"#, server.url("/hi")), "42");
+            t.assert_eq(&format!(r#"self:net:http "{}" |>:body | self:string:from"#, server.url("/hi")), "\"hello world\"");
+            t.assert_eq(&format!(r#"self:net:http "{}" |>:status-code | self:string:from"#, server.url("/hi")), "200");
         }
 
         fn http_basic_auth(t) {
@@ -327,7 +326,7 @@ mod test {
                     .header("Authorization", "Basic YWxhZGRpbjpvcGVuc2VzYW1l");
                 then.status(200);
             });
-            t.assert_content_eq(&format!(r#"self:net:http (basic-auth = "aladdin:opensesame") "{}" |>:complete"#, server.url("/auth")), "()");
+            t.assert_eq(&format!(r#"self:net:http (basic-auth = "aladdin:opensesame") "{}" |>:complete"#, server.url("/auth")), "()");
         }
 
         fn http_bearer_auth(t) {
@@ -338,7 +337,7 @@ mod test {
                     .header("Authorization", "Bearer 12345");
                 then.status(200);
             });
-            t.assert_content_eq(&format!(r#"self:net:http (bearer-auth = 12345) "{}" |>:complete"#, server.url("/auth")), "()");
+            t.assert_eq(&format!(r#"self:net:http (bearer-auth = 12345) "{}" |>:complete"#, server.url("/auth")), "()");
         }
 
         fn http_put(t) {
@@ -351,7 +350,7 @@ mod test {
             });
             t.assert_fail(&format!(r#"self:net:http (body=mydata) "{}" |>:complete"#, server.url("/put")));
             t.assert_fail(&format!(r#"self:net:http (method=put) (body=mydataa) "{}" |>:complete"#, server.url("/put")));
-            t.assert_content_eq(&format!(r#"self:net:http (method=put) (body=mydata) "{}" |>:complete"#, server.url("/put")), "()");
+            t.assert_eq(&format!(r#"self:net:http (method=put) (body=mydata) "{}" |>:complete"#, server.url("/put")), "()");
         }
 
         fn http_headers(t) {
@@ -364,7 +363,7 @@ mod test {
             });
 
             t.assert_fail(&format!(r#"self:net:http (headers={{myheader = 43}}) "{}" |>:complete"#, server.url("/hdr")));
-            t.assert_content_eq(&format!(r#"self:net:http (headers={{myheader = 42}}) "{}" |>:complete"#, server.url("/hdr")), "()");
+            t.assert_eq(&format!(r#"self:net:http (headers={{myheader = 42}}) "{}" |>:complete"#, server.url("/hdr")), "()");
         }
 
         fn http_timeout(t) {

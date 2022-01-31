@@ -43,5 +43,4 @@ ergo_traits_fn! {
     traits::IntoTyped::<super::Bool>::add_impl::<Unset>(traits);
 
     crate::ergo_type_name!(traits, Unset);
-    traits::ValueByContent::add_impl::<Unset>(traits);
 }

@@ -1,7 +1,7 @@
 //! Comparison types.
 
 use ergo_runtime::abi_stable::{std_types::RCmpOrdering, StableAbi};
-use ergo_runtime::{traits, type_system::ErgoType, Value};
+use ergo_runtime::{type_system::ErgoType, Value};
 
 pub fn module() -> Value {
     crate::make_string_map! {
@@ -66,5 +66,4 @@ ergo_runtime::ConstantDependency!(Order);
 ergo_runtime::type_system::ergo_traits_fn! {
     ergo_runtime::ergo_type_name!(traits, Order);
     ergo_runtime::ergo_display_basic!(traits, Order);
-    traits::ValueByContent::add_impl::<Order>(traits);
 }
