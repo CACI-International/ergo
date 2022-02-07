@@ -98,3 +98,4 @@ scripts reside.
 * Show full command on exec falure.
 * Store `Unset`.
 * Improve CLI markdown rendering.
+* `std:fs:file-size`

@@ -14,7 +14,7 @@ if [[ " $* "  == *\ --release\ * ]]; then
 	TYPE=release
 fi
 
-(cd $DIR; cargo build -p ergo -p ergo_std "$@")
+(cd $DIR; cargo build -p ergolang -p ergo_std "$@")
 
 DYEXT=so
 if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -25,6 +25,8 @@ rm -fr $OUTPUT
 
 mkdir -p $OUTPUT/bin
 mkdir -p $OUTPUT/share/ergo/lib
-cp $DIR/target/$TYPE/ergo $OUTPUT/bin/ergo
+cp $DIR/target/$TYPE/ergolang $OUTPUT/bin/ergolang
 cp -r $DIR/ergo_std/script $OUTPUT/share/ergo/lib/std
 cp $DIR/target/$TYPE/libergo_std.$DYEXT $OUTPUT/share/ergo/lib/std/plugin.ergo
+ln -s ergolang $OUTPUT/bin/ergo
+ln -s ergolang $OUTPUT/bin/ergo-lsp

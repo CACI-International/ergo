@@ -36,6 +36,14 @@ pub enum SymbolicToken {
     DoubleHash,
 }
 
+/// Tokens which are used to continue grouped blocks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LeaderToken {
+    Apostrophe,
+    Hash,
+    DoubleHash,
+}
+
 /// Tokens which are parsed in pairs and used in grouping other tokens.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PairedToken {
@@ -43,9 +51,9 @@ pub enum PairedToken {
     Curly,
     Bracket,
     Quote,
-    ApostropheSpace,
-    HashSpace,
-    DoubleHashSpace,
+    Apostrophe,
+    Hash,
+    DoubleHash,
 }
 
 /// Script tokens.
@@ -58,6 +66,8 @@ pub enum Token<'a> {
     String(&'a str),
     /// A symbolic token.
     Symbol(SymbolicToken),
+    /// A block continuation token.
+    Leader(LeaderToken),
     /// Start a nested paired grouping.
     StartNested(PairedToken),
     /// End the most recent nested paired grouping.
@@ -117,6 +127,18 @@ impl<'a> Token<'a> {
         Token::Symbol(SymbolicToken::DoubleHash)
     }
 
+    pub fn leading_apostrophe() -> Self {
+        Token::Leader(LeaderToken::Apostrophe)
+    }
+
+    pub fn leading_hash() -> Self {
+        Token::Leader(LeaderToken::Hash)
+    }
+
+    pub fn leading_double_hash() -> Self {
+        Token::Leader(LeaderToken::DoubleHash)
+    }
+
     pub fn paren() -> Self {
         Token::StartNested(PairedToken::Paren)
     }
@@ -134,15 +156,15 @@ impl<'a> Token<'a> {
     }
 
     pub fn apostrophe_space() -> Self {
-        Token::StartNested(PairedToken::ApostropheSpace)
+        Token::StartNested(PairedToken::Apostrophe)
     }
 
     pub fn hash_space() -> Self {
-        Token::StartNested(PairedToken::HashSpace)
+        Token::StartNested(PairedToken::Hash)
     }
 
     pub fn double_hash_space() -> Self {
-        Token::StartNested(PairedToken::DoubleHashSpace)
+        Token::StartNested(PairedToken::DoubleHash)
     }
 
     pub fn close() -> Self {
@@ -172,6 +194,17 @@ impl fmt::Display for SymbolicToken {
     }
 }
 
+impl fmt::Display for LeaderToken {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use LeaderToken::*;
+        match self {
+            Apostrophe => write!(f, "'"),
+            Hash => write!(f, "#"),
+            DoubleHash => write!(f, "##"),
+        }
+    }
+}
+
 impl fmt::Display for PairedToken {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use PairedToken::*;
@@ -180,9 +213,9 @@ impl fmt::Display for PairedToken {
             Curly => write!(f, "curly bracket"),
             Bracket => write!(f, "square bracket"),
             Quote => write!(f, "quote"),
-            ApostropheSpace => write!(f, "block string"),
-            HashSpace => write!(f, "line comment"),
-            DoubleHashSpace => write!(f, "doc comment"),
+            Apostrophe => write!(f, "block string"),
+            Hash => write!(f, "line comment"),
+            DoubleHash => write!(f, "doc comment"),
         }
     }
 }
@@ -734,28 +767,31 @@ where
 
 trait BlockStringPrefix: Eraseable {
     const DELIMITER: &'static str;
+    const LEADER: LeaderToken;
     const ALLOW_NESTED: bool;
 }
 
 macro_rules! block_string_prefix {
-    ($name:ident, $delimiter:literal, $allow_nested:literal) => {
+    ($name:ident, $leader:ident, $str:literal, $allow_nested:literal) => {
         struct $name;
         impl BlockStringPrefix for $name {
-            const DELIMITER: &'static str = $delimiter;
+            const DELIMITER: &'static str = $str;
+            const LEADER: LeaderToken = LeaderToken::$leader;
             const ALLOW_NESTED: bool = $allow_nested;
         }
     };
 }
 
-block_string_prefix!(HashPrefix, "#", false);
-block_string_prefix!(DoubleHashPrefix, "##", true);
-block_string_prefix!(ApostrophePrefix, "'", true);
+block_string_prefix!(HashPrefix, Hash, "#", false);
+block_string_prefix!(DoubleHashPrefix, DoubleHash, "##", true);
+block_string_prefix!(ApostrophePrefix, Apostrophe, "'", true);
 
 /// A tokenization context which reads a block string of some sort. This includes doc comment
 /// blocks, string blocks, and comment blocks.
 struct BlockString<Prefix> {
     nested: Next,
     end_with_next: bool,
+    set_line_start: bool,
     _prefix: Prefix,
 }
 
@@ -764,6 +800,7 @@ impl<Prefix> BlockString<Prefix> {
         BlockString {
             nested: Next::empty(),
             end_with_next,
+            set_line_start: false,
             _prefix: prefix,
         }
     }
@@ -774,9 +811,11 @@ impl<T: BlockStringPrefix> NextToken for BlockString<T> {
         this: &mut next_token::Ref<'a, Self>,
         position: &mut TokenPosition<'tok>,
     ) -> Option<Result<Source<Token<'tok>>, Source<Error>>> {
-        let nested = &mut this.as_mut().nested;
+        let me = this.as_mut();
+        let set_line_start = &mut me.set_line_start;
+        let nested = &mut me.nested;
 
-        if position.line_start {
+        if std::mem::replace(&mut position.line_start, std::mem::take(set_line_start)) {
             // Skip non-newline whitespace and look for delimiter
             let s = position
                 .remaining
@@ -784,15 +823,22 @@ impl<T: BlockStringPrefix> NextToken for BlockString<T> {
             match s.strip_prefix(T::DELIMITER) {
                 Some(mut rest) if rest.starts_with(&[' ', '\n'][..]) => {
                     // match delimiter, continue with this tokenization
+                    //
+                    position.reset_source_start();
+                    position.source.location.start +=
+                        position.remaining.len() - rest.len() - T::DELIMITER.len();
+                    position.source.location.length = T::DELIMITER.len();
+                    let ret = position.source.clone().with(Token::Leader(T::LEADER));
+                    position.reset_source_start();
 
                     if rest.starts_with(' ') {
+                        position.source.location.start += ' '.len_utf8();
                         // SAFETY: starts_with guarantees we can skip forward a space
                         rest = unsafe { rest.get_unchecked(' '.len_utf8()..) };
                     }
-                    position.reset_source_start();
-                    position.source.location.length += position.remaining.len() - rest.len();
-                    position.reset_source_start();
                     position.remaining = rest;
+                    *set_line_start = true;
+                    return Some(Ok(ret));
                 }
                 _ => {
                     // no delimiter, finish
@@ -1330,6 +1376,7 @@ mod test {
             &[
                 Token::apostrophe_space(),
                 Token::string("hello\n"),
+                Token::leading_apostrophe(),
                 Token::string("world"),
                 Token::close(),
             ],
@@ -1339,8 +1386,11 @@ mod test {
             &[
                 Token::apostrophe_space(),
                 Token::string("\n"),
+                Token::leading_apostrophe(),
                 Token::string("hello\n"),
+                Token::leading_apostrophe(),
                 Token::string("\n"),
+                Token::leading_apostrophe(),
                 Token::string(" world\n"),
                 Token::close(),
                 Token::next(),
@@ -1389,6 +1439,7 @@ mod test {
             &[
                 Token::hash_space(),
                 Token::string("hello\n"),
+                Token::leading_hash(),
                 Token::string("world"),
                 Token::close(),
             ],
@@ -1398,8 +1449,11 @@ mod test {
             &[
                 Token::hash_space(),
                 Token::string("\n"),
+                Token::leading_hash(),
                 Token::string("hello\n"),
+                Token::leading_hash(),
                 Token::string("\n"),
+                Token::leading_hash(),
                 Token::string(" world\n"),
                 Token::close(),
                 Token::next(),
@@ -1441,6 +1495,7 @@ mod test {
             &[
                 Token::double_hash_space(),
                 Token::string("hello\n"),
+                Token::leading_double_hash(),
                 Token::string("world"),
                 Token::close(),
             ],
@@ -1450,8 +1505,11 @@ mod test {
             &[
                 Token::double_hash_space(),
                 Token::string("\n"),
+                Token::leading_double_hash(),
                 Token::string("hello\n"),
+                Token::leading_double_hash(),
                 Token::string("\n"),
+                Token::leading_double_hash(),
                 Token::string(" world\n"),
                 Token::close(),
                 Token::next(),
@@ -1568,20 +1626,28 @@ mod test {
                 Token::caret(),
                 Token::curly(),
                 Token::next(),
+                Token::leading_double_hash(),
                 Token::string("v"),
                 Token::equal(),
                 Token::string("5"),
                 Token::next(),
+                Token::leading_double_hash(),
                 Token::next(),
+                Token::leading_double_hash(),
                 Token::string("x"),
                 Token::equal(),
                 Token::apostrophe_space(),
                 Token::string("\n"),
+                Token::leading_double_hash(),
+                Token::leading_apostrophe(),
                 Token::string("this is\n"),
+                Token::leading_double_hash(),
+                Token::leading_apostrophe(),
                 Token::string("nested "),
                 Token::caret(),
                 Token::string("v"),
                 Token::string("\n"),
+                Token::leading_double_hash(),
                 Token::close(),
                 Token::next(),
                 Token::close(),

@@ -1,5 +1,5 @@
 [workspace]
-members = ["abi_stable_ext", "ergo", "ergo_runtime", "ergo_runtime_macro", "ergo_script", "ergo_std"]
+members = ["abi_stable_ext", "ergolang", "ergo_runtime", "ergo_runtime_macro", "ergo_script", "ergo_std"]
 
 [profile.release]
 lto = true

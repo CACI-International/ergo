@@ -54,7 +54,7 @@ where
                 None => break None,
                 Some(Err(e)) => break Some(Err(e)),
                 Some(Ok(t)) => match t.value() {
-                    Tree::Hash(_) | Tree::HashSpace(_) => continue,
+                    Tree::Hash(_) | Tree::HashBlock(_) => continue,
                     _ => break Some(Ok(t)),
                 },
             }
@@ -75,7 +75,7 @@ where
             match self.0.next() {
                 None => break None,
                 Some(t) => match t.value() {
-                    Tree::Hash(_) | Tree::HashSpace(_) => continue,
+                    Tree::Hash(_) | Tree::HashBlock(_) => continue,
                     _ => break Some(t),
                 },
             }
@@ -214,7 +214,7 @@ where
             Some(Ok(t)) => {
                 let (source, t) = t.take();
                 match t {
-                    Tree::DoubleHashSpace(parts) => match string_parts(ctx, parts) {
+                    Tree::DoubleHashBlock(parts) => match string_parts(ctx, parts) {
                         Ok(v) => attributes.push(source.with(Attr::DocComment(v))),
                         Err(e) => break Some(Err(e)),
                     },
@@ -411,7 +411,7 @@ fn to_expression<E>(
                 Some(f) => {
                     // See if the first item is an attribute, and parse accordingly.
                     match f.value() {
-                        Tree::DoubleHash(_) | Tree::DoubleHashSpace(_) => {
+                        Tree::DoubleHash(_) | Tree::DoubleHashBlock(_) => {
                             attributed(
                                 ctx,
                                 &mut (&mut inner).map(Ok).peekable(),
@@ -463,7 +463,7 @@ fn to_expression<E>(
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(source.with(Expression::array(exprs)))
         }
-        Tree::Quote(strings) | Tree::ApostropheSpace(strings) => Ok(source.with(
+        Tree::Quote(strings) | Tree::ApostropheBlock(strings) => Ok(source.with(
             if strings.iter().all(|s| match s.value() {
                 StringTree::String(_) => true,
                 _ => false,
@@ -482,8 +482,8 @@ fn to_expression<E>(
                 Expression::compound_string(string_parts(ctx, strings)?)
             },
         )),
-        Tree::Hash(_) | Tree::HashSpace(_) => Err(vec![source.with(Error::BadComment)]),
-        Tree::DoubleHash(_) | Tree::DoubleHashSpace(_) => {
+        Tree::Hash(_) | Tree::HashBlock(_) => Err(vec![source.with(Error::BadComment)]),
+        Tree::DoubleHash(_) | Tree::DoubleHashBlock(_) => {
             Err(vec![source.with(Error::BadAttribute)])
         }
     }

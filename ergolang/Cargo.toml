@@ -1,5 +1,5 @@
 [package]
-name = "ergo"
+name = "ergolang"
 version = "1.0.0-rc.3"
 authors = ["Alex Franchuk <afranchuk@caci.com>"]
 edition = "2021"
@@ -8,18 +8,20 @@ edition = "2021"
 atty = "^0.2"
 backtrace = { version = "0.3", optional = true }
 chrono = "^0.4"
+clap = { version = "3", features = ["derive"] }
 ctrlc = "^3.1"
 directories = "4.0"
 ergo_script = { path = "../ergo_script" }
 ergo_runtime = { path = "../ergo_runtime" }
 futures = "^0.3"
 log = "^0.4"
+lspower = "1.5"
 pager = "0.16"
 simplelog = "^0.7"
 slab = "^0.4"
-structopt = "^0.3"
 term = "^0.6"
 termimad = "0.17"
+tokio = { version = "1", features = ["io-std", "rt", "rt-multi-thread", "sync"] }
 
 [target.'cfg(unix)'.dependencies]
 termios = "0.3"

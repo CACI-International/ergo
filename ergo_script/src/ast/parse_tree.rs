@@ -28,9 +28,9 @@ pub enum Tree {
     Bracket(TreeVec),
     // String Groups
     Quote(StringTreeVec),
-    ApostropheSpace(StringTreeVec),
-    HashSpace(String),
-    DoubleHashSpace(StringTreeVec),
+    ApostropheBlock(StringTreeVec),
+    HashBlock(String),
+    DoubleHashBlock(StringTreeVec),
 }
 
 pub type StringTreeVec = Vec<Source<StringTree>>;
@@ -279,7 +279,14 @@ where
         match self.tokens.next() {
             None => Ok(None),
             Some(Err(e)) => Err(e.map(Error::Tokenization)),
-            Some(Ok(t)) => Ok(Some(t)),
+            Some(Ok(t)) => {
+                // Always disregard leader tokens.
+                if let Token::Leader(_) = t.value() {
+                    self.next_tok()
+                } else {
+                    Ok(Some(t))
+                }
+            }
         }
     }
 
@@ -307,12 +314,12 @@ where
                             PairedToken::Curly => Tree::Curly(self.groups()?),
                             PairedToken::Bracket => Tree::Bracket(self.groups()?),
                             PairedToken::Quote => Tree::Quote(self.string_tree(true)?),
-                            PairedToken::ApostropheSpace => {
-                                Tree::ApostropheSpace(self.string_tree(false)?)
+                            PairedToken::Apostrophe => {
+                                Tree::ApostropheBlock(self.string_tree(false)?)
                             }
-                            PairedToken::HashSpace => Tree::HashSpace(self.join_strings()?),
-                            PairedToken::DoubleHashSpace => {
-                                Tree::DoubleHashSpace(self.string_tree(false)?)
+                            PairedToken::Hash => Tree::HashBlock(self.join_strings()?),
+                            PairedToken::DoubleHash => {
+                                Tree::DoubleHashBlock(self.string_tree(false)?)
                             }
                         };
                         // Next token must be valid and EndNested
@@ -321,8 +328,7 @@ where
                         src.unwrap_or_else(|| (source, end).into_source().source())
                             .with(t.into())
                     }
-                    Token::EndNested => panic!("unexpected token"),
-                    Token::NextChild => panic!("unexpected token"),
+                    _ => panic!("unexpected token"),
                 }))
             }
         }
@@ -1156,7 +1162,7 @@ mod test {
     fn apostrophe_space_block() {
         assert_single(
             "'\n  ' block string\n  ' here",
-            ApostropheSpace(vec![
+            ApostropheBlock(vec![
                 src(StringTree::String("block string\n".into())),
                 src(StringTree::String("here".into())),
             ]),
@@ -1167,7 +1173,7 @@ mod test {
     fn apostrophe_space_block_nested() {
         assert_single(
             "'\n  ' block ^^^string\n  ' here",
-            ApostropheSpace(vec![
+            ApostropheBlock(vec![
                 src(StringTree::String("block ".into())),
                 src(StringTree::String("^".into())),
                 src(StringTree::Expression(s("string"))),
@@ -1181,7 +1187,7 @@ mod test {
     fn hash_space_block() {
         assert_single(
             "# hello world\n# this is a comment ^^^hi",
-            HashSpace("hello world\nthis is a comment ^^^hi".into()),
+            HashBlock("hello world\nthis is a comment ^^^hi".into()),
         );
     }
 
@@ -1189,7 +1195,7 @@ mod test {
     fn double_hash_space_block() {
         assert_single(
             "##\n  ## block string\n  ## here",
-            DoubleHashSpace(vec![
+            DoubleHashBlock(vec![
                 src(StringTree::String("block string\n".into())),
                 src(StringTree::String("here".into())),
             ]),
@@ -1200,7 +1206,7 @@ mod test {
     fn double_hash_space_block_nested() {
         assert_single(
             "##\n  ## block ^^^string\n  ## here",
-            DoubleHashSpace(vec![
+            DoubleHashBlock(vec![
                 src(StringTree::String("block ".into())),
                 src(StringTree::String("^".into())),
                 src(StringTree::Expression(s("string"))),

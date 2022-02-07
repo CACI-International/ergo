@@ -1,3 +1,4 @@
+use crate::command::evaluate::OutputFormat;
 use ergo_runtime::abi_stable::std_types::{RDuration, ROption, RSlice, RString};
 use ergo_runtime::context::{LogEntry, LogLevel, LogTarget, LogTaskKey};
 use ergo_runtime::Error;
@@ -16,10 +17,7 @@ pub trait Output: LogTarget {
     fn take_errors(&mut self) -> ergo_runtime::error::Diagnostics;
 }
 
-pub fn output(
-    format: crate::options::OutputFormat,
-    keep_going: bool,
-) -> Option<(OutputInstance, bool)> {
+pub fn output(format: OutputFormat, keep_going: bool) -> Option<(OutputInstance, bool)> {
     use interface::OutputType::*;
     interface::stdout(format).map(|v| match v {
         Term(term_output) => (terminal::Output::new(term_output, keep_going).into(), true),
@@ -27,7 +25,7 @@ pub fn output(
     })
 }
 
-pub fn error(format: crate::options::OutputFormat) -> Option<Box<term::StderrTerminal>> {
+pub fn error(format: OutputFormat) -> Option<Box<term::StderrTerminal>> {
     interface::stderr(format)
 }
 

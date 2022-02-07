@@ -38,6 +38,8 @@ impl fmt::Display for ParseLogLevelError {
     }
 }
 
+impl std::error::Error for ParseLogLevelError {}
+
 impl std::str::FromStr for LogLevel {
     type Err = ParseLogLevelError;
 

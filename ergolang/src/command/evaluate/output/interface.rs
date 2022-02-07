@@ -1,3 +1,4 @@
+use crate::command::evaluate::OutputFormat;
 use std::io::Write;
 use term::Terminal;
 
@@ -7,8 +8,8 @@ pub mod render {
     pub use term::Terminal;
 }
 
-pub fn stdout(format: crate::options::OutputFormat) -> Option<OutputType> {
-    use crate::options::OutputFormat::*;
+pub fn stdout(format: OutputFormat) -> Option<OutputType> {
+    use OutputFormat::*;
     let t = term::stdout();
     let is_tty = atty::is(atty::Stream::Stdout);
 
@@ -21,8 +22,8 @@ pub fn stdout(format: crate::options::OutputFormat) -> Option<OutputType> {
     }
 }
 
-pub fn stderr(format: crate::options::OutputFormat) -> Option<Box<term::StderrTerminal>> {
-    use crate::options::OutputFormat::*;
+pub fn stderr(format: OutputFormat) -> Option<Box<term::StderrTerminal>> {
+    use OutputFormat::*;
     let t = term::stderr();
     let is_tty = atty::is(atty::Stream::Stderr);
 

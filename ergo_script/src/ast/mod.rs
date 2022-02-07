@@ -28,9 +28,9 @@ trait ToDiagnostic: ToString {
 }
 
 pub mod keyset;
-mod parse;
-mod parse_tree;
-mod tokenize;
+pub mod parse;
+pub mod parse_tree;
+pub mod tokenize;
 
 pub type CaptureSet = keyset::KeySet;
 pub type CaptureKey = keyset::Key;

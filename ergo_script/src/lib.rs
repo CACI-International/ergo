@@ -4,7 +4,7 @@ pub use ergo_runtime::source::Source;
 use ergo_runtime::{Context, Error, Value};
 use std::collections::HashMap;
 
-mod ast;
+pub mod ast;
 mod base;
 mod eval;
 pub mod testing;

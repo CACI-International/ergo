@@ -17,14 +17,14 @@ pub unsafe fn store() {
 }
 
 pub unsafe fn restore() {
-    if let Some(settings) = &STATE.stdin {
+    if let Some(settings) = std::mem::take(&mut STATE.stdin) {
         let fd = std::os::unix::io::AsRawFd::as_raw_fd(&std::io::stdin());
-        drop(termios::tcsetattr(fd, termios::TCSANOW, settings));
+        drop(termios::tcsetattr(fd, termios::TCSANOW, &settings));
     }
-    if let Some(settings) = &STATE.stdout {
+    if let Some(settings) = std::mem::take(&mut STATE.stdout) {
         let mut out = std::io::stdout();
         let fd = std::os::unix::io::AsRawFd::as_raw_fd(&out);
-        drop(termios::tcsetattr(fd, termios::TCSANOW, settings));
+        drop(termios::tcsetattr(fd, termios::TCSANOW, &settings));
         // Reset colors, show cursor
         print!("\x1b[m\x1b[?25h");
         drop(std::io::Write::flush(&mut out));
