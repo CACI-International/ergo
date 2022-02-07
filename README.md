@@ -1,9 +1,9 @@
 # Ergo
-This repository contains related projects for the `ergo` task running program.
-See the [`ergo` README](ergo/README.md) for more details.
+This repository contains related projects for the `ergo` language. See the
+[`ergolang` README](ergolang/README.md) for more details.
 
 The project includes a few separate rust crates:
-* [`ergo`](ergo) - The main executable, using the other crates.
+* [`ergolang`](ergolang) - The main executable, using the other crates.
 * [`abi_stable_ext`](abi_stable_ext) - Extensions to the `abi_stable` crate.
 * [`ergo_runtime`](ergo_runtime) - The ergo runtime, containing the ergo type
   system, trait system, basic types, basic traits, and runtime context.

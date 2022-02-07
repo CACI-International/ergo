@@ -73,11 +73,6 @@ not work correctly with this flag, so the default is `less`. You can:
 * install a newer version of `less` with brew and set `PAGER` to that, or
 * add `-p` to _disable_ paging when displaying the documentation.
 
-## Script Resolution
-Project-mode is detected by the presence of a `workspace.ergo` file/directory
-somewhere in the parent hierarchy. That directory is where project top-level
-scripts reside.
-
 ## Development Notes
 
 ### TODO
