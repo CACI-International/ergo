@@ -110,7 +110,8 @@ impl Captures {
 }
 
 type LocalEnv = BTreeMap<IdentifiedValue, Value>;
-type SetsItem = (Option<CaptureKey>, Value, Value);
+type SetsValue = futures::future::Shared<futures::channel::oneshot::Receiver<Value>>;
+type SetsItem = (Option<CaptureKey>, Value, SetsValue);
 
 #[derive(Clone)]
 struct Sets {
@@ -137,18 +138,39 @@ impl Sets {
         Sets { inner: None }
     }
 
-    pub fn add(&self, cap: Option<CaptureKey>, key: Value, value: Value) {
-        self.inner().push((cap, key, value));
+    pub fn add(
+        &self,
+        cap: Option<CaptureKey>,
+        key: Value,
+        value: futures::channel::oneshot::Receiver<Value>,
+    ) {
+        self.inner().push((cap, key, value.shared()));
     }
 
-    pub fn into_inner(self) -> Vec<SetsItem> {
-        match std::sync::Arc::try_unwrap(self.inner.expect("internal error: set scope missing")) {
+    pub fn into_inner(self) -> Vec<(Option<CaptureKey>, Value, Value)> {
+        let vec = match std::sync::Arc::try_unwrap(
+            self.inner.expect("internal error: set scope missing"),
+        ) {
             Err(a) => {
-                error!("Internal error: set scope unexpectedly persisted. This is likely caused by ValueByContent being incorrectly implemented.");
+                // TODO should this panic instead? That would allow getting rid of the Shared
+                // wrapper.
+                error!("internal error: set scope unexpectedly persisted");
                 a.lock().clone()
             }
             Ok(v) => v.into_inner(),
-        }
+        };
+        vec.into_iter()
+            .map(|(cap, key, val)| {
+                (
+                    cap,
+                    key,
+                    match val.now_or_never() {
+                        Some(Ok(v)) => v,
+                        _ => types::Unset.into(),
+                    },
+                )
+            })
+            .collect()
     }
 
     fn inner(
@@ -507,8 +529,7 @@ impl<'a> ExprEvaluator<'a> {
                     traits::bind_no_error(b, e).await?;
                     let new_sets = new_sets.into_inner();
 
-                    for (cap, k, mut v) in new_sets {
-                        Context::eval_once(&mut v).await;
+                    for (cap, k, v) in new_sets {
                         let k = k.as_identified().await;
 
                         if !v.is_type::<types::Unset>() {
@@ -815,20 +836,7 @@ impl<'a> ExprEvaluator<'a> {
                 let k = self.child(&set.value).evaluate().await;
                 let (send_result, receive_result) = futures::channel::oneshot::channel::<Value>();
 
-                let receive_result = receive_result.shared();
-
-                let mut v = Value::dynamic(
-                    || async move {
-                        match receive_result.now_or_never() {
-                            Some(Ok(v)) => v,
-                            _ => types::Unset.into()
-                        }
-                    },
-                    // Value identities should be derived from the actual value.
-                    ergo_runtime::value::EvalForId::set(depends![dyn nsid!(ergo::get), k]),
-                );
-                Source::set(&mut v, Source::get(&k));
-                self.sets.add(set.capture_key.clone(), k.clone(), v);
+                self.sets.add(set.capture_key.clone(), k.clone(), receive_result);
 
                 let send_result = std::sync::Arc::new(std::sync::Mutex::new(Some(send_result)));
                 types::Unbound::new_no_doc(move |v| {
