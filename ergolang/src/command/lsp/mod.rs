@@ -209,7 +209,19 @@ impl LanguageServer for Service {
                             results.push(tok.location, TokenType::COMMENT, TokenModifier::DOC)
                         }
                         _ => {
-                            if ["std", "workspace", "fn", "pat"].contains(s) {
+                            if [
+                                "ergo",
+                                "std",
+                                "workspace",
+                                "fn",
+                                "pat",
+                                "index",
+                                "bind",
+                                "unset",
+                                "doc",
+                            ]
+                            .contains(s)
+                            {
                                 results.push(tok.location, TokenType::FUNCTION, Default::default());
                             }
                         }
