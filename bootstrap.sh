@@ -24,9 +24,7 @@ fi
 rm -fr $OUTPUT
 
 mkdir -p $OUTPUT/bin
-mkdir -p $OUTPUT/share/ergo/lib
+mkdir -p $OUTPUT/lib/ergo
 cp $DIR/target/$TYPE/ergolang $OUTPUT/bin/ergolang
-cp -r $DIR/ergo_std/script $OUTPUT/share/ergo/lib/std
-cp $DIR/target/$TYPE/libergo_std.$DYEXT $OUTPUT/share/ergo/lib/std/plugin.ergo
-ln -s ergolang $OUTPUT/bin/ergo
-ln -s ergolang $OUTPUT/bin/ergo-lsp
+cp -r $DIR/ergo_std/script $OUTPUT/lib/ergo/std
+cp $DIR/target/$TYPE/libergo_std.$DYEXT $OUTPUT/lib/ergo/std/plugin.ergo
