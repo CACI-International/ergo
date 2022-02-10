@@ -116,6 +116,7 @@ ergo_traits_fn! {
             BoxFuture<'a, Value> {
             BoxFuture::new(async move { v })
         }
+        #[allow(improper_ctypes_definitions)]
         extern "C" fn id(_traits: &Traits, tp: &Type, trt: &Trait) -> ROption<Erased> {
             if trt.id == IntoTyped::<crate::types::Unit>::ergo_trait().id {
                 let TypeParameters(trait_types) = trt.data.clone().into();

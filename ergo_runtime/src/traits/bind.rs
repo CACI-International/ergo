@@ -258,6 +258,7 @@ ergo_traits_fn! {
                 }
             })
         }
+        #[allow(improper_ctypes_definitions)]
         extern "C" fn id_eq(_traits: &crate::context::Traits, _tp: &Type, trt: &Trait) -> ROption<Erased> {
             if trt.id == Bind::ergo_trait().id {
                 ROption::RSome(Erased::new(BindImpl {

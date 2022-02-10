@@ -74,6 +74,7 @@ impl std::fmt::Debug for InternalTraitGenerator {
     }
 }
 
+#[allow(improper_ctypes_definitions)]
 extern "C" fn apply_trait_generator_by_trait(
     f: *const (),
     traits: &Traits,
@@ -82,6 +83,7 @@ extern "C" fn apply_trait_generator_by_trait(
     (unsafe { std::mem::transmute::<*const (), TraitGeneratorByTrait>(f) })(traits, tp)
 }
 
+#[allow(improper_ctypes_definitions)]
 extern "C" fn trait_generator_to_erased<Trt: ts::ErgoTrait>(
     f: *const (),
     traits: *const Traits,

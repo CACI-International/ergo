@@ -16,9 +16,15 @@
 //! are considered token trees. All but hash-preceded trees may contain carets which each must be
 //! followed by a single token tree.
 
-use ergo_runtime::abi_stable::type_erase::{Eraseable, Erased};
 use ergo_runtime::source::Source;
 use std::fmt;
+
+#[macro_export]
+macro_rules! StringTypeSlice {
+    ( $t:ident < $l:lifetime > ) => {
+        <$t as StringTypeT<$l>>::Slice
+    };
+}
 
 /// Tokens relevant to expression interpretation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,13 +63,13 @@ pub enum PairedToken {
 }
 
 /// Script tokens.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Token<'a> {
+#[derive(Clone, Debug, Eq)]
+pub enum Token<T> {
     /// A string token.
     ///
     /// If strings are within quotes, they are guaranteed to have at least one character after any
     /// backslash characters.
-    String(&'a str),
+    String(T),
     /// A symbolic token.
     Symbol(SymbolicToken),
     /// A block continuation token.
@@ -78,8 +84,8 @@ pub enum Token<'a> {
     NextChild,
 }
 
-impl<'a> Token<'a> {
-    pub fn string<S: Into<&'a str>>(s: S) -> Self {
+impl<T> Token<T> {
+    pub fn string<S: Into<T>>(s: S) -> Self {
         Token::String(s.into())
     }
 
@@ -174,6 +180,17 @@ impl<'a> Token<'a> {
     pub fn next() -> Self {
         Token::NextChild
     }
+
+    pub fn map<U, F: FnMut(T) -> U>(self, mut f: F) -> Token<U> {
+        match self {
+            Token::String(s) => Token::String(f(s)),
+            Token::Symbol(s) => Token::Symbol(s),
+            Token::Leader(s) => Token::Leader(s),
+            Token::StartNested(s) => Token::StartNested(s),
+            Token::EndNested => Token::EndNested,
+            Token::NextChild => Token::NextChild,
+        }
+    }
 }
 
 impl fmt::Display for SymbolicToken {
@@ -226,8 +243,22 @@ impl PartialEq<Source<Self>> for PairedToken {
     }
 }
 
-impl<'a> PartialEq<Source<Self>> for Token<'a> {
-    fn eq(&self, other: &Source<Self>) -> bool {
+impl<U, T: PartialEq<U>> PartialEq<Token<U>> for Token<T> {
+    fn eq(&self, other: &Token<U>) -> bool {
+        match (self, other) {
+            (Token::String(t), Token::String(u)) => t == u,
+            (Token::Symbol(a), Token::Symbol(b)) => a == b,
+            (Token::Leader(a), Token::Leader(b)) => a == b,
+            (Token::StartNested(a), Token::StartNested(b)) => a == b,
+            (Token::EndNested, Token::EndNested) => true,
+            (Token::NextChild, Token::NextChild) => true,
+            _ => false,
+        }
+    }
+}
+
+impl<U, T: PartialEq<U>> PartialEq<Source<Token<U>>> for Token<T> {
+    fn eq(&self, other: &Source<Token<U>>) -> bool {
         self == &**other
     }
 }
@@ -284,14 +315,18 @@ impl super::ToDiagnostic for Error {
 
 mod next_token {
     use super::*;
+    use ergo_runtime::abi_stable::{
+        marker_type::UnsyncUnsend,
+        type_erase::{EraseableT, ErasedT},
+    };
 
-    pub(super) struct Ref<'a, T> {
-        next: &'a mut Next,
+    pub(super) struct Ref<'a, 'tok, S, T> {
+        next: &'a mut Next<'tok, S>,
         valid: bool,
         _phantom: std::marker::PhantomData<&'a T>,
     }
 
-    impl<'a, T> Ref<'a, T> {
+    impl<'a, 'tok, S, T> Ref<'a, 'tok, S, T> {
         pub fn as_ref(&self) -> &T {
             assert!(self.valid);
             unsafe { self.next.current().as_ref() }
@@ -302,7 +337,7 @@ mod next_token {
             unsafe { self.next.current_mut().as_mut() }
         }
 
-        pub fn push<N: NextToken>(&mut self, next: N) {
+        pub fn push<N: NextToken<'tok, S>>(&mut self, next: N) {
             self.next.push(next);
             self.valid = false;
         }
@@ -314,16 +349,16 @@ mod next_token {
         }
     }
 
-    pub(super) trait NextToken: Eraseable + Sized {
-        fn next<'a, 'tok>(
-            this: &mut Ref<'a, Self>,
-            position: &mut TokenPosition<'tok>,
-        ) -> Option<Result<Source<Token<'tok>>, Source<Error>>>;
+    pub(super) trait NextToken<'tok, S>: EraseableT<'tok, UnsyncUnsend> + Sized {
+        fn next<'a>(
+            this: &mut Ref<'a, 'tok, S, Self>,
+            position: &mut TokenPosition<S>,
+        ) -> Option<Result<Source<Token<S>>, Source<Error>>>;
 
-        fn call_next<'tok>(
-            next: &mut Next,
-            position: &mut TokenPosition<'tok>,
-        ) -> Option<Result<Source<Token<'tok>>, Source<Error>>> {
+        fn call_next(
+            next: &mut Next<'tok, S>,
+            position: &mut TokenPosition<S>,
+        ) -> Option<Result<Source<Token<S>>, Source<Error>>> {
             let mut this = Ref {
                 next,
                 valid: true,
@@ -334,26 +369,26 @@ mod next_token {
 
         fn close(self) -> Result<usize, Source<Error>>;
 
-        fn call_close(e: Erased) -> Result<usize, Source<Error>> {
+        fn call_close(e: ErasedT<'tok, UnsyncUnsend>) -> Result<usize, Source<Error>> {
             Self::close(unsafe { e.to_owned() })
         }
     }
 
-    struct Impl {
-        call_next: for<'tok> fn(
-            &mut Next,
-            &mut TokenPosition<'tok>,
-        ) -> Option<Result<Source<Token<'tok>>, Source<Error>>>,
-        call_close: fn(Erased) -> Result<usize, Source<Error>>,
-        data: Erased,
+    struct Impl<'tok, S> {
+        call_next: fn(
+            &mut Next<'tok, S>,
+            &mut TokenPosition<S>,
+        ) -> Option<Result<Source<Token<S>>, Source<Error>>>,
+        call_close: fn(ErasedT<'tok, UnsyncUnsend>) -> Result<usize, Source<Error>>,
+        data: ErasedT<'tok, UnsyncUnsend>,
     }
 
-    impl Impl {
-        pub fn new<T: NextToken>(imp: T) -> Self {
+    impl<'tok, S> Impl<'tok, S> {
+        pub fn new<T: NextToken<'tok, S> + 'tok>(imp: T) -> Self {
             Impl {
                 call_next: T::call_next,
                 call_close: T::call_close,
-                data: Erased::new(imp),
+                data: ErasedT::new(imp),
             }
         }
 
@@ -370,21 +405,21 @@ mod next_token {
         }
     }
 
-    pub(super) struct Next(Vec<Impl>);
+    pub(super) struct Next<'tok, S>(Vec<Impl<'tok, S>>);
 
-    impl Next {
+    impl<'tok, S> Next<'tok, S> {
         pub fn empty() -> Self {
             Next(vec![])
         }
 
-        pub fn new<T: NextToken>(initial: T) -> Self {
+        pub fn new<T: NextToken<'tok, S>>(initial: T) -> Self {
             Next(vec![Impl::new(initial)])
         }
 
-        pub fn next<'tok>(
+        pub fn next(
             &mut self,
-            position: &mut TokenPosition<'tok>,
-        ) -> Option<Result<Source<Token<'tok>>, Source<Error>>> {
+            position: &mut TokenPosition<S>,
+        ) -> Option<Result<Source<Token<S>>, Source<Error>>> {
             if self.is_empty() {
                 None
             } else {
@@ -397,7 +432,7 @@ mod next_token {
             self.0.is_empty()
         }
 
-        pub fn close<'tok>(&mut self) -> Result<usize, Source<Error>> {
+        pub fn close(&mut self) -> Result<usize, Source<Error>> {
             let mut total = 0;
             while let Some(imp) = self.0.pop() {
                 total += (imp.call_close)(imp.data)?;
@@ -405,19 +440,19 @@ mod next_token {
             Ok(total)
         }
 
-        pub fn push<T: NextToken>(&mut self, next: T) {
+        pub fn push<T: NextToken<'tok, S>>(&mut self, next: T) {
             self.0.push(Impl::new(next));
         }
 
-        fn current(&self) -> &Impl {
+        fn current(&self) -> &Impl<'tok, S> {
             self.0.last().unwrap()
         }
 
-        fn current_mut(&mut self) -> &mut Impl {
+        fn current_mut(&mut self) -> &mut Impl<'tok, S> {
             self.0.last_mut().unwrap()
         }
 
-        fn pop(&mut self) -> Impl {
+        fn pop(&mut self) -> Impl<'tok, S> {
             self.0.pop().unwrap()
         }
     }
@@ -429,9 +464,9 @@ use next_token::{Next, NextToken};
 // What this means is that e.g., a quoted string spanning over a newline will be split into two
 // separate string tokens (which will be recombined with further quoted string processing).
 
-enum TokenElseString {
+enum TokenElseString<S> {
     /// Return a token.
-    Some(Token<'static>),
+    Some(Token<S>),
     /// Indicate the character is a string character.
     String,
     /// Move to the next character, but don't consider this a string character.
@@ -442,15 +477,19 @@ enum TokenElseString {
 
 /// Read a token, optionally preceded by a string. Thus we move to the next non-string token while
 /// also parsing a string (if any) along the way.
-fn token_else_string<'a, 'tok, T, F>(
-    this: &mut next_token::Ref<'a, T>,
-    position: &mut TokenPosition<'tok>,
+fn token_else_string<'a, 'tok, S: StringSlice<'tok>, T, F>(
+    this: &mut next_token::Ref<'a, 'tok, S, T>,
+    position: &mut TokenPosition<S>,
     mut get_token: F,
-) -> Option<Result<Source<Token<'tok>>, Source<Error>>>
+) -> Option<Result<Source<Token<S>>, Source<Error>>>
 where
-    F: FnMut(char, &mut next_token::Ref<'a, T>, &mut TokenPosition<'tok>) -> TokenElseString,
+    F: FnMut(
+        char,
+        &mut next_token::Ref<'a, 'tok, S, T>,
+        &mut TokenPosition<S>,
+    ) -> TokenElseString<S>,
 {
-    let mut pending_str = position.remaining;
+    let mut pending_str = position.remaining.clone();
     let mut pending_str_len = 0;
 
     let token = loop {
@@ -463,7 +502,7 @@ where
                     if pending_str_len > 0 || c == '\n' {
                         break None;
                     } else {
-                        pending_str = position.remaining;
+                        pending_str = position.remaining.clone();
                         continue;
                     }
                 }
@@ -482,7 +521,7 @@ where
         }
         // SAFETY: pending_str_len is only incremented with the byte counts of subsequent
         // characters within pending_str itself.
-        let s = unsafe { pending_str.get_unchecked(..pending_str_len) };
+        let s = unsafe { pending_str.slice_to(pending_str_len) };
         let mut src = position.source.clone();
         src.location.start -= pending_str_len;
         src.location.length = pending_str_len;
@@ -492,7 +531,7 @@ where
     }
 }
 
-trait FinishAt: Eraseable {
+trait FinishAt {
     const GROUP: bool;
 }
 
@@ -526,11 +565,11 @@ impl<T> Normal<T> {
     }
 }
 
-impl<T: FinishAt> NextToken for Normal<T> {
-    fn next<'a, 'tok>(
-        this: &mut next_token::Ref<'a, Self>,
-        position: &mut TokenPosition<'tok>,
-    ) -> Option<Result<Source<Token<'tok>>, Source<Error>>> {
+impl<'tok, T: FinishAt + 'tok, S: StringSlice<'tok>> NextToken<'tok, S> for Normal<T> {
+    fn next<'a>(
+        this: &mut next_token::Ref<'a, 'tok, S, Self>,
+        position: &mut TokenPosition<S>,
+    ) -> Option<Result<Source<Token<S>>, Source<Error>>> {
         let has_children = this
             .as_ref()
             .nested
@@ -556,13 +595,13 @@ impl<T: FinishAt> NextToken for Normal<T> {
                     }
                 }
                 '!' => Token::bang(),
-                '-' if position.char_match(">") => Token::arrow(),
-                '|' if position.char_match(">") => Token::pipe_right(),
+                '-' if position.match_skip(">") => Token::arrow(),
+                '|' if position.match_skip(">") => Token::pipe_right(),
                 '|' => Token::pipe(),
-                '<' if position.char_match("|") => Token::pipe_left(),
+                '<' if position.match_skip("|") => Token::pipe_left(),
                 '#' => {
-                    let double_hash = position.char_match("#");
-                    let has_space = position.char_match(" ")
+                    let double_hash = position.match_skip("#");
+                    let has_space = position.match_skip(" ")
                         || position.peek().map(|c| c == '\n').unwrap_or(true);
 
                     match (double_hash, has_space) {
@@ -640,7 +679,7 @@ impl<T: FinishAt> NextToken for Normal<T> {
                     Token::quote()
                 }
                 '\'' => {
-                    let has_space = position.char_match(" ")
+                    let has_space = position.match_skip(" ")
                         || position.peek().map(|c| c == '\n').unwrap_or(true);
                     if has_space {
                         if T::GROUP && me.nested.is_empty() {
@@ -688,11 +727,11 @@ impl StringCaretWord {
     }
 }
 
-impl NextToken for StringCaretWord {
-    fn next<'a, 'tok>(
-        this: &mut next_token::Ref<'a, Self>,
-        position: &mut TokenPosition<'tok>,
-    ) -> Option<Result<Source<Token<'tok>>, Source<Error>>> {
+impl<'tok, S: StringSlice<'tok>> NextToken<'tok, S> for StringCaretWord {
+    fn next<'a>(
+        this: &mut next_token::Ref<'a, 'tok, S, Self>,
+        position: &mut TokenPosition<S>,
+    ) -> Option<Result<Source<Token<S>>, Source<Error>>> {
         position.reset_source_start();
 
         // This will only run once.
@@ -730,11 +769,11 @@ impl CloseTokens {
     }
 }
 
-impl NextToken for CloseTokens {
-    fn next<'a, 'tok>(
-        this: &mut next_token::Ref<'a, Self>,
-        _position: &mut TokenPosition<'tok>,
-    ) -> Option<Result<Source<Token<'tok>>, Source<Error>>> {
+impl<'tok, S: StringSlice<'tok>> NextToken<'tok, S> for CloseTokens {
+    fn next<'a>(
+        this: &mut next_token::Ref<'a, 'tok, S, Self>,
+        _position: &mut TokenPosition<S>,
+    ) -> Option<Result<Source<Token<S>>, Source<Error>>> {
         this.as_mut().count -= 1;
 
         let source = if this.as_ref().count == 0 {
@@ -750,12 +789,15 @@ impl NextToken for CloseTokens {
     }
 }
 
-fn string_expression<'a, F>(position: &mut TokenPosition<'a>, set_next: F) -> Token<'static>
+fn string_expression<'a, 'tok, S: StringSlice<'tok>, F>(
+    position: &mut TokenPosition<S>,
+    set_next: F,
+) -> Token<S>
 where
     F: FnOnce(bool),
 {
-    if position.char_match("^") {
-        Token::string("^")
+    if position.match_skip("^") {
+        Token::string(S::from_str("^"))
     } else {
         match position.peek() {
             Some('(' | '[' | '{' | '"') => set_next(true),
@@ -765,7 +807,7 @@ where
     }
 }
 
-trait BlockStringPrefix: Eraseable {
+trait BlockStringPrefix {
     const DELIMITER: &'static str;
     const LEADER: LeaderToken;
     const ALLOW_NESTED: bool;
@@ -788,14 +830,14 @@ block_string_prefix!(ApostrophePrefix, Apostrophe, "'", true);
 
 /// A tokenization context which reads a block string of some sort. This includes doc comment
 /// blocks, string blocks, and comment blocks.
-struct BlockString<Prefix> {
-    nested: Next,
+struct BlockString<'tok, S, Prefix> {
+    nested: Next<'tok, S>,
     end_with_next: bool,
     set_line_start: bool,
     _prefix: Prefix,
 }
 
-impl<Prefix> BlockString<Prefix> {
+impl<'tok, S, Prefix> BlockString<'tok, S, Prefix> {
     pub fn new(prefix: Prefix, end_with_next: bool) -> Self {
         BlockString {
             nested: Next::empty(),
@@ -806,57 +848,54 @@ impl<Prefix> BlockString<Prefix> {
     }
 }
 
-impl<T: BlockStringPrefix> NextToken for BlockString<T> {
-    fn next<'a, 'tok>(
-        this: &mut next_token::Ref<'a, Self>,
-        position: &mut TokenPosition<'tok>,
-    ) -> Option<Result<Source<Token<'tok>>, Source<Error>>> {
+impl<'tok, T: BlockStringPrefix + 'tok, S: StringSlice<'tok>> NextToken<'tok, S>
+    for BlockString<'tok, S, T>
+{
+    fn next<'a>(
+        this: &mut next_token::Ref<'a, 'tok, S, Self>,
+        position: &mut TokenPosition<S>,
+    ) -> Option<Result<Source<Token<S>>, Source<Error>>> {
         let me = this.as_mut();
         let set_line_start = &mut me.set_line_start;
         let nested = &mut me.nested;
 
         if std::mem::replace(&mut position.line_start, std::mem::take(set_line_start)) {
             // Skip non-newline whitespace and look for delimiter
-            let s = position
+            let mut s = position
                 .remaining
                 .trim_start_matches(|c: char| c.is_whitespace() && c != '\n');
-            match s.strip_prefix(T::DELIMITER) {
-                Some(mut rest) if rest.starts_with(&[' ', '\n'][..]) => {
-                    // match delimiter, continue with this tokenization
-                    //
-                    position.reset_source_start();
-                    position.source.location.start +=
-                        position.remaining.len() - rest.len() - T::DELIMITER.len();
-                    position.source.location.length = T::DELIMITER.len();
-                    let ret = position.source.clone().with(Token::Leader(T::LEADER));
-                    position.reset_source_start();
+            if s.match_skip(T::DELIMITER) && (s.starts_with_char(' ') || s.starts_with_char('\n')) {
+                // match delimiter, continue with this tokenization
+                //
+                position.reset_source_start();
+                position.source.location.start +=
+                    position.remaining.len() - s.len() - T::DELIMITER.len();
+                position.source.location.length = T::DELIMITER.len();
+                let ret = position.source.clone().with(Token::Leader(T::LEADER));
+                position.reset_source_start();
 
-                    if rest.starts_with(' ') {
-                        position.source.location.start += ' '.len_utf8();
-                        // SAFETY: starts_with guarantees we can skip forward a space
-                        rest = unsafe { rest.get_unchecked(' '.len_utf8()..) };
-                    }
-                    position.remaining = rest;
-                    *set_line_start = true;
-                    return Some(Ok(ret));
+                if s.match_skip(" ") {
+                    position.source.location.start += ' '.len_utf8();
                 }
-                _ => {
-                    // no delimiter, finish
-                    // flush inner tokens
-                    if let Some(r) = nested.next(position) {
-                        return Some(r);
-                    }
-                    let mut me = this.finish();
-                    return Some(me.nested.close().map(|close_tokens| {
-                        if me.end_with_next {
-                            this.push(ImmediateResult(Ok(position.source(Token::next()))));
-                        }
-                        if close_tokens > 0 {
-                            this.push(CloseTokens::new(close_tokens, position.source(())));
-                        }
-                        position.source(Token::close())
-                    }));
+                position.remaining = s;
+                *set_line_start = true;
+                return Some(Ok(ret));
+            } else {
+                // no delimiter, finish
+                // flush inner tokens
+                if let Some(r) = nested.next(position) {
+                    return Some(r);
                 }
+                let mut me = this.finish();
+                return Some(me.nested.close().map(|close_tokens| {
+                    if me.end_with_next {
+                        this.push(ImmediateResult(Ok(position.source(Token::next()))));
+                    }
+                    if close_tokens > 0 {
+                        this.push(CloseTokens::new(close_tokens, position.source(())));
+                    }
+                    position.source(Token::close())
+                }));
             }
         }
 
@@ -889,11 +928,11 @@ impl<T: BlockStringPrefix> NextToken for BlockString<T> {
 /// A tokenization context which reads a string until (and including) the next newline.
 struct LineString;
 
-impl NextToken for LineString {
-    fn next<'a, 'tok>(
-        this: &mut next_token::Ref<'a, Self>,
-        position: &mut TokenPosition<'tok>,
-    ) -> Option<Result<Source<Token<'tok>>, Source<Error>>> {
+impl<'tok, S: StringSlice<'tok>> NextToken<'tok, S> for LineString {
+    fn next<'a>(
+        this: &mut next_token::Ref<'a, 'tok, S, Self>,
+        position: &mut TokenPosition<S>,
+    ) -> Option<Result<Source<Token<S>>, Source<Error>>> {
         let ret = token_else_string(this, position, |_, _, _| TokenElseString::String);
         this.finish();
         ret
@@ -915,11 +954,11 @@ impl QuoteString {
     }
 }
 
-impl NextToken for QuoteString {
-    fn next<'a, 'tok>(
-        this: &mut next_token::Ref<'a, Self>,
-        position: &mut TokenPosition<'tok>,
-    ) -> Option<Result<Source<Token<'tok>>, Source<Error>>> {
+impl<'tok, S: StringSlice<'tok>> NextToken<'tok, S> for QuoteString {
+    fn next<'a>(
+        this: &mut next_token::Ref<'a, 'tok, S, Self>,
+        position: &mut TokenPosition<S>,
+    ) -> Option<Result<Source<Token<S>>, Source<Error>>> {
         let mut escaped = false;
         token_else_string(this, position, |c, this, position| {
             if std::mem::replace(&mut escaped, false) {
@@ -957,13 +996,13 @@ impl NextToken for QuoteString {
 }
 
 /// A tokenization context which returns a single result immediately.
-struct ImmediateResult(Result<Source<Token<'static>>, Source<Error>>);
+struct ImmediateResult<S>(Result<Source<Token<S>>, Source<Error>>);
 
-impl NextToken for ImmediateResult {
-    fn next<'a, 'tok>(
-        this: &mut next_token::Ref<'a, Self>,
-        _position: &mut TokenPosition<'tok>,
-    ) -> Option<Result<Source<Token<'tok>>, Source<Error>>> {
+impl<'tok, S: std::fmt::Debug + 'tok> NextToken<'tok, S> for ImmediateResult<S> {
+    fn next<'a>(
+        this: &mut next_token::Ref<'a, 'tok, S, Self>,
+        _position: &mut TokenPosition<S>,
+    ) -> Option<Result<Source<Token<S>>, Source<Error>>> {
         Some(this.finish().0)
     }
 
@@ -972,22 +1011,116 @@ impl NextToken for ImmediateResult {
     }
 }
 
+/// String slice types which can be used in tokenization.
+pub trait StringSlice<'a>: Clone + std::fmt::Debug + Sized + 'a {
+    fn starts_with_str(&self, s: &str) -> bool;
+    fn starts_with_char(&self, c: char) -> bool;
+    fn ends_with_char(&self, c: char) -> bool;
+    fn len(&self) -> usize;
+    fn find<F: FnMut(char) -> bool>(&self, f: F) -> Option<usize>;
+    fn split_at(&self, byte_index: usize) -> (Self, Self);
+    fn peek_char(&self) -> Option<char>;
+    fn next_char(&mut self) -> Option<char>;
+    fn match_skip(&mut self, s: &str) -> bool;
+    unsafe fn slice_to(&self, byte_index: usize) -> Self;
+    fn trim_start_matches<F: FnMut(char) -> bool>(&self, f: F) -> Self;
+    fn from_str(s: &'static str) -> Self;
+    fn write_to_string(slices: &[Self], s: &mut String);
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    fn to_string(slices: &[Self]) -> String {
+        let mut s = String::new();
+        Self::write_to_string(slices, &mut s);
+        s
+    }
+}
+
+impl<'a> StringSlice<'a> for &'a str {
+    fn starts_with_str(&self, s: &str) -> bool {
+        self.starts_with(s)
+    }
+
+    fn starts_with_char(&self, c: char) -> bool {
+        self.starts_with(c)
+    }
+
+    fn ends_with_char(&self, c: char) -> bool {
+        self.ends_with(c)
+    }
+
+    fn len(&self) -> usize {
+        str::len(self)
+    }
+
+    fn find<F: FnMut(char) -> bool>(&self, f: F) -> Option<usize> {
+        str::find(self, f)
+    }
+
+    fn split_at(&self, index: usize) -> (Self, Self) {
+        str::split_at(self, index)
+    }
+
+    fn peek_char(&self) -> Option<char> {
+        self.chars().next()
+    }
+
+    fn next_char(&mut self) -> Option<char> {
+        let mut chars = self.chars();
+        let c = chars.next()?;
+        *self = chars.as_str();
+        Some(c)
+    }
+
+    fn match_skip(&mut self, s: &str) -> bool {
+        if self.starts_with(s) {
+            // SAFETY: `s.len()` must be a valid unicode-boundary offset of self
+            *self = unsafe { self.get_unchecked(s.len()..) };
+            true
+        } else {
+            false
+        }
+    }
+
+    unsafe fn slice_to(&self, byte_index: usize) -> Self {
+        self.get_unchecked(..byte_index)
+    }
+
+    fn trim_start_matches<F: FnMut(char) -> bool>(&self, f: F) -> Self {
+        str::trim_start_matches(self, f)
+    }
+
+    fn from_str(s: &'static str) -> Self {
+        s
+    }
+
+    fn write_to_string(slices: &[Self], s: &mut String) {
+        let total = slices.iter().map(|s| s.len()).sum();
+        s.reserve(total);
+        for slice in slices {
+            s.push_str(slice);
+        }
+    }
+}
+
 #[derive(Debug)]
-struct TokenPosition<'a> {
-    remaining: &'a str,
+struct TokenPosition<S> {
+    remaining: S,
     source: Source<()>,
     line_start: bool,
     next_line_start: bool,
 }
 
 /// Iterator producing tokens or errors.
-pub struct Tokens<'a> {
-    position: TokenPosition<'a>,
-    next: Next,
+pub struct Tokens<'tok, S> {
+    position: TokenPosition<S>,
+    next: Next<'tok, S>,
 }
 
-impl<'a> From<Source<&'a str>> for Tokens<'a> {
-    fn from(s: Source<&'a str>) -> Self {
+impl<'tok, S: StringSlice<'tok>> From<Source<S>> for Tokens<'tok, S> {
+    fn from(s: Source<S>) -> Self {
         let (source, remaining) = s.take();
         let mut position = TokenPosition {
             remaining,
@@ -998,7 +1131,7 @@ impl<'a> From<Source<&'a str>> for Tokens<'a> {
         let mut next = Next::new(Normal::new(FinishAtNone));
 
         // Check for shebang at beginning of script and handle it specially.
-        if position.remaining.starts_with("#!") {
+        if position.remaining.starts_with_str("#!") {
             position.next_char().unwrap();
             let hash = ImmediateResult(Ok(position.source(Token::hash())));
             position.reset_source_start();
@@ -1016,16 +1149,14 @@ impl<'a> From<Source<&'a str>> for Tokens<'a> {
     }
 }
 
-impl<'a> TokenPosition<'a> {
+impl<'tok, S: StringSlice<'tok>> TokenPosition<S> {
     pub fn next_char(&mut self) -> Option<char> {
         if self.next_line_start {
             self.next_line_start = false;
             self.line_start = true;
             return None;
         }
-        let mut chars = self.remaining.chars();
-        let c = chars.next()?;
-        self.remaining = chars.as_str();
+        let c = self.remaining.next_char()?;
         self.source.location.length += c.len_utf8();
         self.next_line_start = c == '\n';
         self.line_start = false;
@@ -1033,13 +1164,11 @@ impl<'a> TokenPosition<'a> {
     }
 
     pub fn peek(&self) -> Option<char> {
-        self.remaining.chars().next()
+        self.remaining.peek_char()
     }
 
-    pub fn char_match(&mut self, s: &str) -> bool {
-        if self.remaining.starts_with(s) {
-            // SAFETY: `s.len()` must be a valid unicode-boundary offset of self.remaining
-            self.remaining = unsafe { self.remaining.get_unchecked(s.len()..) };
+    pub fn match_skip(&mut self, s: &str) -> bool {
+        if self.remaining.match_skip(s) {
             self.source.location.length += s.len();
             true
         } else {
@@ -1052,13 +1181,13 @@ impl<'a> TokenPosition<'a> {
         self.source.location.length = 0;
     }
 
-    pub fn source<T>(&self, v: T) -> Source<T> {
+    pub fn source<V>(&self, v: V) -> Source<V> {
         self.source.clone().with(v)
     }
 }
 
-impl<'a> Iterator for Tokens<'a> {
-    type Item = Result<Source<Token<'a>>, Source<Error>>;
+impl<'tok, S: StringSlice<'tok>> Iterator for Tokens<'tok, S> {
+    type Item = Result<Source<Token<S>>, Source<Error>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
@@ -1687,7 +1816,7 @@ mod test {
         );
     }
 
-    fn assert_tokens(s: &str, expected: &[Token]) {
+    fn assert_tokens(s: &str, expected: &[Token<&str>]) {
         let toks: Vec<_> = Tokens::from(Source::missing(s))
             .collect::<Result<Vec<_>, _>>()
             .expect("failed to tokenize")

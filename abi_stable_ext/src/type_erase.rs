@@ -6,7 +6,7 @@
 //! The Erased and ErasedTrivial types are ABI stable, though that doesn't mean the types they
 //! store are also ABI stable.
 
-use abi_stable::{std_types::RArc, StableAbi};
+use abi_stable::{marker_type, std_types::RArc, StableAbi};
 use std::alloc::{alloc, Layout};
 use std::mem::drop;
 
@@ -66,18 +66,17 @@ impl Buffer {
     }
 }
 
+pub type Erased = ErasedT<'static, marker_type::SyncSend>;
+
 /// A type which stores a value with the type erased.
 #[derive(StableAbi)]
 #[repr(C)]
-pub struct Erased {
+pub struct ErasedT<'a, SyncSend> {
     data: ErasedTrivial,
     drop: extern "C" fn(&mut ErasedTrivial),
+    _sync_send: SyncSend,
+    _lifetime: std::marker::PhantomData<&'a ()>,
 }
-
-// Erased will always be Send, and should be Sync if the value it stores is Sync. So we require
-// all stored values to be Sync for safety.
-unsafe impl Send for Erased {}
-unsafe impl Sync for Erased {}
 
 extern "C" fn no_drop(_v: &mut ErasedTrivial) {}
 
@@ -85,14 +84,49 @@ extern "C" fn drop_type<T>(v: &mut ErasedTrivial) {
     drop(unsafe { std::mem::take(v).to_owned::<T>() });
 }
 
-pub trait Eraseable: Send + Sync + 'static {}
+pub trait EraseableT<'a, SyncSend>: 'a {}
 
-impl<T: Send + Sync + ?Sized + 'static> Eraseable for T {}
+impl<'a, T: Send + Sync + ?Sized + 'a> EraseableT<'a, marker_type::SyncSend> for T {}
+impl<'a, T: Send + ?Sized + 'a> EraseableT<'a, marker_type::UnsyncSend> for T {}
+impl<'a, T: Sync + ?Sized + 'a> EraseableT<'a, marker_type::SyncUnsend> for T {}
+impl<'a, T: ?Sized + 'a> EraseableT<'a, marker_type::UnsyncUnsend> for T {}
 
-impl Erased {
+pub trait Eraseable: EraseableT<'static, marker_type::SyncSend> + Send + Sync {}
+
+impl<T: EraseableT<'static, marker_type::SyncSend> + Send + Sync> Eraseable for T {}
+
+pub trait SyncSendMarker: 'static {
+    fn marker() -> Self;
+}
+
+impl SyncSendMarker for marker_type::SyncSend {
+    fn marker() -> Self {
+        marker_type::SyncSend
+    }
+}
+
+impl SyncSendMarker for marker_type::UnsyncSend {
+    fn marker() -> Self {
+        Self::NEW
+    }
+}
+
+impl SyncSendMarker for marker_type::SyncUnsend {
+    fn marker() -> Self {
+        Self::NEW
+    }
+}
+
+impl SyncSendMarker for marker_type::UnsyncUnsend {
+    fn marker() -> Self {
+        Self::NEW
+    }
+}
+
+impl<'a, SyncSend: SyncSendMarker> ErasedT<'a, SyncSend> {
     /// Create a new Erased from the given value.
-    pub fn new<T: Eraseable>(v: T) -> Self {
-        Erased {
+    pub fn new<T: EraseableT<'a, SyncSend>>(v: T) -> Self {
+        ErasedT {
             // Safe to trivialize since ErasedTrivial is only a veneer over trait safety.
             data: ErasedTrivial::new(unsafe { trivialize(v) }),
             drop: if std::mem::needs_drop::<T>() {
@@ -100,14 +134,16 @@ impl Erased {
             } else {
                 no_drop
             },
+            _sync_send: SyncSend::marker(),
+            _lifetime: std::marker::PhantomData,
         }
     }
 
     /// Create a new Erased from the given boxed value.
     ///
     /// When retrieving the value later, one should use `as_ref::<T>()`/`to_owned::<T>()`.
-    pub fn from_boxed<T: Eraseable>(v: Box<T>) -> Self {
-        Erased {
+    pub fn from_boxed<T: EraseableT<'a, SyncSend>>(v: Box<T>) -> Self {
+        ErasedT {
             // Safe to trivialize since ErasedTrivial is only a veneer over trait safety.
             data: ErasedTrivial::from_boxed(unsafe { v.trivialize() }),
             drop: if std::mem::needs_drop::<T>() {
@@ -115,6 +151,8 @@ impl Erased {
             } else {
                 no_drop
             },
+            _sync_send: SyncSend::marker(),
+            _lifetime: std::marker::PhantomData,
         }
     }
 
@@ -141,23 +179,25 @@ impl Erased {
     }
 }
 
-impl Default for Erased {
+impl<'a, SyncSend: SyncSendMarker> Default for ErasedT<'a, SyncSend> {
     /// The default Erased value should never be converted to a type.
     fn default() -> Self {
-        Erased {
+        ErasedT {
             data: Default::default(),
             drop: no_drop,
+            _sync_send: SyncSend::marker(),
+            _lifetime: std::marker::PhantomData,
         }
     }
 }
 
-impl Drop for Erased {
+impl<'a, SyncSend> Drop for ErasedT<'a, SyncSend> {
     fn drop(&mut self) {
         (self.drop)(&mut self.data)
     }
 }
 
-impl std::fmt::Debug for Erased {
+impl<'a, SyncSend> std::fmt::Debug for ErasedT<'a, SyncSend> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         f.debug_struct("Erased").field("data", &self.data).finish()
     }
@@ -293,8 +333,7 @@ pub struct ErasedTrivial {
     is_box_and_align: u8, // first bit indicates box, remaining indicate alignment
 }
 
-// ErasedTrivial will always be Send and Sync by definition of Trivial, though we are requiring
-// Eraseable too, which also needs Send and Sync.
+// ErasedTrivial will always be Send and Sync by definition of Trivial.
 unsafe impl Send for ErasedTrivial {}
 unsafe impl Sync for ErasedTrivial {}
 
@@ -302,7 +341,7 @@ impl ErasedTrivial {
     const IS_BOX_MASK_AND_MAX_ALIGN: u8 = 1 << (std::mem::size_of::<u8>() * 8 - 1);
 
     /// Create a new ErasedTrivial from the given value.
-    pub fn new<T: Eraseable + Trivial>(v: T) -> Self {
+    pub fn new<T: Trivial>(v: T) -> Self {
         let size = std::mem::size_of_val(&v);
         let align = std::mem::align_of_val(&v);
         if size <= std::mem::size_of::<Buffer>() && align <= std::mem::align_of::<Buffer>() {
@@ -317,7 +356,7 @@ impl ErasedTrivial {
     /// Create a new ErasedTrivial from the given boxed value.
     ///
     /// When retrieving the value later, one should use `as_ref::<T>()`/`to_owned::<T>()`.
-    pub fn from_boxed<T: Eraseable + Trivial>(v: Box<T>) -> Self {
+    pub fn from_boxed<T: Trivial>(v: Box<T>) -> Self {
         Self::from_type(
             Boxed::from_box(v),
             true,
@@ -329,7 +368,7 @@ impl ErasedTrivial {
     /// Create a new ErasedTrivial from the given boxed slice.
     ///
     /// When retrieving the value later, one should use `as_slice::<T>()`/`to_boxed_slice::<T>()`.
-    pub fn from_slice<T: Eraseable + Trivial>(v: Box<[T]>) -> Self {
+    pub fn from_slice<T: Trivial>(v: Box<[T]>) -> Self {
         let size = std::mem::size_of_val(&*v);
         if size == 0 {
             Self::default()
@@ -615,7 +654,7 @@ pub struct Ref<T, Ptr>(Ptr, std::marker::PhantomData<*const T>);
 unsafe impl<T, Ptr: Send> Send for Ref<T, Ptr> {}
 unsafe impl<T, Ptr: Sync> Sync for Ref<T, Ptr> {}
 
-impl<T, Ptr: std::ops::Deref<Target = Erased>> Ref<T, Ptr> {
+impl<'a, SyncSend, T, Ptr: std::ops::Deref<Target = ErasedT<'a, SyncSend>>> Ref<T, Ptr> {
     /// Create a new ref from an erased value.
     ///
     /// Unsafe because callers must ensure that the Erased stores T.
@@ -638,11 +677,15 @@ impl<T, Ptr: std::fmt::Debug> std::fmt::Debug for Ref<T, Ptr> {
     }
 }
 
-impl<T: std::fmt::Display + Sync, Ptr: std::ops::Deref<Target = Erased>> std::fmt::Display
-    for Ref<T, Ptr>
+impl<
+        'a,
+        SyncSend: SyncSendMarker,
+        T: std::fmt::Display,
+        Ptr: std::ops::Deref<Target = ErasedT<'a, SyncSend>>,
+    > std::fmt::Display for Ref<T, Ptr>
 {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        std::fmt::Display::fmt(self.as_ref(), f)
+        std::fmt::Display::fmt(unsafe { (*self.0).as_ref::<T>() }, f)
     }
 }
 
@@ -662,7 +705,9 @@ impl<T: Clone + Sync> Ref<T, RArc<Erased>> {
     }
 }
 
-impl<T: Sync, Ptr: std::ops::Deref<Target = Erased>> std::ops::Deref for Ref<T, Ptr> {
+impl<SyncSend: SyncSendMarker, T, Ptr: std::ops::Deref<Target = ErasedT<'static, SyncSend>>>
+    std::ops::Deref for Ref<T, Ptr>
+{
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -670,7 +715,9 @@ impl<T: Sync, Ptr: std::ops::Deref<Target = Erased>> std::ops::Deref for Ref<T, 
     }
 }
 
-impl<T: Sync, Ptr: std::ops::Deref<Target = Erased>> AsRef<T> for Ref<T, Ptr> {
+impl<SyncSend: SyncSendMarker, T, Ptr: std::ops::Deref<Target = ErasedT<'static, SyncSend>>>
+    AsRef<T> for Ref<T, Ptr>
+{
     fn as_ref(&self) -> &T {
         &**self
     }

@@ -5,7 +5,7 @@
 //! * Redundant groupings (parens) are removed.
 //! * Quoted string escape sequences are interpreted.
 
-use super::tokenize::{PairedToken, SymbolicToken, Token};
+use super::tokenize::{PairedToken, StringSlice, SymbolicToken, Token};
 use ergo_runtime::{source::IntoSource, Source};
 use std::fmt;
 
@@ -179,9 +179,10 @@ impl<T: IntoIterator> From<T> for Parser<T::IntoIter> {
     }
 }
 
-impl<'a, I, E: fmt::Debug> Iterator for Parser<I>
+impl<'a, T, I, E: fmt::Debug> Iterator for Parser<I>
 where
-    I: Iterator<Item = Result<Source<Token<'a>>, Source<E>>>,
+    I: Iterator<Item = Result<Source<Token<T>>, Source<E>>>,
+    T: StringSlice<'a> + Into<String> + PartialEq,
 {
     type Item = Result<Source<Tree>, Vec<Source<Error<E>>>>;
 
@@ -198,12 +199,16 @@ where
     }
 }
 
-fn parse_escape_sequences<E>(s: &str) -> Result<String, (Error<E>, usize, usize)> {
+fn parse_escape_sequences<'a, T: StringSlice<'a>, E>(
+    mut s: T,
+) -> Result<String, (Error<E>, usize, usize)> {
     let mut ret = String::with_capacity(s.len());
     let mut escape = None;
 
-    let mut chars = s.char_indices();
-    while let Some((offset, c)) = chars.next() {
+    let string_end = s.len();
+
+    let mut offset = 0;
+    while let Some(c) = s.next_char() {
         match escape.take() {
             None => {
                 if c == '\\' {
@@ -219,32 +224,34 @@ fn parse_escape_sequences<E>(s: &str) -> Result<String, (Error<E>, usize, usize)
                     'n' => ret.push('\n'),
                     't' => ret.push('\t'),
                     'u' => {
-                        if let Some((offset, '{')) = chars.next() {
-                            let unicode_hex = chars.as_str();
+                        if let Some('{') = s.next_char() {
+                            let unicode_hex = s.clone();
+                            let mut unicode_hex_len = 0;
                             let mut end = false;
-                            while let Some((_, c)) = chars.next() {
+                            while let Some(c) = s.next_char() {
                                 if c == '}' {
                                     end = true;
                                     break;
+                                } else {
+                                    unicode_hex_len += c.len_utf8();
                                 }
                             }
                             if !end {
                                 return Err((
                                     Error::UnfinishedUnicodeCharacter,
                                     start_offset,
-                                    s.len(),
+                                    string_end,
                                 ));
                             } else {
-                                let unicode_hex_len =
-                                    unicode_hex.len() - chars.as_str().len() - '}'.len_utf8();
                                 // SAFETY: end must be in bounds and on a character boundary
                                 // according to the character iterator.
-                                let unicode_hex =
-                                    unsafe { unicode_hex.get_unchecked(..unicode_hex_len) };
+                                let unicode_hex = unsafe { unicode_hex.slice_to(unicode_hex_len) };
                                 let end_offset =
-                                    offset + '{'.len_utf8() + unicode_hex_len + '}'.len_utf8();
+                                    end_offset + '{'.len_utf8() + unicode_hex_len + '}'.len_utf8();
+                                // TODO could use a Cow<'str> method instead
+                                let unicode_hex = T::to_string(&[unicode_hex]);
                                 ret.push(
-                                    u32::from_str_radix(unicode_hex, 16)
+                                    u32::from_str_radix(&unicode_hex, 16)
                                         .ok()
                                         .and_then(|val| char::try_from(val).ok())
                                         .ok_or((
@@ -266,16 +273,18 @@ fn parse_escape_sequences<E>(s: &str) -> Result<String, (Error<E>, usize, usize)
                 }
             }
         }
+        offset += c.len_utf8();
     }
 
     Ok(ret)
 }
 
-impl<'a, I, E: fmt::Debug> Parser<I>
+impl<'a, T, I, E: fmt::Debug> Parser<I>
 where
-    I: Iterator<Item = Result<Source<Token<'a>>, Source<E>>>,
+    I: Iterator<Item = Result<Source<Token<T>>, Source<E>>>,
+    T: StringSlice<'a> + Into<String> + PartialEq,
 {
-    fn next_tok(&mut self) -> Result<Option<Source<Token<'a>>>, Source<Error<E>>> {
+    fn next_tok(&mut self) -> Result<Option<Source<Token<T>>>, Source<Error<E>>> {
         match self.tokens.next() {
             None => Ok(None),
             Some(Err(e)) => Err(e.map(Error::Tokenization)),
@@ -797,35 +806,38 @@ where
                                 .with(StringTree::Expression(tree)),
                         ))
                     }
-                    Token::String("\n") if remove_leading_newline => Ok(None),
                     Token::String(mut s) => {
-                        // Check if next token is the end
-                        let remove_trailing_newline = !quoted
-                            && self
-                                .tokens
-                                .peek()
-                                .unwrap()
-                                .as_ref()
-                                .map(|t| t == &Token::EndNested)
-                                .unwrap_or(false);
-                        if remove_trailing_newline && s.ends_with('\n') {
-                            // SAFETY: ends_with() guarantees the offset will be valid
-                            s = unsafe { s.get_unchecked(..s.len() - '\n'.len_utf8()) };
-                            if s.is_empty() {
-                                return Ok(None);
-                            }
-                        }
-                        if quoted {
-                            match parse_escape_sequences(s) {
-                                Ok(s) => Ok(Some(source.with(StringTree::String(s)))),
-                                Err((e, start_offset, end_offset)) => {
-                                    source.location.start += start_offset;
-                                    source.location.length = end_offset - start_offset;
-                                    Err(source.with(e).into())
+                        if s.starts_with_char('\n') && remove_leading_newline {
+                            Ok(None)
+                        } else {
+                            // Check if next token is the end
+                            let remove_trailing_newline = !quoted
+                                && self
+                                    .tokens
+                                    .peek()
+                                    .unwrap()
+                                    .as_ref()
+                                    .map(|t| t == &Token::EndNested)
+                                    .unwrap_or(false);
+                            if remove_trailing_newline && s.ends_with_char('\n') {
+                                // SAFETY: ends_with() guarantees the offset will be valid
+                                s = unsafe { s.slice_to(s.len() - '\n'.len_utf8()) };
+                                if s.is_empty() {
+                                    return Ok(None);
                                 }
                             }
-                        } else {
-                            Ok(Some(source.with(StringTree::String(s.into()))))
+                            if quoted {
+                                match parse_escape_sequences(s) {
+                                    Ok(s) => Ok(Some(source.with(StringTree::String(s)))),
+                                    Err((e, start_offset, end_offset)) => {
+                                        source.location.start += start_offset;
+                                        source.location.length = end_offset - start_offset;
+                                        Err(source.with(e).into())
+                                    }
+                                }
+                            } else {
+                                Ok(Some(source.with(StringTree::String(s.into()))))
+                            }
                         }
                     }
                     _ => panic!("unexpected token"),
@@ -849,12 +861,12 @@ where
                 _ => panic!("unexpected token"),
             },
         })
-        .map(|strs| strs.join(""))
+        .map(|strs| T::to_string(&strs))
     }
 
-    fn until_end_nested<T, F>(&mut self, mut f: F) -> Result<Vec<T>, Errors<E>>
+    fn until_end_nested<U, F>(&mut self, mut f: F) -> Result<Vec<U>, Errors<E>>
     where
-        F: FnMut(&mut Self) -> Result<Option<T>, Errors<E>>,
+        F: FnMut(&mut Self) -> Result<Option<U>, Errors<E>>,
     {
         let mut result = Vec::new();
         let mut errors = Vec::new();
