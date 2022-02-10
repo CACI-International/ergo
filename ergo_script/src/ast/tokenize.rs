@@ -1013,19 +1013,59 @@ impl<'tok, S: std::fmt::Debug + 'tok> NextToken<'tok, S> for ImmediateResult<S> 
 
 /// String slice types which can be used in tokenization.
 pub trait StringSlice<'a>: Clone + std::fmt::Debug + Sized + 'a {
-    fn starts_with_str(&self, s: &str) -> bool;
-    fn starts_with_char(&self, c: char) -> bool;
-    fn ends_with_char(&self, c: char) -> bool;
-    fn len(&self) -> usize;
-    fn find<F: FnMut(char) -> bool>(&self, f: F) -> Option<usize>;
-    fn split_at(&self, byte_index: usize) -> (Self, Self);
-    fn peek_char(&self) -> Option<char>;
     fn next_char(&mut self) -> Option<char>;
-    fn match_skip(&mut self, s: &str) -> bool;
+    fn peek_char(&self) -> Option<char>;
+    fn split_at(&self, byte_index: usize) -> (Self, Self);
+    fn len(&self) -> usize;
     unsafe fn slice_to(&self, byte_index: usize) -> Self;
-    fn trim_start_matches<F: FnMut(char) -> bool>(&self, f: F) -> Self;
     fn from_str(s: &'static str) -> Self;
     fn write_to_string(slices: &[Self], s: &mut String);
+    fn ends_with_char(&self, c: char) -> bool;
+
+    fn starts_with_str(&self, s: &str) -> bool {
+        let mut slice = self.clone();
+        for c in s.chars() {
+            if slice.next_char() != Some(c) {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn starts_with_char(&self, c: char) -> bool {
+        self.peek_char() == Some(c)
+    }
+
+    fn find<F: FnMut(char) -> bool>(&self, mut f: F) -> Option<usize> {
+        let mut slice = self.clone();
+        let mut offset = 0;
+        while let Some(c) = slice.next_char() {
+            if f(c) {
+                return Some(offset);
+            } else {
+                offset += c.len_utf8();
+            }
+        }
+        None
+    }
+
+    fn match_skip(&mut self, s: &str) -> bool {
+        let ret = self.starts_with_str(s);
+        if ret {
+            *self = self.split_at(s.len()).1;
+        }
+        ret
+    }
+
+    fn trim_start_matches<F: FnMut(char) -> bool>(&self, mut f: F) -> Self {
+        let mut slice = self.clone();
+        while let Some(c) = slice.next_char() {
+            if !f(c) {
+                break;
+            }
+        }
+        slice
+    }
 
     fn is_empty(&self) -> bool {
         self.len() == 0

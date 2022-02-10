@@ -1,5 +1,5 @@
 use ergo_runtime::source::{Location, Source};
-use ergo_script::ast::tokenize::{LeaderToken, PairedToken, SymbolicToken, Token, Tokens};
+use ergo_script::ast::{parse_tree, tokenize};
 use lspower::jsonrpc::Result;
 use lspower::lsp::*;
 use lspower::{Client, LanguageServer, LspService, Server};
@@ -92,12 +92,11 @@ fn subswap(a: &mut usize, mut b: usize) -> u32 {
 }
 
 impl TokenResults {
-    pub fn new(source: &str) -> Self {
+    pub fn new(source: &ropey::Rope) -> Self {
         let mut line_lengths = source
-            .match_indices('\n')
-            .map(|s| s.0)
-            // +1 to "seek" to next line, -1 to remove newline in count
-            .scan(0, |last, this| Some(subswap(last, this + 1) - 1))
+            .lines()
+            // Exclude final newline in line lengths
+            .map(|line| (line.len_bytes() - '\n'.len_utf8()) as u32)
             .collect::<Vec<_>>();
         // Reverse so popping can be done efficiently
         line_lengths.reverse();
@@ -136,6 +135,72 @@ impl TokenResults {
     }
 }
 
+fn char_offset(s: &ropey::Rope, pos: Position) -> Option<usize> {
+    let line_offset = s.try_line_to_char(pos.line as usize).ok()?;
+    Some(line_offset + pos.character as usize)
+}
+
+#[derive(Debug, Clone)]
+struct RopeSlice<'a>(ropey::RopeSlice<'a>);
+
+impl<'a> From<ropey::RopeSlice<'a>> for RopeSlice<'a> {
+    fn from(s: ropey::RopeSlice<'a>) -> Self {
+        RopeSlice(s)
+    }
+}
+
+impl<'a> std::ops::Deref for RopeSlice<'a> {
+    type Target = ropey::RopeSlice<'a>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<'a> tokenize::StringSlice<'a> for RopeSlice<'a> {
+    fn next_char(&mut self) -> Option<char> {
+        let c = self.0.get_char(0)?;
+        self.0 = self.0.slice(1..);
+        Some(c)
+    }
+
+    fn peek_char(&self) -> Option<char> {
+        self.0.get_char(0)
+    }
+
+    fn split_at(&self, byte_index: usize) -> (Self, Self) {
+        let c = self.0.byte_to_char(byte_index);
+        (self.0.slice(..c).into(), self.0.slice(c..).into())
+    }
+
+    fn len(&self) -> usize {
+        self.0.len_bytes()
+    }
+
+    fn ends_with_char(&self, c: char) -> bool {
+        self.0.len_chars() > 0 && self.0.char(self.0.len_chars() - 1) == c
+    }
+
+    unsafe fn slice_to(&self, byte_index: usize) -> Self {
+        let c = self.0.byte_to_char(byte_index);
+        self.0.slice(..c).into()
+    }
+
+    fn from_str(s: &'static str) -> Self {
+        RopeSlice(s.into())
+    }
+
+    fn write_to_string(slices: &[Self], s: &mut String) {
+        let total = slices.iter().map(|s| s.0.len_bytes()).sum();
+        s.reserve(total);
+        for slice in slices {
+            for chunk in slice.0.chunks() {
+                s.push_str(chunk);
+            }
+        }
+    }
+}
+
 #[lspower::async_trait]
 impl LanguageServer for Service {
     async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
@@ -151,8 +216,10 @@ impl LanguageServer for Service {
                 },
             }),
         );
-        capabilities.text_document_sync =
-            Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL));
+        capabilities.text_document_sync = Some(TextDocumentSyncCapability::Kind(
+            TextDocumentSyncKind::INCREMENTAL,
+        ));
+        capabilities.document_formatting_provider = Some(OneOf::Left(true));
         Ok(InitializeResult {
             server_info: Some(ServerInfo {
                 name: env!("CARGO_PKG_NAME").into(),
@@ -165,16 +232,45 @@ impl LanguageServer for Service {
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         let mut source = self.files.content_mut(&params.text_document.uri).await;
         for change in params.content_changes {
-            if let None = change.range {
-                *source = change.text;
+            if let Some(r) = change.range {
+                match (char_offset(&*source, r.start), char_offset(&*source, r.end)) {
+                    (Some(start_char), Some(end_char)) => {
+                        if source.try_remove(start_char..end_char).is_ok() {
+                            source.insert(start_char, change.text.as_str());
+                        }
+                    }
+                    // TODO send error?
+                    _ => (),
+                }
+            } else {
+                *source = change.text.into();
             }
         }
     }
+
+    /*
+    async fn formatting(
+        &self,
+        params: DocumentRangeFormattingOptions,
+    ) -> Result<Option<Vec<TextEdit>>> {
+        let source = self.files.content(&params.text_document.uri).await;
+        const width: usize = 100;
+        for tree in parse_tree::Parser::from(tokenize::Tokens::from(Source::new(0).with(&*source)))
+        {
+            let tree = match tree {
+                Err(_) => return Ok(None),
+                Ok(t) => t,
+            };
+        }
+    }
+    */
 
     async fn semantic_tokens_full(
         &self,
         params: SemanticTokensParams,
     ) -> Result<Option<SemanticTokensResult>> {
+        use ergo_script::ast::tokenize::{LeaderToken, PairedToken, SymbolicToken, Token};
+
         let source = self.files.content(&params.text_document.uri).await;
         let mut results = TokenResults::new(&*source);
         let mut paired_toks = Vec::new();
@@ -187,7 +283,7 @@ impl LanguageServer for Service {
 
         let mut comment_next = CommentNext::Off;
 
-        for t in Tokens::from(Source::new(0).with(&*source)) {
+        for t in tokenize::Tokens::from(Source::new(0).with(RopeSlice(source.slice(..)))) {
             use LeaderToken as L;
             use PairedToken as P;
             use SymbolicToken::*;
@@ -220,7 +316,8 @@ impl LanguageServer for Service {
                                 "unset",
                                 "doc",
                             ]
-                            .contains(s)
+                            .into_iter()
+                            .any(|k| **s == k)
                             {
                                 results.push(tok.location, TokenType::FUNCTION, Default::default());
                             }

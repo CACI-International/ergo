@@ -1,14 +1,15 @@
+use serial_test::serial;
 use std::path::Path;
 use std::process::Command;
-use serial_test::serial;
 
-const PROGRAM: &'static str = env!("CARGO_BIN_EXE_ergo");
+const PROGRAM: &'static str = env!("CARGO_BIN_EXE_ergolang");
 const MANIFEST: &'static str = env!("CARGO_MANIFEST_DIR");
 
 type Result<T> = std::io::Result<T>;
 
 fn run(args: &[&str], word: &[u8]) -> Result<()> {
     Command::new(PROGRAM)
+        .arg("evaluate")
         .args(args)
         .current_dir(
             Path::new(MANIFEST)

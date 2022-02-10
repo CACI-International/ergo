@@ -1,27 +1,25 @@
 use lspower::lsp::Url;
+use ropey::Rope;
 use std::collections::HashMap;
 use std::io::Read;
 use tokio::sync::{RwLock, RwLockMappedWriteGuard, RwLockReadGuard, RwLockWriteGuard};
 
 #[derive(Debug, Default)]
 pub struct Files {
-    content: RwLock<HashMap<Url, String>>,
+    content: RwLock<HashMap<Url, Rope>>,
 }
 
-fn read_file(url: &Url, guard: &mut RwLockWriteGuard<HashMap<Url, String>>) {
-    if let Ok(path) = url.to_file_path() {
-        let mut s = String::new();
-        if let Ok(mut f) = std::fs::File::open(path) {
-            if f.read_to_string(&mut s).is_err() {
-                s = String::new();
-            }
-        }
-        guard.insert(url.clone(), s);
-    }
+fn read_file(url: &Url, guard: &mut RwLockWriteGuard<HashMap<Url, Rope>>) {
+    let s = url
+        .to_file_path()
+        .ok()
+        .and_then(|path| std::fs::File::open(path).and_then(Rope::from_reader).ok())
+        .unwrap_or_default();
+    guard.insert(url.clone(), s);
 }
 
 impl Files {
-    pub async fn content(&self, url: &Url) -> RwLockReadGuard<'_, str> {
+    pub async fn content(&self, url: &Url) -> RwLockReadGuard<'_, Rope> {
         let mut guard = self.content.read().await;
         if !guard.contains_key(url) {
             drop(guard);
@@ -29,10 +27,10 @@ impl Files {
             read_file(url, &mut wguard);
             guard = wguard.downgrade();
         }
-        RwLockReadGuard::map(guard, |m| m.get(url).unwrap().as_str())
+        RwLockReadGuard::map(guard, |m| m.get(url).unwrap())
     }
 
-    pub async fn content_mut(&self, url: &Url) -> RwLockMappedWriteGuard<'_, String> {
+    pub async fn content_mut(&self, url: &Url) -> RwLockMappedWriteGuard<'_, Rope> {
         let mut guard = self.content.write().await;
         if !guard.contains_key(url) {
             read_file(url, &mut guard);
