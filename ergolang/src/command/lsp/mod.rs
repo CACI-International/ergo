@@ -1,5 +1,6 @@
+use super::format::Formatter;
 use ergo_runtime::source::{Location, Source};
-use ergo_script::ast::{parse_tree, tokenize};
+use ergo_script::ast::tokenize;
 use lspower::jsonrpc::Result;
 use lspower::lsp::*;
 use lspower::{Client, LanguageServer, LspService, Server};
@@ -143,6 +144,12 @@ fn char_offset(s: &ropey::Rope, pos: Position) -> Option<usize> {
 #[derive(Debug, Clone)]
 struct RopeSlice<'a>(ropey::RopeSlice<'a>);
 
+impl<'a> From<RopeSlice<'a>> for std::borrow::Cow<'a, str> {
+    fn from(s: RopeSlice<'a>) -> Self {
+        s.0.into()
+    }
+}
+
 impl<'a> From<ropey::RopeSlice<'a>> for RopeSlice<'a> {
     fn from(s: ropey::RopeSlice<'a>) -> Self {
         RopeSlice(s)
@@ -239,7 +246,7 @@ impl LanguageServer for Service {
                             source.insert(start_char, change.text.as_str());
                         }
                     }
-                    // TODO send error?
+                    // XXX send error
                     _ => (),
                 }
             } else {
@@ -248,28 +255,40 @@ impl LanguageServer for Service {
         }
     }
 
-    /*
-    async fn formatting(
-        &self,
-        params: DocumentRangeFormattingOptions,
-    ) -> Result<Option<Vec<TextEdit>>> {
+    async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
         let source = self.files.content(&params.text_document.uri).await;
-        const width: usize = 100;
-        for tree in parse_tree::Parser::from(tokenize::Tokens::from(Source::new(0).with(&*source)))
-        {
-            let tree = match tree {
-                Err(_) => return Ok(None),
-                Ok(t) => t,
-            };
+
+        let formatter = Formatter { line_width: 100 };
+
+        match formatter.format(
+            tokenize::Tokens::from(Source::new(0).with(RopeSlice(source.slice(..))))
+                .map(|r| r.map(Source::unwrap).map_err(Source::unwrap)),
+        ) {
+            Err(_) => {
+                // XXX send error
+                Ok(None)
+            }
+            Ok(new_text) => Ok(Some(vec![TextEdit {
+                range: Range {
+                    start: Position {
+                        line: 0,
+                        character: 0,
+                    },
+                    end: Position {
+                        line: source.len_lines() as u32,
+                        character: source.line(source.len_lines() - 1).len_chars() as u32,
+                    },
+                },
+                new_text,
+            }])),
         }
     }
-    */
 
     async fn semantic_tokens_full(
         &self,
         params: SemanticTokensParams,
     ) -> Result<Option<SemanticTokensResult>> {
-        use ergo_script::ast::tokenize::{LeaderToken, PairedToken, SymbolicToken, Token};
+        use tokenize::{LeaderToken, PairedToken, SymbolicToken, Token};
 
         let source = self.files.content(&params.text_document.uri).await;
         let mut results = TokenResults::new(&*source);

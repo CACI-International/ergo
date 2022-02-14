@@ -13,6 +13,17 @@
       be implemented. While reasoning about evaluation may be a little more
       difficult, this ensures the _correctness_ of identities and so generally
       users won't _need_ to reason about things as much.
+* Add an lsp server.
+  * Supports syntax highlighting and document formatting.
+* Add support for document formatting.
+  * This is still fairly simplistic, and will _only_ do whitespace and separator
+    (`,` and `;`) formatting.
+* Change the executable to be multi-functional, with shortcuts for subcommands
+  based on the executable name.
+  * Supports `evaluate` (old behavior), `lsp`, and `format` subcommands.
+* Change library lookup to look in the sibling `lib/ergo` directory (rather than
+  `share/ergo/lib`).
+* Package with an installer to simplify and streamline installation.
 
 ## 1.0.0-rc.3  -- 2021-12-14
 * Properly remove previously-set keys when a key is set to `unset`.

@@ -1,7 +1,6 @@
 use lspower::lsp::Url;
 use ropey::Rope;
 use std::collections::HashMap;
-use std::io::Read;
 use tokio::sync::{RwLock, RwLockMappedWriteGuard, RwLockReadGuard, RwLockWriteGuard};
 
 #[derive(Debug, Default)]

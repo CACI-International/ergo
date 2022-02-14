@@ -78,7 +78,7 @@ pub enum Token<T> {
     StartNested(PairedToken),
     /// End the most recent nested paired grouping.
     EndNested,
-    /// Start the next child withing the current grouping.
+    /// Start the next child within the current grouping.
     ///
     /// Only valid within PairedToken::Curly and PairedToken::Bracket.
     NextChild,

@@ -16,6 +16,8 @@ pub use app_err::AppErr;
 enum Command {
     /// Load and evaluate a value.
     Evaluate(command::Evaluate),
+    /// Format scripts.
+    Format(command::Format),
     /// Run the language server.
     Lsp(command::Lsp),
 }
@@ -24,6 +26,7 @@ impl command::Command for Command {
     fn run(self) -> Result<(), String> {
         match self {
             Command::Evaluate(a) => a.run(),
+            Command::Format(a) => a.run(),
             Command::Lsp(a) => a.run(),
         }
     }
@@ -128,6 +131,8 @@ fn main() {
             if let Some(name) = std::path::PathBuf::from(proc).file_name() {
                 if name == "ergo" {
                     break cli::<ImplicitCommand<command::Evaluate>>();
+                } else if name == "ergo-format" {
+                    break cli::<ImplicitCommand<command::Format>>();
                 } else if name == "ergo-lsp" {
                     break cli::<ImplicitCommand<command::Lsp>>();
                 }

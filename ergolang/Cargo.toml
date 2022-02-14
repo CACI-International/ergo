@@ -23,6 +23,7 @@ termimad = "0.17"
 
 ## LSP-specific dependencies
 lspower = "1.5"
+pretty = "0.11"
 ropey = "1.3"
 tokio = { version = "1", features = ["io-std", "rt", "rt-multi-thread", "sync"] }
 
