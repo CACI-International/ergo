@@ -221,14 +221,19 @@ async fn eval(mut value: _) -> Value {
 ///
 /// Arguments: `:metadata-key :value`
 ///
-/// Returns the value which had the metadata, or the final value resulting from evaluation if no
-/// matching metadata was found.
+/// Returns a map with the following keys:
+/// * `metadata-value` - the associated metadata value, if any
+/// * `result` - the evaluated value that had the metadata value, or the final value resulting from
+/// evaluation if no matching metadata was found.
 async fn meta_eval(metadata_key: _, mut value: _) -> Value {
     let key = metadata_key.id().await;
     while !value.is_evaluated() && value.get_metadata(&Runtime { key }).is_none() {
         Context::eval_once(&mut value).await;
     }
-    value
+    crate::make_string_map! { source ARGS_SOURCE,
+        "metadata-value" = value.get_metadata(&Runtime { key }).map(|v| v.as_ref().clone()).unwrap_or_else(|| types::Unset.into()),
+        "result" = value
+    }
 }
 
 #[types::ergo_fn]
@@ -445,6 +450,10 @@ mod test {
         fn dynamic_binding_multiple_scopes(t) {
             t.assert_eq("the-value = self:value:dynamic:get the-value
                 [force <| self:value:dynamic:eval {the-value = 10} :the-value, force <| self:value:dynamic:eval {the-value = hi} :the-value]", "[10,hi]");
+        }
+
+        fn meta(t) {
+            t.assert_eq("v = self:value:meta:set mkey mvalue value; { result = :v2, ^_ } = self:value:meta:eval mkey :v; self:value:meta:get mkey :v2", "mvalue");
         }
 
         fn merge(t) {

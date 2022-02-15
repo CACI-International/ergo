@@ -52,11 +52,10 @@ module = :v -> {
     sections = plugin:iter:fold (fn :categories :e -> {
         # Partition contents based on category.
         # First check for the explicit metadata
-        v = plugin:value:meta:eval :category-key e:value
-        plugin:type:String :category = plugin:match (plugin:value:meta:get :category-key :v) [
+        { result = :v, metadata-value = :meta } = plugin:value:meta:eval :category-key e:value
+        plugin:type:String :category = plugin:match :meta [
             # Use the value type to determine the category
             plugin:type:Unset -> plugin:match :v [
-                plugin:type:Map -> Modules
                 plugin:type:Function -> Functions
                 _ -> Values
             ]

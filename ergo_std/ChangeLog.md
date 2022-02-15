@@ -8,10 +8,19 @@
 ### Improvements
 * Removed the `std:by-content` function, as one shouldn't be reinterpreting
   value identities.
+* Change `std:meta:eval` to return a map with the evaluated value and the
+  metadata value (if any). This also allows binding the map so that the
+  evaluation occurs immediately, which is often the intention (since forcing
+  evaluation is not longer supported syntactically).
 
 ### Migration
 * Remove the use of `std:by-content`. If it was being used to compare nested
   structures, some other means should be used (like binding in a `std:match`).
+* Change `std:meta:eval` calls to properly get the value. You likely want to
+  bind the result so that the evaluation occurs immediately, e.g.
+  ```
+  { result, metadata-value } = std:meta:eval KEY :value
+  ```
 
 ## 1.0.0-rc.3  -- 2021-12-14
 * No changes.
