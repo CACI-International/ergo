@@ -92,5 +92,4 @@ not work correctly with this flag, so the default is `less`. You can:
 * `std:Iter:partition`
 * Show full command on exec falure.
 * Store `Unset`.
-* Improve CLI markdown rendering.
 * `std:fs:file-size`

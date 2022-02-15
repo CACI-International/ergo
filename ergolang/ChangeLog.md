@@ -24,6 +24,7 @@
 * Change library lookup to look in the sibling `lib/ergo` directory (rather than
   `share/ergo/lib`).
 * Package with an installer to simplify and streamline installation.
+* Improve the CLI markdown rendering for documentation.
 
 ## 1.0.0-rc.3  -- 2021-12-14
 * Properly remove previously-set keys when a key is set to `unset`.

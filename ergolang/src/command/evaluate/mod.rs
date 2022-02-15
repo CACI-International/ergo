@@ -10,6 +10,7 @@ use ergo_script::constants::{PROGRAM_NAME, WORKSPACE_NAME};
 use ergo_script::Runtime;
 
 mod output;
+mod render_markdown;
 mod sync;
 
 /// Constant values shared throughout the program.
@@ -172,6 +173,9 @@ impl super::Command for Evaluate {
         // Restore terminal state prior to the pager being used.
         unsafe { crate::terminal_state::restore() };
 
+        // Check color support prior to possibly activating the pager.
+        let color_support = render_markdown::ColorSupport::new();
+
         if paging_enabled {
             pager::Pager::with_default_pager(if cfg!(target_os = "macos") {
                 // macos less is old and buggy, not working correctly with `-F`
@@ -184,7 +188,7 @@ impl super::Command for Evaluate {
 
         let s = result?;
         if doc && is_terminal {
-            termimad::print_text(&s);
+            render_markdown::render_markdown(color_support, &s);
         } else {
             println!("{}", s);
         }
