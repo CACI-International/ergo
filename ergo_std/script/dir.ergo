@@ -12,16 +12,6 @@ mnet = ergo net
 mtest = ergo test
 mtype = ergo type
 
-## ^(doc plugin:value:eval)
-##
-## Pattern Arguments: `:value`
-##
-## When used in a pattern, evaluates the bound value before binding to the argument.
-eval = :a -> plugin:value:eval <| plugin:match :a [
-    fn :x -> { plugin:value:eval :x }
-    pat :out -> :x -> bind :out (force <| plugin:value:eval :x)
-]
-
 ## Load a remote archive.
 ##
 ## Fetches the archive with `net:unarchive ^^enter`, and loads the archive from the root directory.
@@ -460,7 +450,6 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
     import {optional,required} = :mtype
     default
     ergo-remote
-    eval
     exec = plugin:exec
     getopt = function-module plugin:getopt {fn = :getopt-fn}
     import

@@ -12,6 +12,7 @@
   metadata value (if any). This also allows binding the map so that the
   evaluation occurs immediately, which is often the intention (since forcing
   evaluation is not longer supported syntactically).
+* Remove `std:eval` in favor of `std:Typed`.
 
 ### Migration
 * Remove the use of `std:by-content`. If it was being used to compare nested
@@ -21,6 +22,10 @@
   ```
   { result, metadata-value } = std:meta:eval KEY :value
   ```
+* Replace `std:eval` calls with `std:Typed`. In patterns, they are
+  interchangeable. In normal expressions, `std:eval :v` can be converted to
+  `{std:Typed :v = :v; :v}`, though you may no longer need `std:eval` semantics
+  at all.
 
 ## 1.0.0-rc.3  -- 2021-12-14
 * No changes.

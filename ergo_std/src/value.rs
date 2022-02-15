@@ -21,7 +21,6 @@ pub fn module() -> Value {
             "eval" = dynamic_binding_set()
         },
         "equal" = equal(),
-        "eval" = eval(),
         "identity" = identity(),
         "merge" = merge(),
         "meta" = crate::make_string_map! {
@@ -205,15 +204,6 @@ async fn debug(value: _) -> Value {
 /// Returns the identity as a 32-character hex string.
 async fn identity(value: _) -> Value {
     types::String::from(format!("{:032x}", value.id().await)).into()
-}
-
-#[types::ergo_fn]
-/// Evaluate a value.
-///
-/// Arguments: `:value`
-async fn eval(mut value: _) -> Value {
-    drop(Context::eval(&mut value).await);
-    value
 }
 
 #[types::ergo_fn]
@@ -430,11 +420,6 @@ async fn equal(mut a: _, mut b: _, (exact): [_]) -> Value {
 #[cfg(test)]
 mod test {
     ergo_script::tests! {
-        fn eval(t) {
-            t.assert_script_ne("fn :a -> :a |> str", "str");
-            t.assert_eq("self:value:eval <| fn :a -> :a |> str", "str");
-        }
-
         fn source_path(t) {
             t.assert_eq("x = 1; self:value:source-path :x", ":unset");
         }

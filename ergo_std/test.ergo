@@ -37,21 +37,6 @@ type = {
     }
 }
 
-eval = {
-    function = {
-        std:String hi = std:eval { "hi" }
-        std:Bool:true
-    }
-    pattern = {
-        std:eval hi = { "hi" }
-        std:Bool:true
-    }
-    error = {
-        std:Error _ = std:eval <| std:Error:@ "oh no"
-        std:Bool:true
-    }
-}
-
 required = {
     exists = {
         std:required _ = hi
