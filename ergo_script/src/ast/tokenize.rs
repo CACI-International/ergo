@@ -1059,9 +1059,11 @@ pub trait StringSlice<'a>: Clone + std::fmt::Debug + Sized + 'a {
 
     fn trim_start_matches<F: FnMut(char) -> bool>(&self, mut f: F) -> Self {
         let mut slice = self.clone();
-        while let Some(c) = slice.next_char() {
+        while let Some(c) = slice.peek_char() {
             if !f(c) {
                 break;
+            } else {
+                slice.next_char();
             }
         }
         slice
@@ -1699,6 +1701,30 @@ mod test {
                 Token::close(),
             ],
         );
+    }
+
+    #[test]
+    fn mixed_hash_blocks() {
+        assert_tokens(
+            "# foo\n# bar\n## foo\n## bar\n# foo",
+            &[
+                Token::hash_space(),
+                Token::string("foo\n"),
+                Token::leading_hash(),
+                Token::string("bar\n"),
+                Token::close(),
+                Token::next(),
+                Token::double_hash_space(),
+                Token::string("foo\n"),
+                Token::leading_double_hash(),
+                Token::string("bar\n"),
+                Token::close(),
+                Token::next(),
+                Token::hash_space(),
+                Token::string("foo"),
+                Token::close(),
+            ],
+        )
     }
 
     #[test]
