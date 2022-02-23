@@ -124,25 +124,34 @@ impl<'a, 's: 'a, S: Clone + Into<Cow<'s, str>>> FormatTree<S> {
             FormatTree::Token(Token::NextChild) => true,
             _ => false,
         });
+
         let mut doc = arena.nil();
-        while let Some(line) = groups.next() {
-            if !line.is_empty() {
-                doc = doc.append(Self::group(line, arena, arena.space()));
-                break;
-            }
-        }
         let mut empty_lines = 0;
+        let mut skip_sep = true;
+        let mut first = true;
         while let Some(line) = groups.next() {
             if line.is_empty() {
                 empty_lines += 1;
             } else {
-                doc = doc
-                    .append(sep.clone())
-                    .append(arena.concat(
+                if !skip_sep {
+                    doc += sep.clone();
+                }
+                if !first {
+                    doc += arena.concat(
                         std::iter::repeat(arena.line_()).take(std::cmp::min(empty_lines, 2)),
-                    ))
-                    .append(Self::group(line, arena, arena.space()));
+                    );
+                }
+                doc += Self::group(line, arena, arena.space());
                 empty_lines = 0;
+                first = false;
+                skip_sep = match line.first() {
+                    // These always have a trailing hardline
+                    Some(FormatTree::Nested {
+                        token: PairedToken::Apostrophe | PairedToken::Hash | PairedToken::DoubleHash,
+                        ..
+                    }) => true,
+                    _ => false,
+                };
             }
         }
         doc
@@ -163,7 +172,9 @@ impl<'a, 's: 'a, S: Clone + Into<Cow<'s, str>>> FormatTree<S> {
                     skip_sep = true;
                     should_skip_sep = true;
                 }
-                FormatTree::Token(Token::Symbol(SymbolicToken::ColonPrefix)) => {
+                FormatTree::Token(Token::Symbol(
+                    SymbolicToken::ColonPrefix | SymbolicToken::Hash | SymbolicToken::DoubleHash,
+                )) => {
                     should_skip_sep = true;
                 }
                 _ => (),
