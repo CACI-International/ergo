@@ -13,6 +13,7 @@
   evaluation occurs immediately, which is often the intention (since forcing
   evaluation is not longer supported syntactically).
 * Remove `std:eval` in favor of `std:Typed`.
+* Add `std:Iter:partition` to partition iterators into a Map of Arrays.
 
 ### Migration
 * Remove the use of `std:by-content`. If it was being used to compare nested

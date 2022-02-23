@@ -8,7 +8,7 @@ use futures::{
     future::{ready, FutureExt},
     stream::StreamExt,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub fn module() -> Value {
     crate::make_string_map! {
@@ -21,6 +21,7 @@ pub fn module() -> Value {
         "map-lazy" = map_lazy(),
         "no-errors" = no_errors(),
         "order" = order(),
+        "partition" = partition(),
         "skip" = skip(),
         "skip-while" = skip_while(),
         "take" = take(),
@@ -645,7 +646,7 @@ async fn count(iter: _) -> Value {
     types::Number::from_usize(vals.len()).into()
 }
 
-async fn compare(
+async fn quicksort_compare(
     cmp: &ergo_runtime::Source<Value>,
     a: &Value,
     b: &Value,
@@ -669,7 +670,7 @@ async fn compare(
         .map(|v| v.to_owned().into())
 }
 
-async fn partition(
+async fn quicksort_partition(
     v: &mut [Value],
     cmp: &ergo_runtime::Source<Value>,
 ) -> ergo_runtime::Result<usize> {
@@ -679,7 +680,7 @@ async fn partition(
 
     let mut part = 0;
     for i in 0..end {
-        if compare(cmp, &v[i], &v[end]).await? == std::cmp::Ordering::Less {
+        if quicksort_compare(cmp, &v[i], &v[end]).await? == std::cmp::Ordering::Less {
             v.swap(i, part);
             part += 1;
         }
@@ -694,7 +695,7 @@ fn quicksort<'a>(
 ) -> futures::future::BoxFuture<'a, ergo_runtime::Result<()>> {
     futures::future::FutureExt::boxed(async move {
         if v.len() >= 2 {
-            let p = partition(v, cmp).await?;
+            let p = quicksort_partition(v, cmp).await?;
             quicksort(&mut v[..p], cmp).await?;
             quicksort(&mut v[p + 1..], cmp).await?;
         }
@@ -720,6 +721,56 @@ async fn order(func: _, iter: _) -> Value {
 
     let deps = depends![^@vals];
     types::Iter::new_iter(vals.into_iter(), deps).into()
+}
+
+#[types::ergo_fn]
+/// Partition the items in an iterator.
+///
+/// Arguments: `(Function :key) (Into<Iter> :iter)`
+///
+/// Uses `key` to partition items in `iter`. `key` is applied to each item in `iter`, and the value
+/// it returns is used as the key in the returned map.
+///
+/// Returns a Map where each key was returned by `key` and the values for each key are an Array of
+/// the items from `iter` for which `key` returned the associated key. The relative order of items
+/// from `iter` is retained.
+async fn partition(func: _, iter: _) -> Value {
+    let iter = traits::into::<types::Iter>(iter).await?.to_owned();
+
+    let vals: Vec<_> = iter.collect().await?;
+    let keyed = Context::global()
+        .task
+        .join_all(vals.into_iter().map(|v| async {
+            let key = traits::bind(
+                func.clone(),
+                Source::imbue(
+                    ARGS_SOURCE.clone().with(
+                        types::Args {
+                            args: types::args::Arguments::positional(vec![v.clone()]).unchecked(),
+                        }
+                        .into(),
+                    ),
+                ),
+            )
+            .await;
+            let key = key.as_identified().await;
+            Ok((key, v))
+        }))
+        .await
+        .unwrap();
+
+    let mut result: BTreeMap<_, Vec<_>> = Default::default();
+    for (k, v) in keyed {
+        result.entry(k).or_default().push(v);
+    }
+
+    types::Map(
+        result
+            .into_iter()
+            .map(|(k, v)| (k, Value::from(types::Array(v.into()))))
+            .collect(),
+    )
+    .into()
 }
 
 #[cfg(test)]
@@ -754,6 +805,13 @@ mod test {
             t.assert_eq("self:array:from <| self:iter:order self:string:compare [b,c,w,d,g,a]", "[a,b,c,d,g,w]");
             t.assert_eq("self:array:from <| self:iter:order self:string:compare [b,a,a,b,c]", "[a,a,b,b,c]");
             t.assert_eq("self:array:from <| self:iter:order self:string:compare []", "[]");
+        }
+
+        fn partition(t) {
+            t.assert_eq(
+                "self:iter:partition (fn :x -> force x:0) [force [a,1],force [b,2],force [c,3],force [a,4],force [c,5],force [b,6],force [b,7],force [c,8]]",
+                "{c = force [force [c,3],force [c,5],force [c,8]], b = force [force [b,2],force [b,6],force [b,7]], a = force [force [a,1],force [a,4]] }"
+            );
         }
 
         fn skip(t) {
