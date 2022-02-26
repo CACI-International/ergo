@@ -14,9 +14,9 @@ pub type TreeVec = Vec<Source<Tree>>;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Tree {
     String(String),
-    Bang(Box<Source<Tree>>),
     Caret(Box<Source<Tree>>),
     ColonPrefix(Box<Source<Tree>>),
+    Dollar(Box<Source<Tree>>),
     Hash(Box<Source<Tree>>),
     DoubleHash(Box<Source<Tree>>),
     Equal(Box<Source<Tree>>, Box<Source<Tree>>),
@@ -376,11 +376,11 @@ where
 
         // Resolve operators
         // Precedence (descending):
+        //   Dollar
         //   Colon Prefix
         //   Colon (Left assoc)
-        //   Bang/Caret Prefix
+        //   Caret Prefix
         //   Hash/DoubleHash Prefix
-        //   Bang Expression Prefix
         //   Arrow (Right assoc)
         //   Pipe/PipeRight (Left assoc macro)
         //   PipeLeft (Right assoc macro)
@@ -581,11 +581,20 @@ where
                 .collect())
         }
 
+        fn dollar<E>(toks: &mut Toks) -> TResult<E> {
+            prefix_op(
+                toks,
+                |v| v.is_symbol(&SymbolicToken::Dollar),
+                to_treedeque,
+                |_, t| Tree::Dollar(t.into()),
+            )
+        }
+
         fn colon_prefix<E>(toks: &mut Toks) -> TResult<E> {
             prefix_op(
                 toks,
                 |v| v.is_symbol(&SymbolicToken::ColonPrefix),
-                to_treedeque,
+                dollar,
                 |_, t| Tree::ColonPrefix(t.into()),
             )
         }
@@ -622,13 +631,12 @@ where
             )
         }
 
-        fn bang_caret_prefixes<E>(toks: &mut Toks) -> TResult<E> {
+        fn caret_prefixes<E>(toks: &mut Toks) -> TResult<E> {
             prefix_op(
                 toks,
-                |t| t.is_symbol(&SymbolicToken::Bang) || t.is_symbol(&SymbolicToken::Caret),
+                |t| t.is_symbol(&SymbolicToken::Caret),
                 colon,
                 |s, t| match s {
-                    TreeOrSymbol::Symbol(SymbolicToken::Bang) => Tree::Bang(t.into()),
                     TreeOrSymbol::Symbol(SymbolicToken::Caret) => Tree::Caret(t.into()),
                     _ => panic!("unexpected symbol"),
                 },
@@ -639,7 +647,7 @@ where
             prefix_op(
                 toks,
                 |t| t.is_symbol(&SymbolicToken::Hash) || t.is_symbol(&SymbolicToken::DoubleHash),
-                bang_caret_prefixes,
+                caret_prefixes,
                 |s, t| match s {
                     TreeOrSymbol::Symbol(SymbolicToken::Hash) => Tree::Hash(t.into()),
                     TreeOrSymbol::Symbol(SymbolicToken::DoubleHash) => Tree::DoubleHash(t.into()),
@@ -648,15 +656,11 @@ where
             )
         }
 
-        fn bang_prefix_group<E>(toks: &mut Toks) -> TResult<E> {
-            prefixed_initial(toks, &SymbolicToken::Bang, hash_prefixes, Tree::Bang)
-        }
-
         fn arrow<E>(toks: &mut Toks) -> TResult<E> {
             right_bin_op(
                 toks,
                 |v| v.is_symbol(&SymbolicToken::Arrow),
-                bang_prefix_group,
+                hash_prefixes,
                 |_, a, b| {
                     single((a, b).into_source().map(|(a, b)| {
                         Tree::Arrow(to_tree(a.unwrap()).into(), to_tree(b.unwrap()).into())
@@ -795,10 +799,10 @@ where
             Some(t) => {
                 let (mut source, t) = t.take();
                 match t {
-                    Token::Symbol(SymbolicToken::Caret) => {
+                    Token::Symbol(SymbolicToken::Dollar) => {
                         let tree = self
                             .tree_or_symbol()?
-                            .expect("caret must be followed by a token")
+                            .expect("dollar must be followed by a token")
                             .map(|t| t.as_tree());
                         Ok(Some(
                             (source, tree.source())
@@ -919,13 +923,6 @@ mod test {
     }
 
     #[test]
-    fn bang() {
-        assert_single("!a", Bang(s("a")));
-        assert_single("!a b c", Bang(src(Parens(vec![s("a"), s("b"), s("c")]))));
-        assert_single("a !b c", Parens(vec![s("a"), src(Bang(s("b"))), s("c")]));
-    }
-
-    #[test]
     fn caret() {
         assert_single("^a", Caret(s("a")));
         assert_single("^a b c", Caret(src(Parens(vec![s("a"), s("b"), s("c")]))));
@@ -957,10 +954,6 @@ mod test {
             ]),
         );
         assert_single("a #b d", Parens(vec![s("a"), src(Hash(s("b"))), s("d")]));
-        assert_single(
-            "a #!b d",
-            Parens(vec![s("a"), src(Hash(src(Bang(s("b"))))), s("d")]),
-        );
         assert_single(
             "a #^b d",
             Parens(vec![s("a"), src(Hash(src(Caret(s("b"))))), s("d")]),
@@ -994,10 +987,6 @@ mod test {
         assert_single(
             "a ##b d",
             Parens(vec![s("a"), src(DoubleHash(s("b"))), s("d")]),
-        );
-        assert_single(
-            "a ##!b d",
-            Parens(vec![s("a"), src(DoubleHash(src(Bang(s("b"))))), s("d")]),
         );
         assert_single(
             "a ##^b d",
@@ -1158,7 +1147,7 @@ mod test {
     #[test]
     fn quote_nested() {
         assert_single(
-            "\"hello ^(get-name :name)!\"",
+            "\"hello $(get-name :name)!\"",
             Quote(vec![
                 src(StringTree::String("hello ".into())),
                 src(StringTree::Expression(src(Parens(vec![
@@ -1184,10 +1173,10 @@ mod test {
     #[test]
     fn apostrophe_space_block_nested() {
         assert_single(
-            "'\n  ' block ^^^string\n  ' here",
+            "'\n  ' block $$$string\n  ' here",
             ApostropheBlock(vec![
                 src(StringTree::String("block ".into())),
-                src(StringTree::String("^".into())),
+                src(StringTree::String("$".into())),
                 src(StringTree::Expression(s("string"))),
                 src(StringTree::String("\n".into())),
                 src(StringTree::String("here".into())),
@@ -1198,8 +1187,8 @@ mod test {
     #[test]
     fn hash_space_block() {
         assert_single(
-            "# hello world\n# this is a comment ^^^hi",
-            HashBlock("hello world\nthis is a comment ^^^hi".into()),
+            "# hello world\n# this is a comment $$$hi",
+            HashBlock("hello world\nthis is a comment $$$hi".into()),
         );
     }
 
@@ -1217,10 +1206,10 @@ mod test {
     #[test]
     fn double_hash_space_block_nested() {
         assert_single(
-            "##\n  ## block ^^^string\n  ## here",
+            "##\n  ## block $$$string\n  ## here",
             DoubleHashBlock(vec![
                 src(StringTree::String("block ".into())),
-                src(StringTree::String("^".into())),
+                src(StringTree::String("$".into())),
                 src(StringTree::Expression(s("string"))),
                 src(StringTree::String("\n".into())),
                 src(StringTree::String("here".into())),
@@ -1230,7 +1219,7 @@ mod test {
 
     #[test]
     fn unary_no_arg() {
-        for op in &[":", "!", "^"] {
+        for op in &["$", ":", "^"] {
             assert_fail(op);
         }
     }
@@ -1247,7 +1236,7 @@ mod test {
     #[test]
     fn mixed() {
         assert_single(
-            ":a = g <| a:b :c -> a <| b c",
+            ":a = g <| a:b $c -> a <| b c",
             Equal(
                 src(ColonPrefix(s("a"))),
                 src(Parens(vec![
@@ -1255,7 +1244,7 @@ mod test {
                     src(Arrow(
                         src(Parens(vec![
                             src(Colon(s("a"), s("b"))),
-                            src(ColonPrefix(s("c"))),
+                            src(Dollar(s("c"))),
                         ])),
                         src(Parens(vec![s("a"), src(Parens(vec![s("b"), s("c")]))])),
                     )),

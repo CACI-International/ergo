@@ -299,11 +299,10 @@ mod once {
 use once::Once;
 
 #[derive(Clone)]
-struct ExprEvaluator<'a> {
+struct ExprEvaluator {
     expr: Expr,
     evaluator: Evaluator,
     captures: Captures,
-    local_env: Option<&'a LocalEnv>,
     sets: Sets,
     cache: ExprEvaluatorCache,
 }
@@ -324,13 +323,12 @@ fn witness<T>(_: &T) -> std::marker::PhantomData<T> {
     std::marker::PhantomData
 }
 
-impl<'a> ExprEvaluator<'a> {
+impl ExprEvaluator {
     pub fn new(expr: Expr, evaluator: Evaluator, captures: Captures) -> Self {
         ExprEvaluator {
             expr,
             evaluator,
             captures,
-            local_env: None,
             sets: Sets::none(),
             cache: Default::default(),
         }
@@ -371,24 +369,12 @@ impl<'a> ExprEvaluator<'a> {
                 .captures()
                 .map(|c| self.captures.subset(c))
                 .unwrap_or_default(),
-            local_env: self.local_env.clone(),
             sets: self.sets.clone(),
             cache: self
                 .cache
                 .children
                 .cache_default(child.instance_key())
                 .clone(),
-        }
-    }
-
-    fn with_local_env<'b>(self, local_env: Option<&'b LocalEnv>) -> ExprEvaluator<'b> {
-        ExprEvaluator {
-            expr: self.expr,
-            evaluator: self.evaluator,
-            captures: self.captures,
-            local_env,
-            sets: self.sets,
-            cache: self.cache,
         }
     }
 
@@ -433,23 +419,11 @@ impl<'a> ExprEvaluator<'a> {
             let last_item = items.peek().is_none();
             match i {
                 ast::BlockItem::Expr(e) => {
-                    push_result(
-                        mode,
-                        &mut results,
-                        me.child(e)
-                            .with_local_env(if mode.command() { None } else { Some(&env) })
-                            .evaluate()
-                            .await,
-                        last_item,
-                    )
-                    .await?;
+                    push_result(mode, &mut results, me.child(e).evaluate().await, last_item)
+                        .await?;
                 }
                 ast::BlockItem::Merge(e) => {
-                    let mut val = me
-                        .child(e)
-                        .with_local_env(if mode.command() { None } else { Some(&env) })
-                        .evaluate()
-                        .await;
+                    let mut val = me.child(e).evaluate().await;
                     let val_source = Source::get(&val);
                     drop(Context::eval(&mut val).await);
                     match_value! { val.clone(),
@@ -511,19 +485,10 @@ impl<'a> ExprEvaluator<'a> {
                     }
                 }
                 ast::BlockItem::Bind(b, e) => {
-                    let e = me
-                        .child(e)
-                        .with_local_env(if mode.command() { None } else { Some(&env) })
-                        .evaluate()
-                        .await;
+                    let e = me.child(e).evaluate().await;
 
                     let new_sets = Sets::new();
-                    let b = me
-                        .child(b)
-                        .with_local_env(if mode.command() { None } else { Some(&env) })
-                        .with_sets(new_sets.clone())
-                        .evaluate()
-                        .await;
+                    let b = me.child(b).with_sets(new_sets.clone()).evaluate().await;
 
                     // Immediately eval and check for bind error
                     traits::bind_no_error(b, e).await?;
@@ -589,7 +554,7 @@ impl<'a> ExprEvaluator<'a> {
                 .expr
                 .value()
                 .as_ref::<ast::Get>()
-                .and_then(|g| g.capture_key)
+                .map(|g| g.capture_key.expect("gets must always have a capture key"))
             {
                 if let Some(v) = self.captures.get(cap) {
                     return v.clone().eval_id().await;
@@ -657,11 +622,7 @@ impl<'a> ExprEvaluator<'a> {
     }
 
     fn value_id(&self) -> ValueId {
-        let me = self
-            .clone()
-            .with_local_env(None)
-            .with_sets(Sets::none())
-            .no_eval_cache();
+        let me = self.clone().with_sets(Sets::none()).no_eval_cache();
         ValueId::new(move |v| {
             Context::spawn(EVAL_TASK_PRIORITY, |_| {}, async move {
                 Ok(me.identity(Some(v)).await)
@@ -683,7 +644,7 @@ impl<'a> ExprEvaluator<'a> {
         macro_rules! delayed {
             ( $self:ident , $v:ident , $( $body:tt )* ) => {{
                 let id = self.value_id();
-                let $self = self.clone().with_local_env(None).no_eval_cache();
+                let $self = self.clone().no_eval_cache();
                 let v_type = witness($v);
                 Value::dynamic(
                     move || async move {
@@ -777,7 +738,7 @@ impl<'a> ExprEvaluator<'a> {
                 let id = self.value_id();
                 let bind = func.bind.clone();
                 let body = func.body.clone();
-                let me = self.clone().with_local_env(None).with_sets(Sets::none()).cache_root();
+                let me = self.clone().with_sets(Sets::none()).cache_root();
                 types::Unbound::new_no_doc(move |v| {
                     let bind = bind.clone();
                     let body = body.clone();
@@ -789,45 +750,31 @@ impl<'a> ExprEvaluator<'a> {
                         let bind = me.child(&bind).with_sets(sets.clone()).evaluate().await;
                         try_result!(traits::bind_no_error(bind, v).await);
 
-                        let (new_captures, local_env_v): (Vec<_>, Vec<_>) = sets
+                        let new_captures: Vec<_> = sets
                             .into_inner()
                             .into_iter()
-                            .map(|(cap, k, v)| {
-                                (cap.map(|c| (c, v.clone())), (k, v))
-                            })
-                            .unzip();
-                        let mut local_env = LocalEnv::new();
-                        for (k, v) in local_env_v {
-                            local_env.insert(k.as_identified().await, v);
-                        }
+                            .map(|(cap, _, v)| cap.map(|c| (c, v.clone())))
+                            .collect();
                         for (cap, v) in new_captures.into_iter().filter_map(|o| o) {
                             me.captures.resolve(cap, v);
                         }
 
-                        me.child(&body).with_local_env(Some(&local_env)).evaluate().await
+                        me.child(&body).evaluate().await
                     }.boxed()
                 }, id).into()
             },
             Get(get) => {
-                match get.capture_key {
-                    Some(cap) =>  match self.captures.get(cap) {
-                        Some(v) => v.clone(),
-                        None => {
-                            if cfg!(debug_assertions) {
-                                use ergo_runtime::error::{Diagnostic, DiagnosticInfo, diagnostics_to_string};
-                                let d = Diagnostic::from(format!("internal capture error: {:?}", cap))
-                                    .add_primary_label(self.source().with(""));
-                                panic!("{}", diagnostics_to_string(&[d], Context::global().diagnostic_sources().as_ref(), false));
-                            } else {
-                                types::Unset.into()
-                            }
-                        }
-                    }
+                let cap = get.capture_key.expect("gets must always have a capture key");
+                match self.captures.get(cap) {
+                    Some(v) => v.clone(),
                     None => {
-                        let k = self.child(&get.value).evaluate().await.as_identified().await;
-                        match self.local_env.and_then(|env| env.get(&k)) {
-                            None => Source::get(&k).with("missing binding").into_error().into(),
-                            Some(v) => v.clone()
+                        if cfg!(debug_assertions) {
+                            use ergo_runtime::error::{Diagnostic, DiagnosticInfo, diagnostics_to_string};
+                            let d = Diagnostic::from(format!("internal capture error: {:?}", cap))
+                                .add_primary_label(self.source().with(""));
+                            panic!("{}", diagnostics_to_string(&[d], Context::global().diagnostic_sources().as_ref(), false));
+                        } else {
+                            types::Unset.into()
                         }
                     }
                 }
@@ -913,7 +860,7 @@ impl<'a> ExprEvaluator<'a> {
                 // include the identity of the doc comment.
                 // In practice the identity of a doc comment won't matter much though.
                 //let id = self.value_id();
-                let me = self.clone().with_local_env(None).with_sets(Sets::none()).no_eval_cache();
+                let me = self.clone().with_sets(Sets::none()).no_eval_cache();
                 let mut doc = Value::dynamic(move || async move {
                         Context::spawn(EVAL_TASK_PRIORITY, |_| {}, async move {
                             ergo_runtime::error_info! {

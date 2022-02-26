@@ -88,6 +88,8 @@ where
 pub enum Error<TreeError> {
     /// A tree parsing error.
     TreeParse(TreeError),
+    /// A dollar operator was in an invalid position.
+    BadDollar,
     /// A caret operator was in an invalid position.
     BadCaret,
     /// An equal operator was in an invalid position.
@@ -96,14 +98,13 @@ pub enum Error<TreeError> {
     BadAttribute,
     /// A comment was in an invalid position.
     BadComment,
-    /// A bang was in an invalid position.
-    BadBang,
 }
 
 impl<E: fmt::Display> fmt::Display for Error<E> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Error::TreeParse(t) => t.fmt(f),
+            Error::BadDollar => write!(f, "a dollar must be followed by a string"),
             Error::BadCaret => write!(f, "cannot merge values here"),
             Error::BadEqual => write!(f, "cannot bind values here"),
             Error::BadAttribute => write!(
@@ -111,7 +112,6 @@ impl<E: fmt::Display> fmt::Display for Error<E> {
                 "attributes and doc comments can only be within blocks or brackets preceding an expression or binding, or directly preceding a single expression"
             ),
             Error::BadComment => write!(f, "comments are not valid in this context"),
-            Error::BadBang => write!(f, "not a pattern expression"),
         }
     }
 }
@@ -292,7 +292,7 @@ fn to_basic_block_item<E>(
             to_expression(ctx.pattern(true).string_implies(StringImplies::Set), *a)?,
             to_expression(ctx.string_implies(StringImplies::None), *b)?,
         )),
-        // elaborate an unquoted string literal `a` to `:a = :a`
+        // elaborate an unquoted string literal `a` to `:a = $a`
         Tree::String(s) if string_implies_bind => {
             let s = source.clone().with(Expression::string(s));
             Ok(BlockItem::Bind(
@@ -355,6 +355,36 @@ fn to_array_item<I: Iterator<Item = Result<Source<Tree>, Vec<Source<E>>>>, E>(
     )
 }
 
+/*
+std:import { :a, :b, c++ => {:module} } = :workspace
+
+{ a, b, c } ==> { a = $a, b = $b, c = $c }
+{ :a, :b, :c } ==> { a => :a, b => :b, c => :c }
+
+let :a = 123
+let :b = (let :a = 123)
+
+fn let :a = ^:args -> a:$v
+
+Path:with :f1 :f2 :f3 {
+    std:exec cp $f1 $f2
+}
+
+path-with = fn ^:fs :v -> {
+    std:Iter:map (:f -> {$f = Path:new ()}) $fs
+    $v
+}
+
+something (setter => :blah)
+
+Order matters if you want to use `$`... or `$` needs to block
+
+fn {
+    debug => default :debug as true
+    debug-symbols => default :debug-symbols as $debug
+}
+*/
+
 fn to_expression<E>(
     mut ctx: ParseContext,
     t: Source<Tree>,
@@ -376,17 +406,18 @@ fn to_expression<E>(
                 })
             }
         }
-        Tree::Bang(t) => {
-            if ctx.pattern {
-                // Bang in a pattern interprets as a non-pattern expression
-                to_expression(ctx.pattern(false), *t)
-            } else {
-                Err(vec![source.with(Error::BadBang)])
-            }
-        }
         Tree::Caret(_) => {
             // Caret not allowed in expressions
             Err(vec![source.with(Error::BadCaret)])
+        }
+        Tree::Dollar(t) => {
+            // Dollar may only be followed by a string.
+            let inner = to_expression(ctx, *t)?;
+            if inner.expr_type() == ExpressionType::String {
+                Ok(source.with(Expression::get(inner)))
+            } else {
+                Err(vec![source.with(Error::BadDollar)])
+            }
         }
         Tree::ColonPrefix(t) => {
             if ctx.pattern {
@@ -592,10 +623,10 @@ mod test {
         assert_single("\"\"", E::string("".into()));
         assert_single("\"abc\ndef\"", E::string("abc\ndef".into()));
         assert_single(
-            "\"hello ^^^world\"",
+            "\"hello $$$world\"",
             E::compound_string(vec![
                 StringItem::String("hello ".into()),
-                StringItem::String("^".into()),
+                StringItem::String("$".into()),
                 StringItem::Expression(src(E::get(s("world")))),
             ]),
         );
@@ -611,12 +642,12 @@ mod test {
         );
         assert_single(
             "' block
-        ' string with ^^
-        ' and ^capture",
+        ' string with $$
+        ' and $capture",
             E::compound_string(vec![
                 StringItem::String("block\n".into()),
                 StringItem::String("string with ".into()),
-                StringItem::String("^".into()),
+                StringItem::String("$".into()),
                 StringItem::String("\n".into()),
                 StringItem::String("and ".into()),
                 StringItem::Expression(src(E::get(s("capture")))),
@@ -769,7 +800,7 @@ mod test {
     fn bind_string_set() {
         assert_block_item("a = b", BI::Bind(src(E::set(s("a"))), s("b")));
         assert_block_item(":a = b", BI::Bind(src(E::set(s("a"))), s("b")));
-        assert_block_item("!a = b", BI::Bind(s("a"), s("b")));
+        assert_block_item("\"a\" = b", BI::Bind(s("a"), s("b")));
     }
 
     #[test]
@@ -813,7 +844,7 @@ mod test {
     #[test]
     fn bind_map() {
         assert_block_item(
-            "{a,:b=:c,:d=!:e,^:rest} = v",
+            "{a,:b=:c,:d=$e,^:rest} = v",
             BI::Bind(
                 src(E::block(block_items![
                     bind(src(E::set(s("a"))), src(E::set(s("a")))),
@@ -842,7 +873,7 @@ mod test {
 
     #[test]
     fn bind_expr() {
-        assert_block_item("!:a = b", BI::Bind(src(E::get(s("a"))), s("b")));
+        assert_block_item("$a = b", BI::Bind(src(E::get(s("a"))), s("b")));
     }
 
     #[test]
@@ -915,7 +946,7 @@ mod test {
             E::function(s("a"), src(E::function(s("b"), s("c")))),
         );
         assert_single(
-            "pat :a -> :b -> {!:a = :b}",
+            "pat :a -> :b -> {$a = :b}",
             E::function(
                 src(E::pat_command(
                     src(E::get(s("pat"))),
@@ -1006,7 +1037,7 @@ mod test {
     #[test]
     fn doc_comment_expressions() {
         assert_single(
-            "## my doc ^comment\n## ^{\n## more expr\n## abc def ghi} stuff\n##   more docs\nval",
+            "## my doc $comment\n## ${\n## more expr\n## abc def ghi} stuff\n##   more docs\nval",
             E::doc_comment(
                 vec![
                     StringItem::String("my doc ".into()),

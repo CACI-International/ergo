@@ -270,7 +270,7 @@ mod test {
 
     #[test]
     fn unset() -> Result<(), String> {
-        script_eval_to(":unset", SRUnset)
+        script_eval_to("$unset", SRUnset)
     }
 
     #[test]
@@ -332,14 +332,14 @@ mod test {
     #[test]
     fn block_set_arbitrary() -> Result<(), String> {
         script_eval_to(
-            ":a = b; ::a = c; :arr = [::a,1]; ::arr = d; :::arr = e; :map = {:k=v}; ::map = f",
+            ":a = b; v = { :$a = c }; v = { :arr = [v:$a,1] }; :(v:arr) = d; :map = {:k=v}; :$map = f",
             SRAny,
         )
     }
 
     #[test]
     fn block_indirect_get() -> Result<(), String> {
-        script_eval_to(":a = name, ::a = b, ::a", SRString("b"))
+        script_parse_fail(":a = name, :$a = b, $$a")
     }
 
     mod doc_comment {
@@ -358,7 +358,7 @@ mod test {
         #[test]
         fn expression() -> Result<(), String> {
             script_eval_to(
-                "## doc ^\"comment\"
+                "## doc $\"comment\"
                 a = ()
                 doc :a",
                 SRString("doc comment"),
@@ -369,7 +369,7 @@ mod test {
         fn expression_scope() -> Result<(), String> {
             script_eval_to(
                 "v = comment
-                ## doc ^v
+                ## doc $v
                 a = ()
                 doc :a",
                 SRString("doc comment"),
@@ -379,7 +379,7 @@ mod test {
         #[test]
         fn expression_value() -> Result<(), String> {
             script_eval_to(
-                "## doc ^(doc:value () |>:v)
+                "## doc $(doc:value () |>:v)
                 a = { v = comment }
                 doc :a",
                 SRString("doc comment"),
@@ -458,17 +458,16 @@ mod test {
 
     #[test]
     fn function_capture() -> Result<(), String> {
-        script_eval_to(":f = { :a = 100; _ -> :a }; :a = 5; f()", SRString("100"))?;
-        script_parse_fail(":f = _ -> :b; f()")?;
+        script_eval_to(":f = { :a = 100; _ -> $a }; :a = 5; f()", SRString("100"))?;
+        script_parse_fail(":f = _ -> $b; f()")?;
         script_eval_to(
-            ":f = fn :a -> { :b = [:a,something]; fn() -> {b,a} }; (f hi) ()",
+            ":f = fn :a -> { :b = [$a,something]; fn() -> {b,a} }; (f hi) ()",
             SRMap(&[
                 ("b", SRArray(&[SRString("hi"), SRString("something")])),
                 ("a", SRString("hi")),
             ]),
         )?;
-        script_fail(":a = 5; ::a = 10; :f = _ -> ::a; f()")?;
-        script_parse_fail(":a = 5; ::a = 10; :f = _ -> :b = 4; f(); :b")?;
+        script_parse_fail(":a = 5; :$a = 10; :f = _ -> :b = 4; f(); :b")?;
         Ok(())
     }
 
@@ -492,19 +491,19 @@ mod test {
 
     #[test]
     fn quote_compound_string() -> Result<(), String> {
-        script_eval_to("x = b, \"a ^x\"", SRString("a b"))?;
-        script_eval_to("x = b, y = c, \"a^x^y\"", SRString("abc"))?;
+        script_eval_to("x = b, \"a $x\"", SRString("a b"))?;
+        script_eval_to("x = b, y = c, \"a$x$y\"", SRString("abc"))?;
         Ok(())
     }
 
     #[test]
     fn compound_string_ids_differ() {
-        script_parse_id_ne("x = b, \"a ^x\"", "x = b, \"c ^x\"");
+        script_parse_id_ne("x = b, \"a $x\"", "x = b, \"c $x\"");
     }
 
     #[test]
     fn quote_preserves_whitespace() -> Result<(), String> {
-        script_eval_to("hi=hi, \"\n\n^hi\n\"", SRString("\n\nhi\n"))
+        script_eval_to("hi=hi, \"\n\n$hi\n\"", SRString("\n\nhi\n"))
     }
 
     #[test]
@@ -516,7 +515,7 @@ mod test {
     #[test]
     fn block_string() -> Result<(), String> {
         script_eval_to(
-            "v = block, '\n  ' this is my ^v string",
+            "v = block, '\n  ' this is my $v string",
             SRString("this is my block string"),
         )
     }
@@ -640,7 +639,7 @@ mod test {
             script_eval_to("fn [1,2,3] -> () |> [1,2,3]", SRUnit)?;
             script_eval_to("fn {:a=b} -> () |> {:a=b}", SRUnit)?;
             script_eval_to(
-                ":something = {:a=b}; fn !:something -> () |> {:a=b}",
+                ":something = {:a=b}; fn $something -> () |> {:a=b}",
                 SRUnit,
             )?;
             Ok(())
@@ -752,18 +751,18 @@ mod test {
         #[test]
         fn bind_command() -> Result<(), String> {
             script_eval_to(
-                ":keyto = pat :key -> {key = !:key} -> (); :m = {:key = hi}; fn (keyto hi) -> () |> :m",
+                ":keyto = pat :key -> {key = $key} -> (); :m = {:key = hi}; fn (keyto hi) -> () |> :m",
                 SRUnit,
             )?;
             script_eval_to(
-                ":keyto = pat :key -> {key = !:key} -> (); :m = {:key = hi}; keyto :b = :m; :b",
+                ":keyto = pat :key -> {key = $key} -> (); :m = {:key = hi}; keyto :b = :m; :b",
                 SRString("hi"),
             )?;
             script_fail(
-                ":keyto = pat :key -> {key = !:key} -> (); :m = {:key = hi}; fn (keyto bye) -> () |> :m",
+                ":keyto = pat :key -> {key = $key} -> (); :m = {:key = hi}; fn (keyto bye) -> () |> :m",
             )?;
             script_fail(
-                ":keyto = pat :key -> {key = !:key} -> (); :m = {:notkey = hi}; fn (keyto hi) -> () |> :m",
+                ":keyto = pat :key -> {key = $key} -> (); :m = {:notkey = hi}; fn (keyto hi) -> () |> :m",
             )?;
             Ok(())
         }

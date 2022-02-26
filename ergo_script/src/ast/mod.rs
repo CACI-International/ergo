@@ -1055,29 +1055,25 @@ impl<'a> ExpressionCompiler<'a> {
                 e_caps.difference_with(&in_scope_captures);
             }),
             Get(v) => {
-                // Any gets of a string constant are captures.
-                if v.value.expr_type() == ExpressionType::String {
-                    // String gets will always result in a capture key
-                    do_captures!(v, |e_caps| {
-                        let key = self.capture_mapping.get(&v.value).map(|v| *v);
-                        match key {
-                            Some(key) => {
-                                self.used_binding(key);
-                                v.capture_key = Some(key);
-                                e_caps.insert(key);
-                            }
-                            None => {
-                                let key = *self.string_gets
-                                    .entry(v.value.clone())
-                                    .or_insert_with(|| self.capture_context.key());
-                                v.capture_key = Some(key);
-                                e_caps.insert(key);
-                            }
+                // Gets may only be of a string, and will always result in a capture key.
+                debug_assert!(v.value.expr_type() == ExpressionType::String);
+                do_captures!(v, |e_caps| {
+                    let key = self.capture_mapping.get(&v.value).map(|v| *v);
+                    match key {
+                        Some(key) => {
+                            self.used_binding(key);
+                            v.capture_key = Some(key);
+                            e_caps.insert(key);
                         }
-                    });
-                } else {
-                    do_captures!(subexpr v);
-                }
+                        None => {
+                            let key = *self.string_gets
+                                .entry(v.value.clone())
+                                .or_insert_with(|| self.capture_context.key());
+                            v.capture_key = Some(key);
+                            e_caps.insert(key);
+                        }
+                    }
+                });
             },
             Set(v) => {
                 if v.value.expr_type() == ExpressionType::String {

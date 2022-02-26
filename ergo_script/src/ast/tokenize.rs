@@ -33,7 +33,7 @@ pub enum SymbolicToken {
     Caret,
     Colon,
     ColonPrefix,
-    Bang,
+    Dollar,
     Arrow,
     Pipe,
     PipeLeft,
@@ -105,8 +105,8 @@ impl<T> Token<T> {
         Token::Symbol(SymbolicToken::ColonPrefix)
     }
 
-    pub fn bang() -> Self {
-        Token::Symbol(SymbolicToken::Bang)
+    pub fn dollar() -> Self {
+        Token::Symbol(SymbolicToken::Dollar)
     }
 
     pub fn arrow() -> Self {
@@ -200,7 +200,7 @@ impl fmt::Display for SymbolicToken {
             Equal => write!(f, "="),
             Caret => write!(f, "^"),
             Colon | ColonPrefix => write!(f, ":"),
-            Bang => write!(f, "!"),
+            Dollar => write!(f, "$"),
             Arrow => write!(f, "->"),
             Pipe => write!(f, "|"),
             PipeLeft => write!(f, "<|"),
@@ -270,8 +270,10 @@ pub enum Error {
     InvalidBlockString,
     /// A colon was in an invalid location.
     InvalidColon,
-    /// A caret within a quoted string was not followed by a word.
-    InvalidStringCaret,
+    /// A dollar was in an invalid location.
+    InvalidDollar,
+    /// A dollar within a quoted string was not followed by a word.
+    InvalidStringDollar,
     /// An expression separator is invalid (comma or semicolon within nested expression).
     InvalidExpressionSeparator,
     /// An opened PairedToken does not have a corresponding closing PairedToken.
@@ -288,7 +290,11 @@ impl fmt::Display for Error {
                 f,
                 "colons must always be followed by an expression (without whitespace)"
             ),
-            Error::InvalidStringCaret => write!(f, "expected an alphanumeric string to follow the caret"),
+            Error::InvalidDollar => write!(
+                f,
+                "dollars must always be followed by a string (without whitespace)"
+            ),
+            Error::InvalidStringDollar => write!(f, "expected an alphanumeric string to follow the dollar"),
             Error::InvalidExpressionSeparator => write!(f, "commas and semicolons may only be within curly and square brackets to separate expressions"),
             Error::UnmatchedOpeningToken(t) => write!(f, "unmatched {}", t),
             Error::UnmatchedClosingToken(t, _) => write!(f, "unmatched {}", t),
@@ -594,7 +600,15 @@ impl<'tok, T: FinishAt + 'tok, S: StringSlice<'tok>> NextToken<'tok, S> for Norm
                         Token::colon()
                     }
                 }
-                '!' => Token::bang(),
+                '$' => {
+                    let next_is_boundary =
+                        position.peek().map(|c| c.is_whitespace()).unwrap_or(true);
+                    if next_is_boundary {
+                        return TokenElseString::Err(Error::InvalidDollar);
+                    } else {
+                        Token::dollar()
+                    }
+                }
                 '-' if position.match_skip(">") => Token::arrow(),
                 '|' if position.match_skip(">") => Token::pipe_right(),
                 '|' => Token::pipe(),
@@ -714,20 +728,20 @@ impl<'tok, T: FinishAt + 'tok, S: StringSlice<'tok>> NextToken<'tok, S> for Norm
     }
 }
 
-/// Caret word tokenization, within a quoted string.
+/// String dollar tokenization, within a quoted string.
 ///
 /// This tokenization context only reads a single alphanumeric and [-_] string.
-struct StringCaretWord {
-    caret_source: Source<()>,
+struct StringDollarWord {
+    entry_source: Source<()>,
 }
 
-impl StringCaretWord {
-    fn new(caret_source: Source<()>) -> Self {
-        StringCaretWord { caret_source }
+impl StringDollarWord {
+    fn new(entry_source: Source<()>) -> Self {
+        StringDollarWord { entry_source }
     }
 }
 
-impl<'tok, S: StringSlice<'tok>> NextToken<'tok, S> for StringCaretWord {
+impl<'tok, S: StringSlice<'tok>> NextToken<'tok, S> for StringDollarWord {
     fn next<'a>(
         this: &mut next_token::Ref<'a, 'tok, S, Self>,
         position: &mut TokenPosition<S>,
@@ -742,7 +756,7 @@ impl<'tok, S: StringSlice<'tok>> NextToken<'tok, S> for StringCaretWord {
             .find(|c: char| !c.is_alphanumeric() && !"-_".contains(c))
             .unwrap_or(position.remaining.len());
         Some(if end == 0 {
-            Err(me.caret_source.with(Error::InvalidStringCaret))
+            Err(me.entry_source.with(Error::InvalidStringDollar))
         } else {
             let (s, rest) = position.remaining.split_at(end);
             position.remaining = rest;
@@ -752,7 +766,7 @@ impl<'tok, S: StringSlice<'tok>> NextToken<'tok, S> for StringCaretWord {
     }
 
     fn close(self) -> Result<usize, Source<Error>> {
-        Err(self.caret_source.with(Error::InvalidStringCaret))
+        Err(self.entry_source.with(Error::InvalidStringDollar))
     }
 }
 
@@ -796,14 +810,14 @@ fn string_expression<'a, 'tok, S: StringSlice<'tok>, F>(
 where
     F: FnOnce(bool),
 {
-    if position.match_skip("^") {
-        Token::string(S::from_str("^"))
+    if position.match_skip("$") {
+        Token::string(S::from_str("$"))
     } else {
         match position.peek() {
             Some('(' | '[' | '{' | '"') => set_next(true),
             _ => set_next(false),
         }
-        Token::caret()
+        Token::dollar()
     }
 }
 
@@ -902,13 +916,13 @@ impl<'tok, T: BlockStringPrefix + 'tok, S: StringSlice<'tok>> NextToken<'tok, S>
         if nested.is_empty() {
             token_else_string(this, position, |c, this, position| {
                 TokenElseString::Some(match c {
-                    '^' if T::ALLOW_NESTED => {
+                    '$' if T::ALLOW_NESTED => {
                         let source = position.source(());
                         string_expression(position, |next_group| {
                             this.as_mut().nested = if next_group {
                                 Next::new(Normal::new(FinishAtGroup))
                             } else {
-                                Next::new(StringCaretWord::new(source))
+                                Next::new(StringDollarWord::new(source))
                             };
                         })
                     }
@@ -965,13 +979,13 @@ impl<'tok, S: StringSlice<'tok>> NextToken<'tok, S> for QuoteString {
                 TokenElseString::String
             } else {
                 TokenElseString::Some(match c {
-                    '^' => {
+                    '$' => {
                         let source = position.source(());
                         string_expression(position, |next_group| {
                             if next_group {
                                 this.push(Normal::new(FinishAtGroup));
                             } else {
-                                this.push(StringCaretWord::new(source));
+                                this.push(StringDollarWord::new(source));
                             }
                         })
                     }
@@ -1177,13 +1191,9 @@ impl<'tok, S: StringSlice<'tok>> From<Source<S>> for Tokens<'tok, S> {
             position.next_char().unwrap();
             let hash = ImmediateResult(Ok(position.source(Token::hash())));
             position.reset_source_start();
-            position.next_char().unwrap();
-            let bang = ImmediateResult(Ok(position.source(Token::bang())));
-            position.reset_source_start();
-            // Emit hash+bang+string, which will be ignored as a tree comment (but can be preserved
+            // Emit hash+string, which will be ignored as a tree comment (but can be preserved
             // if rewriting the token stream).
             next.push(LineString);
-            next.push(bang);
             next.push(hash);
         }
 
@@ -1270,12 +1280,12 @@ mod test {
     #[test]
     fn symbols() {
         assert_tokens(
-            "=^:!->|<||>#a##a",
+            "=^:$->|<||>#a##a",
             &[
                 Token::equal(),
                 Token::caret(),
                 Token::colon(),
-                Token::bang(),
+                Token::dollar(),
                 Token::arrow(),
                 Token::pipe(),
                 Token::pipe_left(),
@@ -1316,6 +1326,14 @@ mod test {
         assert_err("a: ", Error::InvalidColon);
         assert_err(":", Error::InvalidColon);
         assert_err(": ", Error::InvalidColon);
+    }
+
+    #[test]
+    fn dollar() {
+        assert_tokens("$a", &[Token::dollar(), Token::string("a")]);
+        assert_tokens(" $a", &[Token::dollar(), Token::string("a")]);
+        assert_err("$", Error::InvalidDollar);
+        assert_err("$ ", Error::InvalidDollar);
     }
 
     #[test]
@@ -1416,7 +1434,7 @@ mod test {
     #[test]
     fn string_ends() {
         assert_tokens(
-            "a[b]c{d}e(f)g:h,i;j^k=l\nm n|o<|p|>q!r->s\"t\"",
+            "a[b]c{d}e(f)g:h,i;j^k=l\nm n|o<|p|>q->r\"s\"t$u",
             &[
                 Token::string("a"),
                 Token::bracket(),
@@ -1450,13 +1468,14 @@ mod test {
                 Token::string("p"),
                 Token::pipe_right(),
                 Token::string("q"),
-                Token::bang(),
-                Token::string("r"),
                 Token::arrow(),
-                Token::string("s"),
+                Token::string("r"),
                 Token::quote(),
-                Token::string("t"),
+                Token::string("s"),
                 Token::close(),
+                Token::string("t"),
+                Token::dollar(),
+                Token::string("u"),
             ],
         );
     }
@@ -1485,10 +1504,10 @@ mod test {
     #[test]
     fn quotes_nested() {
         assert_tokens(
-            "\"^name\"",
+            "\"$name\"",
             &[
                 Token::quote(),
-                Token::caret(),
+                Token::dollar(),
                 Token::string("name"),
                 Token::close(),
             ],
@@ -1503,38 +1522,38 @@ mod test {
     #[test]
     fn string_nested() {
         assert_tokens(
-            "\"hi ^name\"",
+            "\"hi $name\"",
             &[
                 Token::quote(),
                 Token::string("hi "),
-                Token::caret(),
+                Token::dollar(),
                 Token::string("name"),
                 Token::close(),
             ],
         );
         assert_tokens(
-            "\"hi ^(name)\"",
+            "\"hi $(name)\"",
             &[
                 Token::quote(),
                 Token::string("hi "),
-                Token::caret(),
+                Token::dollar(),
                 Token::paren(),
                 Token::string("name"),
                 Token::close(),
                 Token::close(),
             ],
         );
-        assert_err("\"hi ^ \"", Error::InvalidStringCaret);
+        assert_err("\"hi $ \"", Error::InvalidStringDollar);
     }
 
     #[test]
     fn string_nested_escape() {
         assert_tokens(
-            "\"hi ^^\"",
+            "\"hi $$\"",
             &[
                 Token::quote(),
                 Token::string("hi "),
-                Token::string("^"),
+                Token::string("$"),
                 Token::close(),
             ],
         );
@@ -1578,11 +1597,11 @@ mod test {
     #[test]
     fn block_string_nested() {
         assert_tokens(
-            "' hello ^name",
+            "' hello $name",
             &[
                 Token::apostrophe_space(),
                 Token::string("hello "),
-                Token::caret(),
+                Token::dollar(),
                 Token::string("name"),
                 Token::close(),
             ],
@@ -1636,10 +1655,10 @@ mod test {
     #[test]
     fn hash_block_no_nested() {
         assert_tokens(
-            "# hello ^name",
+            "# hello $name",
             &[
                 Token::hash_space(),
-                Token::string("hello ^name"),
+                Token::string("hello $name"),
                 Token::close(),
             ],
         );
@@ -1692,11 +1711,11 @@ mod test {
     #[test]
     fn double_hash_block_nested() {
         assert_tokens(
-            "## hello ^name",
+            "## hello $name",
             &[
                 Token::double_hash_space(),
                 Token::string("hello "),
-                Token::caret(),
+                Token::dollar(),
                 Token::string("name"),
                 Token::close(),
             ],
@@ -1732,7 +1751,7 @@ mod test {
         assert_tokens(
             "a b c
         ->;
-        b = !, c; d",
+        b = e, c; d",
             &[
                 Token::string("a"),
                 Token::string("b"),
@@ -1743,7 +1762,7 @@ mod test {
                 Token::next(),
                 Token::string("b"),
                 Token::equal(),
-                Token::bang(),
+                Token::string("e"),
                 Token::next(),
                 Token::string("c"),
                 Token::next(),
@@ -1808,17 +1827,17 @@ mod test {
     #[test]
     fn nested_blocks() {
         assert_tokens(
-            "## a b ^{
+            "## a b ${
              ##  v = 5
              ##
              ##  x = '
              ##  ' this is
-             ##  ' nested ^v
+             ##  ' nested $v
              ## }",
             &[
                 Token::double_hash_space(),
                 Token::string("a b "),
-                Token::caret(),
+                Token::dollar(),
                 Token::curly(),
                 Token::next(),
                 Token::leading_double_hash(),
@@ -1839,7 +1858,7 @@ mod test {
                 Token::leading_double_hash(),
                 Token::leading_apostrophe(),
                 Token::string("nested "),
-                Token::caret(),
+                Token::dollar(),
                 Token::string("v"),
                 Token::string("\n"),
                 Token::leading_double_hash(),
@@ -1864,7 +1883,7 @@ mod test {
             "a {b c\n d [e,f]})",
             Error::UnmatchedClosingToken(PairedToken::Paren, None),
         );
-        assert_err("## ^(\na", Error::UnmatchedOpeningToken(PairedToken::Paren));
+        assert_err("## $(\na", Error::UnmatchedOpeningToken(PairedToken::Paren));
     }
 
     #[test]
@@ -1873,8 +1892,7 @@ mod test {
             "#!/usr/bin/env ergo\na b c",
             &[
                 Token::hash(),
-                Token::bang(),
-                Token::string("/usr/bin/env ergo\n"),
+                Token::string("!/usr/bin/env ergo\n"),
                 Token::string("a"),
                 Token::string("b"),
                 Token::string("c"),

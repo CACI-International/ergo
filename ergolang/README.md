@@ -94,3 +94,4 @@ not work correctly with this flag, so the default is `less`. You can:
 * `std:fs:file-size`
 * Improve `Error` storage (prevent storage of nested Errors).
 * Change set syntax, and do away with pattern commands.
+* ExitStatus to Number.
