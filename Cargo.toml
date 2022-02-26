@@ -4,3 +4,4 @@ members = ["abi_stable_ext", "ergolang", "ergo_runtime", "ergo_runtime_macro", "
 [profile.release]
 lto = true
 panic = 'abort'
+strip = true
