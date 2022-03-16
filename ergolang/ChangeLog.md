@@ -15,7 +15,7 @@
       users won't _need_ to reason about things as much.
 * Add an lsp server.
   * Supports syntax highlighting and document formatting.
-* Add support for document formatting.
+* Add support for script formatting.
   * This is still fairly simplistic, and will _only_ do whitespace and separator
     (`,` and `;`) formatting.
 * Change the executable to be multi-functional, with shortcuts for subcommands
@@ -25,6 +25,17 @@
   `share/ergo/lib`).
 * Package with an installer to simplify and streamline installation.
 * Improve the CLI markdown rendering for documentation.
+* Disambiguate set and get operators.
+  * Rather than using context to determine whether `:` means get or set, we
+    change gets to use `$`.
+* Indirect get expressions are no longer supported. Get expressions must be with
+  a string.
+
+### Breaking Changes
+* Any use of `!` should be replaced with equivalent code.
+* Change any `:value` get expressions to use `$value` instead.
+* Any indirect get expressions need to be replaced with indexing or explicit
+  matching.
 
 ## 1.0.0-rc.3  -- 2021-12-14
 * Properly remove previously-set keys when a key is set to `unset`.
