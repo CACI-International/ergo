@@ -30,12 +30,24 @@
     change gets to use `$`.
 * Indirect get expressions are no longer supported. Get expressions must be with
   a string.
+* Remove pattern commands as a syntax feature. Functions that should do
+  something different should be renamed.
+* Remove `pat` and the function version of `index`.
+* Change the syntax for `{ a }` expanding to `{ :a = :a }`: it is now `{ :a }`.
 
 ### Breaking Changes
 * Any use of `!` should be replaced with equivalent code.
 * Change any `:value` get expressions to use `$value` instead.
 * Any indirect get expressions need to be replaced with indexing or explicit
   matching.
+* The overloading of a function to be used in pattern and normal contexts is no
+  longer allowed (as pattern contexts don't exist). Separate the bindings to
+  distinct names.
+* Anything using `pat` should be changed to `fn` and/or bound to a new name.
+* Anything using `index :a b` as a function rather than `a:b` can use the
+  latter: `a:b` is now lazily evaluated.
+* Any `{ a, b, c }` in what used to be a pattern context should be changed to
+  `{ :a, :b, :c }`.
 
 ## 1.0.0-rc.3  -- 2021-12-14
 * Properly remove previously-set keys when a key is set to `unset`.

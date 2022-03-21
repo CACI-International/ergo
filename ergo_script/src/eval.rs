@@ -4,7 +4,7 @@
 //! tracks source locations for values so that when an error occurs, useful error information can
 //! be provided.
 
-use crate::ast::{self, CaptureKey, CaptureSet, Expr, Subexpressions};
+use crate::ast::{self, CaptureKey, CaptureSet, Expr, ScopeKey, Subexpressions};
 use cachemap::CacheMap;
 use ergo_runtime::abi_stable::external_types::RMutex;
 use ergo_runtime::Result;
@@ -109,33 +109,25 @@ impl Captures {
     }
 }
 
-type LocalEnv = BTreeMap<IdentifiedValue, Value>;
-type SetsValue = futures::future::Shared<futures::channel::oneshot::Receiver<Value>>;
-type SetsItem = (Option<CaptureKey>, Value, SetsValue);
+type ScopeValue = futures::future::Shared<futures::channel::oneshot::Receiver<Value>>;
+type ScopeItem = (Option<CaptureKey>, Value, ScopeValue);
 
 #[derive(Clone)]
-struct Sets {
-    inner: Option<std::sync::Arc<RMutex<Vec<SetsItem>>>>,
+struct Scope {
+    inner: std::sync::Arc<RMutex<Vec<ScopeItem>>>,
 }
 
-impl std::fmt::Debug for Sets {
+impl std::fmt::Debug for Scope {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match &self.inner {
-            None => write!(f, "None"),
-            Some(a) => write!(f, "{:?}", a.lock()),
-        }
+        write!(f, "{:?}", self.inner.lock())
     }
 }
 
-impl Sets {
+impl Scope {
     pub fn new() -> Self {
-        Sets {
-            inner: Some(std::sync::Arc::new(RMutex::new(vec![]))),
+        Scope {
+            inner: std::sync::Arc::new(RMutex::new(vec![])),
         }
-    }
-
-    pub fn none() -> Self {
-        Sets { inner: None }
     }
 
     pub fn add(
@@ -148,9 +140,7 @@ impl Sets {
     }
 
     pub fn into_inner(self) -> Vec<(Option<CaptureKey>, Value, Value)> {
-        let vec = match std::sync::Arc::try_unwrap(
-            self.inner.expect("internal error: set scope missing"),
-        ) {
+        let vec = match std::sync::Arc::try_unwrap(self.inner) {
             Err(a) => {
                 // TODO should this panic instead? That would allow getting rid of the Shared
                 // wrapper.
@@ -175,12 +165,51 @@ impl Sets {
 
     fn inner(
         &self,
-    ) -> ergo_runtime::abi_stable::external_types::parking_lot::mutex::RMutexGuard<Vec<SetsItem>>
+    ) -> ergo_runtime::abi_stable::external_types::parking_lot::mutex::RMutexGuard<Vec<ScopeItem>>
     {
+        self.inner.as_ref().lock()
+    }
+}
+
+#[derive(Clone)]
+struct Scopes {
+    inner: BTreeMap<ScopeKey, Scope>,
+}
+
+struct ScopeCloser(ScopeKey);
+
+impl Scopes {
+    pub fn new() -> Self {
+        Scopes {
+            inner: Default::default(),
+        }
+    }
+
+    pub fn open(&mut self, key: ScopeKey) -> ScopeCloser {
+        dbg!("open", key);
+        let no_value = self.inner.insert(key, Scope::new()).is_none();
+        debug_assert!(no_value, "unexpected scope present");
+        ScopeCloser(key)
+    }
+
+    pub fn insert(
+        &self,
+        scope_key: ScopeKey,
+        cap: Option<CaptureKey>,
+        key: Value,
+        value: futures::channel::oneshot::Receiver<Value>,
+    ) {
         self.inner
-            .as_ref()
-            .expect("internal error: set scope missing")
-            .lock()
+            .get(&scope_key)
+            .expect("scope disappeared")
+            .add(cap, key, value);
+    }
+
+    pub fn close(&mut self, closer: ScopeCloser) -> Vec<(Option<CaptureKey>, Value, Value)> {
+        self.inner
+            .remove(&closer.0)
+            .expect("scope disappeared")
+            .into_inner()
     }
 }
 
@@ -303,7 +332,8 @@ struct ExprEvaluator {
     expr: Expr,
     evaluator: Evaluator,
     captures: Captures,
-    sets: Sets,
+    scopes: Scopes,
+    scope_key: ScopeKey,
     cache: ExprEvaluatorCache,
 }
 
@@ -329,7 +359,8 @@ impl ExprEvaluator {
             expr,
             evaluator,
             captures,
-            sets: Sets::none(),
+            scopes: Scopes::new(),
+            scope_key: ScopeKey::new(),
             cache: Default::default(),
         }
     }
@@ -369,7 +400,8 @@ impl ExprEvaluator {
                 .captures()
                 .map(|c| self.captures.subset(c))
                 .unwrap_or_default(),
-            sets: self.sets.clone(),
+            scopes: self.scopes.clone(),
+            scope_key: self.scope_key.enter(child),
             cache: self
                 .cache
                 .children
@@ -378,8 +410,9 @@ impl ExprEvaluator {
         }
     }
 
-    fn with_sets(self, sets: Sets) -> Self {
-        ExprEvaluator { sets, ..self }
+    fn no_scope(mut self) -> Self {
+        self.scopes = Scopes::new();
+        self
     }
 
     /// Evaluate block items.
@@ -390,10 +423,10 @@ impl ExprEvaluator {
         &self,
         items: &[ast::BlockItem],
         mode: BlockItemMode,
-    ) -> Result<(Vec<Value>, LocalEnv)> {
+    ) -> Result<(Vec<Value>, BTreeMap<IdentifiedValue, Value>)> {
         // Make a copy of self to modify the captures as we evaluate the block items.
         let mut me = self.clone();
-        let mut env = LocalEnv::new();
+        let mut env = BTreeMap::new();
         let mut results = Vec::new();
         let mut errs = Vec::new();
         let mut had_unbound = false;
@@ -417,6 +450,9 @@ impl ExprEvaluator {
 
         while let Some(i) = items.next() {
             let last_item = items.peek().is_none();
+
+            let close_scope = me.scopes.open(me.scope_key);
+
             match i {
                 ast::BlockItem::Expr(e) => {
                     push_result(mode, &mut results, me.child(e).evaluate().await, last_item)
@@ -484,28 +520,27 @@ impl ExprEvaluator {
                         }
                     }
                 }
-                ast::BlockItem::Bind(b, e) => {
-                    let e = me.child(e).evaluate().await;
-
-                    let new_sets = Sets::new();
-                    let b = me.child(b).with_sets(new_sets.clone()).evaluate().await;
+                ast::BlockItem::Bind(key, value) => {
+                    let value = me.child(value).evaluate().await;
+                    let key = me.child(key).evaluate().await;
 
                     // Immediately eval and check for bind error
-                    traits::bind_no_error(b, e).await?;
-                    let new_sets = new_sets.into_inner();
+                    traits::bind_no_error(key, value).await?;
+                }
+            }
 
-                    for (cap, k, v) in new_sets {
-                        let k = k.as_identified().await;
+            let new_scope = me.scopes.close(close_scope);
 
-                        if !v.is_type::<types::Unset>() {
-                            env.insert(k, v.clone());
-                        } else {
-                            env.remove(&k);
-                        }
-                        if let Some(cap) = cap {
-                            me.captures.resolve(cap, v);
-                        }
-                    }
+            for (cap, k, v) in new_scope {
+                let k = k.as_identified().await;
+
+                if !v.is_type::<types::Unset>() {
+                    env.insert(k, v.clone());
+                } else {
+                    env.remove(&k);
+                }
+                if let Some(cap) = cap {
+                    me.captures.resolve(cap, v);
                 }
             }
         }
@@ -622,7 +657,7 @@ impl ExprEvaluator {
     }
 
     fn value_id(&self) -> ValueId {
-        let me = self.clone().with_sets(Sets::none()).no_eval_cache();
+        let me = self.clone().no_scope().no_eval_cache();
         ValueId::new(move |v| {
             Context::spawn(EVAL_TASK_PRIORITY, |_| {}, async move {
                 Ok(me.identity(Some(v)).await)
@@ -738,7 +773,7 @@ impl ExprEvaluator {
                 let id = self.value_id();
                 let bind = func.bind.clone();
                 let body = func.body.clone();
-                let me = self.clone().with_sets(Sets::none()).cache_root();
+                let me = self.clone().no_scope().cache_root();
                 types::Unbound::new_no_doc(move |v| {
                     let bind = bind.clone();
                     let body = body.clone();
@@ -746,12 +781,11 @@ impl ExprEvaluator {
                     // identities/values.
                     let mut me = me.clone().cache_root();
                     async move {
-                        let sets = Sets::new();
-                        let bind = me.child(&bind).with_sets(sets.clone()).evaluate().await;
+                        let close_scope = me.scopes.open(me.scope_key);
+                        let bind = me.child(&bind).evaluate().await;
                         try_result!(traits::bind_no_error(bind, v).await);
 
-                        let new_captures: Vec<_> = sets
-                            .into_inner()
+                        let new_captures: Vec<_> = me.scopes.close(close_scope)
                             .into_iter()
                             .map(|(cap, _, v)| cap.map(|c| (c, v.clone())))
                             .collect();
@@ -767,23 +801,14 @@ impl ExprEvaluator {
                 let cap = get.capture_key.expect("gets must always have a capture key");
                 match self.captures.get(cap) {
                     Some(v) => v.clone(),
-                    None => {
-                        if cfg!(debug_assertions) {
-                            use ergo_runtime::error::{Diagnostic, DiagnosticInfo, diagnostics_to_string};
-                            let d = Diagnostic::from(format!("internal capture error: {:?}", cap))
-                                .add_primary_label(self.source().with(""));
-                            panic!("{}", diagnostics_to_string(&[d], Context::global().diagnostic_sources().as_ref(), false));
-                        } else {
-                            types::Unset.into()
-                        }
-                    }
+                    None => types::Unset.into(),
                 }
             },
             Set(set) => {
                 let k = self.child(&set.value).evaluate().await;
                 let (send_result, receive_result) = futures::channel::oneshot::channel::<Value>();
 
-                self.sets.add(set.capture_key.clone(), k.clone(), receive_result);
+                self.scopes.insert(set.scope_key, set.capture_key.clone(), k.clone(), receive_result);
 
                 let send_result = std::sync::Arc::new(std::sync::Mutex::new(Some(send_result)));
                 types::Unbound::new_no_doc(move |v| {
@@ -827,32 +852,6 @@ impl ExprEvaluator {
                     }
                 }
             },
-            PatternCommand(cmd) => delayed! { me, cmd,
-                let src = cmd.function.source();
-                let mut function = me.child(&cmd.function).evaluate().await;
-                match me
-                    .evaluate_block_items(&cmd.args, BlockItemMode::Command)
-                    .await
-                {
-                    Err(e) => e.into(),
-                    Ok((pos, keyed)) => {
-                        if let Err(e) = Context::eval(&mut function).await {
-                            let mut val = e.into();
-                            Source::set_if_missing(&mut val, src);
-                            return val;
-                        }
-                        let args = types::args::Arguments::new(pos, keyed).unchecked();
-                        let pat_args = Source::imbue(me.source().with(types::PatternArgs { args }.into()));
-                        // Pattern commands have all arguments evaluated immediately in
-                        // debug builds to ensure that any set expressions are
-                        // evaluated and properly added to the capture scope.
-                        if cfg!(debug_assertions) {
-                            try_result!(traits::eval_nested(pat_args.clone()).await);
-                        }
-                        traits::bind(function, pat_args).await
-                    }
-                }
-            },
             DocComment(doc) => {
                 let mut val = self.child(&doc.value).evaluate().await;
                 let items = doc.items.clone();
@@ -860,7 +859,7 @@ impl ExprEvaluator {
                 // include the identity of the doc comment.
                 // In practice the identity of a doc comment won't matter much though.
                 //let id = self.value_id();
-                let me = self.clone().with_sets(Sets::none()).no_eval_cache();
+                let me = self.clone().no_scope().no_eval_cache();
                 let mut doc = Value::dynamic(move || async move {
                         Context::spawn(EVAL_TASK_PRIORITY, |_| {}, async move {
                             ergo_runtime::error_info! {

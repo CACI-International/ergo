@@ -136,6 +136,15 @@ impl From<SymbolicToken> for TreeOrSymbol {
     }
 }
 
+impl Tree {
+    pub fn is_string(&self) -> bool {
+        match self {
+            Tree::String(_) => true,
+            _ => false,
+        }
+    }
+}
+
 impl TreeOrSymbol {
     pub fn take(&mut self) -> Self {
         std::mem::replace(self, TreeOrSymbol::Used)

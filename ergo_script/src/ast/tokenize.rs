@@ -13,7 +13,7 @@
 //! lines.
 //!
 //! Quotes and line-oriented blocks preceded by apostrophes/hash/double-hash followed by a space
-//! are considered token trees. All but hash-preceded trees may contain carets which each must be
+//! are considered token trees. All but hash-preceded trees may contain dollars which each must be
 //! followed by a single token tree.
 
 use ergo_runtime::source::Source;

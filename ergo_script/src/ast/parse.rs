@@ -2,8 +2,7 @@
 //!
 //! The parser takes an iterator of parsed `parse_tree::Tree`s and produces an iterator of
 //! top-level `BlockItem` expressions. In doing so some syntax is desugared, such as bare strings
-//! implying get, set, or bind operations (depending on context). Commands and pattern commands are
-//! also disambiguated depending on context.
+//! implying get, set, or bind operations.
 
 use super::parse_tree::{StringTree, Tree};
 use super::*;
@@ -143,24 +142,18 @@ enum StringImplies {
 
 #[derive(Clone, Copy, Debug)]
 struct ParseContext {
-    pub pattern: bool,
     pub string_implies: StringImplies,
 }
 
 impl Default for ParseContext {
     fn default() -> Self {
         ParseContext {
-            pattern: false,
             string_implies: StringImplies::None,
         }
     }
 }
 
 impl ParseContext {
-    pub fn pattern(&self, pattern: bool) -> Self {
-        ParseContext { pattern, ..*self }
-    }
-
     pub fn string_implies(&self, string_implies: StringImplies) -> Self {
         ParseContext {
             string_implies,
@@ -219,10 +212,7 @@ where
                         Err(e) => break Some(Err(e)),
                     },
                     Tree::DoubleHash(inner) => {
-                        match to_expression(
-                            ctx.pattern(false).string_implies(StringImplies::Get),
-                            *inner,
-                        ) {
+                        match to_expression(ctx.string_implies(StringImplies::Get), *inner) {
                             Ok(v) => attributes.push(source.with(Attr::Attribute(v))),
                             Err(e) => break Some(Err(e)),
                         }
@@ -267,7 +257,7 @@ fn string_parts<E>(
             Ok(match p.unwrap() {
                 StringTree::String(s) => StringItem::String(s),
                 StringTree::Expression(tree) => StringItem::Expression(to_expression(
-                    ctx.pattern(false).string_implies(StringImplies::Get),
+                    ctx.string_implies(StringImplies::Get),
                     tree,
                 )?),
             })
@@ -278,7 +268,7 @@ fn string_parts<E>(
 fn to_basic_block_item<E>(
     ctx: ParseContext,
     t: Source<Tree>,
-    string_implies_bind: bool,
+    explicit_map: bool,
 ) -> Result<BlockItem, Vec<Source<Error<E>>>> {
     let (source, t) = t.take();
 
@@ -289,19 +279,26 @@ fn to_basic_block_item<E>(
             *t,
         )?)),
         Tree::Equal(a, b) => Ok(BlockItem::Bind(
-            to_expression(ctx.pattern(true).string_implies(StringImplies::Set), *a)?,
+            to_expression(ctx.string_implies(StringImplies::Set), *a)?,
             to_expression(ctx.string_implies(StringImplies::None), *b)?,
         )),
         // elaborate an unquoted string literal `a` to `:a = $a`
-        Tree::String(s) if string_implies_bind => {
+        Tree::String(s) if explicit_map => {
             let s = source.clone().with(Expression::string(s));
             Ok(BlockItem::Bind(
                 source.clone().with(Expression::set(s.clone())),
-                source.with(if ctx.pattern {
-                    Expression::set(s)
-                } else {
-                    Expression::get(s)
-                }),
+                source.with(Expression::get(s)),
+            ))
+        }
+        // elaborate a set of an unquoted string literal `:a` to `:a = :a`
+        Tree::ColonPrefix(t) if explicit_map && t.is_string() => {
+            let s = (*t).map(|t| match t {
+                Tree::String(s) => Expression::string(s),
+                _ => panic!("unexpected tree type"),
+            });
+            Ok(BlockItem::Bind(
+                source.clone().with(Expression::set(s.clone())),
+                source.with(Expression::set(s)),
             ))
         }
         t => to_expression(ctx, source.with(t)).map(BlockItem::Expr),
@@ -311,12 +308,12 @@ fn to_basic_block_item<E>(
 fn to_block_item<I: Iterator<Item = Result<Source<Tree>, Vec<Source<E>>>>, E>(
     ctx: ParseContext,
     iter: &mut I,
-    string_implies_bind: bool,
+    explicit_map: bool,
 ) -> Option<Result<BlockItem, Vec<Source<Error<E>>>>> {
     attributed(
         ctx,
         iter,
-        |ctx, t| to_basic_block_item(ctx, t, string_implies_bind),
+        |ctx, t| to_basic_block_item(ctx, t, explicit_map),
         |block_item, _| match block_item {
             BlockItem::Expr(e) | BlockItem::Bind(_, e) => Some(e),
             BlockItem::Merge(_) => None,
@@ -355,36 +352,6 @@ fn to_array_item<I: Iterator<Item = Result<Source<Tree>, Vec<Source<E>>>>, E>(
     )
 }
 
-/*
-std:import { :a, :b, c++ => {:module} } = :workspace
-
-{ a, b, c } ==> { a = $a, b = $b, c = $c }
-{ :a, :b, :c } ==> { a => :a, b => :b, c => :c }
-
-let :a = 123
-let :b = (let :a = 123)
-
-fn let :a = ^:args -> a:$v
-
-Path:with :f1 :f2 :f3 {
-    std:exec cp $f1 $f2
-}
-
-path-with = fn ^:fs :v -> {
-    std:Iter:map (:f -> {$f = Path:new ()}) $fs
-    $v
-}
-
-something (setter => :blah)
-
-Order matters if you want to use `$`... or `$` needs to block
-
-fn {
-    debug => default :debug as true
-    debug-symbols => default :debug-symbols as $debug
-}
-*/
-
 fn to_expression<E>(
     mut ctx: ParseContext,
     t: Source<Tree>,
@@ -395,7 +362,7 @@ fn to_expression<E>(
     ctx = ctx.string_implies(StringImplies::None);
     match t {
         Tree::String(s) => {
-            if ctx.pattern && s == "_" {
+            if s == "_" {
                 Ok(source.with(Expression::bind_any()))
             } else {
                 let s = source.clone().with(Expression::string(s));
@@ -419,17 +386,11 @@ fn to_expression<E>(
                 Err(vec![source.with(Error::BadDollar)])
             }
         }
-        Tree::ColonPrefix(t) => {
-            if ctx.pattern {
-                Ok(source.with(Expression::set(to_expression(ctx.pattern(false), *t)?)))
-            } else {
-                Ok(source.with(Expression::get(to_expression(ctx, *t)?)))
-            }
-        }
+        Tree::ColonPrefix(t) => Ok(source.with(Expression::set(to_expression(ctx, *t)?))),
         Tree::Equal(_, _) => Err(vec![source.with(Error::BadEqual)]),
         Tree::Arrow(a, b) => Ok(source.with(Expression::function(
-            to_expression(ctx.pattern(true), *a)?,
-            to_expression(ctx.pattern(false), *b)?,
+            to_expression(ctx, *a)?,
+            to_expression(ctx, *b)?,
         ))),
         Tree::Colon(a, b) => Ok(source.with(Expression::index(
             to_expression(ctx.string_implies(StringImplies::Get), *a)?,
@@ -464,18 +425,11 @@ fn to_expression<E>(
                             if inner.peek().is_none() {
                                 to_expression(ctx, f)
                             } else {
-                                let f = to_expression(
-                                    ctx.pattern(false).string_implies(StringImplies::Get),
-                                    f,
-                                )?;
+                                let f = to_expression(ctx.string_implies(StringImplies::Get), f)?;
                                 let rest = inner
                                     .map(|v| to_basic_block_item(ctx, v, false))
                                     .collect::<Result<Vec<_>, _>>()?;
-                                if ctx.pattern {
-                                    Ok(source.with(Expression::pat_command(f, rest)))
-                                } else {
-                                    Ok(source.with(Expression::command(f, rest)))
-                                }
+                                Ok(source.with(Expression::command(f, rest)))
                             }
                         }
                     }
@@ -793,7 +747,7 @@ mod test {
                 )),
             ),
         );
-        assert_block_item("::a=a", BI::Bind(src(E::set(src(E::get(s("a"))))), s("a")));
+        assert_block_item(":$a=a", BI::Bind(src(E::set(src(E::get(s("a"))))), s("a")));
     }
 
     #[test]
@@ -808,10 +762,7 @@ mod test {
         assert_block_item(
             "cmd a = cmd b",
             BI::Bind(
-                src(E::pat_command(
-                    src(E::get(s("cmd"))),
-                    command_items![s("a")],
-                )),
+                src(E::command(src(E::get(s("cmd"))), command_items![s("a")])),
                 src(E::command(src(E::get(s("cmd"))), command_items![s("b")])),
             ),
         );
@@ -844,7 +795,7 @@ mod test {
     #[test]
     fn bind_map() {
         assert_block_item(
-            "{a,:b=:c,:d=$e,^:rest} = v",
+            "{:a,:b=:c,:d=$e,^:rest} = v",
             BI::Bind(
                 src(E::block(block_items![
                     bind(src(E::set(s("a"))), src(E::set(s("a")))),
@@ -862,7 +813,7 @@ mod test {
         assert_block_item(
             "cmd (a=b) = v",
             BI::Bind(
-                src(E::pat_command(
+                src(E::command(
                     src(E::get(s("cmd"))),
                     command_items![bind(src(E::set(s("a"))), s("b"))],
                 )),
@@ -878,12 +829,12 @@ mod test {
 
     #[test]
     fn bind_any() {
-        assert_block_item("_ = _", BI::Bind(src(E::bind_any()), s("_")));
+        assert_block_item("_ = _", BI::Bind(src(E::bind_any()), src(E::bind_any())));
     }
 
     #[test]
     fn get() {
-        assert_single(":a", E::get(s("a")));
+        assert_single("$a", E::get(s("a")));
     }
 
     #[test]
@@ -934,7 +885,7 @@ mod test {
         assert_single(
             "fn ^_ -> howdy",
             E::function(
-                src(E::pat_command(
+                src(E::command(
                     src(E::get(s("fn"))),
                     command_items![merge(src(E::bind_any()))],
                 )),
@@ -946,9 +897,9 @@ mod test {
             E::function(s("a"), src(E::function(s("b"), s("c")))),
         );
         assert_single(
-            "pat :a -> :b -> {$a = :b}",
+            "pat :a -> :b -> {$a = $b}",
             E::function(
-                src(E::pat_command(
+                src(E::command(
                     src(E::get(s("pat"))),
                     command_items![src(E::set(s("a")))],
                 )),
