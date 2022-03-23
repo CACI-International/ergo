@@ -126,13 +126,13 @@ impl TokenResults {
                 self.line_lengths.pop();
             }
         }
-        self.tokens.push(dbg!(SemanticToken {
+        self.tokens.push(SemanticToken {
             delta_line,
             delta_start,
             length: location.length as u32,
             token_type: tp.0,
             token_modifiers_bitset: modifiers.0,
-        }));
+        });
     }
 }
 

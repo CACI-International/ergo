@@ -20,6 +20,8 @@ enum Command {
     Format(command::Format),
     /// Run the language server.
     Lsp(command::Lsp),
+    /// Migrate source files.
+    Migrate(command::Migrate),
 }
 
 impl command::Command for Command {
@@ -28,6 +30,7 @@ impl command::Command for Command {
             Command::Evaluate(a) => a.run(),
             Command::Format(a) => a.run(),
             Command::Lsp(a) => a.run(),
+            Command::Migrate(a) => a.run(),
         }
     }
 }

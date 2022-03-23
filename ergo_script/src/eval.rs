@@ -186,7 +186,6 @@ impl Scopes {
     }
 
     pub fn open(&mut self, key: ScopeKey) -> ScopeCloser {
-        dbg!("open", key);
         let no_value = self.inner.insert(key, Scope::new()).is_none();
         debug_assert!(no_value, "unexpected scope present");
         ScopeCloser(key)

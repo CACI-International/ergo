@@ -43,7 +43,7 @@ impl Default for Source {
 #[derive(StableAbi, crate::type_system::ErgoType)]
 #[repr(C)]
 pub struct Sources {
-    item: Item,
+    item: ROption<Item>,
     source_ids: CacheMap<SourceId, RMutex<Source>>,
     file_ids: RMutex<RHashMap<PathBuf, SourceId>>,
     source_line_starts: CacheMap<SourceId, RVec<usize>>,
@@ -54,25 +54,27 @@ type StoredData = Vec<(std::path::PathBuf, SourceId, Option<std::time::Duration>
 
 impl std::ops::Drop for Sources {
     fn drop(&mut self) {
-        let content = match unsafe { self.item.write_unguarded() } {
-            Err(e) => {
-                log::error!("could not open diagnostic source info for writing: {}", e);
-                return;
-            }
-            Ok(v) => v,
-        };
-        let entries: StoredData = std::mem::take(&mut self.source_ids)
-            .into_iter()
-            .filter_map(|(k, v)| match v.into_inner() {
-                Source::File { path, mod_time, .. } => {
-                    Some((path.into(), k, Some(mod_time.into())))
+        if let ROption::RSome(item) = &mut self.item {
+            let content = match unsafe { item.write_unguarded() } {
+                Err(e) => {
+                    log::error!("could not open diagnostic source info for writing: {}", e);
+                    return;
                 }
-                Source::BinaryFile { path } => Some((path.into(), k, None)),
-                _ => None,
-            })
-            .collect();
-        if let Err(e) = bincode::serialize_into(content, &entries) {
-            log::error!("error while serializing diagnostic source info: {}", e);
+                Ok(v) => v,
+            };
+            let entries: StoredData = std::mem::take(&mut self.source_ids)
+                .into_iter()
+                .filter_map(|(k, v)| match v.into_inner() {
+                    Source::File { path, mod_time, .. } => {
+                        Some((path.into(), k, Some(mod_time.into())))
+                    }
+                    Source::BinaryFile { path } => Some((path.into(), k, None)),
+                    _ => None,
+                })
+                .collect();
+            if let Err(e) = bincode::serialize_into(content, &entries) {
+                log::error!("error while serializing diagnostic source info: {}", e);
+            }
         }
     }
 }
@@ -145,9 +147,18 @@ impl Sources {
             ));
         }
         Sources {
-            item,
+            item: ROption::RSome(item),
             source_ids: source_ids.into_iter().collect(),
             file_ids: RMutex::new(file_ids.into_iter().collect()),
+            source_line_starts: Default::default(),
+        }
+    }
+
+    pub fn empty() -> Self {
+        Sources {
+            item: ROption::RNone,
+            source_ids: Default::default(),
+            file_ids: RMutex::new(Default::default()),
             source_line_starts: Default::default(),
         }
     }

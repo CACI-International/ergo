@@ -28,6 +28,7 @@
 * Disambiguate set and get operators.
   * Rather than using context to determine whether `:` means get or set, we
     change gets to use `$`.
+* Change the string interpolation operator from `^` to `$`.
 * Indirect get expressions are no longer supported. Get expressions must be with
   a string.
 * Remove pattern commands as a syntax feature. Functions that should do
@@ -38,6 +39,8 @@
 ### Breaking Changes
 * Any use of `!` should be replaced with equivalent code.
 * Change any `:value` get expressions to use `$value` instead.
+* Change any `^...` (string interpolation) in quoted strings to be `$...`, and
+  change `^^` to `^` and any `$` literals to `$$`.
 * Any indirect get expressions need to be replaced with indexing or explicit
   matching.
 * The overloading of a function to be used in pattern and normal contexts is no
