@@ -499,15 +499,6 @@ impl ExprEvaluator {
                                 errs.push(val_source.with("cannot merge value with type Args").into_error());
                             }
                         }
-                        types::PatternArgs { mut args } => {
-                            if mode.command() {
-                                results.extend(&mut args);
-                                env.extend(args.keyed);
-                            } else {
-                                has_errors = true;
-                                errs.push(val_source.with("cannot merge value with type PatternArgs").into_error());
-                            }
-                        }
                         e@types::Error {..} => {
                             has_errors = true;
                             errs.push(e);

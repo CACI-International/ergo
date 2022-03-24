@@ -55,22 +55,6 @@ pub fn ergo_fn_value(ts: TokenStream) -> TokenStream {
     ergo_fn::ergo_fn_value(ts)
 }
 
-/// Create an ergo Unbound for PatternArgs from a rust function declaration.
-///
-/// Evaluates to a function with no arguments which, when called, returns the ergo Value.
-#[proc_macro_attribute]
-pub fn ergo_pat(_args: TokenStream, item: TokenStream) -> TokenStream {
-    ergo_fn::ergo_pat(item)
-}
-
-/// Create an ergo Unbound for PatternArgs from a rust function declaration.
-///
-/// Evaluates to the ergo Value.
-#[proc_macro]
-pub fn ergo_pat_value(ts: TokenStream) -> TokenStream {
-    ergo_fn::ergo_pat_value(ts)
-}
-
 /// Mark a function as the plugin entrypoint.
 ///
 /// The function must take a single `&Context` argument and return a `Result<Value>`.

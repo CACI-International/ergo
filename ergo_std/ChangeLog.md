@@ -12,8 +12,11 @@
   metadata value (if any). This also allows binding the map so that the
   evaluation occurs immediately, which is often the intention (since forcing
   evaluation is not longer supported syntactically).
-* Remove `std:eval` in favor of `std:Typed`.
+* Remove `std:eval` in favor of `std:Type:any`.
 * Add `std:Iter:partition` to partition iterators into a Map of Arrays.
+* Add a `Type` type, and refactor how script types work in general.
+  * You can now get the type of any value as a runtime value.
+* Move `std:cmp` to `std:Order`.
 
 ### Migration
 * Remove the use of `std:by-content`. If it was being used to compare nested
@@ -27,6 +30,11 @@
   interchangeable. In normal expressions, `std:eval :v` can be converted to
   `{std:Typed :v = :v; :v}`, though you may no longer need `std:eval` semantics
   at all.
+* Anything using a custom `std:type:new` type will need to be rewritten for the
+  new API.
+* Any type checks as normal (as previously designated) function calls will need
+  to be rewritten or wrapped.
+* Change `std:cmp:...` to `std:Order:...`.
 
 ## 1.0.0-rc.3  -- 2021-12-14
 * No changes.

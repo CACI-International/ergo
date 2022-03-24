@@ -18,13 +18,6 @@ pub struct Args {
     pub args: UncheckedArguments,
 }
 
-/// Arguments in a pattern function call.
-#[derive(Clone, ErgoType, StableAbi)]
-#[repr(C)]
-pub struct PatternArgs {
-    pub args: UncheckedArguments,
-}
-
 impl GetDependencies for Args {
     fn get_depends(&self) -> Dependencies {
         depends![Args::ergo_type(), ^&self.args]
@@ -33,18 +26,6 @@ impl GetDependencies for Args {
 
 impl From<Args> for TypedValue<Args> {
     fn from(v: Args) -> Self {
-        Self::new(v)
-    }
-}
-
-impl GetDependencies for PatternArgs {
-    fn get_depends(&self) -> Dependencies {
-        depends![PatternArgs::ergo_type(), ^&self.args]
-    }
-}
-
-impl From<PatternArgs> for TypedValue<PatternArgs> {
-    fn from(v: PatternArgs) -> Self {
         Self::new(v)
     }
 }
@@ -329,24 +310,6 @@ async fn args_index(ind: Value, args: &UncheckedArguments) -> Value {
     }
 }
 
-impl traits::NestedValues for PatternArgs {
-    fn nested_values(&self) -> Vec<&Value> {
-        self.args
-            .positional
-            .iter()
-            .chain(self.args.keyed.iter().map(|(k, v)| vec![&**k, v]).flatten())
-            .collect()
-    }
-    // XXX not entirely correct, skips keys
-    fn nested_values_mut(&mut self) -> Vec<&mut Value> {
-        self.args
-            .positional
-            .iter_mut()
-            .chain(self.args.keyed.iter_mut().map(|(_, v)| v))
-            .collect()
-    }
-}
-
 impl traits::NestedValues for Args {
     fn nested_values(&self) -> Vec<&Value> {
         self.args
@@ -367,7 +330,6 @@ impl traits::NestedValues for Args {
 
 ergo_traits_fn! {
     crate::ergo_type_name!(traits, Args);
-    crate::ergo_type_name!(traits, PatternArgs);
 
     traits::Nested::add_impl::<Args>(traits);
 
@@ -397,44 +359,6 @@ ergo_traits_fn! {
     }
 
     impl traits::IntoTyped<super::Map> for Args {
-        async fn into_typed(self) -> crate::Value {
-            let mut args = self.to_owned().args;
-            crate::try_result!(args.unused_positional());
-            super::Map(args.keyed).into()
-        }
-    }
-
-    traits::Nested::add_impl::<PatternArgs>(traits);
-
-    impl traits::Bind for PatternArgs {
-        async fn bind(&self, mut arg: Value) -> Value {
-            crate::try_result!(Context::eval(&mut arg).await);
-            let src = Source::get_origin(&arg);
-
-            crate::value::match_value!{ arg,
-                PatternArgs { args } => {
-                    bind_args(&self.args, src.with(args), |args| PatternArgs { args }.into()).await.into()
-                }
-                Args { args } => {
-                    bind_args(&self.args, src.with(args), |args| Args { args }.into()).await.into()
-                }
-                super::Index(ind) => {
-                    args_index(ind, &self.args).await
-                }
-                v => traits::bind_error(v).into()
-            }
-        }
-    }
-
-    impl traits::IntoTyped<super::Array> for PatternArgs {
-        async fn into_typed(self) -> crate::Value {
-            let mut args = self.to_owned().args;
-            crate::try_result!(args.unused_keyed());
-            super::Array(args.collect()).into()
-        }
-    }
-
-    impl traits::IntoTyped<super::Map> for PatternArgs {
         async fn into_typed(self) -> crate::Value {
             let mut args = self.to_owned().args;
             crate::try_result!(args.unused_positional());

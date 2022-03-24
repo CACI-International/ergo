@@ -19,21 +19,6 @@ pub fn ergo_fn_value(item: TokenStream) -> TokenStream {
         .into()
 }
 
-pub fn ergo_pat(item: TokenStream) -> TokenStream {
-    let parser = ErgoFnLike(quote! { ergo_runtime::types::PatternArgs });
-    parse_macro_input!(item with parser)
-        .into_token_stream()
-        .into()
-}
-
-pub fn ergo_pat_value(item: TokenStream) -> TokenStream {
-    let parser = ErgoFnLike(quote! { ergo_runtime::types::PatternArgs });
-    parse_macro_input!(item with parser)
-        .block
-        .into_token_stream()
-        .into()
-}
-
 struct ErgoFnLike(proc_macro2::TokenStream);
 
 impl Parser for ErgoFnLike {

@@ -4,19 +4,25 @@ use ergo_runtime::{
     context::{item_name, ItemName},
     error::{Diagnostic, DiagnosticInfo},
     metadata::Source,
-    traits, types, Context, Value,
+    traits,
+    type_system::ErgoType,
+    types, Context, Value,
 };
 
-pub fn module() -> Value {
-    crate::make_string_map! {
-        "from" = from(),
-        "join" = join(),
-        "name" = name(),
-        "new" = new(),
-        "parent" = parent(),
-        "relative" = relative(),
-        "split" = split()
+pub fn r#type() -> Value {
+    types::Type {
+        tp: types::Path::ergo_type(),
+        index: crate::make_string_map! {
+            "from" = from(),
+            "join" = join(),
+            "name" = name(),
+            "new" = new(),
+            "parent" = parent(),
+            "relative" = relative(),
+            "split" = split()
+        },
     }
+    .into()
 }
 
 #[types::ergo_fn]
@@ -147,23 +153,23 @@ mod test {
     ergo_script::tests! {
         fn join(t) {
             let p = std::path::PathBuf::from("a");
-            t.assert_value_eq("self:path:join a b c", &super::types::Path::from(p.join("b").join("c")));
+            t.assert_value_eq("self:Path:join a b c", &super::types::Path::from(p.join("b").join("c")));
         }
 
         fn from(t) {
-            t.assert_value_eq("self:path:from a/b/c", &super::types::Path::from(std::path::PathBuf::from("a").join("b").join("c")));
+            t.assert_value_eq("self:Path:from a/b/c", &super::types::Path::from(std::path::PathBuf::from("a").join("b").join("c")));
         }
 
         fn parent(t) {
-            t.assert_eq("self:path:parent (self:path:join a b c)", "self:path:join a b");
+            t.assert_eq("self:Path:parent (self:Path:join a b c)", "self:Path:join a b");
         }
 
         fn relative(t) {
-            t.assert_eq("self:path:relative (self:path:join a b) (self:path:join a b c d)", "self:path:join c d");
+            t.assert_eq("self:Path:relative (self:Path:join a b) (self:Path:join a b c d)", "self:Path:join c d");
         }
 
         fn split(t) {
-            t.assert_eq("self:path:split (self:path:join a b c)", "[a,b,c]");
+            t.assert_eq("self:Path:split (self:Path:join a b c)", "[a,b,c]");
         }
     }
 }

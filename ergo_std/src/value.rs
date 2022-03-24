@@ -421,24 +421,24 @@ async fn equal(mut a: _, mut b: _, (exact): [_]) -> Value {
 mod test {
     ergo_script::tests! {
         fn source_path(t) {
-            t.assert_eq("x = 1; self:value:source-path :x", ":unset");
+            t.assert_eq("x = 1; self:value:source-path $x", "$unset");
         }
 
         fn dynamic_binding(t) {
-            t.assert_eq("self:value:dynamic:get something", ":unset");
-            t.assert_eq("v = self:value:dynamic:get something; self:value:dynamic:eval { something = value } :v", "value");
-            t.assert_eq("f = fn :x -> <| self:value:dynamic:get my_func |> :x
-                say_hello = fn :name -> \"hi, ^name\"
-                self:value:dynamic:eval { my_func = :say_hello } <| f dude", "\"hi, dude\"");
+            t.assert_eq("self:value:dynamic:get something", "$unset");
+            t.assert_eq("v = self:value:dynamic:get something; self:value:dynamic:eval { something = value } $v", "value");
+            t.assert_eq("f = fn :x -> <| self:value:dynamic:get my_func |> $x
+                say_hello = fn :name -> \"hi, $name\"
+                self:value:dynamic:eval { my_func = $say_hello } <| f dude", "\"hi, dude\"");
         }
 
         fn dynamic_binding_multiple_scopes(t) {
             t.assert_eq("the-value = self:value:dynamic:get the-value
-                [force <| self:value:dynamic:eval {the-value = 10} :the-value, force <| self:value:dynamic:eval {the-value = hi} :the-value]", "[10,hi]");
+                [force <| self:value:dynamic:eval {the-value = 10} $the-value, force <| self:value:dynamic:eval {the-value = hi} $the-value]", "[10,hi]");
         }
 
         fn meta(t) {
-            t.assert_eq("v = self:value:meta:set mkey mvalue value; { result = :v2, ^_ } = self:value:meta:eval mkey :v; self:value:meta:get mkey :v2", "mvalue");
+            t.assert_eq("v = self:value:meta:set mkey mvalue value; { result = :v2, ^_ } = self:value:meta:eval mkey $v; self:value:meta:get mkey $v2", "mvalue");
         }
 
         fn merge(t) {
@@ -451,12 +451,12 @@ mod test {
         }
 
         fn equal(t) {
-            t.assert_eq("self:value:equal a a", "self:bool:true");
-            t.assert_eq("self:value:equal (self:string:format \"{}{}\" abc def) (self:string:format \"{}{}\" a bcdef)", "self:bool:true");
-            t.assert_eq("self:value:equal a b", "self:bool:false");
-            t.assert_eq("self:value:equal a {\"a\"}", "self:bool:true");
-            t.assert_eq("self:value:equal ^exact a {\"a\"}", "self:bool:false");
-            t.assert_eq("self:value:equal ^exact {\"a\"} {\"a\"}", "self:bool:true");
+            t.assert_eq("self:value:equal a a", "self:Bool:true");
+            t.assert_eq("self:value:equal \"$\"abc\"$\"def\"\" \"$\"a\"bcdef\"", "self:Bool:true");
+            t.assert_eq("self:value:equal a b", "self:Bool:false");
+            t.assert_eq("self:value:equal a {\"a\"}", "self:Bool:true");
+            t.assert_eq("self:value:equal ^exact a {\"a\"}", "self:Bool:false");
+            t.assert_eq("self:value:equal ^exact {\"a\"} {\"a\"}", "self:Bool:true");
         }
     }
 }

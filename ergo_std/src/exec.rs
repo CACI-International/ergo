@@ -653,12 +653,12 @@ mod test {
         }
 
         fn exec_unset_args(t) {
-            t.assert_eq("self:string:from <| self:exec echo :unset hello :unset world |>:stdout", "\"hello world\\n\"");
-            t.assert_fail("self:exec :unset echo |>:complete");
+            t.assert_eq("self:String:from <| self:exec echo $unset hello $unset world |>:stdout", "\"hello world\\n\"");
+            t.assert_fail("self:exec $unset echo |>:complete");
         }
 
         fn exec_unit_args(t) {
-            t.assert_eq("self:string:from <| self:exec echo () hello () world |>:stdout", "\"hello world\\n\"");
+            t.assert_eq("self:String:from <| self:exec echo () hello () world |>:stdout", "\"hello world\\n\"");
             t.assert_fail("self:exec () echo |>:complete");
         }
     }

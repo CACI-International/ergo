@@ -1,8 +1,8 @@
 //! Iterator functions.
 
 use ergo_runtime::{
-    depends, error::DiagnosticInfo, metadata::Source, nsid, traits, try_result, types,
-    value::match_value, Context, Value,
+    depends, error::DiagnosticInfo, metadata::Source, nsid, traits, try_result,
+    type_system::ErgoType, types, Context, Value,
 };
 use futures::{
     future::{ready, FutureExt},
@@ -10,25 +10,30 @@ use futures::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
-pub fn module() -> Value {
-    crate::make_string_map! {
-        "count" = count(),
-        "filter" = filter(),
-        "flatten" = flatten(),
-        "fold" = fold(),
-        "from" = from(),
-        "map" = map(),
-        "map-lazy" = map_lazy(),
-        "no-errors" = no_errors(),
-        "order" = order(),
-        "partition" = partition(),
-        "skip" = skip(),
-        "skip-while" = skip_while(),
-        "take" = take(),
-        "take-while" = take_while(),
-        "unique" = unique(),
-        "zip" = zip()
+pub fn r#type() -> Value {
+    types::Type {
+        tp: types::Iter::ergo_type(),
+        index: crate::make_string_map! {
+            "count" = count(),
+            "filter" = filter(),
+            "flatten" = flatten(),
+            "fold" = fold(),
+            "from" = from(),
+            "map" = map(),
+            "map-lazy" = map_lazy(),
+            "no-errors" = no_errors(),
+            "order" = order(),
+            "partition" = partition(),
+            "skip" = skip(),
+            "skip-while" = skip_while(),
+            "take" = take(),
+            "take-while" = take_while(),
+            "unique" = unique(),
+            "unzip" = unzip(),
+            "zip" = zip()
+        },
     }
+    .into()
 }
 
 #[types::ergo_fn]
@@ -196,112 +201,130 @@ async fn filter(func: _, iter: _) -> Value {
     .into()
 }
 
-fn zip() -> Value {
-    types::Unbound::new(|arg| {
-        async move {
-            let arg_source = Source::get(&arg);
-            match_value! { arg,
-                types::Args { mut args } => {
-                    let iters: Vec<_> = (&mut args).collect();
+#[types::ergo_fn]
+/// Zip the values of iterators together.
+///
+/// Arguments: `^((Array:Of Into<Iter>) :iters)`
+///
+/// Returns a new iterator containing arrays where the index in the array corresponds to the
+/// iterator argument to the function. The returned iterator will have only as many values as the
+/// minimum of the passed iterators.
+async fn zip(...) -> Value {
+    let iters = REST;
 
-                    try_result!(args.unused_arguments());
+    let iters_typed = Context::global()
+        .task
+        .join_all(iters.into_iter().map(|i| traits::into::<types::Iter>(i)))
+        .await?;
 
-                    let iters_typed = try_result!(Context::global().task.join_all(
-                            iters.into_iter().map(|i| traits::into::<types::Iter>(i))
-                        ).await);
+    let deps = depends![dyn nsid!(std::iter::zip), ^@iters_typed];
 
-                    let deps = depends![dyn nsid!(std::iter::zip), ^@iters_typed];
+    let new_iter = if iters_typed.is_empty() {
+        types::Iter::from_iter(std::iter::empty())
+    } else {
+        #[derive(Clone)]
+        struct Zip {
+            iters: Vec<types::Iter>,
+            args_source: ergo_runtime::Source<()>,
+        }
 
-                    let new_iter = if iters_typed.is_empty() {
-                        types::Iter::from_iter(std::iter::empty())
-                    } else {
-                        #[derive(Clone)]
-                        struct Zip {
-                            iters: Vec<types::Iter>,
-                            arg_source: ergo_runtime::Source<()>,
-                        }
-
-                        ergo_runtime::ImplGenerator!(Zip => |self| {
-                            let mut arr = abi_stable::std_types::RVec::with_capacity(self.iters.len());
-                            for v in self.iters.iter_mut() {
-                                match v.next().await? {
-                                    None => return Ok(None),
-                                    Some(v) => arr.push(v),
-                                }
-                            }
-                            Ok(Some(Source::imbue(self.arg_source.clone().with(types::Array(arr).into()))))
-                        });
-
-                        types::Iter::from_generator(Zip {
-                            iters: iters_typed.into_iter().map(|v| v.to_owned()).collect(),
-                            arg_source,
-                        })
-                    };
-
-                    Value::with_id(new_iter, deps)
-                },
-                types::PatternArgs { mut args } => {
-                    let iter_outs: Vec<_> = (&mut args).collect();
-
-                    try_result!(args.unused_arguments());
-
-                    let deps = depends![dyn nsid!(std::iter::zip::pattern), ^@iter_outs];
-
-                    types::Unbound::new_no_doc(move |arg| {
-                        let iter_outs = iter_outs.clone();
-                        async move {
-                            let arg = try_result!(Context::eval_as::<types::Iter>(arg).await);
-                            let arg_source = Source::get(&arg);
-                            let iter_id = arg.id().await;
-                            let iter = arg.to_owned();
-
-                            let items: Vec<_> = try_result!(iter.collect().await);
-                            let arrays = try_result!(Context::global().task.join_all(items.into_iter().map(|v| Context::eval_as::<types::Array>(v))).await);
-
-                            let shared_arrays = ergo_runtime::abi_stable::stream::shared_async_stream::SharedAsyncStream::new(futures::stream::iter(arrays.into_iter()));
-                            let mut errs = Vec::new();
-                            for (i, out) in iter_outs.into_iter().enumerate() {
-                                let arrays = shared_arrays.clone();
-                                let filtered = arrays.filter_map(move |arr| {
-                                        ready(match arr.as_ref().0.get(i) {
-                                            None => None,
-                                            Some(v) => if v.is_type::<types::Unset>() {
-                                                // XXX this won't work for delayed Unset values
-                                                None
-                                            } else {
-                                                Some(v.clone())
-                                            }
-                                        })
-                                    });
-                                let deps = depends![nsid!(std::iter::zip::pattern_result), iter_id, i];
-                                let to_bind = Source::imbue(arg_source.clone().with(types::Iter::new_stream(filtered, deps).into()));
-                                if let Err(e) = traits::bind_no_error(out, to_bind).await {
-                                    errs.push(e);
-                                }
-                            }
-                            if errs.is_empty() {
-                                types::Unit.into()
-                            } else {
-                                types::Error::aggregate(errs).into()
-                            }
-                        }.boxed()
-                    }, deps).into()
-                },
-                v => traits::bind_error(v).into()
+        ergo_runtime::ImplGenerator!(Zip => |self| {
+            let mut arr = abi_stable::std_types::RVec::with_capacity(self.iters.len());
+            for v in self.iters.iter_mut() {
+                match v.next().await? {
+                    None => return Ok(None),
+                    Some(v) => arr.push(v),
+                }
             }
-        }.boxed()
-    }, depends![const nsid!(std::iter::zip)],
-        r"Zip the values of iterators together.
+            Ok(Some(Source::imbue(self.args_source.clone().with(types::Array(arr).into()))))
+        });
 
-Arguments: `^((Array:Of Into<Iter>) :iters)`
+        types::Iter::from_generator(Zip {
+            iters: iters_typed.into_iter().map(|v| v.to_owned()).collect(),
+            args_source: ARGS_SOURCE,
+        })
+    };
 
-Returns a new iterator containing arrays where the each value index corresponds to the iterator
-argument to the function. The returned iterator will have only as many values as the minimum of the
-passed iterators.
+    Value::with_id(new_iter, deps)
+}
 
-When used in a pattern call, unzips an iterator of arrays into the provided iterators, ignoring
-missing and extra values in each array. If arrays have `Unset` values, they are skipped in the respective
-iterator.").into()
+#[types::ergo_fn]
+/// Unzip an iterator of arrays into individual iterators.
+///
+/// Arguments: `Iter...`
+///
+/// Returns a value to be bound with an Iter of Arrays.
+///
+/// Unzips an iterator of arrays into the provided iterators, ignoring missing and extra values in
+/// each array. If arrays have `Unset` values, they are skipped in the respective iterator.
+async fn unzip(...) -> Value {
+    let iter_outs = REST.by_ref().collect::<Vec<_>>();
+    REST.unused_arguments()?;
+
+    let deps = depends![dyn nsid!(std::iter::zip::pattern), ^@iter_outs];
+
+    types::Unbound::new_no_doc(
+        move |arg| {
+            let iter_outs = iter_outs.clone();
+            async move {
+                let arg = try_result!(Context::eval_as::<types::Iter>(arg).await);
+                let arg_source = Source::get(&arg);
+                let iter_id = arg.id().await;
+                let iter = arg.to_owned();
+
+                let items: Vec<_> = try_result!(iter.collect().await);
+                let arrays = try_result!(
+                    Context::global()
+                        .task
+                        .join_all(
+                            items
+                                .into_iter()
+                                .map(|v| Context::eval_as::<types::Array>(v))
+                        )
+                        .await
+                );
+
+                let shared_arrays =
+                    ergo_runtime::abi_stable::stream::shared_async_stream::SharedAsyncStream::new(
+                        futures::stream::iter(arrays.into_iter()),
+                    );
+                let mut errs = Vec::new();
+                for (i, out) in iter_outs.into_iter().enumerate() {
+                    let arrays = shared_arrays.clone();
+                    let filtered = arrays.filter_map(move |arr| {
+                        ready(match arr.as_ref().0.get(i) {
+                            None => None,
+                            Some(v) => {
+                                if v.is_type::<types::Unset>() {
+                                    // XXX this won't work for delayed Unset values
+                                    None
+                                } else {
+                                    Some(v.clone())
+                                }
+                            }
+                        })
+                    });
+                    let deps = depends![nsid!(std::iter::zip::pattern_result), iter_id, i];
+                    let to_bind = Source::imbue(
+                        arg_source
+                            .clone()
+                            .with(types::Iter::new_stream(filtered, deps).into()),
+                    );
+                    if let Err(e) = traits::bind_no_error(out, to_bind).await {
+                        errs.push(e);
+                    }
+                }
+                if errs.is_empty() {
+                    types::Unit.into()
+                } else {
+                    types::Error::aggregate(errs).into()
+                }
+            }
+            .boxed()
+        },
+        deps,
+    )
+    .into()
 }
 
 #[types::ergo_fn]
@@ -665,7 +688,7 @@ async fn quicksort_compare(
     )
     .await;
 
-    Context::eval_as::<super::cmp::Order>(result)
+    Context::eval_as::<super::order::Order>(result)
         .await
         .map(|v| v.to_owned().into())
 }
@@ -777,88 +800,91 @@ async fn partition(func: _, iter: _) -> Value {
 mod test {
     ergo_script::tests! {
         fn count(t) {
-            t.assert_eq("self:iter:count [a,b,1,2]", "self:number:from 4");
-            t.assert_eq("self:iter:count []", "self:number:from 0");
+            t.assert_eq("self:Iter:count [a,b,1,2]", "self:Number:from 4");
+            t.assert_eq("self:Iter:count []", "self:Number:from 0");
         }
 
         fn fold(t) {
-            t.assert_eq("self:iter:fold (fn :r :a -> [:a,^:r]) [init] [a,b,c]", "[c,b,a,init]");
+            t.assert_eq("self:Iter:fold (fn :r :a -> [$a,^$r]) [init] [a,b,c]", "[c,b,a,init]");
         }
 
         fn filter(t) {
-            t.assert_eq("self:array:from <| self:iter:filter (fn :v -> self:match :v [self:type:String -> self:bool:true, _ -> self:bool:false]) [a,b,[],c,(),(),d,e]", "[a,b,c,d,e]");
+            t.assert_eq("self:Array:from <| self:Iter:filter (fn :v -> self:match $v [self:String _ -> self:Bool:true, _ -> self:Bool:false]) [a,b,[],c,(),(),d,e]", "[a,b,c,d,e]");
         }
 
         fn flatten(t) {
-            t.assert_eq("self:array:from <| self:iter:flatten [[a,b],[],[],[c,d,e,f],[g]]", "[a,b,c,d,e,f,g]");
+            t.assert_eq("self:Array:from <| self:Iter:flatten [[a,b],[],[],[c,d,e,f],[g]]", "[a,b,c,d,e,f,g]");
         }
 
         fn map(t) {
-            t.assert_eq("self:array:from <| self:iter:map (fn :a -> { mapped = :a }) [2,3]", "[{mapped = force 2},{mapped = force 3}]");
+            t.assert_eq("self:Array:from <| self:Iter:map (fn :a -> { mapped = $a }) [2,3]", "[{mapped = force 2},{mapped = force 3}]");
         }
 
         fn map_lazy(t) {
-            t.assert_eq("self:array:from <| self:iter:map-lazy (fn :a -> { mapped = :a }) [2,3]", "[{mapped = force 2},{mapped = force 3}]");
+            t.assert_eq("self:Array:from <| self:Iter:map-lazy (fn :a -> { mapped = $a }) [2,3]", "[{mapped = force 2},{mapped = force 3}]");
         }
 
         fn order(t) {
-            t.assert_eq("self:array:from <| self:iter:order self:string:compare [b,c,w,d,g,a]", "[a,b,c,d,g,w]");
-            t.assert_eq("self:array:from <| self:iter:order self:string:compare [b,a,a,b,c]", "[a,a,b,b,c]");
-            t.assert_eq("self:array:from <| self:iter:order self:string:compare []", "[]");
+            t.assert_eq("self:Array:from <| self:Iter:order self:String:compare [b,c,w,d,g,a]", "[a,b,c,d,g,w]");
+            t.assert_eq("self:Array:from <| self:Iter:order self:String:compare [b,a,a,b,c]", "[a,a,b,b,c]");
+            t.assert_eq("self:Array:from <| self:Iter:order self:String:compare []", "[]");
         }
 
         fn partition(t) {
             t.assert_eq(
-                "self:iter:partition (fn :x -> force x:0) [force [a,1],force [b,2],force [c,3],force [a,4],force [c,5],force [b,6],force [b,7],force [c,8]]",
+                "self:Iter:partition (fn :x -> force x:0) [force [a,1],force [b,2],force [c,3],force [a,4],force [c,5],force [b,6],force [b,7],force [c,8]]",
                 "{c = force [force [c,3],force [c,5],force [c,8]], b = force [force [b,2],force [b,6],force [b,7]], a = force [force [a,1],force [a,4]] }"
             );
         }
 
         fn skip(t) {
-            t.assert_eq("self:array:from <| self:iter:skip 5 [a,b,c,d,e,f,g]", "[f,g]");
-            t.assert_eq("self:array:from <| self:iter:skip 5 [a,b]", "[]");
+            t.assert_eq("self:Array:from <| self:Iter:skip 5 [a,b,c,d,e,f,g]", "[f,g]");
+            t.assert_eq("self:Array:from <| self:Iter:skip 5 [a,b]", "[]");
         }
 
         fn skip_while(t) {
-            t.assert_eq("self:array:from <| self:iter:skip-while (fn :v -> self:match :v [self:type:String -> self:bool:true, _ -> self:bool:false]) [a,b,c,d,(),e,f,g]", "[(),e,f,g]");
-            t.assert_eq("self:array:from <| self:iter:skip-while (fn :v -> self:match :v [self:type:String -> self:bool:true, _ -> self:bool:false]) [a,b,c,d]", "[]");
+            t.assert_eq("self:Array:from <| self:Iter:skip-while (fn :v -> self:match $v [self:String _ -> self:Bool:true, _ -> self:Bool:false]) [a,b,c,d,(),e,f,g]", "[(),e,f,g]");
+            t.assert_eq("self:Array:from <| self:Iter:skip-while (fn :v -> self:match $v [self:String _ -> self:Bool:true, _ -> self:Bool:false]) [a,b,c,d]", "[]");
         }
 
         fn take(t) {
-            t.assert_eq("self:array:from <| self:iter:take 4 [a,b,c,d,e,f,g]", "[a,b,c,d]");
-            t.assert_eq("self:array:from <| self:iter:take 4 [a]", "[a]");
+            t.assert_eq("self:Array:from <| self:Iter:take 4 [a,b,c,d,e,f,g]", "[a,b,c,d]");
+            t.assert_eq("self:Array:from <| self:Iter:take 4 [a]", "[a]");
         }
 
         fn take_while(t) {
-            t.assert_eq("self:array:from <| self:iter:take-while (fn :v -> self:match :v [self:type:String -> self:bool:true, _ -> self:bool:false]) [a,b,c,d,(),e,f,g]", "[a,b,c,d]");
-            t.assert_eq("self:array:from <| self:iter:take-while (fn :v -> self:match :v [self:type:String -> self:bool:true, _ -> self:bool:false]) [(),e]", "[]");
-            t.assert_eq("self:array:from <| self:iter:take-while (fn :v -> self:match :v [self:type:String -> self:bool:true, _ -> self:bool:false]) [a,b]", "[a,b]");
+            t.assert_eq("self:Array:from <| self:Iter:take-while (fn :v -> self:match $v [self:String _ -> self:Bool:true, _ -> self:Bool:false]) [a,b,c,d,(),e,f,g]", "[a,b,c,d]");
+            t.assert_eq("self:Array:from <| self:Iter:take-while (fn :v -> self:match $v [self:String _ -> self:Bool:true, _ -> self:Bool:false]) [(),e]", "[]");
+            t.assert_eq("self:Array:from <| self:Iter:take-while (fn :v -> self:match $v [self:String _ -> self:Bool:true, _ -> self:Bool:false]) [a,b]", "[a,b]");
         }
 
         fn unique(t) {
-            t.assert_eq("self:array:from <| self:iter:unique [1,2,3,2,40,5,6,5]", "[1,2,3,40,5,6]");
+            t.assert_eq("self:Array:from <| self:Iter:unique [1,2,3,2,40,5,6,5]", "[1,2,3,40,5,6]");
         }
 
-        fn zip(t) {
-            t.assert_eq("self:array:from <| self:iter:zip [a,b,c,d] [1,2,3,4]", "[force [a,1],force [b,2],force [c,3],force [d,4]]");
-            t.assert_eq("self:array:from <| self:iter:zip [a,b,c,d] [1,2]", "[force [a,1],force [b,2]]");
-            t.assert_eq("self:array:from <| self:iter:zip [a,b] [1,2,3,4]", "[force [a,1],force [b,2]]");
-            t.assert_eq("self:array:from <| self:iter:zip ^[]", "[]");
-            t.assert_eq("self:array:from <| self:iter:zip [a,b,c]", "[force [a],force [b],force [c]]");
-            t.assert_eq("self:array:from <| self:iter:zip [a,b] [1,2] [x,y,z]", "[force [a,1,x],force [b,2,y]]");
+        fn unzip(t) {
             t.assert_eq(
-                "self:iter:zip :x :y = self:iter:from [[a,1],[b,2]]
-                 x = force <| self:array:from :x
-                 y = force <| self:array:from :y",
+                "self:Iter:unzip :x :y = self:Iter:from [[a,1],[b,2]]
+                 x = force <| self:Array:from $x
+                 y = force <| self:Array:from $y",
                 "{x = force [a,b], y = force [1,2]}"
             );
             t.assert_eq(
-                "self:iter:zip :x :y :z = self:iter:from [[a,1,x],[b,2],[c,3,y,q],[d,:unset,z]]
-                 x = force <| self:array:from :x
-                 y = force <| self:array:from :y
-                 z = force <| self:array:from :z",
+                "self:Iter:unzip :x :y :z = self:Iter:from [[a,1,x],[b,2],[c,3,y,q],[d,$unset,z]]
+                 x = force <| self:Array:from $x
+                 y = force <| self:Array:from $y
+                 z = force <| self:Array:from $z",
                 "{x = force [a,b,c,d], y = force [1,2,3], z = force [x,y,z]}"
             );
+        }
+
+        fn zip(t) {
+            t.assert_eq("self:Array:from <| self:Iter:zip [a,b,c,d] [1,2,3,4]", "[force [a,1],force [b,2],force [c,3],force [d,4]]");
+            t.assert_eq("self:Array:from <| self:Iter:zip [a,b,c,d] [1,2]", "[force [a,1],force [b,2]]");
+            t.assert_eq("self:Array:from <| self:Iter:zip [a,b] [1,2,3,4]", "[force [a,1],force [b,2]]");
+            t.assert_eq("self:Array:from <| self:Iter:zip ^[]", "[]");
+            t.assert_eq("self:Array:from <| self:Iter:zip [a,b,c]", "[force [a],force [b],force [c]]");
+            t.assert_eq("self:Array:from <| self:Iter:zip [a,b] [1,2] [x,y,z]", "[force [a,1,x],force [b,2,y]]");
         }
     }
 }

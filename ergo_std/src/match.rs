@@ -117,22 +117,22 @@ pub async fn function(
 mod test {
     ergo_script::tests! {
         fn match_expr(t) {
-            t.assert_eq("self:match [1,2,3] [{^:keys} -> :keys, [:a,:b] -> :a, [:a,:b,:c] -> :c]", "3");
-            t.assert_eq("self:match [1,2,3] [:a -> :a, [:a,:b,:c] -> :b]", "[1,2,3]");
+            t.assert_eq("self:match [1,2,3] [{^:keys} -> $keys, [:a,:b] -> $a, [:a,:b,:c] -> $c]", "3");
+            t.assert_eq("self:match [1,2,3] [:a -> $a, [:a,:b,:c] -> $b]", "[1,2,3]");
             t.assert_eq("self:match str [a -> a, str -> success]", "success");
         }
 
         fn match_error(t) {
-            t.assert_fail("self:match (self:type:Error:@ doh) [a -> a]");
-            t.assert_eq("self:match ^allow-error (self:type:Error:@ doh) [self:type:Error _ -> error]", "error");
+            t.assert_fail("self:match (self:Error:new doh) [a -> a]");
+            t.assert_eq("self:match ^allow-error (self:Error:new doh) [self:Error _ -> error]", "error");
         }
 
         fn match_failure(t) {
-            t.assert_fail("self:match {:a=[1,2]} [{b} -> :b, [:a,:b] -> :b]");
+            t.assert_fail("self:match {:a=[1,2]} [{:b} -> $b, [:a,:b] -> $b]");
         }
 
         fn match_case_body_error(t) {
-            t.assert_eq("self:match 1 [1 -> self:types:Error:@ NO, 1 -> 2]", "self:types:Error:@ NO");
+            t.assert_eq("self:match 1 [1 -> self:Error:new NO, 1 -> 2]", "self:Error:new NO");
         }
 
         fn match_case_body_bind_failure(t) {
@@ -140,7 +140,7 @@ mod test {
         }
 
         fn match_fallback(t) {
-            t.assert_eq("a = _ -> self:type:Error:@ doh; self:type:Error _ = self:match (fallback=:a) hi [p -> ()]; ()", "()");
+            t.assert_eq("a = _ -> self:Error:new doh; self:Error _ = self:match (fallback=$a) hi [p -> ()]; ()", "()");
         }
     }
 }

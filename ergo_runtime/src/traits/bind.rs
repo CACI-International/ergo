@@ -241,10 +241,6 @@ ergo_traits_fn! {
                             let name = type_name_for(tp);
                             arg_source.with(format!("cannot call value with type {}", name)).into_error().into()
                         }
-                        types::PatternArgs {..} => {
-                            let name = type_name_for(tp);
-                            arg_source.with(format!("cannot call value in pattern with type {}", name)).into_error().into()
-                        }
                         types::Index(_) => {
                             let name = type_name_for(tp);
                             arg_source.with(format!("cannot index value with type {}", name)).into_error().into()

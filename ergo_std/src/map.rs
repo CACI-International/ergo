@@ -1,11 +1,15 @@
 //! Map functions.
 
-use ergo_runtime::{traits, types, Value};
+use ergo_runtime::{traits, type_system::ErgoType, types, Value};
 
-pub fn module() -> Value {
-    crate::make_string_map! {
-        "from" = from()
+pub fn r#type() -> Value {
+    types::Type {
+        tp: types::Map::ergo_type(),
+        index: crate::make_string_map! {
+            "from" = from()
+        },
     }
+    .into()
 }
 
 #[types::ergo_fn]
@@ -20,16 +24,16 @@ async fn from(value: _) -> Value {
 mod test {
     ergo_script::tests! {
         fn from(t) {
-            t.assert_eq("self:map:from <| self:iter:from {a=1,b=2}", "{a=1,b=2}");
+            t.assert_eq("self:Map:from <| self:Iter:from {a=1,b=2}", "{a=1,b=2}");
         }
 
         fn iter(t) {
-            t.assert_eq("self:map:from <| self:iter:map (fn (self:type:MapEntry:@ :key :value) -> self:type:MapEntry:@ :key ()) {a=1,b=2}", "{a=(),b=()}");
+            t.assert_eq("self:Map:from <| self:Iter:map (fn (self:MapEntry:@ :key :value) -> self:MapEntry:new $key ()) {a=1,b=2}", "{a=(),b=()}");
         }
 
         fn from_args(t) {
-            t.assert_eq("fn ^:args -> self:map:from :args |> (a=1) (b=2)", "{a=1,b=2}");
-            t.assert_fail("fn ^:args -> self:map:from :args |> (a=1) 2");
+            t.assert_eq("fn ^:args -> self:Map:from $args |> (a=1) (b=2)", "{a=1,b=2}");
+            t.assert_fail("fn ^:args -> self:Map:from $args |> (a=1) 2");
         }
     }
 }

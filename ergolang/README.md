@@ -98,3 +98,5 @@ not work correctly with this flag, so the default is `less`. You can:
 * Parallelism count.
 * `std:fs:rename`
 * Improve caching speed (using sqlite, in-memory map, etc)
+* Keys in maps should always be typed values.
+  * Indexing should evaluate the index (for Maps at least, but maybe always?).

@@ -59,6 +59,7 @@ ConstantDependency!(String);
 ConstantDependency!(&'_ str);
 ConstantDependency!(std::path::PathBuf);
 ConstantDependency!(&'_ std::path::Path);
+ConstantDependency!(bool);
 ConstantDependency!(u32);
 ConstantDependency!(i32);
 ConstantDependency!(u64);

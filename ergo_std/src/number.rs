@@ -1,18 +1,49 @@
 //! Number functions.
 
 use ergo_runtime::types::number::Zero;
-use ergo_runtime::{metadata::Source, traits, types, Value};
+use ergo_runtime::{metadata::Source, traits, type_system::ErgoType, types, Value};
 
-pub fn module() -> Value {
-    crate::make_string_map! {
-        "from" = from(),
-        "compare" = compare(),
-        "+" = add(),
-        "-" = subtract(),
-        "*" = multiply(),
-        "/" = divide(),
-        "%" = modulus()
+pub fn r#type() -> Value {
+    types::Type {
+        tp: types::Number::ergo_type(),
+        index: crate::make_string_map! {
+            "new" = new(),
+            "from" = from(),
+            "compare" = compare(),
+            "+" = add(),
+            "-" = subtract(),
+            "*" = multiply(),
+            "/" = divide(),
+            "%" = modulus()
+        },
     }
+    .into()
+}
+
+#[types::ergo_fn]
+/// Create a new Number.
+///
+/// Arguments: `(String :rep)`
+///
+/// Numbers are arbitrarily large rationals. `rep` may be expressed as an integer, decimal, or
+/// a rational such as `1/2`.
+async fn new(rep: types::String) -> Value {
+    rep.as_ref()
+        .0
+        .as_str()
+        .parse::<types::Number>()
+        .map_err(|e| {
+            ergo_runtime::error! {
+                labels: [
+                    primary(Source::get(&rep).with("while parsing this value as a number"))
+                ],
+                notes: [
+                    format_args!("value was '{}'", rep.as_ref().0.as_str())
+                ],
+                error: e
+            }
+        })
+        .into()
 }
 
 #[types::ergo_fn]
@@ -30,7 +61,7 @@ async fn from(value: _) -> Value {
 ///
 /// Returns a `std:Order` indicating the comparison of `a` to `b`.
 async fn compare(a: types::Number, b: types::Number) -> Value {
-    super::cmp::Order::from(a.as_ref().cmp(b.as_ref())).into()
+    super::order::Order::from(a.as_ref().cmp(b.as_ref())).into()
 }
 
 #[types::ergo_fn]
@@ -143,32 +174,44 @@ async fn modulus(a: _, b: _) -> Value {
 #[cfg(test)]
 mod test {
     ergo_script::tests! {
+        fn new(t) {
+            t.assert_success("self:Number:new 1");
+            t.assert_success("self:Number:new -3.14");
+            t.assert_success("self:Number:new 1/2");
+            t.assert_success("self:Number:new -3/4");
+            t.assert_success("self:Number:new 0.5");
+            t.assert_success("self:Number:new -0.3");
+            t.assert_eq("self:Number:new 0.5", "self:Number:new 1/2");
+            t.assert_fail("self:Number:new ()");
+            t.assert_success("self:Number _ = self:Number:new 0");
+        }
+
         fn from(t) {
-            t.assert_eq("self:type:Number:@ 1/4", "self:number:from 0.25");
-            t.assert_ne("self:type:Number:@ 1/3", "self:number:from 0.333333333333333333333333");
-            t.assert_fail("self:type:Number:@ 1/0");
+            t.assert_eq("self:Number:from 1/4", "self:Number:from 0.25");
+            t.assert_ne("self:Number:from 1/3", "self:Number:from 0.333333333333333333333333");
+            t.assert_fail("self:Number:from 1/0");
         }
 
         fn compare(t) {
-            t.assert_eq("self:number:compare (self:number:from -1) (self:number:from 200)", "self:cmp:less");
-            t.assert_eq("self:number:compare (self:number:from 0.25) (self:number:from 0.125)", "self:cmp:greater");
-            t.assert_eq("self:number:compare (self:number:from 100/4) (self:number:from 25)", "self:cmp:equal");
+            t.assert_eq("self:Number:compare (self:Number:from -1) (self:Number:from 200)", "self:Order:less");
+            t.assert_eq("self:Number:compare (self:Number:from 0.25) (self:Number:from 0.125)", "self:Order:greater");
+            t.assert_eq("self:Number:compare (self:Number:from 100/4) (self:Number:from 25)", "self:Order:equal");
         }
 
         fn math(t) {
-            t.assert_eq("self:number:+ 1 2 3", "self:number:from 6");
-            t.assert_eq("self:number:- 4 3 2", "self:number:from -1");
-            t.assert_eq("self:number:- 2", "self:number:from -2");
-            t.assert_eq("self:number:* 4 3 2", "self:number:from 24");
-            t.assert_eq("self:number:/ 4 3 2", "self:number:from 2/3");
-            t.assert_eq("self:number:/ 2/3", "self:number:from 3/2");
-            t.assert_fail("self:number:/ 4 2 0");
-            t.assert_fail("self:number:/ 0");
-            t.assert_eq("self:number:% 4 2", "self:number:from 0");
-            t.assert_eq("self:number:% 15 4", "self:number:from 3");
-            t.assert_eq("self:number:% 4 15", "self:number:from 4");
-            t.assert_eq("self:number:% 1/2 1/3", "self:number:from 1/6");
-            t.assert_fail("self:number:% 1 0");
+            t.assert_eq("self:Number:+ 1 2 3", "self:Number:from 6");
+            t.assert_eq("self:Number:- 4 3 2", "self:Number:from -1");
+            t.assert_eq("self:Number:- 2", "self:Number:from -2");
+            t.assert_eq("self:Number:* 4 3 2", "self:Number:from 24");
+            t.assert_eq("self:Number:/ 4 3 2", "self:Number:from 2/3");
+            t.assert_eq("self:Number:/ 2/3", "self:Number:from 3/2");
+            t.assert_fail("self:Number:/ 4 2 0");
+            t.assert_fail("self:Number:/ 0");
+            t.assert_eq("self:Number:% 4 2", "self:Number:from 0");
+            t.assert_eq("self:Number:% 15 4", "self:Number:from 3");
+            t.assert_eq("self:Number:% 4 15", "self:Number:from 4");
+            t.assert_eq("self:Number:% 1/2 1/3", "self:Number:from 1/6");
+            t.assert_fail("self:Number:% 1 0");
         }
     }
 }

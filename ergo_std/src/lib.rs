@@ -3,27 +3,29 @@ use ergo_runtime::{plugin_entry, types, Context, IdentifiedValue, Value};
 
 mod array;
 mod bool;
-mod cmp;
 mod env;
 mod error;
 mod exec;
 mod fs;
+mod function;
 mod getopt;
 mod io;
 mod iter;
 mod json;
 mod log;
 mod map;
-#[path = "match.rs"]
-mod match_;
+mod map_entry;
+mod r#match;
 mod net;
 mod number;
+mod order;
 mod path;
 mod string;
 mod sync;
 pub mod task;
-#[path = "type.rs"]
-mod type_;
+mod r#type;
+mod unit;
+mod unset;
 mod value;
 
 //pub use exec::ExitStatus;
@@ -62,34 +64,38 @@ fn entry() -> ergo_runtime::Result<Value> {
     // Add trait implementations
     {
         let traits = &Context::global().traits;
-        cmp::ergo_traits(traits);
         exec::ergo_traits(traits);
         net::ergo_traits(traits);
+        order::ergo_traits(traits);
         sync::ergo_traits(traits);
     }
 
     Ok(make_string_map! {
-        "array" = array::module(),
-        "bool" = bool::module(),
-        "cmp" = cmp::module(),
+        "Array" = array::r#type(),
+        "Bool" = bool::r#type(),
+        "Error" = error::r#type(),
+        "Function" = function::r#type(),
+        "Iter" = iter::r#type(),
+        "Map" = map::r#type(),
+        "MapEntry" = map_entry::r#type(),
+        "Number" = number::r#type(),
+        "Order" = order::r#type(),
+        "Path" = path::r#type(),
+        "String" = string::r#type(),
+        "Unit" = unit::r#type(),
+        "Unset" = unset::r#type(),
+        "Type" = r#type::r#type(),
         "env" = env::module(),
-        "error" = error::module(),
         "exec" = exec::function(),
         "fs" = fs::module(),
         "getopt" = getopt::function(),
         "io" = io::module(),
-        "iter" = iter::module(),
         "json" = json::module(),
         "log" = log::function(),
-        "map" = map::module(),
-        "match" = match_::function(),
+        "match" = r#match::function(),
         "net" = net::module(),
-        "number" = number::module(),
-        "path" = path::module(),
-        "string" = string::module(),
         "sync" = sync::module(),
         "task" = task::function(),
-        "type" = type_::module(),
         "value" = value::module()
     })
 }

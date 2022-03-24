@@ -1,16 +1,20 @@
 //! Bool functions.
 
-use ergo_runtime::{traits, types, Value};
+use ergo_runtime::{traits, type_system::ErgoType, types, Value};
 
-pub fn module() -> Value {
-    crate::make_string_map! {
-        "true" = true_val(),
-        "false" = false_val(),
-        "from" = from(),
-        "and" = and(),
-        "or" = or(),
-        "not" = not()
+pub fn r#type() -> Value {
+    types::Type {
+        tp: types::Bool::ergo_type(),
+        index: crate::make_string_map! {
+            "true" = true_val(),
+            "false" = false_val(),
+            "from" = from(),
+            "and" = and(),
+            "or" = or(),
+            "not" = not()
+        },
     }
+    .into()
 }
 
 fn true_val() -> Value {
@@ -73,9 +77,9 @@ async fn not(v: _) -> Value {
 mod test {
     ergo_script::tests! {
         fn from(t) {
-            t.assert_eq("self:bool:false", "self:bool:from :unset");
-            t.assert_eq("self:bool:true", "self:bool:from hello");
-            t.assert_ne("self:bool:false", "self:bool:from ()"); // () is true, too
+            t.assert_eq("self:Bool:false", "self:Bool:from $unset");
+            t.assert_eq("self:Bool:true", "self:Bool:from hello");
+            t.assert_ne("self:Bool:false", "self:Bool:from ()"); // () is true, too
         }
     }
 }

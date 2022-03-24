@@ -16,14 +16,16 @@ mod map_entry;
 pub mod number;
 mod path;
 mod string;
+#[path = "type.rs"]
+mod type_;
 mod unbound;
 mod unit;
 mod unset;
 
-pub use ergo_runtime_macro::{ergo_fn, ergo_fn_value, ergo_pat, ergo_pat_value};
+pub use ergo_runtime_macro::{ergo_fn, ergo_fn_value};
 
 pub use self::bool::Bool;
-pub use args::{Args, PatternArgs};
+pub use args::Args;
 pub use array::Array;
 pub use bind_rest::{BindRest, BindRestKey};
 pub use byte_stream::ByteStream;
@@ -35,6 +37,7 @@ pub use map_entry::MapEntry;
 pub use number::Number;
 pub use path::Path;
 pub use string::String;
+pub use type_::Type;
 pub use unbound::Unbound;
 pub use unit::Unit;
 pub use unset::Unset;
@@ -56,4 +59,5 @@ ergo_traits_fn! {
     index::ergo_traits(traits);
     bind_rest::ergo_traits(traits);
     number::ergo_traits(traits);
+    type_::ergo_traits(traits);
 }

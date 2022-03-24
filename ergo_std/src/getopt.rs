@@ -68,13 +68,13 @@ pub async fn function(args: types::Array, (consecutive): [_]) -> Value {
 mod test {
     ergo_script::tests! {
         fn getopt(t) {
-            t.assert_eq("self:getopt [a,b,c,d]", "fn ^:args -> :args |> a b c d");
+            t.assert_eq("self:getopt [a,b,c,d]", "fn ^:args -> $args |> a b c d");
             t.assert_eq("self:getopt [--flag,pos1,\"--key=a\",pos2,pos3,\"--key2=123=b\"]",
-                "fn ^:args -> :args |> ^flag (key=a) (key2=\"123=b\") pos1 pos2 pos3");
+                "fn ^:args -> $args |> ^flag (key=a) (key2=\"123=b\") pos1 pos2 pos3");
         }
 
         fn consecutive(t) {
-            t.assert_eq("self:getopt ^consecutive [--a,--b,c,--d]", "fn ^:args -> :args |> ^a ^b c --d");
+            t.assert_eq("self:getopt ^consecutive [--a,--b,c,--d]", "fn ^:args -> $args |> ^a ^b c --d");
         }
     }
 }

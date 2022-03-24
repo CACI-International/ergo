@@ -313,9 +313,9 @@ mod test {
                     .body("hello world");
             });
             t.assert_eq(&format!(r#"self:net:http "{}" |>:complete"#, server.url("/hi")), "()");
-            t.assert_eq(&format!(r#"self:net:http "{}" |>:headers:myheader | self:string:from"#, server.url("/hi")), "42");
-            t.assert_eq(&format!(r#"self:net:http "{}" |>:body | self:string:from"#, server.url("/hi")), "\"hello world\"");
-            t.assert_eq(&format!(r#"self:net:http "{}" |>:status-code | self:string:from"#, server.url("/hi")), "200");
+            t.assert_eq(&format!(r#"self:net:http "{}" |>:headers:myheader | self:String:from"#, server.url("/hi")), "42");
+            t.assert_eq(&format!(r#"self:net:http "{}" |>:body | self:String:from"#, server.url("/hi")), "\"hello world\"");
+            t.assert_eq(&format!(r#"self:net:http "{}" |>:status-code | self:String:from"#, server.url("/hi")), "200");
         }
 
         fn http_basic_auth(t) {

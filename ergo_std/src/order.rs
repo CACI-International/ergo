@@ -1,14 +1,18 @@
-//! Comparison types.
+//! Order values.
 
 use ergo_runtime::abi_stable::{std_types::RCmpOrdering, StableAbi};
-use ergo_runtime::{type_system::ErgoType, Value};
+use ergo_runtime::{type_system::ErgoType, types, Value};
 
-pub fn module() -> Value {
-    crate::make_string_map! {
-        "less" = less_val(),
-        "equal" = equal_val(),
-        "greater" = greater_val()
+pub fn r#type() -> Value {
+    types::Type {
+        tp: Order::ergo_type(),
+        index: crate::make_string_map! {
+            "less" = less_val(),
+            "equal" = equal_val(),
+            "greater" = greater_val()
+        },
     }
+    .into()
 }
 
 fn less_val() -> Value {
@@ -66,4 +70,13 @@ ergo_runtime::ConstantDependency!(Order);
 ergo_runtime::type_system::ergo_traits_fn! {
     ergo_runtime::ergo_type_name!(traits, Order);
     ergo_runtime::ergo_display_basic!(traits, Order);
+}
+
+#[cfg(test)]
+mod test {
+    ergo_script::tests! {
+        fn order(t) {
+            t.assert_success("self:Order _ = self:Order:less");
+        }
+    }
 }
