@@ -1,6 +1,6 @@
 //! Runtime types, which have a UUID identifier and optional additional data.
 
-use crate::abi_stable::{type_erase::ErasedTrivial, uuid::Uuid, StableAbi};
+use crate::abi_stable::{std_types::RVec, type_erase::ErasedTrivial, uuid::Uuid, StableAbi};
 use std::convert::TryInto;
 
 /// A runtime type.
@@ -64,8 +64,9 @@ pub trait ErgoType {
     }
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct TypeParameters(pub Vec<Type>);
+#[derive(Clone, Debug, Default, StableAbi)]
+#[repr(C)]
+pub struct TypeParameters(pub RVec<Type>);
 
 impl From<TypeParameters> for ErasedTrivial {
     fn from(params: TypeParameters) -> Self {

@@ -23,6 +23,7 @@ mod path;
 mod string;
 mod sync;
 pub mod task;
+mod r#trait;
 mod r#type;
 mod unit;
 mod unset;
@@ -96,6 +97,7 @@ fn entry() -> ergo_runtime::Result<Value> {
         "net" = net::module(),
         "sync" = sync::module(),
         "task" = task::function(),
+        "trait" = r#trait::module(),
         "value" = value::module()
     })
 }

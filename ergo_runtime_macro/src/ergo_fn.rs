@@ -95,6 +95,18 @@ impl Parser for ErgoFnLike {
             .unwrap_or_default()
         };
 
+        let depends = {
+            f.attrs
+                .iter()
+                .position(|a| a.path.is_ident("depends"))
+                .map(|i| {
+                    f.attrs
+                        .swap_remove(i)
+                        .parse_args::<proc_macro2::TokenStream>()
+                })
+                .transpose()?
+        };
+
         let id = f.sig.ident.clone();
         let inputs = std::mem::take(&mut f.sig.inputs);
         let has_rest = f.sig.variadic.take().is_some();
@@ -227,40 +239,64 @@ impl Parser for ErgoFnLike {
 
         let which = self.0;
 
-        let deps = {
-            let deps = quote! { ergo_runtime::depends![const fn_id] };
-            if forced {
-                quote! { ergo_runtime::value::EvalForId::set(#deps) }
-            } else {
-                deps
+        let deps = match depends {
+            None => quote! { ergo_runtime::depends![const __ergo_fn_id] },
+            Some(ds) => quote! { ergo_runtime::depends![dyn __ergo_fn_id, #ds] },
+        };
+
+        let dep_tag = if forced {
+            quote! { ergo_runtime::value::EvalForId::set }
+        } else {
+            quote! { std::convert::identity }
+        };
+
+        let fn_id = quote! {
+            let __ergo_fn_id = ergo_runtime::nsid!(function, std::concat!(std::module_path!(),"::",std::stringify!(#id)).as_bytes());
+        };
+
+        let deps = quote! {
+            let __ergo_fn_deps = #deps;
+            let __ergo_fn_deps_inner = __ergo_fn_deps.clone();
+        };
+
+        let imp = quote! {
+            move |__ergo_fn_arg| {
+                #(#clones)*
+                let __ergo_fn_deps_inner = __ergo_fn_deps_inner.clone();
+                ergo_runtime::future::FutureExt::boxed(async move {
+                    let __ergo_fn_args = ergo_runtime::try_result!(ergo_runtime::Context::eval_as::<#which>(__ergo_fn_arg).await);
+                    let ARGS_SOURCE = ergo_runtime::metadata::Source::get(&__ergo_fn_args);
+                    let CALL_DEPENDS: ergo_runtime::dependency::Dependencies = __ergo_fn_deps_inner + ergo_runtime::depends![dyn __ergo_fn_args];
+                    let mut __ergo_fn_args = __ergo_fn_args.to_owned().args;
+                    #(#args)*
+                    #rest_or_check
+                    ergo_runtime::error_info!(
+                        labels: [
+                            secondary(ARGS_SOURCE.with("in this call"))
+                        ],
+                        async {
+                            ergo_runtime::Result::<Value>::Ok(#inner_block)
+                        }
+                    ).into()
+                })
             }
         };
 
-        f.block = Box::new(parse_quote! {
-            {
-                let fn_id = ergo_runtime::nsid!(function, std::concat!(std::module_path!(),"::",std::stringify!(#id)).as_bytes());
-                ergo_runtime::types::Unbound::new(move |__ergo_fn_arg| {
-                    #(#clones)*
-                    ergo_runtime::future::FutureExt::boxed(async move {
-                        let __ergo_fn_args = ergo_runtime::try_result!(ergo_runtime::Context::eval_as::<#which>(__ergo_fn_arg).await);
-                        let ARGS_SOURCE = ergo_runtime::metadata::Source::get(&__ergo_fn_args);
-                        let CALL_DEPENDS: ergo_runtime::dependency::Dependencies = ergo_runtime::depends![fn_id, __ergo_fn_args];
-                        let mut __ergo_fn_args = __ergo_fn_args.to_owned().args;
-                        #(#args)*
-                        #rest_or_check
-                        ergo_runtime::error_info!(
-                            labels: [
-                                secondary(ARGS_SOURCE.with("in this call"))
-                            ],
-                            async {
-                                ergo_runtime::Result::<Value>::Ok(#inner_block)
-                            }
-                        ).into()
-                    })
-                },
-                #deps,
-                #doc
-                ).into()
+        f.block = Box::new(if doc.is_empty() {
+            parse_quote! {
+                {
+                    #fn_id
+                    #deps
+                    ergo_runtime::types::Unbound::new_no_doc(#imp, #dep_tag(__ergo_fn_deps)).into()
+                }
+            }
+        } else {
+            parse_quote! {
+                {
+                    #fn_id
+                    #deps
+                    ergo_runtime::types::Unbound::new(#imp, #dep_tag(__ergo_fn_deps), #doc).into()
+                }
             }
         });
 

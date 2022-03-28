@@ -68,8 +68,7 @@ pub(crate) struct TraitRegistry {
 impl TraitRegistry {
     /// Insert a new implementation.
     ///
-    /// Unsafe because the implementation must correspond to a the trait correctly
-    /// on retrieval.
+    /// Unsafe because the implementation must correspond to the trait correctly on retrieval.
     pub unsafe fn insert_unchecked(&mut self, tp: Type, trt: Trait, implementation: Erased) {
         self.impls
             .insert(TraitKey(tp, trt), ROption::RSome(RArc::new(implementation)));

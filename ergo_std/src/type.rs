@@ -30,7 +30,7 @@ pub fn r#type() -> Value {
 ///
 /// Arguments: `(String :id)`
 ///
-/// * `id` is used to derive the type identity, and must be unique to this type.
+/// `id` is used to derive the type identity, and must be unique to this type.
 ///
 /// Returns a Type which matches values of the new Type (by application). It will also support the
 /// following indices:

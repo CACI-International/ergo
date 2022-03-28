@@ -14,7 +14,8 @@ use crate::dependency::GetDependencies;
 use crate::depends;
 use crate::metadata::Source;
 use crate::type_system::{
-    ergo_trait, ergo_trait_impl, ergo_traits_fn, ErgoTrait, ErgoType, Trait, Type, TypeParameters,
+    ergo_trait, ergo_trait_impl, ergo_traits_fn, ErgoTrait, ErgoType, Ref, Trait, Type,
+    TypeParameters,
 };
 use crate::value::{TypedValue, Value};
 
@@ -64,17 +65,31 @@ impl<T: ErgoType + StableAbi + Eraseable> IntoTyped<T> {
     }
 }
 
+/// Create an IntoTyped trait for the given type.
+pub fn into_trait(tp: Type) -> Trait {
+    let mut trt = IntoTyped::<crate::types::Unit>::ergo_trait();
+    trt.data = TypeParameters(vec![tp].into()).into();
+    trt
+}
+
 /// Convert the given value into another type.
-pub async fn into<T: ErgoType + StableAbi + Eraseable>(
-    mut v: Value,
-) -> crate::Result<TypedValue<T>> {
-    let mut src = Source::get(&v);
-    let result: crate::Result<_> = async {
-        Context::eval(&mut v).await?;
-        src = Source::get(&v); // Update source in case it changed
-        let from_t = type_name(&v);
-        let t = Context::get_trait::<IntoTyped<T>>(&v).ok_or_else(|| {
-            let to_t = type_name_for(&T::ergo_type());
+pub async fn into<T: ErgoType + StableAbi + Eraseable>(v: Value) -> crate::Result<TypedValue<T>> {
+    into_for(&T::ergo_type(), v)
+        .await
+        .map(|v| v.as_type::<T>().unwrap())
+}
+
+/// Convert the given value into another type.
+pub async fn into_for(tp: &Type, mut v: Value) -> crate::Result<Value> {
+    Context::eval(&mut v).await?;
+    let src = Source::get(&v); // Update source in case it changed
+    let from_t = type_name(&v);
+    let trt = into_trait(tp.clone());
+    let t = Context::global()
+        .traits
+        .get_impl(v.ergo_type().unwrap(), &trt)
+        .ok_or_else(|| {
+            let to_t = type_name_for(tp);
             crate::error! {
                 labels: [
                     primary(src.with(format!("value has type {}", from_t)))
@@ -82,30 +97,25 @@ pub async fn into<T: ErgoType + StableAbi + Eraseable>(
                 error: format!("cannot convert value into {}", to_t)
             }
         })?;
-        crate::try_value!(t.into_typed(v).await)
-            .as_type::<T>()
-            .map_err(|v| {
-                let actual_t = type_name(&v);
-                let into_t = type_name_for(&T::ergo_type());
-                crate::error! {
-                    labels: [
-                        primary(src.with(format!("value has type {}", from_t)))
-                    ],
-                    notes: [
-                        format!("expected {}", into_t),
-                        format!("got {}", actual_t)
-                    ],
-                    error: format!("bad IntoTyped<{}> implementation", into_t)
-                }
-            })
-    }
-    .await;
-    match result {
-        Ok(mut t) => {
-            Source::set_if_missing(&mut t, src);
-            Ok(t)
-        }
-        Err(e) => Err(e),
+    let t = IntoTyped::<crate::types::Unit>::create(unsafe { Ref::new(t) });
+    let mut v = t.into_typed(v).await;
+    Context::eval(&mut v).await?;
+    if v.ergo_type().unwrap() != tp {
+        let actual_t = type_name(&v);
+        let to_t = type_name_for(tp);
+        Err(crate::error! {
+            labels: [
+                primary(src.with(format!("value has type {}", from_t)))
+            ],
+            notes: [
+                format!("expected {}", to_t),
+                format!("got {}", actual_t)
+            ],
+            error: format!("bad IntoTyped<{}> implementation", to_t)
+        })
+    } else {
+        Source::set_if_missing(&mut v, src);
+        Ok(v)
     }
 }
 

@@ -17,6 +17,8 @@
 * Add a `Type` type, and refactor how script types work in general.
   * You can now get the type of any value as a runtime value.
 * Move `std:cmp` to `std:Order`.
+* Add `std:trait`, which allows access to built-in traits (`Bind`, `Into`,
+  `Stored`, and `Display`) as well as creating custom traits with `new`.
 
 ### Migration
 * Remove the use of `std:by-content`. If it was being used to compare nested
@@ -31,7 +33,8 @@
   `{std:Typed :v = :v; :v}`, though you may no longer need `std:eval` semantics
   at all.
 * Anything using a custom `std:type:new` type will need to be rewritten for the
-  new API.
+  new API. This includes changing any `bind` keyed argument to instead call
+  `std:trait:Bind:impl`.
 * Any type checks as normal (as previously designated) function calls will need
   to be rewritten or wrapped.
 * Change `std:cmp:...` to `std:Order:...`.

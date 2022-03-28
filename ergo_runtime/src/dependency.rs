@@ -110,6 +110,12 @@ impl<T: AsDependency> AsDependency for Option<T> {
     }
 }
 
+impl AsDependency for Constant {
+    fn as_dependency(&self) -> Dependency {
+        Dependency::Constant(self.clone())
+    }
+}
+
 impl Dependency {
     /// Get the dependency identity.
     pub async fn id(&self) -> Identity {
@@ -225,6 +231,36 @@ impl<Dep> std::ops::Add for Dependencies<Dep> {
     /// to any ordered dependencies that are stored.
     fn add(mut self, other: Self) -> Self {
         self += other;
+        self
+    }
+}
+
+impl std::ops::Add<Dependencies> for Dependencies<Constant> {
+    type Output = Dependencies;
+
+    /// Combine two Dependencies into one. The order matters with respect
+    /// to any ordered dependencies that are stored.
+    fn add(self, other: Dependencies) -> Self::Output {
+        let mut ret = Dependencies::new();
+        ret.unordered
+            .extend(self.unordered.into_iter().map(|v| v.into()));
+        ret.ordered
+            .extend(self.ordered.into_iter().map(|v| v.into()));
+        ret += other;
+        ret
+    }
+}
+
+impl std::ops::Add<Dependencies<Constant>> for Dependencies {
+    type Output = Dependencies;
+
+    /// Combine two Dependencies into one. The order matters with respect
+    /// to any ordered dependencies that are stored.
+    fn add(mut self, other: Dependencies<Constant>) -> Self::Output {
+        self.unordered
+            .extend(other.unordered.into_iter().map(|v| v.into()));
+        self.ordered
+            .extend(other.ordered.into_iter().map(|v| v.into()));
         self
     }
 }

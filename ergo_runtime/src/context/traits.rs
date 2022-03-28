@@ -237,6 +237,14 @@ impl Traits {
         self.inner.traits.write().insert::<Trt>(tp, implementation);
     }
 
+    /// Add a trait implementation for the given trait and type.
+    pub unsafe fn add_impl_unsafe(&self, trt: ts::Trait, tp: ts::Type, implementation: Erased) {
+        self.inner
+            .traits
+            .write()
+            .insert_unchecked(tp, trt, implementation);
+    }
+
     /// Add a trait generator.
     ///
     /// Trait generators may provide an implementation of arbitrary type/trait combinations.
