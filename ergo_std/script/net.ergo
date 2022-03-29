@@ -3,21 +3,21 @@ plugin = ergo plugin
 cache-name = ERGO_NET_CACHE
 
 ##(ergo doc |>:value)
-## The cache directory specified by the `^cache-name` environment variable, if any.
-cache-dir = plugin:env:get :cache-name
+## The cache directory specified by the `$cache-name` environment variable, if any.
+cache-dir = plugin:env:get $cache-name
 
-http-defaults-path = plugin:path:join plugin:env:config http defaults.ergo
+http-defaults-path = plugin:Path:join plugin:env:config http defaults.ergo
 
 ## The map of http defaults specified by the user.
-http-defaults = plugin:type:Map <| plugin:match (plugin:bool:from <| plugin:fs:file-type :http-defaults-path) [plugin:bool:true -> ergo :http-defaults-path, _ -> {}]
+http-defaults = plugin:Map <| plugin:match (plugin:Bool:from <| plugin:fs:file-type $http-defaults-path) [plugin:Bool:true -> ergo $http-defaults-path, _ -> {}]
 
-http-default-cases = plugin:array:from <| plugin:iter:map (fn :e -> plugin:string:format "^(e:key)/{}" _ -> e:value) <| plugin:iter:order (fn :a :b -> plugin:string:compare b:key a:key) :http-defaults
+http-default-cases = plugin:Array:from <| plugin:Iter:map (fn :e -> plugin:String:match "$(e:key)/{}" _ -> e:value) <| plugin:Iter:order (fn :a :b -> plugin:String:compare b:key a:key) $http-defaults
 
-## ^(doc plugin:net:http)
+## $(doc plugin:net:http)
 ##
 ## ### User-specified defaults
 ## A user may specify default settings for connections based on URL prefixes at
-## `^http-defaults-path`.
+## `$http-defaults-path`.
 ##
 ## The `defaults.ergo` file should evaluate to a map, where keys are URL prefixes (omitting the URI
 ## scheme) and values are maps of default keyed arguments to use for any URLs which are prefixed
@@ -25,39 +25,38 @@ http-default-cases = plugin:array:from <| plugin:iter:map (fn :e -> plugin:strin
 ## `basic-auth` or `bearer-auth`.
 ##
 ## ### Network request caching
-## If the environment variable `^cache-name` is set, all network requests will be cached (based
+## If the environment variable `$cache-name` is set, all network requests will be cached (based
 ## _only_ on url) to the directory specified by the environment variable (creating the directory if
 ## it doesn't exist), and future network requests will first check the cache for matching results
 ## before going out to the network. Note that only successful response bodies are cached. Pass the
 ## keyed argument `disable-net-cache` to ignore the environment variable setting.
-http = fn (plugin:type:String :url) (disable-net-cache=:disable-net-cache) ^:args -> {
+http = fn (plugin:String :url) (disable-net-cache=:disable-net-cache) ^:args -> {
     # Apply defaults
-    without-scheme = plugin:string:split "://" :url |>:-1
-    defaults = plugin:match :without-scheme [^:http-default-cases, _ -> {}]
-    args = plugin:value:merge :defaults (plugin:map:from :args)
+    without-scheme = plugin:String:split "://" $url |>:-1
+    defaults = plugin:match $without-scheme [^$http-default-cases, _ -> {}]
+    args = plugin:value:merge $defaults (plugin:Map:from $args)
 
-    result = plugin:net:http :url ^:args
+    result = plugin:net:http $url ^$args
 
     # Use network cache
-    cache-dir = plugin:match :disable-net-cache [plugin:type:Unset _ -> :cache-dir, _ -> :unset]
-    plugin:match :cache-dir [
-        plugin:type:Unset _ -> :result
+    cache-dir = plugin:match $disable-net-cache [plugin:Unset _ -> $cache-dir, _ -> $unset]
+    plugin:match $cache-dir [
+        $unset -> $result
         :dir -> {
-            id = plugin:value:identity :url
-            final-component = plugin:string:split / :url |>:-1
-            name = "^(final-component)-^(id)"
-            plugin:fs:create-dir (plugin:path:from :dir)
-            path = plugin:path:join :dir :name
-            cached-result = { body = plugin:fs:read :path, headers = {}, complete = (), status-code = plugin:bool:true }
-            plugin:match (plugin:bool:from <| plugin:fs:file-type :path) [
-                plugin:bool:true -> :cached-result
-                plugin:bool:false -> {
-                    result
-                    plugin:match (plugin:bool:from result:status-code) [
-                        plugin:bool:false -> :result
-                        plugin:bool:true -> {
-                            plugin:fs:write :path result:body
-                            :cached-result
+            id = plugin:value:identity $url
+            final-component = plugin:String:split / $url |>:-1
+            name = "$(final-component)-$(id)"
+            plugin:fs:create-dir (plugin:path:from $dir)
+            path = plugin:Path:join $dir $name
+            cached-result = { body = plugin:fs:read $path, headers = {}, complete = (), status-code = plugin:Bool:true }
+            plugin:match (plugin:Bool:from <| plugin:fs:file-type $path) [
+                plugin:Bool:true -> $cached-result
+                plugin:Bool:false -> {
+                    plugin:match (plugin:Bool:from result:status-code) [
+                        plugin:Bool:false -> $result
+                        plugin:Bool:true -> {
+                            plugin:fs:write $path result:body
+                            $cached-result
                         }
                     ]
                 }
@@ -75,10 +74,10 @@ http = fn (plugin:type:String :url) (disable-net-cache=:disable-net-cache) ^:arg
 ## This forwards to `std:net:http`, so all features it has are supported.
 ##
 ## Returns a Unit value, or an error if a non-successful status code is received.
-download = fn (plugin:type:String :url) (plugin:type:Path :target) ^:rest -> {
-    result = http :url ^:rest
+download = fn (plugin:String :url) (plugin:Path :target) ^:rest -> {
+    result = http $url ^$rest
     result:complete
-    plugin:fs:write :target result:body
+    plugin:fs:write $target result:body
 }
 
 ## Open a remote archive file.
@@ -92,15 +91,15 @@ download = fn (plugin:type:String :url) (plugin:type:Path :target) ^:rest -> {
 ##
 ## Returns the unpacked remote archive directory.
 unarchive = fn (enter=:enter) ^:args -> {
-    unpacked-dir = plugin:path:new()
-    result = http ^:args
+    unpacked-dir = plugin:Path:new ()
+    result = http ^$args
     result:complete
-    plugin:fs:unarchive :unpacked-dir result:body
-    plugin:match :enter [
-        plugin:type:Unset _ -> :unpacked-dir
-        _ -> plugin:match (plugin:fs:glob <| plugin:path:join :unpacked-dir *) [
-            [:inner] -> :inner
-            _ -> :unpacked-dir
+    plugin:fs:unarchive $unpacked-dir result:body
+    plugin:match $enter [
+        $unset -> $unpacked-dir
+        _ -> plugin:match (plugin:fs:glob <| plugin:Path:join $unpacked-dir *) [
+            [:inner] -> $inner
+            _ -> $unpacked-dir
         ]
 
     ]

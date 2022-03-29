@@ -8,21 +8,21 @@ plugin = ergo plugin
 ## tests), `Bool:true` to indicate success, `Bool:false` to indicate failure, or `Error` to indicate
 ## failure. The keys of the maps are used to name the tests.
 run = {
-    f = fn :self :name :x -> plugin:match ^allow-error :x [
-        plugin:type:Map :m -> plugin:iter:flatten <| plugin:iter:map (fn (plugin:type:MapEntry:@ :k :v) -> {
-            self :self (plugin:string:format "{}:{}" :name :k) :v
-        }) :m
-        plugin:type:Error :e -> [{ name, result = plugin:string:format "\u{1b}[31mfailed with error:\u{1b}[m {}" <| plugin:error:display :e }]
-        plugin:bool:true -> [{ name, result = "\u{1b}[32msuccess\u{1b}[m" }]
-        plugin:bool:false -> [{ name, result = "\u{1b}[31mfailed\u{1b}[m" }]
-        _ -> plugin:type:Error:@ (source=:x) "\u{1b}[1;31minvalid test result\u{1b}[m"
+    f = fn :self :name :x -> plugin:match ^allow-error $x [
+        plugin:Map :m -> plugin:Iter:flatten <| plugin:Iter:map (fn (plugin:MapEntry:@ :k :v) -> {
+            self $self "$name:$k" $v
+        }) $m
+        plugin:Error :e -> [{ name, result = "\u{1b}[31mfailed with error:\u{1b}[m $(plugin:Error:display $e)" }]
+        plugin:Bool:true -> [{ name, result = "\u{1b}[32msuccess\u{1b}[m" }]
+        plugin:Bool:false -> [{ name, result = "\u{1b}[31mfailed\u{1b}[m" }]
+        _ -> plugin:Error:new (source=$x) "\u{1b}[1;31minvalid test result\u{1b}[m"
     ]
 
-    print-result = fn {name, result} -> plugin:string:format "{} ... {}" :name :result
+    print-result = fn {:name, :result} -> "$name ... $result"
 
-    fn (plugin:type:Map :tests) -> {
-        :results = plugin:iter:flatten <| plugin:iter:map (fn :e -> f :f (plugin:string:format "{}" e:key) e:value) :tests
-        plugin:string:join "\n" <| plugin:iter:map :print-result :results
+    fn (plugin:Map :tests) -> {
+        :results = plugin:Iter:flatten <| plugin:Iter:map (fn :e -> f $f "$(e:key)" e:value) $tests
+        plugin:String:join "\n" <| plugin:Iter:map $print-result $results
     }
 }
 

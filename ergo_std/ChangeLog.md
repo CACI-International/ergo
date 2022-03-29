@@ -16,9 +16,18 @@
 * Add `std:Iter:partition` to partition iterators into a Map of Arrays.
 * Add a `Type` type, and refactor how script types work in general.
   * You can now get the type of any value as a runtime value.
-* Move `std:cmp` to `std:Order`.
 * Add `std:trait`, which allows access to built-in traits (`Bind`, `Into`,
   `Stored`, and `Display`) as well as creating custom traits with `new`.
+* Rename `std:String:format` to `std:String:match` (making it only valid to
+  match strings rather than creating strings).
+* Rename various functions in `std` to be consistent. See Migration for details.
+* Add the `std:Type:or` function (which was already in the last release but was
+  mistakenly not exported).
+* Extend `std:doc:module` to handle `Type`s too.
+* Add `std:Iter:unzip` to handle what used to be done with `std:zip` in pattern
+  expressions.
+* Remove `std:default` behavior in normal (as previously designated)
+  expressions.
 
 ### Migration
 * Remove the use of `std:by-content`. If it was being used to compare nested
@@ -37,7 +46,19 @@
   `std:trait:Bind:impl`.
 * Any type checks as normal (as previously designated) function calls will need
   to be rewritten or wrapped.
-* Change `std:cmp:...` to `std:Order:...`.
+* Change `std:String:format ...` to equivalent formatted strings `"..."` in
+  normal (as previously designated) expressions, and to `std:String:match` in
+  pattern expressions.
+* Change `std:Iter:zip` in pattern (as previously designated) expressions to
+  `std:Iter:unzip`.
+* Move `std:default` in normal (as previously designated) expressions.
+* Rename the following functions:
+  * `std:Any` -> `std:Type:pass`
+  * `std:Typed` -> `std:Type:any`
+  * `std:Array:Values` -> `std:Array:values`
+  * `std:Array:Of` -> `std:Array:of`
+  * `std:Map:Values` -> `std:Map:values`
+  * `std:Map:Of` -> `std:Map:of`
 
 ## 1.0.0-rc.3  -- 2021-12-14
 * No changes.

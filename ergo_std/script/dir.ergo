@@ -4,8 +4,8 @@ plugin = ergo plugin
 ## 
 ## Arguments: `(Array :cases)`
 ##
-## This is a shortcut for `:a -> match :a :cases`.
-matches = fn :cases -> :a -> plugin:match :a :cases
+## This is a shortcut for `:a -> match $$a $$cases`.
+matches = fn :cases -> :a -> plugin:match $a $cases
 
 mdoc = ergo doc
 mnet = ergo net
@@ -14,54 +14,47 @@ mtype = ergo type
 
 ## Load a remote archive.
 ##
-## Fetches the archive with `net:unarchive ^^enter`, and loads the archive from the root directory.
+## Fetches the archive with `net:unarchive ^enter`, and loads the archive from the root directory.
 ## Caches the returned value.
 ##
 ## All arguments are forwarded to `std:net:http`.
-ergo-remote = fn ^:args -> ergo <| plugin:value:cache <| mnet:unarchive ^enter ^:args
+ergo-remote = fn ^:args -> ergo <| plugin:value:cache <| mnet:unarchive ^enter ^$args
 
 ## Return any bound value as-is.
 ##
 ## Particularly useful as a case in `match` calls.
-pass = :v -> :v
+pass = :v -> $v
 
 ## Use a default value if Unset.
 ##
 ## Arguments: `:target as :value`
 ##
-## Ensure that `value` is evaluated as a normal expression in pattern expressions (typically
-## preceded by `!`, though not always necessary if the value doesn't use get/set syntax).
-##
-## If the value bound to the result is `Unset`, the default is used.
+## If the value bound to the result is `Unset`, `value` is used instead.
 ##
 ## ### Example Usage
 ## ```ergo
-## :v = default :my-value as []
-## default :my-value as [] = :maybe-an-array
+## default :my-value as [] = $$maybe-an-array
 ## func = fn (opt-arg = default :arg as []) -> {...}
 ## ```
-default = matches [
-    fn :v as :default-value -> plugin:match :v [plugin:type:Unset -> :default-value, :pass]
-    pat :out as :default-value -> :v -> {
-        bind :out <| plugin:match :v [plugin:type:Unset -> :default-value, :pass]
-    }
-]
+default = fn :target as :default-value -> :v -> {
+    $target =  plugin:match $v [$unset -> $default-value, $pass]
+}
 
 ## Partially apply a function.
 ##
-## Arguments: `(Function :func) ^^:args`
+## Arguments: `(Function :func) ^:args`
 ##
 ## Returns a `Function` that, when called, will call the original function with the original arguments
 ## and any extra arguments of the call.
 ##
 ## ### Example Usage
 ## ```ergo
-## f = fn :a :b :c -> [:a,:b,:c]
-## part = Function:partial :f 1 2
+## f = fn :a :b :c -> [$$a,$$b,$$c]
+## part = Function:partial $$f 1 2
 ## [1,2,3] = part 3
 ## [1,2,a] = part a
 ## ```
-partial = fn :f ^:args -> fn ^:args2 -> f ^:args ^:args2
+partial = fn :f ^:args -> fn ^:args2 -> f ^$args ^$args2
 
 ## Run a command that produces an output path, where the path to create is passed as an argument to
 ## the given function.
@@ -73,11 +66,12 @@ partial = fn :f ^:args -> fn ^:args2 -> f ^:args ^:args2
 ##
 ## ### Example Usage
 ## ```ergo
-## out = Path:with-output <| fn :p -> exec touch :p
+## out = Path:with-output <| fn :p -> exec touch $$p
 ## ```
 with-output-path = fn :f -> {
-    file = plugin:path:new()
-    { f :file, :file }
+    file = plugin:Path:new ()
+    f $file
+    $file
 }
 
 ## Match a path value or bind the source path of the value.
@@ -96,12 +90,14 @@ with-output-path = fn :f -> {
 ##
 ## This is of particular use with function arguments to get function call site source paths and
 ## allow them to be overriden.
-path-or-source = pat ^{parent,no-source = default :no-source as plugin:env:current-dir} :x -> matches [
-    plugin:type:Path :p -> bind :x :p
-    plugin:type:Unset :u -> bind :x <| plugin:match (plugin:value:source-path :u) [
-        plugin:type:Path :p -> plugin:match :parent [plugin:type:Unset -> :p, _ -> plugin:path:parent :p]
-        plugin:type:Unset -> :no-source
-    ]
+path-or-source = fn ^{:parent,no-source = default :no-source as plugin:env:current-dir} :x -> matches [
+    plugin:Path :p -> { $x = $p }
+    plugin:Unset :u -> {
+        $x = plugin:match (plugin:value:source-path $u) [
+            plugin:Path :p -> plugin:match $parent [$unset -> $p, _ -> plugin:Path:parent $p]
+            $unset -> $no-source
+        ]
+    }
 ]
 
 ## Create a recursive function. The passed function will be passed itself as the first argument, and
@@ -125,7 +121,7 @@ path-or-source = pat ^{parent,no-source = default :no-source as plugin:env:curre
 ## # External call
 ## func 1 2
 ## ```
-recursive = fn :f -> fn ^:args -> f :f ^:args
+recursive = fn :f -> fn ^:args -> f $f ^$args
 
 ## Memoize a function (cache the function results based purely on arguments).
 ##
@@ -134,13 +130,13 @@ recursive = fn :f -> fn ^:args -> f :f ^:args
 ## Returns a function which will share results based on the arguments. Thus, if you call the
 ## function more than once on the same arguments, it will only be evaluated once with those
 ## arguments.
-memoize = fn (plugin:type:Function :f) -> fn ^:args -> plugin:value:cache (no-persist=true) <| f ^:args
+memoize = fn (plugin:Function :f) -> fn ^:args -> plugin:value:cache (no-persist=true) <| f ^$args
 
 ## Import values by index in a binding expression.
 ##
-## Arguments: `(MapOrValue :descriptor)`
+## Arguments: `:descriptor`
 ##
-## If passed a map, each key in the map will be used as an index to the bound value, and each value
+## If passed a Map, each key in the map will be used as an index to the bound value, and each value
 ## will be bound as if `import` were used.
 ## Otherwise, bind the result to the binding expression.
 ##
@@ -149,28 +145,24 @@ memoize = fn (plugin:type:Function :f) -> fn ^:args -> plugin:value:cache (no-pe
 ## ### Example Usage
 ## ```ergo
 ## # Basic import (no different than normal binding)
-## import :s = :std
+## import :s = $$std
 ##
 ## # Name import
-## import {fs = {write},io} = :std
+## import {fs = {:write},:io} = $$std
 ## write file.txt io:stdin
 ##
 ## # Renaming import
-## import {path = :stdpath} = :std
+## import {path = :stdpath} = $$std
 ## stdpath:new()
 ## ```
-import = {
-    inner = recursive <| fn :self :descr -> :v -> {
-        plugin:match :descr [
-            plugin:type:Map :m -> {
-                plugin:iter:map (fn (plugin:type:MapEntry:@ :key :value) -> { fn (mtype:required (source=!:key) !(self :self :value)) -> () |> v::key }) :m
-                ()
-            }
-            :other -> bind :other :v
-        ]
-    }
-
-    pat :descr -> inner :descr
+import = recursive <| fn :self :descr -> :v -> {
+    plugin:match $descr [
+        plugin:Map :m -> {
+            plugin:Iter:map (fn (plugin:MapEntry:@ :key :value) -> { mtype:required (self $self $value) = plugin:value:source-copy $key v:$key }) $m
+            ()
+        }
+        :other -> { $other = $v }
+    ]
 }
 
 ## Check whether a path exists.
@@ -178,7 +170,7 @@ import = {
 ## Arguments: `(Path :path)`
 ##
 ## Returns a `Bool` indicating whether the path exists and is accessible to the user.
-file-exists = fn :p -> plugin:bool:from <| plugin:fs:file-type :p
+file-exists = fn :p -> plugin:Bool:from <| plugin:fs:file-type $p
 
 ## Create a function that also behaves as a module (with indices).
 ##
@@ -187,48 +179,30 @@ file-exists = fn :p -> plugin:bool:from <| plugin:fs:file-type :p
 ## This will also appropriately set the documentation of the value based on the documentation of the
 ## arguments.
 function-module = fn :func :module -> {
-    mod-doc = plugin:match :module [
+    mod-doc = plugin:match $module [
         {} -> ""
         _ -> {
             ##mdoc:module
             ##
             module
-            "\n\n^(doc :module)"
+            "\n\n$(doc $module)"
         }
     ]
 
-    ## ^(doc :func)^mod-doc
+    ## $(doc $func)$mod-doc
     :a -> {
-        { result } = plugin:match :a [
-            index :i -> plugin:match module::i [
-                plugin:type:Unset -> plugin:type:Error:@ (source = :module) <| plugin:string:format "missing index: {}" :i
-                :x -> { result = :x }
+        { :result } = plugin:match $a [
+            index :i -> plugin:match module:$i [
+                $unset -> plugin:Error:new (source = $module) "missing index: $i"
+                :x -> { result = $x }
             ]
             # We want the binding to occur immediately, but if there is an error we do not want to make
-            # `matches` consider it a match error and move on (to improve the overall error reported in
+            # `match` consider it a match error and move on (to improve the overall error reported in
             # this case).
-            :other -> { result = bind :func :other }
+            :other -> { result = bind $func $other }
         ]
-        :result
+        $result
     }
-}
-
-make-type = fn :tp ^{compose-args} :index-map -> {
-    index-map = {
-        ^plugin:match :compose-args [
-            plugin:type:Unset -> {}
-            :a -> {
-                ## Compose/decompose the type.
-                ##
-                ## Arguments: `^a`
-                @ = tp:@
-            }
-        ]
-        ^:index-map
-    }
-
-    ##mdoc:type
-    function-module :tp :index-map
 }
 
 ## Split an iterator after the first `n` elements.
@@ -237,62 +211,65 @@ make-type = fn :tp ^{compose-args} :index-map -> {
 ##
 ## Returns a 2-value array where the first value is an Iter with the first `n` values, and the
 ## second is an Iter with all remaining values.
-iter-split = fn :n :iter -> [plugin:iter:take :n :iter, plugin:iter:skip :n :iter]
+iter-split = fn :n :iter -> [plugin:Iter:take $n $iter, plugin:Iter:skip $n $iter]
 
 ## Conditionally return a value.
 ##
-## Arguments: `(Into<Bool> :condition) :if_true [else if :cond2 :if_true2]... [else :if_false]`
+## Arguments: `(Into Bool |> :condition) :if_true [else if :cond2 :if_true2]... [else :if_false]`
 ##
 ## If `condition` evaluates to true, `if_true` is returned. Otherwise each following `cond2` is
 ## subsequently tested (returning `if_true2` if one evaulates to true), and `if_false` is returned
 ## if no conditions evaluate to true. If the else condition is omitted, `unset` will be returned.
 if = fn :cond :if_true ^:rest -> {
     do-condition = recursive <| fn :self :cond :if_true :rest -> {
-        plugin:match (plugin:bool:from :cond) [
-            plugin:bool:true -> :if_true
-            plugin:bool:false -> plugin:match :rest [
-                [else,if,:cond2,:if_true2,^:rest] -> self :self :cond2 :if_true2 :rest
-                [else,:if_false] -> :if_false
-                [] -> :unset
-                [:other,^_] -> plugin:type:Error:@ (source=:other) "expected `else` or `else if`"
+        plugin:match (plugin:Bool:from $cond) [
+            plugin:Bool:true -> $if_true
+            plugin:Bool:false -> plugin:match $rest [
+                [else,if,:cond2,:if_true2,^:rest] -> self $self $cond2 $if_true2 $rest
+                [else,:if_false] -> $if_false
+                [] -> $unset
+                [:other,^_] -> plugin:Error:new (source=$other) "expected `else` or `else if`"
             ]
         ]
     }
-    do-condition :cond :if_true (plugin:array:from <| :rest)
+    do-condition $cond $if_true (plugin:Array:from <| $rest)
 }
 
 ## Create a function which takes only string arguments as interpreted by `std:getopt`.
 ##
-## Pattern Arguments: `^^:args`
+## Pattern Arguments: `^:args`
 ##
 ## Passes all positional arguments to `std:getopt` and binds the result to the pattern arguments.
-getopt-fn = :patargs -> :args -> bind :patargs <| plugin:getopt args:positional
+getopt-fn = :patargs -> :args -> { $patargs = plugin:getopt args:positional }
 
 ## Map a possibly-Unset value.
 ##
 ## Arguments: `(Function :f) :value`
 ##
 ## If `value` is Unset, returns `value`, otherwise return `f` applied to `value`.
-unset-map = fn :f :v -> plugin:match :v [plugin:type:Unset -> :v, _ -> f :v]
+unset-map = fn :f :v -> plugin:match $v [$unset -> $v, _ -> f $v]
 
 ## Bind a value to each binding provided.
 ##
-## Pattern Arguments: `^^:cases`
+## Pattern Arguments: `^:cases`
 ##
 ## When bound with a value `v`, binds each value in `cases` with `v`, failing if any encounter an
 ## error.
-bind-and = pat ^:cases -> :v -> {
-    plugin:iter:map (fn :case -> bind :case :v) cases:positional
+bind-and = fn ^:cases -> :v -> {
+    plugin:Iter:map (fn :case -> { $case = $v }) cases:positional
     ()
 }
 
 ## Bind a value to at least one of the bindings provided.
 ##
-## Pattern Arguments: `^^:cases`
+## Pattern Arguments: `^:cases`
 ##
 ## When bound with a value `v`, binds each value in `cases` with `v` until one does not error, and
 ## produces an error if none match.
-bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
+bind-or = fn ^:cases -> :v -> plugin:match $v cases:positional
+
+## Extend a type with the given map of indices.
+extend-type = fn :tp :map -> plugin:Type:modify $tp <| plugin:value:merge (plugin:Type:index $tp) $map
 
 ##mdoc:module
 ## The ergo standard library.
@@ -307,54 +284,80 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
 ## `std:String :s = :value` checks whether `value` is a string and binds the result (if it is a
 ## string) to `s`; `std:String :value` checks `value` and returns the evaluated result.
 {
-    Any = make-type mtype:Any {}
-
-    Typed = make-type plugin:type:Typed {}
-
-    Array = make-type plugin:type:Array {
-        import {from} = plugin:array
-        Values = mtype:ArrayValues
-        Of = mtype:ArrayOf
+    ##mdoc:module
+    ## Arrays of values.
+    Array = extend-type plugin:Array {
+        values = mtype:array-values
+        of = mtype:array-of
     }
 
-    Bool = make-type plugin:type:Bool plugin:bool
+    ##mdoc:module
+    ## Boolean values.
+    Bool = plugin:Bool
 
-    Error = make-type plugin:type:Error plugin:error (compose-args = "^^{source} :message")
+    ##mdoc:module
+    ## Runtime errors.
+    Error = plugin:Error
 
-    Function = make-type plugin:type:Function {memoize,partial,pass,recursive,module = :function-module}
+    ##mdoc:module
+    ## Functions and unbound values.
+    Function = extend-type plugin:Function {memoize,partial,pass,recursive,module = $function-module}
 
-    Iter = make-type plugin:type:Iter {^plugin:iter, split = :iter-split}
+    ##mdoc:module
+    ## Iterators producing values.
+    Iter = extend-type plugin:Iter {split = $iter-split}
 
-    Map = make-type plugin:type:Map {
-        import {from} = plugin:map
-        Values = mtype:MapValues
-        Of = mtype:MapOf
+    ##mdoc:module
+    ## Maps of values.
+    Map = extend-type plugin:Map {
+        values = mtype:map-values
+        of = mtype:map-of
     }
 
-    MapEntry = make-type plugin:type:MapEntry {} (compose-args = ":key :value")
+    ##mdoc:module
+    ## A single entry for a Map.
+    MapEntry = plugin:MapEntry
 
-    Number = make-type plugin:type:Number plugin:number (compose-args = ":number")
+    ##mdoc:module
+    ## Arbitrary rational numbers.
+    Number = plugin:Number
 
-    Order = make-type plugin:type:Order plugin:cmp
+    ##mdoc:module
+    ## Ordering values.
+    Order = plugin:Order
 
-    Path = make-type plugin:type:Path {^plugin:path, with-output = :with-output-path, or-source = :path-or-source}
+    ##mdoc:module
+    ## File paths.
+    Path = extend-type plugin:Path {with-output = $with-output-path, or-source = $path-or-source}
 
-    String = make-type plugin:type:String plugin:string
+    ##mdoc:module
+    ## Strings.
+    String = plugin:String
 
-    Unit = make-type plugin:type:Unit {}
+    ##mdoc:module
+    ## The Type of Types.
+    Type = extend-type plugin:Type {
+        import {:enum,:struct,:pass,:or} = $mtype
+    }
 
-    Unset = make-type plugin:type:Unset {map = :unset-map}
+    ##mdoc:module
+    ## Unit (void) type.
+    Unit = plugin:Unit
+
+    ##mdoc:module
+    ## Unset type.
+    Unset = extend-type plugin:Unset {map = $unset-map}
 
     ##mdoc:module
     ## Binding helpers.
     bind = {
-        and = :bind-and
-        or = :bind-or
+        and = $bind-and
+        or = $bind-or
     }
 
     ##mdoc:module
     ## Documentation helpers.
-    doc = :mdoc
+    doc = $mdoc
 
     ##mdoc:module
     ## Interact with dynamic bindings.
@@ -376,7 +379,7 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
 
     ##mdoc:module
     ## Interact with the local filesystem.
-    fs = force { ^plugin:fs, exists = :file-exists }
+    fs = { ^plugin:fs, exists = $file-exists }
 
     ##mdoc:module
     ## Interact with the program's io channels.
@@ -410,7 +413,7 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
 
     ##mdoc:module
     ## Networking functions.
-    net = :mnet
+    net = $mnet
 
     ##mdoc:module
     ## Value source location functions.
@@ -422,12 +425,12 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
         ##
         ## Returns the parent directory of the source path of `value`, or Unset if no source path is
         ## available.
-        dir = fn :x -> unset-map plugin:path:parent <| plugin:value:source-path :x
+        dir = fn :x -> unset-map plugin:Path:parent <| plugin:value:source-path $x
         path = plugin:value:source-path
         ## Map a function on a value, retaining the value's source.
         ##
         ## Arguments: `(Function :f) :value`
-        map = fn :f :v -> plugin:value:source-copy :v (f :v)
+        map = fn :f :v -> plugin:value:source-copy $v (f $v)
     }
 
     ##mdoc:module
@@ -436,24 +439,17 @@ bind-or = pat ^:cases -> :v -> plugin:match :v cases:positional
 
     ##mdoc:module
     ## Test helper functions.
-    test = :mtest
-
-    ##mdoc:module
-    ## Type creation.
-    type = {
-        import {new} = plugin:type
-        import {enum,struct} = :mtype
-    }
+    test = $mtest
 
     # Functions
-    import {cache,debug,equal,identity,merge,variable} = plugin:value
-    import {optional,required} = :mtype
+    import {:cache,:debug,:equal,:identity,:merge,:variable} = plugin:value
+    import {:optional,:required} = $mtype
     default
     ergo-remote
     exec = plugin:exec
-    getopt = function-module plugin:getopt {fn = :getopt-fn}
+    getopt = function-module plugin:getopt {fn = $getopt-fn}
     import
     if
-    match = function-module plugin:match {value = :matches}
+    match = function-module plugin:match {value = $matches}
     task = plugin:task
 }

@@ -1,15 +1,9 @@
-{type,match,map,iter,array,value,^_} = ergo plugin
+{:Type,:trait,:match,:Array,:Error,:Function,:Iter,:Map,:MapEntry,:String,:value,^_} = ergo plugin
 
-basic-type = fn :check -> :a -> match :a [
-    :check
-    fn (check :m) -> :m
-    (check _) -> ()
-]
-
-## The Any type.
+## Match any value, without evaluating it.
 ##
-## This type matches any value, without evaluating it.
-Any = basic-type <| pat :x -> :x
+## Arguments: `:target`
+pass = fn :target -> :x -> { $target = $x }
 
 ## Match maps with specific keys and value types.
 ## 
@@ -17,20 +11,18 @@ Any = basic-type <| pat :x -> :x
 ##
 ## `map` should contain the expected keys and their corresponding value types.
 ##
-## Returns a type that will check arguments like typical type functions.
-MapValues = fn (type:Map :fields) -> basic-type <| pat :out -> type:Map :m -> {
-    bind :out <| map:from <| iter:map (fn (type:MapEntry:@ :k :v) -> type:MapEntry:@ :k (fields::k :v)) :m
+## Returns a value that will match a Map with the given key/value types.
+map-values = fn (Map :fields) -> fn :target -> Map :m -> {
+    $target = Map:from <| Iter:map (fn (MapEntry:@ :k :v) -> { fields:$k :v = $v; MapEntry:new $k $v }) $m
 }
 
 ## Match maps where all keys match a specific type and all values match a specific type.
 ## 
 ## Arguments: `(Function :key-type) (Function :value-type)`
 ##
-## Returns a type that will check arguments like typical type functions.
-MapOf = fn (type:Function :keys) (type:Function :values) -> {
-    basic-type <| pat :out -> type:Map :m -> {
-        bind :out <| map:from <| iter:map (fn (type:MapEntry:@ (keys :k) (values :v)) -> type:MapEntry:@ :k :v) :m
-    }
+## Returns a value that will match a Map binding with the given types.
+map-of = fn (Function :Keys) (Function :Values) -> fn :target -> Map :m -> {
+    $target = Map:from <| Iter:map (fn (MapEntry:@ (Keys :k) (Values :v)) -> MapEntry:new $k $v) $m
 }
 
 ## Match arrays with specific value types.
@@ -39,50 +31,45 @@ MapOf = fn (type:Function :keys) (type:Function :values) -> {
 ##
 ## `array` should contain the expected value types for each entry in the array.
 ##
-## Returns a type that will check arguments like typical type functions.
-ArrayValues = fn (type:Array :tps) -> basic-type <| pat :out -> type:Array :a -> {
-    bind :out <| array:from <| iter:map (fn [:f,:v] -> f :v ) <| iter:zip :tps :a
+## Returns a value that will match an Array with the given value types.
+array-values = fn (Array :tps) -> fn :target -> Array :a -> {
+    $target = Array:from <| Iter:map (fn [:T,:v] -> { T :v = $v; $v } ) <| Iter:zip $tps $a
 }
 
 ## Match arrays where all values match a specific type.
 ## 
 ## Arguments: `(Function :type)`
 ##
-## Returns a type that will check arguments like typical type functions.
-ArrayOf = fn (type:Function :tp) -> {
-    basic-type (pat :out -> type:Array :a -> { bind :out <| array:from <| iter:map :tp :a })
+## Returns a value that will match an Array with the given types.
+array-of = fn (Function :T) -> fn :target -> Array :a -> {
+    $target = Array:from <| Iter:map (fn (T :v) -> $v) $a
 }
 
 ## Match a value allowing `Unset` values.
 ##
-## Pattern Arguments: `:target`
-optional = pat :out -> :v -> match :v [
-    type:Unset -> ()
-    _ -> bind :out :v
+## Arguments: `:target`
+optional = fn :target -> :v -> match $v [
+    $unset -> ()
+    _ -> { $target = $v }
 ]
 
 ## Match a value disallowing `Unset` values.
 ##
 ## This is only useful if the binding argument would normally accept an `Unset` value.
 ##
-## Pattern Arguments: `:target`
-required = pat :out ^{source} -> :v -> match :v [
-    type:Unset -> type:Error:@ (source=match :source [type:Unset -> :v, _ -> :source]) "required value missing"
-    _ -> bind :out :v
+## Arguments: `:target`
+required = fn :target -> :v -> match $v [
+    $unset -> Error:new (source=$v) "required value missing"
+    _ -> { $target = $v }
 ]
 
 ## Match one of a number of types.
 ##
-## Arguments: `^^:types`
+## Arguments: `^:types`
 ##
-## Each item in `types` should be a type capable of being called in a pattern expression with a
-## single argument to bind.
-##
-## Returns a type that will check arguments like typical type functions.
-Or = fn ^:tps -> {
-    basic-type <| pat :out -> :v -> {
-        match :v <| value:source-copy :tps <| array:from <| iter:map (fn :tp -> tp !:out -> ()) tps:positional
-    }
+## Returns a value that will match one of the provided `types`.
+or = fn ^:tps -> fn :target -> :v -> {
+    match $v <| value:source-copy $tps <| Array:from <| Iter:map (fn :T -> T $target -> ()) tps:positional
 }
 
 ## Create an enumeration type.
@@ -90,34 +77,27 @@ Or = fn ^:tps -> {
 ## Arguments: `(String :name) (Map :variants)`
 ## 
 ## Enumeration (sum) types have one of a closed set of inner types.
-## The first argument should be the unique name of the type (as would be passed to [new](self:new)).
-## The second argument should be a map of the variant keys and expectected types. For example:
+## The first argument should be the unique name of the type (as would be passed to `Type:new`).
+## The second argument should be a map of the variant keys and expected types. For example:
 ## ```ergo
 ## MapResult = enum MapResult {
-##   Ok = :Map
-##   Error = :String
+##   Ok = $$Map
+##   Error = $$String
 ## }
 ## ok = MapResult:Ok {}
 ## err = MapResult:Error "oh no"
-## MapResult :r = :ok
-## MapResult :e = :err
-## MapResult:Ok :m = :ok
+## MapResult :r = $$ok
+## MapResult :e = $$err
+## MapResult:@:Ok :m = $$ok
 ## ```
-## The variant values should be values supporting function calls and binding/pattern calls.
-enum = fn (type:String :name) (type:Map :variants) -> {
+enum = fn (String :name) (Map :variants) -> {
     # Create new type for enum
-    tp = type:new :name <| :a -> match :a [
-        fn :which ^:args -> { ::which = variants::which ^:args }
-        pat :which ^:args -> { ::which = variants::which ^!:args } -> ()
-    ]
-    # Create map interface for enum variants
-    key-to-accessor = fn :key -> :a -> match :a [
-        fn ^:args -> tp:@ :key ^:args
-        pat ^:args -> tp:@ !:key ^!:args -> ()
-    ]
-    type:Map :accessor = :variants | iter:map (fn (type:MapEntry:@ :key _) -> type:MapEntry:@ :key (key-to-accessor :key)) | map:from
-    # Wrap the accessor to add a way to check for `tp` using it.
-    :a -> match :a [index :arg -> accessor::arg,:tp]
+    Self = Type:new $name
+    # Create interface functions for creation and binding.
+    Type:modify $Self {
+        ^Map:from <| Iter:map (fn :e -> MapEntry:new e:key <| fn (e:value :value) -> Self:new e:key $value) $variants
+        @ = Map:from <| Iter:map (fn :e -> MapEntry:new e:key <| fn :target -> Self:@ e:key $target -> ()) $variants
+    }
 }
 
 ## Create a structured type.
@@ -125,24 +105,27 @@ enum = fn (type:String :name) (type:Map :variants) -> {
 ## Arguments: `(String :name) (Map :fields)`
 ## 
 ## Structured (product) types are a set of keyed values.
-## Note this merely makes a new type with a `MapValues` type checker.
+## Note this merely makes a new Type with a `Map:values` matcher.
 ## 
-## The first argument should be the unique name of the type (as would be passed to `type:new`).
+## The first argument should be the unique name of the type (as would be passed to `Type:new`).
 ## The second argument should be a map of the field keys and expected types. For example:
 ## ```ergo
 ## StringPair = struct StringPair {
-##     first = :String
-##     second = :String
+##     first = $$String
+##     second = $$String
 ## }
-## pair = StringPair:@ { first = hello, second = world }
+## pair = StringPair:new { first = hello, second = world }
 ## StringPair _ = :pair
-## StringPair:@ {first,second} = :pair
+## StringPair:@ {:first,:second} = :pair
 ## ```
-struct = fn (type:String :name) (type:Map :fields) -> {
-    type:new :name <| :a -> match :a [
-        fn (MapValues :fields |> :entries) -> :entries
-        pat :tgt -> !:tgt -> ()
-    ]
+struct = fn (String :name) (Map :fields) -> {
+    # Create new type for struct
+    Self = Type:new $name
+    # Create interface functions for creation and binding.
+    Type:modify $Self {
+        new = fn (map-values $fields |> :entries) -> Self:new $entries
+        @ = Self:@
+    }
 }
 
-{optional,required,Any,MapValues,MapOf,ArrayValues,ArrayOf,Or,enum,struct}
+{pass,optional,required,map-values,map-of,array-values,array-of,or,enum,struct}
