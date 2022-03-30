@@ -35,6 +35,13 @@
   something different should be renamed.
 * Remove `pat` and the function version of `index`.
 * Change the syntax for `{ a }` expanding to `{ :a = :a }`: it is now `{ :a }`.
+* Change Maps and keyed arguments to always be evaluated, and always evaluate
+  values when indexing. This avoids a lot of potential confusion when using
+  maps, as you may try to insert a key or index with a value that's not a
+  constant, but in the overwhelming majority the intention is to use the result
+  of those expressions. If someone _does_ want a key to incorporate an
+  unevaluated value, it is as simple as nesting it (for instance, in another Map
+  or Array).
 
 ### Breaking Changes
 * Any use of `!` should be replaced with equivalent code.

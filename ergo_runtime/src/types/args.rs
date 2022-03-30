@@ -6,7 +6,7 @@ use crate::metadata::Source;
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
 use crate::{
-    depends, Context, Dependencies, Error, GetDependencies, IdentifiedValue, Source as Src,
+    depends, Context, Dependencies, Error, EvaluatedValue, GetDependencies, Source as Src,
     TypedValue, Value,
 };
 use std::collections::BTreeMap;
@@ -36,11 +36,11 @@ impl From<Args> for TypedValue<Args> {
 pub struct UncheckedArguments {
     /// Positional arguments in this vec are in reverse order; use Iterator to access them.
     pub positional: RVec<Value>,
-    pub keyed: BstMap<IdentifiedValue, Value>,
+    pub keyed: BstMap<EvaluatedValue, Value>,
 }
 
 impl UncheckedArguments {
-    fn new(positional: Vec<Value>, keyed: BTreeMap<IdentifiedValue, Value>) -> Self {
+    fn new(positional: Vec<Value>, keyed: BTreeMap<EvaluatedValue, Value>) -> Self {
         UncheckedArguments {
             positional: positional.into_iter().rev().collect(),
             keyed: keyed.into_iter().collect(),
@@ -59,7 +59,7 @@ impl UncheckedArguments {
         self.kw_value(&super::String::from(key).into())
     }
 
-    pub fn kw_value(&mut self, key: &IdentifiedValue) -> Option<Value> {
+    pub fn kw_value(&mut self, key: &EvaluatedValue) -> Option<Value> {
         self.keyed.remove(key)
     }
 
@@ -189,7 +189,7 @@ pub struct Arguments {
 }
 
 impl Arguments {
-    pub fn new(positional: Vec<Value>, keyed: BTreeMap<IdentifiedValue, Value>) -> Self {
+    pub fn new(positional: Vec<Value>, keyed: BTreeMap<EvaluatedValue, Value>) -> Self {
         Arguments {
             inner: UncheckedArguments::new(positional, keyed),
         }

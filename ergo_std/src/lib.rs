@@ -1,5 +1,5 @@
 ///! Ergo standard module plugin.
-use ergo_runtime::{plugin_entry, types, Context, IdentifiedValue, Value};
+use ergo_runtime::{plugin_entry, types, Context, EvaluatedValue, Value};
 
 mod array;
 mod bool;
@@ -31,15 +31,15 @@ mod value;
 
 //pub use exec::ExitStatus;
 
-fn make_string_src(s: ergo_runtime::Source<&str>) -> IdentifiedValue {
+fn make_string_src(s: ergo_runtime::Source<&str>) -> EvaluatedValue {
     let (src, s) = s.take();
-    let mut v: IdentifiedValue = types::String::from(s).into();
+    let mut v: EvaluatedValue = types::String::from(s).into();
     // Safety: adding metadata doesn't change the identity state.
     ergo_runtime::metadata::Source::set(unsafe { v.value_mut() }, src);
     v
 }
 
-fn make_string(s: &str) -> IdentifiedValue {
+fn make_string(s: &str) -> EvaluatedValue {
     types::String::from(s).into()
 }
 
@@ -48,9 +48,9 @@ macro_rules! make_string_map {
     ( source $src:expr, $( $s:literal = $v:expr ),* ) => {
         {
             let src = $src;
-            use ergo_runtime::{IdentifiedValue, Value, types};
+            use ergo_runtime::{EvaluatedValue, Value, types};
             use ergo_runtime::metadata::Source;
-            let mut m: ergo_runtime::abi_stable::bst::BstMap<IdentifiedValue,Value> = Default::default();
+            let mut m: ergo_runtime::abi_stable::bst::BstMap<EvaluatedValue,Value> = Default::default();
             $(m.insert(crate::make_string_src(src.clone().with($s)), Source::imbue(src.clone().with($v)));)*
             Source::imbue(src.with(types::Map(m).into()))
         }

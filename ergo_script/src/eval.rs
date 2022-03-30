@@ -14,7 +14,7 @@ use ergo_runtime::{
     metadata::{self, Source},
     nsid, traits, try_result, types,
     value::{match_value, ValueId},
-    Context, IdentifiedValue, Value,
+    Context, EvaluatedValue, Value,
 };
 use futures::future::{BoxFuture, FutureExt};
 use log::error;
@@ -422,7 +422,7 @@ impl ExprEvaluator {
         &self,
         items: &[ast::BlockItem],
         mode: BlockItemMode,
-    ) -> Result<(Vec<Value>, BTreeMap<IdentifiedValue, Value>)> {
+    ) -> Result<(Vec<Value>, BTreeMap<EvaluatedValue, Value>)> {
         // Make a copy of self to modify the captures as we evaluate the block items.
         let mut me = self.clone();
         let mut env = BTreeMap::new();
@@ -463,7 +463,7 @@ impl ExprEvaluator {
                     drop(Context::eval(&mut val).await);
                     match_value! { val.clone(),
                         s@types::String(_) => {
-                            env.insert(Source::imbue(val_source.clone().with(s.into())).as_identified().await, Source::imbue(val_source.with(types::Unit.into())));
+                            env.insert(Source::imbue(val_source.clone().with(s.into())).as_evaluated().await, Source::imbue(val_source.with(types::Unit.into())));
                         }
                         types::Array(arr) => {
                             // TODO should this implicitly evaluate to a unit type when the array is
@@ -485,7 +485,11 @@ impl ExprEvaluator {
                                     has_errors = true;
                                     errs.push(val_source.with("cannot have multiple unbound merges").into_error());
                                 } else {
-                                    env.insert(Source::imbue(val_source.clone().with(types::BindRestKey.into())).as_identified().await, val);
+                                    let mut key: EvaluatedValue = types::BindRestKey.into();
+                                    // Safety: adding metadata does not change the identity of the
+                                    // value.
+                                    Source::set(unsafe { key.value_mut() }, val_source.clone());
+                                    env.insert(key, val);
                                     had_unbound = true;
                                 }
                             }
@@ -522,7 +526,7 @@ impl ExprEvaluator {
             let new_scope = me.scopes.close(close_scope);
 
             for (cap, k, v) in new_scope {
-                let k = k.as_identified().await;
+                let k = k.as_evaluated().await;
 
                 if !v.is_type::<types::Unset>() {
                     env.insert(k, v.clone());

@@ -5,14 +5,14 @@ use crate::abi_stable::{bst::BstMap, type_erase::Erased, StableAbi};
 use crate::metadata::Source;
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
-use crate::{depends, Dependencies, GetDependencies, IdentifiedValue, TypedValue, Value};
+use crate::{depends, Dependencies, EvaluatedValue, GetDependencies, TypedValue, Value};
 use bincode;
 use std::collections::BTreeMap;
 
 /// Script map type.
 #[derive(Clone, Debug, ErgoType, StableAbi)]
 #[repr(C)]
-pub struct Map(pub BstMap<IdentifiedValue, Value>);
+pub struct Map(pub BstMap<EvaluatedValue, Value>);
 
 impl GetDependencies for Map {
     fn get_depends(&self) -> Dependencies {
@@ -129,7 +129,7 @@ ergo_traits_fn! {
                     let values = read.next().unwrap();
 
                     for (k, v) in keys.into_iter().zip(values) {
-                        vals.insert(k.as_identified().await, v);
+                        vals.insert(k.as_evaluated().await, v);
                     }
                     crate::Result::Ok(Erased::new(Map(vals)))
                 }
@@ -145,7 +145,7 @@ ergo_traits_fn! {
 
             crate::value::match_value! { arg,
                 super::Index(index) => {
-                    self.0.get(&index.as_identified().await).cloned().unwrap_or(super::Unset.into())
+                    self.0.get(&index.as_evaluated().await).cloned().unwrap_or(super::Unset.into())
                 },
                 Map(map) => {
                     crate::try_result!(traits::bind_map(self.0.clone(), source.with(map.clone()), false).await);

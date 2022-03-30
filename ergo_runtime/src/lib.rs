@@ -62,7 +62,7 @@ pub use dependency::{
 pub use ergo_runtime_macro::plugin_entry;
 pub use error::{Error, RResult, Result};
 pub use source::Source;
-pub use value::{IdentifiedValue, TypedValue, Value};
+pub use value::{EvaluatedValue, IdentifiedValue, TypedValue, Value};
 
 pub trait ResultIterator<T> {
     /// Collect values into a Result, where errors will be aggregated.

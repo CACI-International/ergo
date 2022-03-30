@@ -11,11 +11,7 @@ use crate::abi_stable::{
 use crate::metadata::Source;
 use crate::source::Source as Src;
 use crate::type_system::{ergo_trait, ergo_traits_fn, ErgoTrait, Trait, Type};
-use crate::{
-    types,
-    value::{match_value, IntoValue},
-    Context, IdentifiedValue, Value,
-};
+use crate::{types, value::match_value, Context, EvaluatedValue, Value};
 
 /// The Bind ergo trait.
 #[ergo_trait]
@@ -173,11 +169,11 @@ where
 /// Returns the remaining items in `from` that were not bound if `return_rest` is true and
 /// `BindRestKey` is not a key in `to`.
 pub(crate) async fn bind_map(
-    mut to: BstMap<IdentifiedValue, Value>,
-    from: Src<BstMap<IdentifiedValue, Value>>,
+    mut to: BstMap<EvaluatedValue, Value>,
+    from: Src<BstMap<EvaluatedValue, Value>>,
     return_rest: bool,
-) -> crate::Result<BstMap<IdentifiedValue, Value>> {
-    let rest = to.remove(&types::BindRestKey.into_value().as_identified().await);
+) -> crate::Result<BstMap<EvaluatedValue, Value>> {
+    let rest = to.remove(&EvaluatedValue::from(types::BindRestKey));
     let (from_source, mut from) = from.take();
     for (k, to_v) in to.into_iter() {
         bind_no_error(

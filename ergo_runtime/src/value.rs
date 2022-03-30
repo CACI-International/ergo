@@ -565,6 +565,11 @@ impl Value {
         IdentifiedValue::from_value(self).await
     }
 
+    /// Get an EvaluatedValue from this value.
+    pub async fn as_evaluated(self) -> EvaluatedValue {
+        EvaluatedValue::from_value(self).await
+    }
+
     /// Get this value as the given mutable type, if evaluated to that type and no other references
     /// exist.
     pub fn as_mut<T: ErgoType>(&mut self) -> Option<&mut T> {
@@ -1002,6 +1007,75 @@ impl std::hash::Hash for IdentifiedValue {
     }
 }
 
+/// A value with an immediately-available identity and type.
+#[derive(Clone, Debug, StableAbi, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(C)]
+pub struct EvaluatedValue(IdentifiedValue);
+
+impl EvaluatedValue {
+    pub async fn from_value(mut v: Value) -> Self {
+        while !v.is_evaluated() {
+            v.eval_once().await;
+        }
+        EvaluatedValue(IdentifiedValue::from_value_immediate(v).await)
+    }
+
+    pub fn as_identified(self) -> IdentifiedValue {
+        self.0
+    }
+
+    pub fn id(&self) -> &u128 {
+        self.0.id()
+    }
+
+    /// Get the mutable Value.
+    ///
+    /// # Safety
+    /// The caller must ensure than any mutation to the underlying Value will leave the identity in
+    /// a state where it is still immediately available.
+    pub unsafe fn value_mut(&mut self) -> &mut Value {
+        self.0.value_mut()
+    }
+}
+
+impl std::ops::Deref for EvaluatedValue {
+    type Target = Value;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<EvaluatedValue> for IdentifiedValue {
+    fn from(v: EvaluatedValue) -> Self {
+        v.0
+    }
+}
+
+impl From<EvaluatedValue> for Value {
+    fn from(v: EvaluatedValue) -> Self {
+        v.0.into()
+    }
+}
+
+impl std::borrow::Borrow<IdentifiedValue> for EvaluatedValue {
+    fn borrow(&self) -> &IdentifiedValue {
+        &self.0
+    }
+}
+
+impl std::borrow::Borrow<Value> for EvaluatedValue {
+    fn borrow(&self) -> &Value {
+        self.0.borrow()
+    }
+}
+
+impl std::borrow::Borrow<u128> for EvaluatedValue {
+    fn borrow(&self) -> &u128 {
+        self.0.borrow()
+    }
+}
+
 /// A convenience trait for converting directly to a value.
 pub trait IntoValue {
     fn into_value(self) -> Value;
@@ -1033,5 +1107,17 @@ where
         let val = v.into_value();
         assert!(val.try_immediate_id().is_some());
         IdentifiedValue(val)
+    }
+}
+
+impl<T> From<T> for EvaluatedValue
+where
+    T: GetDependenciesConstant + IntoValue,
+{
+    fn from(v: T) -> EvaluatedValue {
+        let val = v.into_value();
+        assert!(val.is_evaluated());
+        assert!(val.try_immediate_id().is_some());
+        EvaluatedValue(IdentifiedValue(val))
     }
 }

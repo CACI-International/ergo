@@ -3,7 +3,7 @@
 use crate::abi_stable::{std_types::RVec, u128::U128, StableAbi};
 use crate::hash::HashFn;
 use crate::type_system::{Trait, Type};
-use crate::value::{IdentifiedValue, Identity, TypedValue, Value};
+use crate::value::{EvaluatedValue, IdentifiedValue, Identity, TypedValue, Value};
 use std::hash::Hash;
 use std::iter::FromIterator;
 
@@ -78,6 +78,12 @@ impl AsDependency for Value {
 }
 
 impl AsDependency for IdentifiedValue {
+    fn as_dependency(&self) -> Dependency {
+        (**self).as_dependency()
+    }
+}
+
+impl AsDependency for EvaluatedValue {
     fn as_dependency(&self) -> Dependency {
         (**self).as_dependency()
     }

@@ -317,7 +317,8 @@ async fn dynamic_binding_set(bindings: types::Map, mut eval: _) -> Value {
     Context::fork(
         |ctx| {
             for (k, v) in entries {
-                ctx.dynamic_scope.set(&Source::extract(k), v);
+                ctx.dynamic_scope
+                    .set(&Source::extract(k.as_identified()), v);
             }
         },
         async move {

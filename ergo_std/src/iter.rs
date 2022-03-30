@@ -776,7 +776,7 @@ async fn partition(func: _, iter: _) -> Value {
                 ),
             )
             .await;
-            let key = key.as_identified().await;
+            let key = key.as_evaluated().await;
             Ok((key, v))
         }))
         .await

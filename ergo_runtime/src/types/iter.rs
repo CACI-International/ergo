@@ -210,7 +210,7 @@ ergo_traits_fn! {
             for v in vals {
                 crate::value::match_value! { v,
                     super::MapEntry { key, value } => {
-                        let key = key.as_identified().await;
+                        let key = key.as_evaluated().await;
                         // Remove Unset values.
                         if value.is_type::<super::Unset>() {
                             ret.remove(&key);
