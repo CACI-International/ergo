@@ -9,4 +9,5 @@ set iskeyword=$,%,&,',*,+,45-57,63-90,95-122,126,~
 
 let b:current_syntax = "ergo"
 
-hi def link CocSemDocumentationComment SpecialComment
+hi link CocSemDocumentationComment SpecialComment
+hi link CocSemVariable PreProc

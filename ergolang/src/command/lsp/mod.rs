@@ -57,6 +57,7 @@ impl TokenType {
     pub const STRING: Self = TokenType(2);
     pub const OPERATOR: Self = TokenType(3);
     pub const FUNCTION: Self = TokenType(4);
+    pub const VARIABLE: Self = TokenType(5);
 
     pub fn register() -> Vec<SemanticTokenType> {
         vec![
@@ -65,6 +66,7 @@ impl TokenType {
             SemanticTokenType::STRING,
             SemanticTokenType::OPERATOR,
             SemanticTokenType::FUNCTION,
+            SemanticTokenType::VARIABLE,
         ]
     }
 }
@@ -301,6 +303,7 @@ impl LanguageServer for Service {
         }
 
         let mut comment_next = CommentNext::Off;
+        let mut last_dollar = false;
 
         for t in tokenize::Tokens::from(Source::new(0).with(RopeSlice(source.slice(..)))) {
             use LeaderToken as L;
@@ -311,16 +314,21 @@ impl LanguageServer for Service {
                 Ok(t) => t,
             };
 
+            let dollar_string = std::mem::take(&mut last_dollar);
+
             match comment_next {
                 CommentNext::Off => match tok.value() {
+                    Token::String(s) if s.as_str() == Some("$") => {
+                        results.push(tok.location, TokenType::VARIABLE, Default::default())
+                    }
                     Token::String(s) => match paired_toks.last() {
-                        Some(P::Quote | P::Apostrophe) => {
+                        Some(P::Quote | P::Apostrophe) if !dollar_string => {
                             results.push(tok.location, TokenType::STRING, Default::default())
                         }
-                        Some(P::Hash) => {
+                        Some(P::Hash) if !dollar_string => {
                             results.push(tok.location, TokenType::COMMENT, Default::default())
                         }
-                        Some(P::DoubleHash) => {
+                        Some(P::DoubleHash) if !dollar_string => {
                             results.push(tok.location, TokenType::COMMENT, TokenModifier::DOC)
                         }
                         _ => {
@@ -339,13 +347,19 @@ impl LanguageServer for Service {
                             .any(|k| **s == k)
                             {
                                 results.push(tok.location, TokenType::FUNCTION, Default::default());
+                            } else if dollar_string {
+                                results.push(tok.location, TokenType::VARIABLE, Default::default());
                             }
                         }
                     },
-                    Token::Symbol(Equal | Arrow | Colon) => {
+                    Token::Symbol(Equal | Arrow | Colon | ColonPrefix) => {
                         results.push(tok.location, TokenType::OPERATOR, Default::default())
                     }
-                    Token::Symbol(Caret | ColonPrefix | Pipe | PipeLeft | PipeRight) => {
+                    Token::Symbol(Dollar) => {
+                        results.push(tok.location, TokenType::VARIABLE, Default::default());
+                        last_dollar = true;
+                    }
+                    Token::Symbol(Caret | Pipe | PipeLeft | PipeRight) => {
                         results.push(tok.location, TokenType::MACRO, Default::default())
                     }
                     Token::Symbol(Hash) => {
