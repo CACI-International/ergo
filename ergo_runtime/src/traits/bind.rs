@@ -236,6 +236,7 @@ ergo_traits_fn! {
             crate::abi_stable::future::BoxFuture::new(async move {
                 if v.id().await != arg.id().await {
                     let arg_source = Source::get(&arg);
+                    let v_source = Source::get(v);
                     match_value! { arg,
                         types::Args {..} => {
                             let name = type_name_for(tp);
@@ -246,7 +247,13 @@ ergo_traits_fn! {
                             arg_source.with(format!("cannot index value with type {}", name)).into_error().into()
                         }
                         _ => {
-                            arg_source.with("mismatched value in binding").into_error().into()
+                            crate::error! {
+                                labels: [
+                                    secondary(arg_source.with("binding this value")),
+                                    secondary(v_source.with("to this value"))
+                                ],
+                                error: "mismatched value in binding"
+                            }.into()
                         }
                     }
                 } else {
