@@ -76,9 +76,9 @@ with-output-path = fn :f -> {
 
 ## Match a path value or bind the source path of the value.
 ##
-## Pattern Arguments: `:source`
+## Arguments: `:source`
 ##
-## Pattern Keyed Arguments:
+## Keyed Arguments:
 ## * `parent` - if present, the parent directory of the source path will be used.
 ## * `no-source` - the value to bind if no source information is available, defaulting to
 ##   `std:env:current-dir`.
@@ -237,7 +237,7 @@ if = fn :cond :if_true ^:rest -> {
 
 ## Create a function which takes only string arguments as interpreted by `std:getopt`.
 ##
-## Pattern Arguments: `^:args`
+## Arguments: `^:args`
 ##
 ## Passes all positional arguments to `std:getopt` and binds the result to the pattern arguments.
 getopt-fn = :patargs -> :args -> { $patargs = plugin:getopt args:positional }
@@ -251,7 +251,7 @@ unset-map = fn :f :v -> plugin:match $v [$unset -> $v, _ -> f $v]
 
 ## Bind a value to each binding provided.
 ##
-## Pattern Arguments: `^:cases`
+## Arguments: `^:cases`
 ##
 ## When bound with a value `v`, binds each value in `cases` with `v`, failing if any encounter an
 ## error.
@@ -262,7 +262,7 @@ bind-and = fn ^:cases -> :v -> {
 
 ## Bind a value to at least one of the bindings provided.
 ##
-## Pattern Arguments: `^:cases`
+## Arguments: `^:cases`
 ##
 ## When bound with a value `v`, binds each value in `cases` with `v` until one does not error, and
 ## produces an error if none match.
