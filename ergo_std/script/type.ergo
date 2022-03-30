@@ -95,8 +95,8 @@ enum = fn (String :name) (Map :variants) -> {
     Self = Type:new $name
     # Create interface functions for creation and binding.
     Type:modify $Self {
-        ^Map:from <| Iter:map (fn :e -> MapEntry:new e:key <| fn (e:value :value) -> Self:new e:key $value) $variants
-        @ = Map:from <| Iter:map (fn :e -> MapEntry:new e:key <| fn :target -> Self:@ e:key $target -> ()) $variants
+        ^Map:from <| Iter:map (fn (MapEntry:@ :key :Value) -> MapEntry:new $key <| fn (Value :value) -> Self:new $key $value) $variants
+        @ = Map:from <| Iter:map (fn (MapEntry:@ :key _) -> MapEntry:new $key <| fn :target -> Self:@ $key $target -> ()) $variants
     }
 }
 

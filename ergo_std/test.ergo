@@ -1,38 +1,32 @@
 type = {
     enum = {
-        MapResult = std:type:enum MapResult {
+        MapResult = std:Type:enum MapResult {
             Ok = std:Map
             Error = std:String
         }
-
         ok = MapResult:Ok {}
         err = MapResult:Error "oh no"
-        std:debug :MapResult:Ok
-        std:debug :ok
-        !:MapResult = :ok
-        !:MapResult = :err
-        MapResult _ = :ok
-        MapResult:Ok {} = :ok
-        MapResult:Error "oh no" = :err
+        MapResult _ = $ok
+        MapResult _ = $err
+        MapResult:@:Ok {} = $ok
+        MapResult:@:Error "oh no" = $err
         std:Bool:true
     }
 
     struct = {
-        StringPair = std:type:struct StringPair {
+        StringPair = std:Type:struct StringPair {
             first = std:String
             second = std:String
         }
-        pair = StringPair:@ { first = hello, second = world }
-        StringPair _ = :pair
-        StringPair:@ {first = hello, second = world} = :pair
+        pair = StringPair:new { first = hello, second = world }
+        StringPair _ = $pair
+        StringPair:@ {first = hello, second = world} = $pair
         std:Bool:true
     }
 
-    Any = {
-        std:Any _ = a
-        std:Any _ = std:Error:@ a
-        std:Any = a
-        a = std:Any a
+    pass = {
+        std:Type:pass _ = a
+        std:Type:pass _ = std:Error:@ a
         std:Bool:true
     }
 }
@@ -43,7 +37,7 @@ required = {
         std:Bool:true
     }
     missing = {
-        std:Error _ = { std:required _ = :unset }
+        std:Error _ = { std:required _ = $unset }
         std:Bool:true
     }
 }
@@ -87,4 +81,4 @@ if = {
     }
 }
 
-std:test:run { if, type, eval, required }
+std:test:run { if, type, required }
