@@ -5,6 +5,13 @@
 ## Arguments: `:target`
 pass = fn :target -> :x -> { $target = $x }
 
+## Check whether a value has the given type.
+##
+## Arguments: `(Type :type) :value`
+##
+## Returns `value` (evaluated) if it is a `type`, otherwise returns an Error.
+check = fn (Type :T) :value -> { T :x = $value; $x }
+
 ## Match maps with specific keys and value types.
 ## 
 ## Arguments: `(Map :map)`
@@ -128,4 +135,4 @@ struct = fn (String :name) (Map :fields) -> {
     }
 }
 
-{pass,optional,required,map-values,map-of,array-values,array-of,or,enum,struct}
+{pass,check,optional,required,map-values,map-of,array-values,array-of,or,enum,struct}

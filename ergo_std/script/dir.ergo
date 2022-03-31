@@ -331,7 +331,7 @@ extend-type = fn :tp :map -> plugin:Type:modify $tp <| plugin:value:merge (plugi
     ##mdoc:module
     ## The Type of Types.
     Type = extend-type plugin:Type {
-        import {:enum,:struct,:pass,:or} = $mtype
+        import {:check,:enum,:struct,:pass,:or} = $mtype
     }
 
     ##mdoc:module

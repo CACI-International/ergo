@@ -1,4 +1,5 @@
 plugin = ergo plugin
+type = ergo type
 
 cache-name = ERGO_NET_CACHE
 
@@ -9,7 +10,7 @@ cache-dir = plugin:env:get $cache-name
 http-defaults-path = plugin:Path:join plugin:env:config http defaults.ergo
 
 ## The map of http defaults specified by the user.
-http-defaults = plugin:Map <| plugin:match (plugin:Bool:from <| plugin:fs:file-type $http-defaults-path) [plugin:Bool:true -> ergo $http-defaults-path, _ -> {}]
+http-defaults = type:check plugin:Map <| plugin:match (plugin:Bool:from <| plugin:fs:file-type $http-defaults-path) [plugin:Bool:true -> ergo $http-defaults-path, _ -> {}]
 
 http-default-cases = plugin:Array:from <| plugin:Iter:map (fn :e -> plugin:String:match "$(e:key)/{}" _ -> e:value) <| plugin:Iter:order (fn :a :b -> plugin:String:compare b:key a:key) $http-defaults
 
