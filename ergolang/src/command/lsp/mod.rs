@@ -56,8 +56,7 @@ impl TokenType {
     pub const COMMENT: Self = TokenType(1);
     pub const STRING: Self = TokenType(2);
     pub const OPERATOR: Self = TokenType(3);
-    pub const FUNCTION: Self = TokenType(4);
-    pub const VARIABLE: Self = TokenType(5);
+    pub const VARIABLE: Self = TokenType(4);
 
     pub fn register() -> Vec<SemanticTokenType> {
         vec![
@@ -65,7 +64,6 @@ impl TokenType {
             SemanticTokenType::COMMENT,
             SemanticTokenType::STRING,
             SemanticTokenType::OPERATOR,
-            SemanticTokenType::FUNCTION,
             SemanticTokenType::VARIABLE,
         ]
     }
@@ -76,9 +74,13 @@ struct TokenModifier(u32);
 
 impl TokenModifier {
     pub const DOC: Self = TokenModifier(1 << 0);
+    pub const BUILTIN: Self = TokenModifier(1 << 1);
 
     pub fn register() -> Vec<SemanticTokenModifier> {
-        vec![SemanticTokenModifier::DOCUMENTATION]
+        vec![
+            SemanticTokenModifier::DOCUMENTATION,
+            SemanticTokenModifier::DEFAULT_LIBRARY,
+        ]
     }
 }
 
@@ -346,7 +348,11 @@ impl LanguageServer for Service {
                             .into_iter()
                             .any(|k| **s == k)
                             {
-                                results.push(tok.location, TokenType::FUNCTION, Default::default());
+                                results.push(
+                                    tok.location,
+                                    TokenType::VARIABLE,
+                                    TokenModifier::BUILTIN,
+                                );
                             } else if dollar_string {
                                 results.push(tok.location, TokenType::VARIABLE, Default::default());
                             }
