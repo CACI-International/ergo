@@ -93,7 +93,6 @@ not work correctly with this flag, so the default is `less`. You can:
 * Store `Unset`.
 * `std:fs:file-size`
 * Improve `Error` storage (prevent storage of nested Errors).
-* ExitStatus to Number.
 * Parallelism count.
 * `std:fs:rename`
 * Improve caching speed (using sqlite, in-memory map, etc)

@@ -73,6 +73,15 @@ impl From<ExitStatus> for types::Bool {
     }
 }
 
+impl From<ExitStatus> for types::Number {
+    fn from(e: ExitStatus) -> Self {
+        types::Number::from(match e.0 {
+            ROption::RNone => -1,
+            ROption::RSome(i) => i,
+        })
+    }
+}
+
 ergo_runtime::ConstantDependency!(ExitStatus);
 
 impl ergo_runtime::GetDependenciesConstant for ExitStatus {
@@ -113,7 +122,9 @@ impl From<ExitStatus> for ergo_runtime::TypedValue<ExitStatus> {
 /// script. It also won't include each of stdout or stderr in the error string if they are used in
 /// the script.
 ///
-/// The `ExitStatus` type can be converted to `Bool` to check whether the program returned a successful status.
+/// The `ExitStatus` type can be converted to `Bool` to check whether the program returned a
+/// successful status. It can also be converted to `Number`; if the process exited as the result of
+/// a signal (on unix OSes), it converts to `-1`.
 pub async fn function(
     cmd: _,
     (env): [types::Map],
@@ -410,6 +421,7 @@ ergo_runtime::type_system::ergo_traits_fn! {
 
     // ExitStatus traits
     traits::IntoTyped::<types::Bool>::add_impl::<ExitStatus>(traits);
+    traits::IntoTyped::<types::Number>::add_impl::<ExitStatus>(traits);
     ergo_runtime::ergo_display_basic!(traits, ExitStatus);
     ergo_runtime::ergo_type_name!(traits, ExitStatus);
 
@@ -650,6 +662,11 @@ mod test {
 
         fn exec_fail(t) {
             t.assert_fail("self:exec false |>:complete")
+        }
+
+        fn exit_status_number(t) {
+            t.assert_eq("self:Number:from <| self:exec false |>:exit-status", "self:Number:new 1");
+            t.assert_eq("self:Number:from <| self:exec true |>:exit-status", "self:Number:new 0");
         }
 
         fn exec_unset_args(t) {

@@ -29,6 +29,8 @@
 * Remove `std:default` behavior in normal (as previously designated)
   expressions.
 * Add `std:Type:name` to get the name of a type.
+* Allow converting `ExitStatus` to `Number`.
+  * If the process exited as the result of a signal, `-1` is returned.
 
 ### Migration
 * Remove the use of `std:by-content`. If it was being used to compare nested
