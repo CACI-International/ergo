@@ -28,6 +28,7 @@
   expressions.
 * Remove `std:default` behavior in normal (as previously designated)
   expressions.
+* Add `std:Type:name` to get the name of a type.
 
 ### Migration
 * Remove the use of `std:by-content`. If it was being used to compare nested
@@ -43,7 +44,8 @@
   at all.
 * Anything using a custom `std:type:new` type will need to be rewritten for the
   new API. This includes changing any `bind` keyed argument to instead call
-  `std:trait:Bind:impl`.
+  `std:trait:Bind:impl`, and adding associated functions using
+  `std:Type:modify`.
 * Any type checks as normal (as previously designated) function calls will need
   to be rewritten or wrapped.
 * Change `std:String:format ...` to equivalent formatted strings `"..."` in

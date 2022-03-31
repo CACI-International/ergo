@@ -19,6 +19,7 @@ pub fn r#type() -> Value {
             "get" = get(),
             "index" = index(),
             "modify" = modify(),
+            "name" = name(),
             "new" = new()
         },
     }
@@ -137,6 +138,17 @@ async fn new(id: types::String) -> Value {
         },
     }
     .into()
+}
+
+#[types::ergo_fn]
+/// Get the name of the given type.
+///
+/// Arguments: `(Type :type)`
+///
+/// Returns the type name as a String.
+async fn name(r#type: types::Type) -> Value {
+    let tp = &r#type.as_ref().tp;
+    types::String::from(traits::type_name_for(tp)).into()
 }
 
 #[types::ergo_fn]
@@ -271,6 +283,13 @@ mod test {
             t.assert_success("self:Type:any _ = hello");
             t.assert_fail("self:Type:any _ = self:Error:new err");
             t.assert_success("self:Type:any ^allow-error _ = self:Error:new err");
+        }
+
+        fn name(t) {
+            t.assert_eq("T = self:Type:new MyType
+            self:Type:name $T",
+                "MyType"
+            );
         }
     }
 }
