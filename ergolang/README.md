@@ -89,10 +89,10 @@ not work correctly with this flag, so the default is `less`. You can:
 * Maybe don't have a fallback doc string if there is no documentation set.
 * Progress spinner
 * Improve sources of capture bindings.
-* Show full command on exec falure.
 * Store `Unset`.
 * `std:fs:file-size`
 * Improve `Error` storage (prevent storage of nested Errors).
 * Parallelism count.
 * `std:fs:rename`
 * Improve caching speed (using sqlite, in-memory map, etc)
+* Change `std:env:get` to be a map (`std:env:vars`).

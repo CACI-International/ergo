@@ -31,6 +31,19 @@
 * Add `std:Type:name` to get the name of a type.
 * Allow converting `ExitStatus` to `Number`.
   * If the process exited as the result of a signal, `-1` is returned.
+* Change `std:exec` in a number of ways:
+  * Remove the `stdin` keyed argument; stdin is passed with a function.
+  * Print all information of the command in logs/errors, including env variables
+    and working directory.
+  * Return a new `Child` type which supports:
+    * `stdin` index - a function to pass data to the child process stdin
+    * `stdout` index - a `ByteStream` of the process stdout (as before)
+    * `stderr` index - a `ByteStream` of the process stderr (as before)
+    * `exit` index - a `ExitStatus` (renamed from the previous `exit-status`)
+    * `success` index - runs the process until completion, requiring success and
+      producing an error with the exit status, stdout, and stderr on error
+      (renamed and improved from the previous `complete`)
+    * conversion to `Bool`, `Number`, `String`, and `ByteStream`
 
 ### Migration
 * Remove the use of `std:by-content`. If it was being used to compare nested
@@ -63,6 +76,8 @@
   * `std:Array:Of` -> `std:Array:of`
   * `std:Map:Values` -> `std:Map:values`
   * `std:Map:Of` -> `std:Map:of`
+* Update the use of `std:exec`, passing `stdin` with the returned function and
+  changing `exit-status` to `exit` and `complete` to `success`.
 
 ## 1.0.0-rc.3  -- 2021-12-14
 * No changes.

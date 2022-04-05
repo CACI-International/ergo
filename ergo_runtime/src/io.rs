@@ -3,7 +3,7 @@
 use crate::abi_stable::{
     future as abi_future, sabi_trait,
     sabi_trait::prelude::*,
-    std_types::{RBox, RResult, RSliceMut},
+    std_types::{RBox, RResult, RSlice, RSliceMut},
     StableAbi,
 };
 use crate::error::DiagnosticInfo;
@@ -277,6 +277,109 @@ impl<'a> AsyncRead for BoxAsyncRead<'a> {
     fn poll_read(self: Pin<&mut Self>, cx: &mut Context, buf: &mut [u8]) -> Poll<Result<usize>> {
         unsafe { self.map_unchecked_mut(|s| &mut s.inner) }
             .poll_read(abi_future::Context::new(cx), buf.into())
+            .into_poll()
+            .map(|r| r.into_result().map_err(|e| e.into()))
+    }
+}
+
+#[sabi_trait]
+trait AsyncWriteInterface: Send {
+    fn poll_write(
+        &mut self,
+        cx: abi_future::Context,
+        src: RSlice<u8>,
+    ) -> abi_future::Poll<RResult<usize, crate::Error>>;
+
+    fn poll_flush(
+        &mut self,
+        cx: abi_future::Context,
+    ) -> abi_future::Poll<RResult<(), crate::Error>>;
+
+    #[sabi(last_prefix_field)]
+    fn poll_close(
+        &mut self,
+        cx: abi_future::Context,
+    ) -> abi_future::Poll<RResult<(), crate::Error>>;
+}
+
+#[derive(StableAbi)]
+#[repr(C)]
+pub struct BoxAsyncWrite<'a> {
+    inner: AsyncWriteInterface_TO<'a, RBox<()>>,
+}
+
+impl<'a> BoxAsyncWrite<'a> {
+    pub fn new<W: AsyncWrite + Send + 'a>(w: W) -> Self {
+        BoxAsyncWrite {
+            inner: AsyncWriteInterface_TO::from_value(w, TU_Opaque),
+        }
+    }
+}
+
+impl<W: AsyncWrite + Send> AsyncWriteInterface for W {
+    fn poll_write(
+        &mut self,
+        cx: abi_future::Context,
+        src: RSlice<u8>,
+    ) -> abi_future::Poll<RResult<usize, crate::Error>> {
+        let waker = cx.into_waker();
+        let mut ctx = Context::from_waker(&waker);
+        // Safe to use Pin::new_unchecked because these values will _only_ be within a Box (and
+        // are moved into the box), so we guarantee that it will not be moved out.
+        AsyncWrite::poll_write(
+            unsafe { Pin::new_unchecked(self) },
+            &mut ctx,
+            src.as_slice(),
+        )
+        .map(|v| v.into_diagnostic().map_err(|e| e.into()).into())
+        .into()
+    }
+
+    fn poll_flush(
+        &mut self,
+        cx: abi_future::Context,
+    ) -> abi_future::Poll<RResult<(), crate::Error>> {
+        let waker = cx.into_waker();
+        let mut ctx = Context::from_waker(&waker);
+        // Safe to use Pin::new_unchecked because these values will _only_ be within a Box (and
+        // are moved into the box), so we guarantee that it will not be moved out.
+        AsyncWrite::poll_flush(unsafe { Pin::new_unchecked(self) }, &mut ctx)
+            .map(|v| v.into_diagnostic().map_err(|e| e.into()).into())
+            .into()
+    }
+
+    fn poll_close(
+        &mut self,
+        cx: abi_future::Context,
+    ) -> abi_future::Poll<RResult<(), crate::Error>> {
+        let waker = cx.into_waker();
+        let mut ctx = Context::from_waker(&waker);
+        // Safe to use Pin::new_unchecked because these values will _only_ be within a Box (and
+        // are moved into the box), so we guarantee that it will not be moved out.
+        AsyncWrite::poll_close(unsafe { Pin::new_unchecked(self) }, &mut ctx)
+            .map(|v| v.into_diagnostic().map_err(|e| e.into()).into())
+            .into()
+    }
+}
+
+impl<'a> AsyncWrite for BoxAsyncWrite<'a> {
+    fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, src: &[u8]) -> Poll<Result<usize>> {
+        unsafe { self.map_unchecked_mut(|s| &mut s.inner) }
+            .poll_write(abi_future::Context::new(cx), src.into())
+            .into_poll()
+            .map(|r| r.into_result().map_err(|e| e.into()))
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
+        unsafe { self.map_unchecked_mut(|s| &mut s.inner) }
+            .poll_flush(abi_future::Context::new(cx))
+            .into_poll()
+            .map(|r| r.into_result().map_err(|e| e.into()))
+    }
+
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
+        unsafe { self.map_unchecked_mut(|s| &mut s.inner) }
+            .poll_close(abi_future::Context::new(cx))
             .into_poll()
             .map(|r| r.into_result().map_err(|e| e.into()))
     }
