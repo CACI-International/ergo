@@ -132,6 +132,9 @@ impl LogTarget for Output {
     }
 
     fn pause_logging(&mut self) {
+        // Update to flush any pending logs.
+        use super::Output;
+        self.update();
         self.paused = true;
         self.out.enable_stdin();
         // Clear previous rendered content.
