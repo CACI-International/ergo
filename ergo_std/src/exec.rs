@@ -301,7 +301,12 @@ pub async fn function(
                 stdin.take().unwrap().close().await?;
             } else {
                 let stream = traits::into::<types::ByteStream>(value).await?;
-                io::copy_interactive(&mut stream.as_ref().read(), stdin.as_mut().unwrap()).await.into_diagnostic()?;
+                if let Err(e) = io::copy_interactive(&mut stream.as_ref().read(), stdin.as_mut().unwrap()).await {
+                    // We expect BrokenPipe to occur if the process ends.
+                    if e.kind() != std::io::ErrorKind::BrokenPipe {
+                        Err(e).into_diagnostic()?;
+                    }
+                }
             }
             types::Unit.into()
         }

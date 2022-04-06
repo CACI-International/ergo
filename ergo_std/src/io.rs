@@ -11,6 +11,7 @@ pub fn module() -> Value {
     }
 }
 
+// FIXME use `std::io::StdinLock` instead (it isn't Send so that complicates things)?
 struct Stdin<'a> {
     inner: io::Blocking<std::io::Stdin>,
     _guard: MutexGuard<'a, ()>,
