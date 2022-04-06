@@ -60,6 +60,12 @@ pub struct Child {
 
 const CHILD_SUCCESS_INDEX: &'static str = "success";
 
+impl std::fmt::Display for Child {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        self.command_string.fmt(f)
+    }
+}
+
 /// The exit status of a command.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, ErgoType, StableAbi)]
 #[repr(C)]
@@ -225,7 +231,7 @@ pub async fn function(
             s.push('"');
         }
         let mut s = String::new();
-        s += "{pwd=";
+        s += "Child(pwd=";
         match command.get_current_dir() {
             None => s += "<none>",
             Some(p) => s += &p.display().to_string(),
@@ -243,7 +249,7 @@ pub async fn function(
             }
             first = false;
         }
-        s += "} ";
+        s += "}) ";
         string_lit(&mut s, command.get_program());
         for a in command.get_args() {
             s += " ";
@@ -371,6 +377,7 @@ ergo_runtime::type_system::ergo_traits_fn! {
 
     // Child traits
     ergo_runtime::ergo_type_name!(traits, Child);
+    ergo_runtime::ergo_display_basic!(traits, Child);
     impl traits::IntoTyped<types::Bool> for Child {
         async fn into_typed(self) -> Value {
             traits::into::<types::Bool>(self.as_ref().exit_status.clone()).await.into()
@@ -512,7 +519,8 @@ mod test {
         }
 
         fn stdin(t) {
-            t.assert_eq("child = self:exec cat; child:stdin hello; child:stdin (); self:String:from child:stdout", "\"hello\"");
+            t.assert_eq("child = self:exec cat; child:stdin hello; child:stdin world; child:stdin (); self:String:from child:stdout", "\"helloworld\"");
+            t.assert_fail("child = self:exec cat; child:stdin (); child:stdin ()");
         }
 
         fn to_string(t) {
