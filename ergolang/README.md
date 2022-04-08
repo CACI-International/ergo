@@ -91,6 +91,5 @@ not work correctly with this flag, so the default is `less`. You can:
 * Improve sources of capture bindings.
 * Improve `Error` storage (prevent storage of nested Errors).
 * Parallelism count.
-* `std:fs:rename`
 * Improve caching speed (using sqlite, in-memory map, etc)
 * Change `std:env:get` to be a map (`std:env:vars`).

@@ -28,6 +28,7 @@ pub fn module() -> Value {
         "glob" = glob_(),
         "read" = read(),
         "remove" = remove(),
+        "rename" = rename(),
         "sha1" = sha1(),
         "track" = track(),
         "unarchive" = unarchive(),
@@ -836,6 +837,28 @@ async fn remove(path: types::Path) -> Value {
             std::fs::remove_dir_all(&path)?;
         }
         ergo_runtime::Result::Ok(())
+    })?;
+    types::Unit.into()
+}
+
+#[types::ergo_fn]
+/// Rename a file or directory.
+///
+/// Arguments: `(Path :from) (Path :to)`
+///
+/// If `from` does not exist, the user doesn't have permissions to `from`, or `from` and `to` are
+/// on separate filesystems, an `Error` is returned.
+///
+/// If `to` already exists, it is overwritten.
+async fn rename(from: types::Path, to: types::Path) -> Value {
+    let from = from.as_ref().as_ref();
+    let to = to.as_ref().as_ref();
+    ergo_runtime::error_info!(
+        notes: [
+            format_args!("`from` was {}", from.display()),
+            format_args!("`to` was {}", to.display())
+        ], {
+        std::fs::rename(&from, &to)
     })?;
     types::Unit.into()
 }

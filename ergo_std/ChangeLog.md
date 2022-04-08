@@ -45,6 +45,7 @@
       (renamed and improved from the previous `complete`)
     * conversion to `Bool`, `Number`, `String`, and `ByteStream`
 * Add `std:fs:file-size` to get the size of a file in bytes.
+* Add `std:fs:rename` to rename files and directories.
 
 ### Migration
 * Remove the use of `std:by-content`. If it was being used to compare nested
