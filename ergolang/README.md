@@ -89,7 +89,6 @@ not work correctly with this flag, so the default is `less`. You can:
 * Maybe don't have a fallback doc string if there is no documentation set.
 * Progress spinner
 * Improve sources of capture bindings.
-* Store `Unset`.
 * `std:fs:file-size`
 * Improve `Error` storage (prevent storage of nested Errors).
 * Parallelism count.

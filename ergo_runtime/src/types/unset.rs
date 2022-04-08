@@ -1,7 +1,7 @@
 //! The Unset type.
 
 use crate as ergo_runtime;
-use crate::abi_stable::StableAbi;
+use crate::abi_stable::{type_erase::Erased, StableAbi};
 use crate::metadata::Source;
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
@@ -37,6 +37,21 @@ ergo_traits_fn! {
                 labels: [ primary(Source::get(SELF_VALUE).with("while displaying this value")) ],
                 error: e
             }).into()
+        }
+    }
+
+    impl traits::Stored for Unset {
+        async fn put(&self, _stored_ctx: &traits::StoredContext, item: crate::context::ItemContent) -> crate::RResult<()> {
+            crate::error_info!(
+                labels: [ primary(Source::get(SELF_VALUE).with("while storing this value")) ],
+                { bincode::serialize_into(item, &()) }
+            ).into()
+        }
+
+        async fn get(_stored_ctx: &traits::StoredContext, item: crate::context::ItemContent) -> crate::RResult<Erased> {
+            crate::error_info!(
+                { bincode::deserialize_from(item).map(|()| Erased::new(Unset)) }
+            ).into()
         }
     }
 

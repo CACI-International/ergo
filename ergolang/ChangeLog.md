@@ -42,6 +42,7 @@
   of those expressions. If someone _does_ want a key to incorporate an
   unevaluated value, it is as simple as nesting it (for instance, in another Map
   or Array).
+* Allow `Unset` types to be persisted.
 
 ### Breaking Changes
 * Any use of `!` should be replaced with equivalent code.
