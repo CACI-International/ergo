@@ -23,6 +23,7 @@ pub fn module() -> Value {
         "archive" = archive(),
         "copy" = copy(),
         "create-dir" = create_dir(),
+        "file-size" = file_size(),
         "file-type" = file_type(),
         "glob" = glob_(),
         "read" = read(),
@@ -292,6 +293,21 @@ async fn copy(from: types::Path, to: types::Path, (shallow): [_], (follow_symlin
     )
     .add_primary_label(ARGS_SOURCE.with(""))?;
     types::Unit.into()
+}
+
+#[types::ergo_fn]
+/// Return the file size of the given path.
+///
+/// Arugments: `(Path :path)`
+///
+/// Returns a Number with the file size in bytes. Does not follow symlinks (returning the size of
+/// the symlink file).
+///
+/// If the path does not exist or the user does not have permission to the path, returns `Unset`.
+async fn file_size(path: types::Path) -> Value {
+    std::fs::symlink_metadata(path.as_ref().0.as_ref())
+        .map(|m| types::Number::from(m.len()).into())
+        .unwrap_or(types::Unset.into())
 }
 
 #[types::ergo_fn]
