@@ -5,14 +5,14 @@ std:import {cache, env, exec, fs, source, task, Path} = :std
 ## Compile function, taking one argument indicating the file to compile.
 compile = fn :source-file -> cache <| Path:with-output <| fn :out -> {
     task "compiling ^source-file" {
-        exec (env = {PATH = env:get PATH}) c++ -o :out -c (!fs:track :source-file) |>:complete
+        exec (env = {PATH = env:vars:PATH}) c++ -o :out -c (!fs:track :source-file) |>:complete
     }
 }
 
 ## Executable-linking function, which links all arguments.
 link-exe = fn :name ^:objs -> cache <| Path:with-output <| fn :exe -> {
     task "linking executable ^name" {
-        exec (env = {PATH = env:get PATH}) c++ -o :exe ^:objs |>:complete
+        exec (env = {PATH = env:vars:PATH}) c++ -o :exe ^:objs |>:complete
     }
 }
 

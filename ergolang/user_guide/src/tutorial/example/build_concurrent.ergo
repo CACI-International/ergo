@@ -4,17 +4,17 @@ std:import {cache, env, exec, fs, source, task, Path} = :std
 
 # Compile main.cpp
 main = cache <| Path:with-output <| fn :out -> {
-    task "compiling main.cpp" (exec (env = {PATH = env:get PATH}) c++ -o :out -c (!fs:track main.cpp)):complete
+    task "compiling main.cpp" (exec (env = {PATH = env:vars:PATH}) c++ -o :out -c (!fs:track main.cpp)):complete
 }
 
 # Compile lib.cpp
 lib = cache <| Path:with-output <| fn :out -> {
-    task "compiling lib.cpp" (exec (env = {PATH = env:get PATH}) c++ -o :out -c (!fs:track lib.cpp)):complete
+    task "compiling lib.cpp" (exec (env = {PATH = env:vars:PATH}) c++ -o :out -c (!fs:track lib.cpp)):complete
 }
 
 # Link the object files together
 exe = cache <| Path:with-output <| fn :out -> {
-    task "linking executable" (exec (env = {PATH = env:get PATH}) c++ -o :out :main :lib):complete
+    task "linking executable" (exec (env = {PATH = env:vars:PATH}) c++ -o :out :main :lib):complete
 }
 
 # Copy to a file in the current directory.

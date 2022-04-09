@@ -3,7 +3,7 @@
 std:import {cache, env, exec, fs, source, task, Array, Iter, Path} = :std
 
 # Convenience bindings for the following functions
-run-with-path = fn ^:args -> (exec (env = {PATH = env:get PATH}) ^:args):complete
+run-with-path = fn ^:args -> (exec (env = {PATH = env:vars:PATH}) ^:args):complete
 copy-out = fn :file :name -> fs:copy :file <| Path:join (source:dir ()) :name
 
 ## Compile function, taking one argument indicating the file to compile.

@@ -9,7 +9,6 @@ use ergo_runtime::{
 
 pub fn module() -> Value {
     crate::make_string_map! {
-        "get" = get(),
         "home" = home(),
         "path-search" = path_search(),
         "current-dir" = current_dir(),
@@ -17,28 +16,25 @@ pub fn module() -> Value {
         "system-cache" = system_cache(),
         "config" = config(),
         "os" = os(),
-        "arch" = arch()
+        "arch" = arch(),
+        "vars" = vars()
     }
 }
 
-#[types::ergo_fn]
-/// Get an environment variable.
-///
-/// Arguments: `(String :environment-variable-name)`
-///
-/// If the environment variable is not set, returns `Unset`. Otherwise returns the value of the
-/// environment variable as a string, where the string is identified by the environment variable's
-/// content.
-async fn get(name: types::String) -> Value {
-    match std::env::var_os(name.as_ref().0.as_str()) {
-        None => types::Unset.into(),
-        Some(v) => types::String::from(v.into_string().map_err(|_| {
-            Source::get(&name)
-                .with("environment variable value is not valid unicode")
-                .into_error()
-        })?)
-        .into(),
+fn vars() -> Value {
+    let mut m = types::Map(Default::default());
+    for (k, v) in std::env::vars_os() {
+        m.0.insert(
+            types::String::from(k.to_string_lossy()).into(),
+            types::String::from(v.to_string_lossy()).into(),
+        );
     }
+    let mut v = m.into();
+    Doc::set_string(
+        &mut v,
+        "A Map of all environment variables when the process started, where keys and values are Strings."
+    );
+    v
 }
 
 fn current_dir() -> Value {

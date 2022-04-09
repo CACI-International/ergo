@@ -67,8 +67,8 @@ executed in the ergo runtime, it *is not* immediately executing `c++`.
 Instead,
 
 1. The entire expression is evaluated, producing a lazily-evaluated value which
-   will later be evaluated. The value captures `std:exec` and `std:env:get` to
-   be used later, which are functions in the standard library.
+   will later be evaluated. The value captures `std:exec` and `std:env:vars` to
+   be used later, which are values from the standard library.
 2. The value returned by the last line of our script is then _evaluated_, which
    is what actually invokes `exec`, running the `c++` program with the given
    arguments.

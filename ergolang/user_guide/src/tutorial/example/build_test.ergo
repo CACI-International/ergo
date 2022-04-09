@@ -7,7 +7,7 @@ std:import {
 
 # Convenience bindings for the following functions
 run = fn ^:args -> (exec ^:args):complete
-run-with-path = fn ^:args -> run (env = {PATH = env:get PATH}) ^:args
+run-with-path = fn ^:args -> run (env = {PATH = env:vars:PATH}) ^:args
 copy-out = fn :file :name -> fs:copy :file <| Path:join (source:dir ()) :name
 
 ## Compile function, taking one argument indicating the file to compile,

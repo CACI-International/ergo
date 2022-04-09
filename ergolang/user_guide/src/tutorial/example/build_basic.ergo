@@ -1,4 +1,4 @@
 #!/usr/bin/env ergo
 
 # Compile our code!
-std:exec (env = { PATH = std:env:get PATH }) c++ -o forty_two main.cpp lib.cpp
+std:exec (env = { PATH = std:env:vars:PATH }) c++ -o forty_two main.cpp lib.cpp

@@ -46,6 +46,8 @@
     * conversion to `Bool`, `Number`, `String`, and `ByteStream`
 * Add `std:fs:file-size` to get the size of a file in bytes.
 * Add `std:fs:rename` to rename files and directories.
+* Remove `std:env:get` in favor of `std:env:vars`, which is a `Map` of all of
+  the process's environment variables.
 
 ### Migration
 * Remove the use of `std:by-content`. If it was being used to compare nested
@@ -80,6 +82,7 @@
   * `std:Map:Of` -> `std:Map:of`
 * Update the use of `std:exec`, passing `stdin` with the returned function and
   changing `exit-status` to `exit` and `complete` to `success`.
+* Change `std:env:get ENV_VAR` to `std:env:vars:ENV_VAR`.
 
 ## 1.0.0-rc.3  -- 2021-12-14
 * No changes.
