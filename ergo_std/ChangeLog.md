@@ -6,29 +6,36 @@
   present in the `ERGO_NET_CACHE` (but would still return the cached result).
 
 ### Improvements
-* Removed the `std:by-content` function, as one shouldn't be reinterpreting
-  value identities.
-* Change `std:meta:eval` to return a map with the evaluated value and the
-  metadata value (if any). This also allows binding the map so that the
-  evaluation occurs immediately, which is often the intention (since forcing
-  evaluation is not longer supported syntactically).
-* Remove `std:eval` in favor of `std:Type:any`.
+
+#### Additions
 * Add `std:Iter:partition` to partition iterators into a Map of Arrays.
 * Add a `Type` type, and refactor how script types work in general.
   * You can now get the type of any value as a runtime value.
 * Add `std:trait`, which allows access to built-in traits (`Bind`, `Into`,
   `Stored`, and `Display`) as well as creating custom traits with `new`.
-* Rename `std:String:format` to `std:String:match` (making it only valid to
-  match strings rather than creating strings).
-* Rename various functions in `std` to be consistent. See Migration for details.
 * Add the `std:Type:or` function (which was already in the last release but was
   mistakenly not exported).
 * Extend `std:doc:module` to handle `Type`s too.
 * Add `std:Iter:unzip` to handle what used to be done with `std:zip` in pattern
   expressions.
+* Add `std:Type:name` to get the name of a type.
+* Add `std:fs:file-size` to get the size of a file in bytes.
+* Add `std:fs:rename` to rename files and directories.
+* Add `std:env:concurrent-tasks` to provide the runtime task concurrency.
+
+#### Modifications
+* Removed the `std:by-content` function, as one shouldn't be reinterpreting
+  value identities.
+* Change `std:meta:eval` to return a map with the evaluated value and the
+  metadata value (if any). This also allows binding the map so that the
+  evaluation occurs immediately, which is often the intention (since forcing
+  evaluation is no longer supported syntactically).
+* Remove `std:eval` in favor of `std:Type:any`.
+* Rename `std:String:format` to `std:String:match` (making it only valid to
+  match strings rather than creating strings).
+* Rename various functions in `std` to be consistent. See Migration for details.
 * Remove `std:default` behavior in normal (as previously designated)
   expressions.
-* Add `std:Type:name` to get the name of a type.
 * Allow converting `ExitStatus` to `Number`.
   * If the process exited as the result of a signal, `-1` is returned.
 * Change `std:exec` in a number of ways:
@@ -44,8 +51,6 @@
       producing an error with the exit status, stdout, and stderr on error
       (renamed and improved from the previous `complete`)
     * conversion to `Bool`, `Number`, `String`, and `ByteStream`
-* Add `std:fs:file-size` to get the size of a file in bytes.
-* Add `std:fs:rename` to rename files and directories.
 * Remove `std:env:get` in favor of `std:env:vars`, which is a `Map` of all of
   the process's environment variables.
 

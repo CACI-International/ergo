@@ -90,5 +90,4 @@ not work correctly with this flag, so the default is `less`. You can:
 * Progress spinner
 * Improve sources of capture bindings.
 * Improve `Error` storage (prevent storage of nested Errors).
-* Parallelism count.
 * Improve caching speed (using sqlite, in-memory map, etc)

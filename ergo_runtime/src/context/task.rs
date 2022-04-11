@@ -460,6 +460,7 @@ pub struct TaskManager {
     pool: ThreadPoolInterface_TO<'static, RBox<()>>,
     tasks: RArc<Semaphore>,
     abort_handles: RArc<RMutex<RVec<AbortHandleInterface_TO<'static, RBox<()>>>>>,
+    threads: usize,
     aggregate_errors: bool,
 }
 
@@ -469,6 +470,7 @@ impl std::fmt::Debug for TaskManager {
             .field("pool", &self.pool)
             .field("tasks", &self.tasks)
             .field("abort_handles", &self.abort_handles.lock())
+            .field("threads", &self.threads)
             .field("aggregate_errors", &self.aggregate_errors)
             .finish()
     }
@@ -486,7 +488,7 @@ impl TaskManager {
         num_threads: Option<usize>,
         aggregate_errors: bool,
     ) -> Result<Self, futures::io::Error> {
-        let threads = num_threads.unwrap_or_else(|| std::cmp::max(1, num_cpus::get()));
+        let threads = std::cmp::max(1, num_threads.unwrap_or_else(num_cpus::get));
         let barrier = std::sync::Arc::new(std::sync::Barrier::new(threads + 1));
         let is_core = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
 
@@ -525,6 +527,7 @@ impl TaskManager {
             ),
             tasks: RArc::new(Semaphore::new(threads)),
             abort_handles: RArc::new(RMutex::new(Default::default())),
+            threads,
             aggregate_errors,
         })
     }
@@ -621,6 +624,11 @@ impl TaskManager {
     /// Return whether the runtime is configured for error aggregation.
     pub fn aggregate_errors(&self) -> bool {
         self.aggregate_errors
+    }
+
+    /// Return the number of configured threads.
+    pub fn threads(&self) -> usize {
+        self.threads
     }
 
     /// Shutdown the runtime, waiting for pending tasks to complete.

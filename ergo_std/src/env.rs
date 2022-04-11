@@ -1,11 +1,6 @@
 //! Environment variable functions.
 
-use ergo_runtime::{
-    metadata::{Doc, Source},
-    traits, types,
-    value::match_value,
-    Context, Value,
-};
+use ergo_runtime::{metadata::Doc, traits, types, value::match_value, Context, Value};
 
 pub fn module() -> Value {
     crate::make_string_map! {
@@ -17,7 +12,8 @@ pub fn module() -> Value {
         "config" = config(),
         "os" = os(),
         "arch" = arch(),
-        "vars" = vars()
+        "vars" = vars(),
+        "concurrent-tasks" = concurrent_tasks()
     }
 }
 
@@ -174,6 +170,15 @@ fn arch() -> Value {
         "The architecture for which ergo was built.
 
 Possible values include `x86_64`, `x86`, `arm`, and `aarch64`.",
+    );
+    v
+}
+
+fn concurrent_tasks() -> Value {
+    let mut v: Value = types::Number::from(Context::global().task.threads()).into();
+    Doc::set_string(
+        &mut v,
+        "The maximum number of concurrent tasks that can run at once.",
     );
     v
 }
