@@ -813,8 +813,6 @@ dependencies = [
  "serde",
  "sha",
  "tar",
- "tokio 1.16.1",
- "tokio-util 0.6.9",
  "xz",
  "zip",
 ]

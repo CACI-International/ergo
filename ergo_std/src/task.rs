@@ -6,7 +6,11 @@ use ergo_runtime::abi_stable::{
     StableAbi,
 };
 use ergo_runtime::context::{DynamicScopeKey, Log, LogTask, RecordingWork, TaskPermit, Work};
-use ergo_runtime::{error::DiagnosticInfo, metadata::Source, nsid, traits, types, Context, Value};
+use ergo_runtime::{
+    depends, error::DiagnosticInfo, metadata::Source, nsid, traits, types, value::EvalForId,
+    Context, Value,
+};
+use futures::future::FutureExt;
 
 pub const SCRIPT_TASK_PRIORITY_OFFSET: u32 = 1000;
 
@@ -79,13 +83,10 @@ pub async fn function(
 
     let description = description.to_owned().0;
 
-    // XXX if more than one task relies on a single task, the task state of only one of them will
-    // be correct (the others will not correctly be suspended because only one will actually
-    // execute the `task ...` function)
     let log = Context::global().log.sublog("task");
     let work = RArc::new(RMutex::new(log.work(format!("{:x}", work_id))));
 
-    let fut = async {
+    let fut = async move {
         let parent_task =
             ParentTask::new(description.clone(), count, log.clone(), work.clone()).await;
         let mut value = value;
@@ -112,12 +113,32 @@ pub async fn function(
             },
         )
         .await
-    };
+    }
+    .shared();
 
-    match Context::with(|ctx| ctx.dynamic_scope.get(&ParentTaskKey)) {
-        Some(p) => p.suspend(fut).await,
-        None => fut.await,
-    }?
+    let call_deps = CALL_DEPENDS.clone();
+
+    // Return a value with the EvalForId flag set, so that it will always be evaluated (without
+    // caching results). This allows multiple tasks to properly suspend when relying on the same
+    // task.
+    Value::dynamic(
+        || async move {
+            match Context::with(|ctx| ctx.dynamic_scope.get(&ParentTaskKey)) {
+                Some(p) => {
+                    let p = p.clone();
+                    Value::dynamic(
+                        || async move { ergo_runtime::try_result!(p.suspend(fut).await) },
+                        depends![nsid!(std::task::result), ^call_deps],
+                    )
+                }
+                None => Value::dynamic(
+                    || async move { ergo_runtime::try_result!(fut.await) },
+                    depends![nsid!(std::task::result), ^call_deps],
+                ),
+            }
+        },
+        EvalForId::set(depends![nsid!(std::task::parent), ^CALL_DEPENDS]),
+    )
 }
 
 pub struct ParentTaskKey;

@@ -41,6 +41,7 @@ struct DynamicValue {
 }
 
 /// A pointer to a dynamic entry value.
+#[derive(Clone)]
 pub struct EntryPointer(RArc<DynamicValue>);
 
 impl std::ops::Deref for EntryPointer {

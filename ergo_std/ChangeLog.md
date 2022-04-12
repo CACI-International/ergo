@@ -4,6 +4,7 @@
 ### Bugfixes
 * Fix a bug where `std:net:http` would still try to download the file when
   present in the `ERGO_NET_CACHE` (but would still return the cached result).
+* Allow multiple tasks to correctly be suspended when awaiting the same task.
 
 ### Improvements
 
