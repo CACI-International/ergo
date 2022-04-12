@@ -43,6 +43,13 @@
   unevaluated value, it is as simple as nesting it (for instance, in another Map
   or Array).
 * Allow `Unset` types to be persisted.
+* Change the value binding fallback behavior such that the bound value is
+  evaluated prior to comparing identities. This, for example, makes matching on
+  nested values much more intuitive: `std:match [a b c, d e f] [
+  [string,other-string] -> ... ]` will evaluate `a b c` and `d e f` to see
+  whether the result matches `string` and `other-string`, respectively, where
+  before they would not be evaluated so it would never match. The prior behavior
+  had very few and obscure use cases.
 
 ### Breaking Changes
 * Any use of `!` should be replaced with equivalent code.

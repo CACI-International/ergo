@@ -227,9 +227,10 @@ ergo_traits_fn! {
             v: &'a Value,
             tp: &'a Type,
             _data: &'a Erased,
-            arg: Value) ->
+            mut arg: Value) ->
             crate::abi_stable::future::BoxFuture<'a, Value> {
             crate::abi_stable::future::BoxFuture::new(async move {
+                crate::try_result!(Context::eval(&mut arg).await);
                 if v.id().await != arg.id().await {
                     let arg_source = Source::get(&arg);
                     let v_source = Source::get(v);
