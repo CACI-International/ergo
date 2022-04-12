@@ -132,7 +132,7 @@ mod test {
         }
 
         fn match_case_body_error(t) {
-            t.assert_eq("self:match 1 [1 -> self:Error:new NO, 1 -> 2]", "self:Error:new NO");
+            t.assert_eq("self:Type:get ^allow-error <| self:match 1 [1 -> self:Error:new NO, 1 -> 2]", "self:Error");
         }
 
         fn match_case_body_bind_failure(t) {

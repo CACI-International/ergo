@@ -102,15 +102,16 @@ impl Test {
         let mut b = self.eval_success_v(b);
         let a = self.block_on(async {
             drop(Context::eval(&mut a).await);
-            a.as_identified().await
+            a
         });
         let b = self.block_on(async {
             drop(Context::eval(&mut b).await);
-            b.as_identified().await
+            b
         });
         self.dbg(&a);
         self.dbg(&b);
-        assert_eq!(a, b);
+        self.block_on(traits::bind_no_error(b, a))
+            .expect("bind error");
     }
 
     pub fn assert_ne(&self, a: &str, b: &str) {
@@ -118,15 +119,16 @@ impl Test {
         let mut b = self.eval_success_v(b);
         let a = self.block_on(async {
             drop(Context::eval(&mut a).await);
-            a.as_identified().await
+            a
         });
         let b = self.block_on(async {
             drop(Context::eval(&mut b).await);
-            b.as_identified().await
+            b
         });
         self.dbg(&a);
         self.dbg(&b);
-        assert_ne!(a, b);
+        self.block_on(traits::bind_no_error(b, a))
+            .expect_err("bind unexpectedly succeeded");
     }
 
     fn dbg(&self, v: &Value) {

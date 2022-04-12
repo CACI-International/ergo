@@ -432,7 +432,7 @@ mod test {
 
         fn dynamic_binding_multiple_scopes(t) {
             t.assert_eq("the-value = self:value:dynamic:get the-value
-                [force <| self:value:dynamic:eval {the-value = 10} $the-value, force <| self:value:dynamic:eval {the-value = hi} $the-value]", "[10,hi]");
+                [self:value:dynamic:eval {the-value = 10} $the-value, self:value:dynamic:eval {the-value = hi} $the-value]", "[10,hi]");
         }
 
         fn meta(t) {
@@ -443,9 +443,9 @@ mod test {
             t.assert_eq("self:value:merge [1,2] [3,4]", "[1,2,3,4]");
             t.assert_eq("self:value:merge hi ()", "()");
             t.assert_eq("self:value:merge {a = [1,2,3], b = { x = 1, y = 2 }, c = hi} {a = [4], b = { x = 42, z = 3 }}",
-                "{a = force [1,2,3,4], b = force { x = 42, y = 2, z = 3 }, c = hi}");
+                "{a = [1,2,3,4], b = { x = 42, y = 2, z = 3 }, c = hi}");
             t.assert_eq("self:value:merge ^array-merge {a = [{z=1},2,3], b = [1]} {a = [{y=4}], b = [4,5,6]}",
-                "{a = force [force {y=4,z=1},2,3], b = force [4,5,6]}");
+                "{a = [{y=4,z=1},2,3], b = [4,5,6]}");
         }
 
         fn equal(t) {

@@ -123,7 +123,7 @@ mod test {
         fn parse(t) {
             t.assert_eq(r#"self:json:parse '
             ' {"a": null, "b": 1, "c": true, "d": ["str"]}"#, "{
-                    a = (), b = force <| self:Number:from 1, c = force self:Bool:true, d = force [str]
+                    a = (), b = self:Number:from 1, c = self:Bool:true, d = [str]
                 }");
         }
 
@@ -132,7 +132,7 @@ mod test {
                     a = (), b = self:Number:from 1, c = self:Bool:true, d = [str]
                 }",
                 "{
-                    a = (), b = force <| self:Number:from 1, c = force self:Bool:true, d = force [str]
+                    a = (), b = self:Number:from 1, c = self:Bool:true, d = [str]
                 }");
         }
 
@@ -140,7 +140,7 @@ mod test {
             t.assert_eq("self:json:parse <| self:json:stringify ^pretty {
                     a = (), b = self:Number:from 1, c = self:Bool:true, d = [str]
                 }",
-                "{ a = (), b = force <| self:Number:from 1, c = force self:Bool:true, d = force [str] }"
+                "{ a = (), b = self:Number:from 1, c = self:Bool:true, d = [str] }"
             );
         }
     }

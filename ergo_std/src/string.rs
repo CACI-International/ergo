@@ -405,7 +405,7 @@ mod test {
 
         fn r#match(t) {
             t.assert_eq(r#"self:String:match "hello {}" :world = "hello world""#, "{ world = world }");
-            t.assert_eq(r#"self:String:match "{1} {} {2} {0}" :a :b :c = "1 2 3 4""#, "{a = force [2,4], b = 1, c = 3}");
+            t.assert_eq(r#"self:String:match "{1} {} {2} {0}" :a :b :c = "1 2 3 4""#, "{a = [2,4], b = 1, c = 3}");
             t.assert_eq(r#"self:String:match "{named} {}" ^{:named} :pos = "howdy pardner""#, "{ named = howdy, pos = pardner }");
             t.assert_eq(r#"self:String:match "{{ {} }}" :v = "{ hi }""#, "{ v = hi }");
             t.assert_fail(r#"bind (self:String:match "no match {}" :v -> $v) match"#);

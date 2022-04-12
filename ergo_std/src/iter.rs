@@ -817,11 +817,11 @@ mod test {
         }
 
         fn map(t) {
-            t.assert_eq("self:Array:from <| self:Iter:map (fn :a -> { mapped = $a }) [2,3]", "[{mapped = force 2},{mapped = force 3}]");
+            t.assert_eq("self:Array:from <| self:Iter:map (fn :a -> { mapped = $a }) [2,3]", "[{mapped = 2},{mapped = 3}]");
         }
 
         fn map_lazy(t) {
-            t.assert_eq("self:Array:from <| self:Iter:map-lazy (fn :a -> { mapped = $a }) [2,3]", "[{mapped = force 2},{mapped = force 3}]");
+            t.assert_eq("self:Array:from <| self:Iter:map-lazy (fn :a -> { mapped = $a }) [2,3]", "[{mapped = 2},{mapped = 3}]");
         }
 
         fn order(t) {
@@ -832,8 +832,8 @@ mod test {
 
         fn partition(t) {
             t.assert_eq(
-                "self:Iter:partition (fn :x -> force x:0) [force [a,1],force [b,2],force [c,3],force [a,4],force [c,5],force [b,6],force [b,7],force [c,8]]",
-                "{c = force [force [c,3],force [c,5],force [c,8]], b = force [force [b,2],force [b,6],force [b,7]], a = force [force [a,1],force [a,4]] }"
+                "self:Iter:partition (fn :x -> x:0) [[a,1],[b,2],[c,3],[a,4],[c,5],[b,6],[b,7],[c,8]]",
+                "{c = [[c,3],[c,5],[c,8]], b = [[b,2],[b,6],[b,7]], a = [[a,1],[a,4]] }"
             );
         }
 
@@ -865,26 +865,26 @@ mod test {
         fn unzip(t) {
             t.assert_eq(
                 "self:Iter:unzip :x :y = self:Iter:from [[a,1],[b,2]]
-                 x = force <| self:Array:from $x
-                 y = force <| self:Array:from $y",
-                "{x = force [a,b], y = force [1,2]}"
+                 x = self:Array:from $x
+                 y = self:Array:from $y",
+                "{x = [a,b], y = [1,2]}"
             );
             t.assert_eq(
                 "self:Iter:unzip :x :y :z = self:Iter:from [[a,1,x],[b,2],[c,3,y,q],[d,$unset,z]]
-                 x = force <| self:Array:from $x
-                 y = force <| self:Array:from $y
-                 z = force <| self:Array:from $z",
-                "{x = force [a,b,c,d], y = force [1,2,3], z = force [x,y,z]}"
+                 x = self:Array:from $x
+                 y = self:Array:from $y
+                 z = self:Array:from $z",
+                "{x = [a,b,c,d], y = [1,2,3], z = [x,y,z]}"
             );
         }
 
         fn zip(t) {
-            t.assert_eq("self:Array:from <| self:Iter:zip [a,b,c,d] [1,2,3,4]", "[force [a,1],force [b,2],force [c,3],force [d,4]]");
-            t.assert_eq("self:Array:from <| self:Iter:zip [a,b,c,d] [1,2]", "[force [a,1],force [b,2]]");
-            t.assert_eq("self:Array:from <| self:Iter:zip [a,b] [1,2,3,4]", "[force [a,1],force [b,2]]");
+            t.assert_eq("self:Array:from <| self:Iter:zip [a,b,c,d] [1,2,3,4]", "[[a,1],[b,2],[c,3],[d,4]]");
+            t.assert_eq("self:Array:from <| self:Iter:zip [a,b,c,d] [1,2]", "[[a,1],[b,2]]");
+            t.assert_eq("self:Array:from <| self:Iter:zip [a,b] [1,2,3,4]", "[[a,1],[b,2]]");
             t.assert_eq("self:Array:from <| self:Iter:zip ^[]", "[]");
-            t.assert_eq("self:Array:from <| self:Iter:zip [a,b,c]", "[force [a],force [b],force [c]]");
-            t.assert_eq("self:Array:from <| self:Iter:zip [a,b] [1,2] [x,y,z]", "[force [a,1,x],force [b,2,y]]");
+            t.assert_eq("self:Array:from <| self:Iter:zip [a,b,c]", "[[a],[b],[c]]");
+            t.assert_eq("self:Array:from <| self:Iter:zip [a,b] [1,2] [x,y,z]", "[[a,1,x],[b,2,y]]");
         }
     }
 }
