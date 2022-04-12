@@ -15,6 +15,7 @@ use crate::dependency::{
 use crate::hash::HashFn;
 use crate::type_system::{ErgoType, Type};
 use crate::Context;
+use cachemap::CacheMap;
 
 /// A shared runtime value.
 ///
@@ -484,10 +485,10 @@ impl Value {
         D: Into<ValueId>,
     {
         let next = DynamicNext_TO::from_value(
-            std::sync::Arc::new(futures::lock::Mutex::new(DynamicNextState::Pending(
+            std::sync::Arc::new(DynamicNextState {
                 func,
-                Default::default(),
-            ))),
+                complete: Default::default(),
+            }),
             TU_Opaque,
         );
         Value {
@@ -618,14 +619,17 @@ impl Value {
 
     /// Evaluate the value once (if dynamic).
     pub async fn eval_once(&mut self) {
-        match std::mem::replace(&mut self.data, ValueData::None) {
-            ValueData::Dynamic { next } => {
-                let Value { id, metadata, data } = next.next().await;
-                self.id = id;
-                self.metadata.extend(metadata);
-                self.data = data;
+        if let ValueData::Dynamic { .. } = &self.data {
+            let id = self.immediate_id().await.map(|v| v.into());
+            match std::mem::replace(&mut self.data, ValueData::None) {
+                ValueData::Dynamic { next } => {
+                    let Value { id, metadata, data } = next.next(id).await;
+                    self.id = id;
+                    self.metadata.extend(metadata);
+                    self.data = data;
+                }
+                _ => panic!("unexpected value data state"),
             }
-            o => self.data = o,
         }
     }
 
@@ -776,104 +780,50 @@ pub trait MetadataKey {
 
 #[sabi_trait]
 trait DynamicNext: Clone + Send + Sync {
-    fn ref_id(&self) -> usize;
-
     #[sabi(last_prefix_field)]
-    fn next(self) -> future::BoxFuture<'static, Value>;
+    fn next(self, id: EvalForId<U128>) -> future::BoxFuture<'static, Value>;
 }
 
-impl<F, Fut> DynamicNext for std::sync::Arc<futures::lock::Mutex<DynamicNextState<F>>>
+impl<F, Fut> DynamicNext for std::sync::Arc<DynamicNextState<F>>
 where
     F: FnOnce() -> Fut + Clone + Send + Sync + 'static,
     Fut: std::future::Future<Output = Value> + Send,
 {
-    fn ref_id(&self) -> usize {
-        self.as_ref() as *const futures::lock::Mutex<_> as usize
-    }
-
-    fn next(self) -> future::BoxFuture<'static, Value> {
+    fn next(self, id: EvalForId<U128>) -> future::BoxFuture<'static, Value> {
         future::BoxFuture::new(async move {
-            let lock_id = self.ref_id();
+            let lock_id = self.as_ref() as *const _ as usize;
             if Context::with(|ctx| ctx.evaluating.locking_would_deadlock(lock_id)) {
                 return crate::error!(error: "deadlock detected").into();
             }
 
-            let mut guard = self.lock().await;
-            match &mut *guard {
-                DynamicNextState::Pending(func, complete) => {
-                    if !complete.is_empty() {
-                        let ids = Context::with(|ctx| ctx.dynamic_scope.ids());
-                        if let Some(v) = complete.get(&ids) {
-                            return v.clone();
-                        }
-                    }
+            if !id.should_eval {
+                let mut guard = self.complete.cache_default(id.id.into()).lock().await;
+                if let Some(v) = &*guard {
+                    v.clone()
+                } else {
                     Context::with(|ctx| ctx.evaluating.locked(lock_id));
-                    let func_inner = func.clone();
-                    let (val, accessed) =
-                        Context::fork(|ctx| ctx.evaluating.push(lock_id), async move {
-                            let val = func_inner().await;
-                            let accessed = Context::with(|ctx| ctx.dynamic_scope.accessed());
-                            (val, accessed)
-                        })
-                        .await;
-                    if accessed.len() == 0 {
-                        debug_assert!(complete.is_empty());
-                        *guard = DynamicNextState::Done(val.clone());
-                    } else {
-                        complete.insert(&accessed, val.clone());
-                    }
+                    let val =
+                        Context::fork(|ctx| ctx.evaluating.push(lock_id), (self.func.clone())())
+                            .await;
+                    *guard = Some(val.clone());
                     drop(guard);
                     Context::with(|ctx| ctx.evaluating.unlocked(lock_id));
                     val
                 }
-                DynamicNextState::Done(val) => val.clone(),
+            } else {
+                Context::with(|ctx| ctx.evaluating.locked(lock_id));
+                let val =
+                    Context::fork(|ctx| ctx.evaluating.push(lock_id), (self.func.clone())()).await;
+                Context::with(|ctx| ctx.evaluating.unlocked(lock_id));
+                val
             }
         })
     }
 }
 
-#[derive(Default)]
-struct DynamicComplete {
-    // The completed values and the number of entries they have in ids.
-    values: Vec<(Value, usize)>,
-    // HashMap of (keyid, valueid) -> index in values
-    ids: std::collections::HashMap<(u128, u128), Vec<usize>>,
-}
-
-impl DynamicComplete {
-    pub fn is_empty(&self) -> bool {
-        self.values.is_empty()
-    }
-
-    pub fn insert(&mut self, entries: &[(u128, u128)], value: Value) {
-        debug_assert!(!entries.is_empty());
-        let index = self.values.len();
-        self.values.push((value, entries.len()));
-        for e in entries {
-            self.ids.entry(*e).or_default().push(index);
-        }
-    }
-
-    pub fn get(&self, entries: &[(u128, u128)]) -> Option<&Value> {
-        let mut counts: Vec<_> = self.values.iter().map(|(v, s)| (v, *s)).collect();
-        for e in entries {
-            if let Some(indices) = self.ids.get(e) {
-                for i in indices {
-                    let c = &mut counts[*i];
-                    c.1 -= 1;
-                    if c.1 == 0 {
-                        return Some(&c.0);
-                    }
-                }
-            }
-        }
-        None
-    }
-}
-
-enum DynamicNextState<F> {
-    Pending(F, DynamicComplete),
-    Done(Value),
+struct DynamicNextState<F> {
+    func: F,
+    complete: CacheMap<u128, futures::lock::Mutex<Option<Value>>>,
 }
 
 /// The data within a Value.

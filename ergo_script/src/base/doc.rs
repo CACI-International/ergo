@@ -20,14 +20,6 @@ impl DynamicScopeKey for DocPathKey {
     fn id(&self) -> u128 {
         nsid!(doc::path).as_u128()
     }
-
-    fn value_id(value: &DocPath) -> u128 {
-        let mut h = ergo_runtime::hash::HashFn::default();
-        use std::hash::Hash;
-        value.root.hash(&mut h);
-        value.path.hash(&mut h);
-        h.finish_ext()
-    }
 }
 
 #[derive(Clone, Debug)]

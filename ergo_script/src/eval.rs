@@ -573,10 +573,19 @@ impl ExprEvaluator {
     }
 
     /// Get the identity of the expression.
-    fn identity<'b>(
-        &'b self,
-        for_value: Option<Value>,
-    ) -> BoxFuture<'b, ergo_runtime::value::Identity> {
+    ///
+    /// The identity is determined by:
+    /// * traversing the AST for subexpressions/constants
+    /// * calculating the identity of subexpressions (recursively), and eagerly evaluating if
+    /// the captures are resolved and the identity has `should_eval` set, and
+    /// * aggregating the returned identities
+    ///
+    /// As an optimization, we don't evaluate() all subexpressions and use eval_id(). That would be
+    /// more consistent, however it would be doing a lot of extra work, and calculating identities
+    /// should be doing the minimum necessary to get the identity.
+    ///
+    /// The identity is cached if all captures are resolved.
+    fn identity<'b>(&'b self) -> BoxFuture<'b, ergo_runtime::value::Identity> {
         let captures_ready = self.captures_ready();
         let compute = async move {
             if let Some(cap) = self
@@ -605,13 +614,24 @@ impl ExprEvaluator {
                 })
             });
 
-            let mut id: ergo_runtime::value::Identity = Context::global()
+            Context::global()
                 .task
                 .join_all(ids.into_iter().map(|t| {
                     match t {
                         IdType::Expr(e) => {
                             let c = self.child(&e);
-                            async move { c.identity(None).await }.boxed()
+                            async move {
+                                let mut id = c.identity().await;
+                                // If the child can be evaluated, eagerly evaluate to potentially
+                                // end the should_eval inheritance (our identity should be based on
+                                // the evaulated identity as soon as it is available).
+                                if id.should_eval && c.captures_ready() {
+                                    let mut v = c.evaluate().await;
+                                    id = v.eval_id().await;
+                                }
+                                id
+                            }
+                            .boxed()
                         }
                         IdType::Constant(v) => {
                             let v = ergo_runtime::value::Identity::clear(v);
@@ -623,25 +643,7 @@ impl ExprEvaluator {
                 .await
                 .unwrap()
                 .into_iter()
-                .sum();
-
-            if id.should_eval && captures_ready {
-                let mut v = match for_value {
-                    None => self.evaluate().await,
-                    Some(v) => v,
-                };
-                // Right now v.eval_id() would result in trying to compute the identity
-                // that we're already computing since self.evaluate() will return the value
-                // which has this identity (except for doc comments, but that is a very
-                // unlikely case). So to get the identity, we evaluate once (if possible)
-                // and use the eval_id of that result.
-                if !v.is_evaluated() {
-                    Context::eval_once(&mut v).await;
-                    id = v.eval_id().await;
-                }
-            }
-
-            id
+                .sum()
         };
         if captures_ready {
             async move { self.cache.eval.as_ref().id.get(compute).await.clone() }.boxed()
@@ -652,9 +654,9 @@ impl ExprEvaluator {
 
     fn value_id(&self) -> ValueId {
         let me = self.clone().no_scope().no_eval_cache();
-        ValueId::new(move |v| {
+        ValueId::new(move |_| {
             Context::spawn(EVAL_TASK_PRIORITY, |_| {}, async move {
-                Ok(me.identity(Some(v)).await)
+                Ok(me.identity().await)
             })
             // Error only occurs when aborting.
             .map(|l| l.unwrap_or_else(|_| ergo_runtime::value::Identity::clear(0)))

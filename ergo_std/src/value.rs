@@ -294,6 +294,7 @@ async fn source_copy(from: _, mut to: _) -> Value {
 /// Arguments: `:key`
 ///
 /// Returns the dynamic binding corresponding to `key`, or `Unset` if none exists.
+#[forced]
 async fn dynamic_binding_get(key: _) -> Value {
     let key = key.as_identified().await;
     match Context::with(|ctx| ctx.dynamic_scope.get(&key)) {
@@ -309,11 +310,7 @@ async fn dynamic_binding_get(key: _) -> Value {
 ///
 /// Returns the result of evaluating `eval` with all `bindings` set in the dynamic scope.
 async fn dynamic_binding_set(bindings: types::Map, mut eval: _) -> Value {
-    let mut entries = Vec::new();
-    for (k, v) in bindings.to_owned().0 {
-        let v = v.as_identified().await;
-        entries.push((k, v));
-    }
+    let entries = bindings.to_owned().0;
     Context::fork(
         |ctx| {
             for (k, v) in entries {
