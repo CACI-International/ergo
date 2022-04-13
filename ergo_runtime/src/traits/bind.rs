@@ -237,17 +237,29 @@ ergo_traits_fn! {
                     match_value! { arg,
                         types::Args {..} => {
                             let name = type_name_for(tp);
-                            arg_source.with(format!("cannot call value with type {}", name)).into_error().into()
+                            crate::error! {
+                                labels: [
+                                    primary(v_source.with("")),
+                                    secondary(arg_source.with("call site"))
+                                ],
+                                error: format!("cannot call value with type {}", name)
+                            }.into()
                         }
                         types::Index(_) => {
                             let name = type_name_for(tp);
-                            arg_source.with(format!("cannot index value with type {}", name)).into_error().into()
+                            crate::error! {
+                                labels: [
+                                    primary(v_source.with("")),
+                                    secondary(arg_source.with("index site"))
+                                ],
+                                error: format!("cannot index value with type {}", name)
+                            }.into()
                         }
                         _ => {
                             crate::error! {
                                 labels: [
-                                    secondary(arg_source.with("binding this value")),
-                                    secondary(v_source.with("to this value"))
+                                    secondary(v_source.with("binding this value...")),
+                                    secondary(arg_source.with("... with this value"))
                                 ],
                                 error: "mismatched value in binding"
                             }.into()
