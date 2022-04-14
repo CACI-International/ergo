@@ -32,13 +32,13 @@ pub fn unset() -> Value {
 }
 
 #[types::ergo_fn]
-#[forced]
-/// Mark the given value as pertinent to the identity of the result.
+#[eval_for_id]
+/// Mark the given value as pertinent to the identity of the expression.
 ///
 /// Arguments: `:value`
 ///
 /// This means that the given value will be evaluated when the identity is needed.
-pub async fn force(mut v: _) -> Value {
+pub async fn eval_for_id(mut v: _) -> Value {
     drop(ergo_runtime::Context::eval(&mut v).await);
     v
 }

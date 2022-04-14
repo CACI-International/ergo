@@ -50,6 +50,8 @@
   whether the result matches `string` and `other-string`, respectively, where
   before they would not be evaluated so it would never match. The prior behavior
   had very few and obscure use cases.
+* Add a built-in `!id` function to mark a value as being relevant to the
+  identity of the expression.
 
 ### Breaking Changes
 * Any use of `!` should be replaced with equivalent code.

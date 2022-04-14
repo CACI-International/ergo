@@ -61,9 +61,9 @@ impl Parser for ErgoFnLike {
             docstr.trim().to_owned()
         };
 
-        let forced = {
+        let eval_for_id = {
             match f.attrs.iter().position(|a| match a.parse_meta() {
-                Ok(syn::Meta::Path(l)) if l.is_ident("forced") => true,
+                Ok(syn::Meta::Path(l)) if l.is_ident("eval_for_id") => true,
                 _ => false,
             }) {
                 Some(ind) => {
@@ -244,7 +244,7 @@ impl Parser for ErgoFnLike {
             Some(ds) => quote! { ergo_runtime::depends![dyn __ergo_fn_id, #ds] },
         };
 
-        let dep_tag = if forced {
+        let dep_tag = if eval_for_id {
             quote! { ergo_runtime::value::EvalForId::set }
         } else {
             quote! { std::convert::identity }

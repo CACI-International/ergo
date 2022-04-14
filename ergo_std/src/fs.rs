@@ -662,7 +662,7 @@ async fn sha1(file: types::Path, sum: types::String) -> Value {
 }
 
 #[types::ergo_fn]
-#[forced]
+#[eval_for_id]
 /// Make a Path depend on the contents of the file to which it refers.
 ///
 /// Arguments: `(Into<Path> :file)`

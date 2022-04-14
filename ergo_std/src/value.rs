@@ -291,12 +291,12 @@ async fn source_copy(from: _, mut to: _) -> Value {
 }
 
 #[types::ergo_fn]
+#[eval_for_id]
 /// Get a dynamic binding.
 ///
 /// Arguments: `:key`
 ///
 /// Returns the dynamic binding corresponding to `key`, or `Unset` if none exists.
-#[forced]
 async fn dynamic_binding_get(key: _) -> Value {
     let key = key.as_identified().await;
     Value::dynamic_impure(

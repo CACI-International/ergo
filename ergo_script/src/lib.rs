@@ -46,7 +46,7 @@ impl Runtime {
             ("doc", base::doc()),
             ("bind", base::bind()),
             ("unset", base::unset()),
-            ("force", base::force()),
+            ("!id", base::eval_for_id()),
         ]
         .into_iter()
         .map(|(k, v)| (k.into(), v))
@@ -812,95 +812,95 @@ mod test {
         }
 
         #[test]
-        fn forced_value() {
-            script_eval_semantics("*id <| force +");
+        fn id_value() {
+            script_eval_semantics("*id <| !id +");
         }
 
         #[test]
         fn array() {
             script_eval_semantics("*id [-,-,-]");
-            script_eval_semantics("*id [force +,-,force +,-]");
+            script_eval_semantics("*id [!id +,-,!id +,-]");
         }
 
         #[test]
         fn block() {
             script_eval_semantics("*id { -; -; - }");
-            script_eval_semantics("*id { force +; -; - }");
-            script_eval_semantics("*id { -; -; force + }");
+            script_eval_semantics("*id { !id +; -; - }");
+            script_eval_semantics("*id { -; -; !id + }");
         }
 
         #[test]
         fn unused_block_bind() {
             // No way to know that `b` is unused without static verification, which we don't
             // consider part of the runtime.
-            script_eval_semantics("*id { a = -, b = force $a, +, - }");
+            script_eval_semantics("*id { a = -, b = !id $a, +, - }");
         }
 
         #[test]
         fn used_block_bind() {
-            script_eval_semantics("*id { a = +, b = force $a, $b, +, - }");
+            script_eval_semantics("*id { a = +, b = !id $a, $b, +, - }");
         }
 
         #[test]
         fn unused_block_fn() {
-            script_eval_semantics("*id { f = fn :x -> force $x, +, - }");
+            script_eval_semantics("*id { f = fn :x -> !id $x, +, - }");
         }
 
         #[test]
         fn used_block_fn() {
-            script_eval_semantics("*id { f = fn :x -> force $x, f +, - }");
+            script_eval_semantics("*id { f = fn :x -> !id $x, f +, - }");
         }
 
         #[test]
         fn map_bind() {
-            script_eval_semantics("*id { a = -, b = force + }");
+            script_eval_semantics("*id { a = -, b = !id + }");
         }
 
         #[test]
         fn used_map_bind() {
-            script_eval_semantics("*id { a = +, b = force $a, c = - }");
+            script_eval_semantics("*id { a = +, b = !id $a, c = - }");
         }
 
         #[test]
         fn unused_map_fn_bind() {
-            script_eval_semantics("*id { f = fn :x -> force $x, +, b = - }");
+            script_eval_semantics("*id { f = fn :x -> !id $x, +, b = - }");
         }
 
         #[test]
         fn used_map_fn_bind() {
-            script_eval_semantics("*id { f = fn :x -> force $x, b = f +, +, c = - }");
+            script_eval_semantics("*id { f = fn :x -> !id $x, b = f +, +, c = - }");
         }
 
         #[test]
         fn fn_creation() {
-            script_eval_semantics("*id <| fn :x -> { -; force + }");
-            script_eval_semantics("*id <| fn :x -> { -; force $x }");
+            script_eval_semantics("*id <| fn :x -> { -; !id + }");
+            script_eval_semantics("*id <| fn :x -> { -; !id $x }");
         }
 
         #[test]
         fn fn_call() {
-            script_eval_semantics("*id <| fn :x -> { -; force + } |> -");
-            script_eval_semantics("*id <| fn :x -> { -; force $x } |> +");
+            script_eval_semantics("*id <| fn :x -> { -; !id + } |> -");
+            script_eval_semantics("*id <| fn :x -> { -; !id $x } |> +");
         }
     }
 
-    mod force {
+    mod eval_for_id {
         use super::*;
 
         #[test]
         fn value_eval() -> Result<(), String> {
-            script_eval_id_eq("force my-string", "my-string")
+            script_eval_id_eq("!id my-string", "my-string")
         }
 
         #[test]
         fn value_id() {
             // One is a String value, the other is a syntax string
-            script_parse_id_ne("force my-string", "my-string");
+            script_parse_id_ne("!id my-string", "my-string");
         }
 
         #[test]
         fn equivalent_value() {
-            script_parse_id_eq("force { x = a; $x }", "force a");
+            script_parse_id_eq("!id { x = a; $x }", "!id a");
         }
 
         #[test]
@@ -908,32 +908,29 @@ mod test {
             // Add the first `f a` to force both cases to evaluate the whole block (since otherwise
             // the first case will evaluate the whole block to bind `f` whereas the second case
             // will not).
-            script_parse_id_eq(
-                "f = fn :x -> force $x; f a",
-                "f = fn :x -> force $x; force a",
-            );
+            script_parse_id_eq("f = fn :x -> !id $x; f a", "f = fn :x -> !id $x; !id a");
         }
 
         #[test]
         fn fn_no_inherit() {
-            script_parse_id_ne("f = fn _ -> force a; f ()", "f = fn _ -> force a; force a");
+            script_parse_id_ne("f = fn _ -> !id a; f ()", "f = fn _ -> !id a; !id a");
         }
 
         #[test]
         fn block_dependency() {
-            script_parse_id_eq("force a; ()", "force a; ()");
-            script_parse_id_ne("force a; ()", "force b; ()");
+            script_parse_id_eq("!id a; ()", "!id a; ()");
+            script_parse_id_ne("!id a; ()", "!id b; ()");
         }
 
         #[test]
         fn map_dependency() {
-            script_parse_id_eq("force a; x = x", "force a; x = x");
-            script_parse_id_ne("force a; x = x", "force b; x = x");
+            script_parse_id_eq("!id a; x = x", "!id a; x = x");
+            script_parse_id_ne("!id a; x = x", "!id b; x = x");
         }
 
         #[test]
         fn map_unresolvable() {
-            script_eval_to("{$force; x = 1}", SRMap(&[("x", SRString("1"))])).unwrap();
+            script_eval_to("{$!id; x = 1}", SRMap(&[("x", SRString("1"))])).unwrap();
         }
     }
 
