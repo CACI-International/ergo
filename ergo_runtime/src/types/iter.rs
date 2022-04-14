@@ -125,7 +125,7 @@ impl Iter {
                         .into(),
                     }
                 },
-                depends![Next::ergo_type()] as crate::dependency::DependenciesConstant,
+                depends![const Next::ergo_type()],
             ),
         }
     }

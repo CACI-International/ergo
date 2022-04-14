@@ -137,10 +137,11 @@ impl<'a> DocRenderer<'a> {
 impl<'a, 'content> DocRendererState<'a, 'content> {
     fn render(self, events: &mut Parser<'content, '_>) -> DocBuilder<'content> {
         let mut doc = self.arena.nil();
-        let mut first = true;
-        while let Some(b) = self.render_one(events, first) {
+        if let Some(b) = self.render_one(events, true) {
             doc += b;
-            first = false;
+        }
+        while let Some(b) = self.render_one(events, false) {
+            doc += b;
         }
         doc
     }
@@ -208,18 +209,19 @@ impl<'a, 'content> DocRendererState<'a, 'content> {
     ) -> Option<DocBuilder<'content>> {
         let e = events.next()?;
 
-        let leading_hardline = if first {
+        let sep = if first {
             self.arena.nil()
         } else {
             self.arena.hardline()
         };
+        let line_sep = sep.clone() + sep.clone();
 
         use pulldown_cmark::{Event::*, HeadingLevel::*, Tag::*};
         Some(match e {
             Start(tag) => match tag {
-                Paragraph => leading_hardline + self.render(events) + self.arena.hardline(),
+                Paragraph => line_sep + self.render(events),
                 Heading(level, _, _) => {
-                    leading_hardline
+                    line_sep
                         + self.render(events).annotate(match level {
                             H1 => self.styles.h1.clone(),
                             H2 => self.styles.h2.clone(),
@@ -228,15 +230,14 @@ impl<'a, 'content> DocRendererState<'a, 'content> {
                             H5 => self.styles.h5.clone(),
                             H6 => self.styles.h6.clone(),
                         })
-                        + self.arena.hardline()
                 }
                 BlockQuote => {
-                    self.render(events)
+                    sep + self
+                        .render(events)
                         .indent(4)
                         .annotate(self.styles.italic.clone())
-                        + self.arena.hardline()
                 }
-                CodeBlock(_) => self.codeblock().render(events) + self.arena.hardline(),
+                CodeBlock(_) => sep + self.codeblock().render(events),
                 List(ordered) => {
                     let mut items = Vec::new();
                     match ordered {
@@ -265,18 +266,16 @@ impl<'a, 'content> DocRendererState<'a, 'content> {
                             }
                         }
                     }
-                    self.arena
+                    sep + self
+                        .arena
                         .intersperse(items.into_iter(), self.arena.hardline())
                         .indent(2)
-                        + self.arena.hardline()
                 }
                 Item => self.render(events),
                 FootnoteDefinition(s) => {
-                    self.arena.text(s).braces() + ": " + self.render(events) + self.arena.hardline()
+                    sep + self.arena.text(s).braces() + ": " + self.render(events)
                 }
-                Table(_) | TableHead | TableRow | TableCell => {
-                    self.render(events) + self.arena.hardline()
-                }
+                Table(_) | TableHead | TableRow | TableCell => line_sep + self.render(events),
                 Emphasis => self.render(events).annotate(self.styles.italic.clone()),
                 Strong => self.render(events).annotate(self.styles.bold.clone()),
                 Strikethrough => self
@@ -323,12 +322,7 @@ impl<'a, 'content> DocRendererState<'a, 'content> {
             FootnoteReference(r) => self.arena.text(r).braces(),
             SoftBreak => self.arena.softline(),
             HardBreak => self.arena.hardline(),
-            Rule => {
-                leading_hardline
-                    + self.arena.text("--------------------------------")
-                    + self.arena.hardline()
-                    + self.arena.hardline()
-            }
+            Rule => line_sep + self.arena.text("--------------------------------"),
             TaskListMarker(_) => {
                 log::error!("unexpected task list marker event from markdown parser");
                 self.arena.nil()
