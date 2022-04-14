@@ -101,7 +101,7 @@ async fn stderr(bytes: _) -> Value {
 /// Arguments: `()`
 ///
 /// Keyed arguments:
-/// `:stream` (optional) - the stream to check. May be `stdout` (default), `stdin`, or `stderr`.
+/// * `:stream` (optional) - the stream to check. May be `stdout` (default), `stdin`, or `stderr`.
 ///
 /// Returns a Bool indicating whether the stream is connected to a terminal.
 async fn is_terminal(_: types::Unit, (stream): [types::String]) -> Value {

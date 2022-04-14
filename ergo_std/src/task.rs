@@ -7,8 +7,7 @@ use ergo_runtime::abi_stable::{
 };
 use ergo_runtime::context::{DynamicScopeKey, Log, LogTask, RecordingWork, TaskPermit, Work};
 use ergo_runtime::{
-    depends, error::DiagnosticInfo, metadata::Source, nsid, traits, types, value::EvalForId,
-    Context, Value,
+    depends, error::DiagnosticInfo, metadata::Source, nsid, traits, types, Context, Value,
 };
 use futures::future::FutureExt;
 
@@ -118,10 +117,9 @@ pub async fn function(
 
     let call_deps = CALL_DEPENDS.clone();
 
-    // Return a value with the EvalForId flag set, so that it will always be evaluated (without
-    // caching results). This allows multiple tasks to properly suspend when relying on the same
-    // task.
-    Value::dynamic(
+    // Return an impure value, so that it will always be evaluated (without caching results). This
+    // allows multiple tasks to properly suspend when relying on the same task.
+    Value::dynamic_impure(
         || async move {
             match Context::with(|ctx| ctx.dynamic_scope.get(&ParentTaskKey)) {
                 Some(p) => {
@@ -137,7 +135,7 @@ pub async fn function(
                 ),
             }
         },
-        EvalForId::set(depends![nsid!(std::task::parent), ^CALL_DEPENDS]),
+        depends![nsid!(std::task::parent), ^CALL_DEPENDS],
     )
 }
 

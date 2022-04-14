@@ -6,7 +6,9 @@ use ergo_runtime::{
     metadata::{Runtime, Source},
     traits,
     type_system::ErgoType,
-    types, Context, Value,
+    types,
+    value::EvalForId,
+    Context, Value,
 };
 use futures::future::{BoxFuture, FutureExt};
 use std::collections::HashMap as CacheMap;
@@ -297,10 +299,15 @@ async fn source_copy(from: _, mut to: _) -> Value {
 #[forced]
 async fn dynamic_binding_get(key: _) -> Value {
     let key = key.as_identified().await;
-    match Context::with(|ctx| ctx.dynamic_scope.get(&key)) {
-        None => types::Unset.into(),
-        Some(r) => (*r).clone().into(),
-    }
+    Value::dynamic_impure(
+        || async move {
+            match Context::with(|ctx| ctx.dynamic_scope.get(&key)) {
+                None => types::Unset.into(),
+                Some(r) => (*r).clone().into(),
+            }
+        },
+        EvalForId::set(CALL_DEPENDS),
+    )
 }
 
 #[types::ergo_fn]

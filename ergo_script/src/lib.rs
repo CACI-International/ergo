@@ -773,6 +773,13 @@ mod test {
             )?;
             Ok(())
         }
+
+        #[test]
+        fn rebinding() -> Result<(), String> {
+            script_fail(
+                "store = fn :a in :b -> () -> { $b = $a }; store :x in :y = (); $y = 1; $y = 2",
+            )
+        }
     }
 
     mod identity {
@@ -922,6 +929,11 @@ mod test {
         fn map_dependency() {
             script_parse_id_eq("force a; x = x", "force a; x = x");
             script_parse_id_ne("force a; x = x", "force b; x = x");
+        }
+
+        #[test]
+        fn map_unresolvable() {
+            script_eval_to("{$force; x = 1}", SRMap(&[("x", SRString("1"))])).unwrap();
         }
     }
 

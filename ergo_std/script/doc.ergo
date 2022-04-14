@@ -23,13 +23,13 @@ category-key = "std:doc:category"
 ## Arguments: `:type`
 set-category = fn :category -> :v -> plugin:value:meta:set $category-key $category $v
 
-## An attribute to force a value to be documented under the `Values` heading.
+## An attribute to document a value under the `Values` heading.
 value = set-category Values
 
-## An attribute to force a value to be documented under the `Functions` heading.
+## An attribute to document a value under the `Functions` heading.
 function = set-category Functions
 
-## An attribute to force a value to be documented under the `Types` heading.
+## An attribute to document a value under the `Types` heading.
 type = set-category Types
 
 ## An attribute to ignore a value when generating documentation.
@@ -55,60 +55,63 @@ module = :val -> {
         plugin:Type :t -> {indices = plugin:Type:index $t, category = Types}
     ]
 
-    sections = plugin:Iter:fold (fn :categories :e -> {
-        # Partition contents based on category.
-        # First check for the explicit metadata
-        { result = :v, metadata-value = :meta } = plugin:value:meta:eval $category-key e:value
-        plugin:String :category = plugin:match $meta [
-            # Use the value type to determine the category
-            $unset -> plugin:match $v [
-                plugin:Function -> Functions
-                plugin:Type -> Types
-                _ -> Values
-            ]
-            :c -> $c
-        ]
-        plugin:value:merge $categories { :$category = [{name = e:key, value = $v}] }
-    }) {} $indices
-
-    # Format section headers and sorted contents, sorting sections explicitly for
-    # Types/Modules/Functions/Values and then lexicographically, dropping the Ignored values.
-    { :Types, :Modules, :Functions, :Values, Ignored = _, ^:extra-sections } = $sections
-
-    make-section = fn :section-name :values -> {
-        values = ($values
-            | plugin:Iter:order (fn :a :b -> plugin:String:compare a:name b:name)
-            | plugin:Iter:map (fn :e -> {
-                plugin:match (doc:path()) [
-                    $unset -> "* $(e:name): $(summary e:value)"
-                    _ -> {
-                        child = doc:child (path-safe e:name) e:value
-                        url-path = plugin:Path:join ^<|plugin:Array:from <| plugin:Iter:map plugin:net:url-encode <| plugin:Path:split child:path
-                        "* [$(e:name)]($url-path): $(string-summary child:content)"
-                    }
+    all-docs = {
+        sections = plugin:Iter:fold (fn :categories :e -> {
+            # Partition contents based on category.
+            # First check for the explicit metadata
+            { result = :v, metadata-value = :meta } = plugin:value:meta:eval $category-key e:value
+            plugin:String :category = plugin:match $meta [
+                # Use the value type to determine the category
+                $unset -> plugin:match $v [
+                    plugin:Function _ -> Functions
+                    plugin:Type _ -> Types
+                    _ -> Values
                 ]
-            })
-            | plugin:String:join "\n"
+                :c -> $c
+            ]
+            plugin:value:merge $categories { :$category = [{name = e:key, value = $v}] }
+        }) {} $indices
+
+        # Format section headers and sorted contents, sorting sections explicitly for
+        # Types/Modules/Functions/Values and then lexicographically, dropping the Ignored values.
+        { :Types, :Modules, :Functions, :Values, Ignored = _, ^:extra-sections } = $sections
+
+        make-section = fn :section-name :values -> {
+            values = ($values
+                | plugin:Iter:order (fn :a :b -> plugin:String:compare a:name b:name)
+                | plugin:Iter:map (fn :e -> {
+                    plugin:match (doc:path()) [
+                        $unset -> "* $(e:name): $(summary e:value)"
+                        _ -> {
+                            child = doc:child (path-safe e:name) e:value
+                            url-path = plugin:Path:join ^<|plugin:Array:from <| plugin:Iter:map plugin:net:url-encode <| plugin:Path:split child:path
+                            "* [$(e:name)]($url-path): $(string-summary child:content)"
+                        }
+                    ]
+                })
+                | plugin:String:join "\n"
+                )
+            "## $section-name\n$values"
+        }
+
+        maybe-section = fn :name :v -> plugin:match $v [$unset -> "", :v -> make-section $name $v]
+        Types = maybe-section Types $Types
+        Modules = maybe-section Modules $Modules
+        Functions = maybe-section Functions $Functions
+        Values = maybe-section Values $Values
+
+        extras = ($extra-sections
+            | plugin:Iter:order (fn :a :b -> plugin:String:compare a:key b:key)
+            | plugin:Iter:map (fn :e -> make-section e:key e:value)
             )
-        "## $section-name\n$values"
+
+        initial-sections = plugin:Iter:filter (fn :v -> plugin:match $v [
+            "" -> plugin:Bool:false
+            _ -> plugin:Bool:true
+        ]) [$docs,$Types,$Modules,$Functions,$Values]
+
+        plugin:String:join "\n\n" <| plugin:Iter:flatten [$initial-sections,$extras]
     }
-
-    maybe-section = fn :name :v -> plugin:match $v [$unset -> "", :v -> make-section $name $v]
-    Types = maybe-section Types $Types
-    Modules = maybe-section Modules $Modules
-    Functions = maybe-section Functions $Functions
-    Values = maybe-section Values $Values
-
-    extras = ($extra-sections
-        | plugin:Iter:order (fn :a :b -> plugin:String:compare a:key b:key)
-        | plugin:Iter:map (fn :e -> make-section e:key e:value)
-        )
-
-    initial-sections = plugin:Iter:filter (fn :v -> plugin:match $v [
-        "" -> plugin:Bool:false
-        _ -> plugin:Bool:true
-    ]) [$docs,$Types,$Modules,$Functions,$Values]
-    all-docs = plugin:String:join "\n\n" <| plugin:Iter:flatten [$initial-sections,$extras]
 
     ##(set-category $category)
     ## $all-docs

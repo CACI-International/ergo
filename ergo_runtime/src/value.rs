@@ -485,12 +485,32 @@ impl Value {
         D: Into<ValueId>,
     {
         let next = DynamicNext_TO::from_value(
-            std::sync::Arc::new(DynamicNextState {
+            std::sync::Arc::new(DynamicCached {
                 func,
                 complete: Default::default(),
             }),
             TU_Opaque,
         );
+        Value {
+            id: RArc::new(id.into()),
+            metadata: Default::default(),
+            data: ValueData::Dynamic { next },
+        }
+    }
+
+    /// Create a dynamically-typed (unevaluated) value with the given identity which represents an
+    /// impure operation.
+    ///
+    /// This is just like `dynamic`, except the resulting value will not cache evaluated results
+    /// based on identity (i.e. `func` will _always_ be called when the value is evaluated).
+    pub fn dynamic_impure<F, Fut, D>(func: F, id: D) -> Self
+    where
+        F: FnOnce() -> Fut + Clone + Send + Sync + 'static,
+        Fut: std::future::Future<Output = Value> + Send,
+        D: Into<ValueId>,
+    {
+        let next =
+            DynamicNext_TO::from_value(std::sync::Arc::new(DynamicImpure { func }), TU_Opaque);
         Value {
             id: RArc::new(id.into()),
             metadata: Default::default(),
@@ -784,7 +804,12 @@ trait DynamicNext: Clone + Send + Sync {
     fn next(self, id: EvalForId<U128>) -> future::BoxFuture<'static, Value>;
 }
 
-impl<F, Fut> DynamicNext for std::sync::Arc<DynamicNextState<F>>
+struct DynamicCached<F> {
+    func: F,
+    complete: CacheMap<u128, futures::lock::Mutex<Option<Value>>>,
+}
+
+impl<F, Fut> DynamicNext for std::sync::Arc<DynamicCached<F>>
 where
     F: FnOnce() -> Fut + Clone + Send + Sync + 'static,
     Fut: std::future::Future<Output = Value> + Send,
@@ -796,24 +821,15 @@ where
                 return crate::error!(error: "deadlock detected").into();
             }
 
-            if !id.should_eval {
-                let mut guard = self.complete.cache_default(id.id.into()).lock().await;
-                if let Some(v) = &*guard {
-                    v.clone()
-                } else {
-                    Context::with(|ctx| ctx.evaluating.locked(lock_id));
-                    let val =
-                        Context::fork(|ctx| ctx.evaluating.push(lock_id), (self.func.clone())())
-                            .await;
-                    *guard = Some(val.clone());
-                    drop(guard);
-                    Context::with(|ctx| ctx.evaluating.unlocked(lock_id));
-                    val
-                }
+            let mut guard = self.complete.cache_default(id.id.into()).lock().await;
+            if let Some(v) = &*guard {
+                v.clone()
             } else {
                 Context::with(|ctx| ctx.evaluating.locked(lock_id));
                 let val =
                     Context::fork(|ctx| ctx.evaluating.push(lock_id), (self.func.clone())()).await;
+                *guard = Some(val.clone());
+                drop(guard);
                 Context::with(|ctx| ctx.evaluating.unlocked(lock_id));
                 val
             }
@@ -821,9 +837,29 @@ where
     }
 }
 
-struct DynamicNextState<F> {
+struct DynamicImpure<F> {
     func: F,
-    complete: CacheMap<u128, futures::lock::Mutex<Option<Value>>>,
+}
+
+impl<F, Fut> DynamicNext for std::sync::Arc<DynamicImpure<F>>
+where
+    F: FnOnce() -> Fut + Clone + Send + Sync + 'static,
+    Fut: std::future::Future<Output = Value> + Send,
+{
+    fn next(self, _id: EvalForId<U128>) -> future::BoxFuture<'static, Value> {
+        future::BoxFuture::new(async move {
+            let lock_id = self.as_ref() as *const _ as usize;
+            if Context::with(|ctx| ctx.evaluating.locking_would_deadlock(lock_id)) {
+                return crate::error!(error: "deadlock detected").into();
+            }
+
+            Context::with(|ctx| ctx.evaluating.locked(lock_id));
+            let val =
+                Context::fork(|ctx| ctx.evaluating.push(lock_id), (self.func.clone())()).await;
+            Context::with(|ctx| ctx.evaluating.unlocked(lock_id));
+            val
+        })
+    }
 }
 
 /// The data within a Value.

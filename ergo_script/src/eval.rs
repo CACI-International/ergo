@@ -109,12 +109,34 @@ impl Captures {
     }
 }
 
-type ScopeValue = futures::future::Shared<futures::channel::oneshot::Receiver<Value>>;
-type ScopeItem = (Option<CaptureKey>, Value, ScopeValue);
+#[derive(Clone, Debug, Eq)]
+struct ScopeEntryKey {
+    cap: Option<CaptureKey>,
+    key: EvaluatedValue,
+}
+
+impl PartialEq for ScopeEntryKey {
+    fn eq(&self, other: &Self) -> bool {
+        match (&self.cap, &other.cap) {
+            (Some(a), Some(b)) => a == b,
+            (None, None) => self.key == other.key,
+            _ => false,
+        }
+    }
+}
+
+impl std::hash::Hash for ScopeEntryKey {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        self.cap.hash(h);
+        if self.cap.is_none() {
+            self.key.hash(h);
+        }
+    }
+}
 
 #[derive(Clone)]
 struct Scope {
-    inner: std::sync::Arc<RMutex<Vec<ScopeItem>>>,
+    inner: std::sync::Arc<RMutex<HashMap<ScopeEntryKey, Value>>>,
 }
 
 impl std::fmt::Debug for Scope {
@@ -126,48 +148,30 @@ impl std::fmt::Debug for Scope {
 impl Scope {
     pub fn new() -> Self {
         Scope {
-            inner: std::sync::Arc::new(RMutex::new(vec![])),
+            inner: std::sync::Arc::new(RMutex::new(Default::default())),
         }
     }
 
-    pub fn add(
-        &self,
-        cap: Option<CaptureKey>,
-        key: Value,
-        value: futures::channel::oneshot::Receiver<Value>,
-    ) {
-        self.inner().push((cap, key, value.shared()));
+    pub fn add(&self, cap: Option<CaptureKey>, key: EvaluatedValue, value: Value) -> bool {
+        self.inner
+            .as_ref()
+            .lock()
+            .insert(ScopeEntryKey { cap, key }, value)
+            .is_some()
     }
 
-    pub fn into_inner(self) -> Vec<(Option<CaptureKey>, Value, Value)> {
-        let vec = match std::sync::Arc::try_unwrap(self.inner) {
+    pub fn into_inner(self) -> Vec<(Option<CaptureKey>, EvaluatedValue, Value)> {
+        match std::sync::Arc::try_unwrap(self.inner) {
             Err(a) => {
-                // TODO should this panic instead? That would allow getting rid of the Shared
-                // wrapper.
-                error!("internal error: set scope unexpectedly persisted");
+                // TODO should this panic instead?
+                error!("set scope unexpectedly persisted");
                 a.lock().clone()
             }
             Ok(v) => v.into_inner(),
-        };
-        vec.into_iter()
-            .map(|(cap, key, val)| {
-                (
-                    cap,
-                    key,
-                    match val.now_or_never() {
-                        Some(Ok(v)) => v,
-                        _ => types::Unset.into(),
-                    },
-                )
-            })
-            .collect()
-    }
-
-    fn inner(
-        &self,
-    ) -> ergo_runtime::abi_stable::external_types::parking_lot::mutex::RMutexGuard<Vec<ScopeItem>>
-    {
-        self.inner.as_ref().lock()
+        }
+        .into_iter()
+        .map(|(k, v)| (k.cap, k.key, v))
+        .collect()
     }
 }
 
@@ -195,16 +199,19 @@ impl Scopes {
         &self,
         scope_key: ScopeKey,
         cap: Option<CaptureKey>,
-        key: Value,
-        value: futures::channel::oneshot::Receiver<Value>,
-    ) {
+        key: EvaluatedValue,
+        value: Value,
+    ) -> bool {
         self.inner
             .get(&scope_key)
             .expect("scope disappeared")
-            .add(cap, key, value);
+            .add(cap, key, value)
     }
 
-    pub fn close(&mut self, closer: ScopeCloser) -> Vec<(Option<CaptureKey>, Value, Value)> {
+    pub fn close(
+        &mut self,
+        closer: ScopeCloser,
+    ) -> Vec<(Option<CaptureKey>, EvaluatedValue, Value)> {
         self.inner
             .remove(&closer.0)
             .expect("scope disappeared")
@@ -526,8 +533,6 @@ impl ExprEvaluator {
             let new_scope = me.scopes.close(close_scope);
 
             for (cap, k, v) in new_scope {
-                let k = k.as_evaluated().await;
-
                 if !v.is_type::<types::Unset>() {
                     env.insert(k, v.clone());
                 } else {
@@ -800,24 +805,27 @@ impl ExprEvaluator {
                     None => types::Unset.into(),
                 }
             },
-            Set(set) => {
-                let k = self.child(&set.value).evaluate().await;
-                let (send_result, receive_result) = futures::channel::oneshot::channel::<Value>();
-
-                self.scopes.insert(set.scope_key, set.capture_key.clone(), k.clone(), receive_result);
-
-                let send_result = std::sync::Arc::new(std::sync::Mutex::new(Some(send_result)));
+            Set(_) => {
+                let me = self.clone().no_eval_cache();
+                let id = self.value_id();
                 types::Unbound::new_no_doc(move |v| {
-                    let send_result = send_result.lock().map(|mut g| g.take()).unwrap_or(None);
+                    let me = me.clone();
                     async move {
-                        if let Some(sender) = send_result {
-                            drop(sender.send(v));
-                            types::Unit.into()
-                        } else {
-                            Source::get(&v).with("cannot bind a setter more than once").into_error().into()
+                        let set = unsafe { me.expr.as_ref_unchecked::<ast::Set>() };
+                        let k = me.child(&set.value).evaluate().await.as_evaluated().await;
+
+                        if me.scopes.insert(set.scope_key, set.capture_key.clone(), k, v.clone()) {
+                            return ergo_runtime::error! {
+                                labels: [
+                                    primary(me.source().with("")),
+                                    secondary(Source::get(&v).with("value being bound"))
+                                ],
+                                error: "cannot bind a setter more than once"
+                            }.into();
                         }
+                        types::Unit.into()
                     }.boxed()
-                }, depends![dyn nsid!(ergo::set), k]).into()
+                }, id).into()
             },
             Index(ind) => delayed! { me, ind,
                 let mut value = me.child(&ind.value).evaluate().await;
