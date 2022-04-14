@@ -12,6 +12,7 @@ use crate::value::match_value;
 use crate::{depends, Dependencies, GetDependencies, TypedValue, Value};
 use bincode;
 use futures::stream::{Stream, StreamExt};
+use std::mem::ManuallyDrop;
 
 /// An iterator type.
 ///
@@ -23,11 +24,45 @@ pub struct Iter {
 }
 
 /// The next value from an Iter.
+///
+/// This has `iter` as a `ManuallyDrop` and has a `Drop` impl to avoid a stack overflow with large
+/// iterators. The issue is that iterators (and values in general) are kept in memory when
+/// evaluated/collected (usually), so that when the first item is dropped it causes a cascade of
+/// drops of all of the cached values, which will be a huge stack for somewhat large iterators
+/// (1000s+ of items). Thread local storage is used to drop the values in a loop rather than
+/// recursively.
 #[derive(Clone, Debug, ErgoType, StableAbi)]
 #[repr(C)]
 struct Next {
     pub value: Value,
-    pub iter: Iter,
+    pub iter: ManuallyDrop<Iter>,
+}
+
+plugin_tls::thread_local! {
+    // We use a Vec rather than simply Option<Value> because when dropping a `Next`, the `value`
+    // may itself be another `Iter` which will possibly drop a second `Next` (so dropping a single
+    // `Next` may produce more than one value to subsequently drop).
+    static TO_DROP: std::cell::UnsafeCell<RVec<Value>> = std::cell::UnsafeCell::new(Default::default());
+    static DROPPING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+}
+
+impl Drop for Next {
+    fn drop(&mut self) {
+        use std::sync::atomic::Ordering::Relaxed;
+        let do_drop = !DROPPING.with(|v| v.fetch_or(true, Relaxed));
+        // Safety: self.iter is not used again after the `take`.
+        let v = unsafe { ManuallyDrop::take(&mut self.iter) };
+        // Safety: the mutable reference is only used here, by a single thread, and then discarded
+        TO_DROP.with(|td| unsafe { td.get().as_mut() }.unwrap().push(v.next));
+
+        if do_drop {
+            // Safety: the mutable reference is only used here, by a single thread, and then discarded
+            while let Some(v) = TO_DROP.with(|td| unsafe { td.get().as_mut() }.unwrap().pop()) {
+                std::mem::drop(v);
+            }
+            DROPPING.with(|v| v.store(false, Relaxed));
+        }
+    }
 }
 
 /// The trait used for arbitrary iterator generators.
@@ -120,7 +155,7 @@ impl Iter {
                         Ok(None) => super::Unset.into(),
                         Ok(Some(value)) => Next {
                             value,
-                            iter: Iter::from_generator(generator),
+                            iter: ManuallyDrop::new(Iter::from_generator(generator)),
                         }
                         .into(),
                     }
@@ -139,9 +174,9 @@ impl Iter {
         crate::Context::eval(&mut next).await?;
         match_value! {next,
             super::Unset => Ok(None),
-            Next { value, iter } => {
-                self.next = iter.next;
-                Ok(Some(value))
+            n@Next { .. } => {
+                self.next = n.iter.next.clone();
+                Ok(Some(n.value.clone()))
             }
             o => Err(traits::type_error(o, "Next or Unset").into())
         }

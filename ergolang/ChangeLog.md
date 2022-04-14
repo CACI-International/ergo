@@ -52,6 +52,8 @@
   had very few and obscure use cases.
 * Add a built-in `!id` function to mark a value as being relevant to the
   identity of the expression.
+* Fix a bug with `Iter` types where very large iterators would cause a stack
+  overflow (which occurred when the value was dropped).
 
 ### Breaking Changes
 * Any use of `!` should be replaced with equivalent code.
