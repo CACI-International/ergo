@@ -667,12 +667,9 @@ impl<K, V> ScopeMap<K, V> {
 }
 
 impl<K: Eq + std::hash::Hash, V> ScopeMap<K, V> {
-    pub fn insert(&mut self, k: K, v: V) -> ScopeKey {
-        self.scopes
-            .get_mut(self.implicit_set_scope.0)
-            .expect("no set scope")
-            .insert(k, v);
-        self.implicit_set_scope
+    pub fn insert(&mut self, k: K, v: V) -> Option<ScopeKey> {
+        self.scopes.get_mut(self.implicit_set_scope.0)?.insert(k, v);
+        Some(self.implicit_set_scope)
     }
 
     pub fn get<Q: ?Sized>(&mut self, k: &Q) -> Option<&V>
@@ -857,7 +854,7 @@ pub fn load(
     compiler.enable_lint(lint);
     compiler.compile_captures(&mut expr, &mut Default::default());
     let lint_messages = compiler.lint_messages();
-    Ok((expr, compiler.into_free_captures(), lint_messages))
+    Ok((expr, compiler.into_free_captures()?, lint_messages))
 }
 
 /// Global context for compilation.
@@ -913,6 +910,7 @@ struct ExpressionCompiler<'a> {
     string_gets: HashMap<Expr, CaptureKey>,
     capture_mapping: ScopeMap<Expression, CaptureKey>,
     lint: Option<Lint>,
+    errors: Vec<Error>,
 }
 
 impl<'a> ExpressionCompiler<'a> {
@@ -922,6 +920,7 @@ impl<'a> ExpressionCompiler<'a> {
             string_gets: Default::default(),
             capture_mapping: Default::default(),
             lint: Default::default(),
+            errors: Default::default(),
         }
     }
 
@@ -987,8 +986,12 @@ impl<'a> ExpressionCompiler<'a> {
             .unwrap_or_default()
     }
 
-    pub fn into_free_captures(self) -> HashMap<CaptureKey, Expr> {
-        self.string_gets.into_iter().map(|(k, v)| (v, k)).collect()
+    pub fn into_free_captures(self) -> Result<HashMap<CaptureKey, Expr>, Error> {
+        if self.errors.is_empty() {
+            Ok(self.string_gets.into_iter().map(|(k, v)| (v, k)).collect())
+        } else {
+            Err(Error::aggregate(self.errors))
+        }
     }
 
     pub fn compile_captures(&mut self, e: &mut Expr, mut caps: &mut CaptureSet) {
@@ -1080,7 +1083,11 @@ impl<'a> ExpressionCompiler<'a> {
             Set(v) => {
                 if v.value.expr_type() == ExpressionType::String {
                     let key = self.capture_context.key();
-                    v.scope_key = self.capture_mapping.insert(v.value.value().clone(), key);
+                    if let Some(scope_key) = self.capture_mapping.insert(v.value.value().clone(), key) {
+                        v.scope_key = scope_key;
+                    } else {
+                        self.errors.push(src.with("no active scope in which to bind").into_error());
+                    }
                     self.unused_binding(src.with(key));
                     v.capture_key = Some(key);
                 } else {
@@ -1435,6 +1442,11 @@ mod test {
         )
     }
 
+    #[test]
+    fn no_implicit_set_scope() {
+        assert_fail(":no-scope");
+    }
+
     mod lints {
         use super::*;
 
@@ -1484,6 +1496,10 @@ mod test {
         dbg!(&captures);
         assert!(captures == expected_captures.into_iter().collect::<HashMap<_, _>>());
         assert!(e == expected);
+    }
+
+    fn assert_fail(s: &str) {
+        load(s).unwrap_err();
     }
 
     fn load(s: &str) -> Result<(Expr, HashMap<CaptureKey, Expression>), Error> {
