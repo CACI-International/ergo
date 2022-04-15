@@ -22,6 +22,7 @@ pub fn r#type() -> Value {
             "chunks" = chunks(),
             "map" = map(),
             "map-lazy" = map_lazy(),
+            "new" = new(),
             "no-errors" = no_errors(),
             "order" = order(),
             "partition" = partition(),
@@ -43,6 +44,64 @@ pub fn r#type() -> Value {
 /// Arguments: `:value`
 async fn from(value: _) -> Value {
     traits::into::<types::Iter>(value).await?.into()
+}
+
+#[types::ergo_fn]
+/// Create a new iterator from a Function.
+///
+/// Arguments: `(Function :f) ^:args`
+///
+/// Each time an item is needed from the iterator, `f` will be called with `args`, and should
+/// evaluate to either `Unset` (to indicate iterator completion), an `Error`, or a `Map` with two
+/// entries:
+/// * `item` - the item to return
+/// * `next` - the next `Args` to call `f` with for the next item (usually created with `fn ...`)
+async fn new(func: _, ...) -> Value {
+    let args = types::Args { args: REST }.into();
+
+    #[derive(Clone)]
+    struct New {
+        func: Value,
+        args: Value,
+    }
+
+    ergo_runtime::ImplGenerator!(New => |self| {
+        let mut result = traits::bind(self.func.clone(), self.args.clone()).await;
+        drop(Context::eval(&mut result).await);
+        ergo_runtime::error_info!{
+            labels: [
+                primary(Source::get(&self.func).with("returned by this function"))
+            ],
+            async {
+                ergo_runtime::value::match_value!{result,
+                    types::Unset => Ok(None),
+                    types::Map(mut m) => {
+                        let item = m.remove(&crate::make_string("item"));
+                        let next = m.remove(&crate::make_string("next"));
+                        if !m.is_empty() {
+                            Err(ergo_runtime::error::Diagnostic::from(
+                                    "extraneous keys in iterator generator; expected `item` and `next`"
+                                    ))?;
+                        }
+                        match (item, next) {
+                            (Some(item),Some(next)) => {
+                                self.args = next;
+                                Ok(Some(item))
+                            }
+                            _ => {
+                                Err(ergo_runtime::error::Diagnostic::from(
+                                    "missing keys in iterator generator; expected `item` and `next`"
+                                    ))?
+                            }
+                        }
+                    }
+                    o => Err(traits::type_error(o, "Map or Unset"))
+                }
+            }
+        }
+    });
+
+    types::Iter::new(New { func, args }, CALL_DEPENDS).into()
 }
 
 #[types::ergo_fn]
@@ -875,6 +934,14 @@ mod test {
 
         fn map_lazy(t) {
             t.assert_eq("self:Array:from <| self:Iter:map-lazy (fn :a -> { mapped = $a }) [2,3]", "[{mapped = 2},{mapped = 3}]");
+        }
+
+        fn new(t) {
+            t.assert_eq("self:Array:from <| self:Iter:new (fn :arr -> self:match $arr [[] -> $unset, [^:a,:b] -> { item = $b, next = fn $a }]) [1,2,3]", "[3,2,1]");
+            t.assert_fail("self:Array:from <| self:Iter:new (fn :arr -> self:match $arr [[] -> $unset, [^:a,:b] -> { item = $b, next = fn $a, something = 1 }]) [1,2,3]");
+            t.assert_fail("self:Array:from <| self:Iter:new (fn :arr -> self:match $arr [[] -> $unset, [^:a,:b] -> { item = $b }]) [1,2,3]");
+            t.assert_fail("self:Array:from <| self:Iter:new (fn :arr -> self:Error:new error) [1,2,3]");
+            t.assert_fail("self:Array:from <| self:Iter:new (fn :arr -> self:Number:new 1) [1,2,3]");
         }
 
         fn order(t) {
