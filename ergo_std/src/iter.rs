@@ -19,6 +19,7 @@ pub fn r#type() -> Value {
             "flatten" = flatten(),
             "fold" = fold(),
             "from" = from(),
+            "chunks" = chunks(),
             "map" = map(),
             "map-lazy" = map_lazy(),
             "no-errors" = no_errors(),
@@ -520,6 +521,53 @@ async fn take(n: _, iter: _) -> Value {
 }
 
 #[types::ergo_fn]
+/// Split an iterator into chunks of `n` consecutive values.
+///
+/// Arguments: `(Into<Number> :n) (Into<Iter> :iter)`
+///
+/// Returns a new iterator where each item is an Array with the next `n` values from `iter`, and
+/// the last item may have less than `n` values (if `iter` didn't have a number of items evenly
+/// divisible by `n`).
+async fn chunks(n: _, iter: _) -> Value {
+    let n = traits::into::<types::Number>(n).await?;
+    let iter = traits::into::<types::Iter>(iter).await?;
+
+    let deps = depends![nsid!(std::iter::chunks), n, iter];
+
+    let n = n
+        .as_ref()
+        .to_usize()
+        .add_primary_label(Source::get(&n).with("expected this to be an unsigned integer"))?;
+
+    #[derive(Clone)]
+    struct Chunks {
+        iter: types::Iter,
+        n: usize,
+    }
+
+    ergo_runtime::ImplGenerator!(Chunks => |self| {
+        let mut a = types::Array(Default::default());
+        a.0.reserve(self.n);
+        for _ in 0..self.n {
+            if let Some(v) = self.iter.next().await? {
+                a.0.push(v);
+            } else {
+                self.n = 0;
+                break;
+            }
+        }
+        Ok(if a.0.is_empty() {
+            None
+        } else {
+            Some(a.into())
+        })
+    });
+
+    let iter = iter.to_owned();
+    types::Iter::new(Chunks { iter, n }, deps).into()
+}
+
+#[types::ergo_fn]
 /// Flatten the values of an iterator.
 ///
 /// Arguments: `(Into<Iter> :iter)`
@@ -814,6 +862,11 @@ mod test {
 
         fn flatten(t) {
             t.assert_eq("self:Array:from <| self:Iter:flatten [[a,b],[],[],[c,d,e,f],[g]]", "[a,b,c,d,e,f,g]");
+        }
+
+        fn chunks(t) {
+            t.assert_eq("self:Array:from <| self:Iter:chunks 5 [a,b,c,d,e,f,g,h,i,j]", "[[a,b,c,d,e],[f,g,h,i,j]]");
+            t.assert_eq("self:Array:from <| self:Iter:chunks 3 [a,b,c,d,e,f,g,h,i,j]", "[[a,b,c],[d,e,f],[g,h,i],[j]]");
         }
 
         fn map(t) {

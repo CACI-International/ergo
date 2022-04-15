@@ -91,5 +91,3 @@ not work correctly with this flag, so the default is `less`. You can:
 * Improve sources of capture bindings.
 * Improve `Error` storage (prevent storage of nested Errors).
 * Improve caching speed (using sqlite, in-memory map, etc)
-* Limit concurrency when deeply evaluating values.
-* `std:Iter:group`
