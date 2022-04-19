@@ -12,6 +12,8 @@ TYPE=debug
 
 if [[ " $* "  == *\ --release\ * ]]; then
 	TYPE=release
+elif [[ " $* "  == *\ --profile\ perf\ * ]]; then
+	TYPE=perf
 fi
 
 (cd $DIR; cargo build -p ergolang -p ergo_std "$@")

@@ -5,3 +5,8 @@ members = ["abi_stable_ext", "ergolang", "ergo_runtime", "ergo_runtime_macro", "
 lto = true
 panic = 'abort'
 strip = true
+
+[profile.perf]
+inherits = "release"
+strip = false
+debug = true
