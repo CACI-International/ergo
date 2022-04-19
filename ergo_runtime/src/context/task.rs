@@ -17,7 +17,8 @@ use crate::error::DiagnosticInfo;
 use crate::Error;
 use futures::future::{abortable, try_join_all, AbortHandle, Aborted, Future, FutureExt};
 use std::cell::Cell;
-use tokio::runtime as tokio_runtime;
+//use tokio::runtime as tokio_runtime;
+mod runtime;
 
 plugin_tls::thread_local! {
     static THREAD_ID: RRwLock<ROption<u64>> = RRwLock::new(ROption::RNone);
@@ -390,10 +391,7 @@ async fn acquire_owned(this: &RArc<Semaphore>, mut count: u32) -> SemaphorePermi
 trait ThreadPoolInterface: Clone + Debug + Send + Sync {
     fn spawn_ok(&self, priority: u32, future: BoxFuture<'static, ()>);
 
-    fn spawn_blocking(
-        &self,
-        f: ClosureOnce<(), Erased>,
-    ) -> BoxFuture<'static, RResult<Erased, Error>>;
+    fn spawn_blocking(&self, f: ClosureOnce<(), ()>);
 
     fn block_on<'a>(&self, future: LocalBoxFuture<'a, ()>);
 
@@ -402,26 +400,17 @@ trait ThreadPoolInterface: Clone + Debug + Send + Sync {
 }
 
 #[derive(Debug)]
-struct TokioThreadPool {
-    pool: tokio_runtime::Runtime,
-    priority: TaskPriority,
+struct ThreadPool {
+    pool: runtime::Runtime,
 }
 
-impl ThreadPoolInterface for std::sync::Arc<TokioThreadPool> {
+impl ThreadPoolInterface for std::sync::Arc<ThreadPool> {
     fn spawn_ok(&self, priority: u32, future: BoxFuture<'static, ()>) {
-        let prioritized = self.priority.prioritize(future, priority);
-        self.pool.spawn(prioritized);
+        self.pool.spawn(priority, future);
     }
 
-    fn spawn_blocking(
-        &self,
-        f: ClosureOnce<(), Erased>,
-    ) -> BoxFuture<'static, RResult<Erased, Error>> {
-        BoxFuture::new(
-            self.pool
-                .spawn_blocking(move || f.call())
-                .map(|r| r.into_diagnostic().map_err(|e| e.into()).into()),
-        )
+    fn spawn_blocking(&self, f: ClosureOnce<(), ()>) {
+        self.pool.spawn_blocking(f);
     }
 
     fn block_on<'a>(&self, future: LocalBoxFuture<'a, ()>) {
@@ -489,40 +478,11 @@ impl TaskManager {
         aggregate_errors: bool,
     ) -> Result<Self, futures::io::Error> {
         let threads = std::cmp::max(1, num_threads.unwrap_or_else(num_cpus::get));
-        let barrier = std::sync::Arc::new(std::sync::Barrier::new(threads + 1));
-        let is_core = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
-
-        let closure_barrier = barrier.clone();
-        let closure_is_core = is_core.clone();
-        let pool = tokio_runtime::Builder::new_multi_thread()
-            .enable_all()
-            .worker_threads(threads)
-            .thread_name("ergo-thread")
-            .on_thread_start(move || {
-                if closure_is_core.load(std::sync::atomic::Ordering::Relaxed) {
-                    let thread_id =
-                        NEXT_THREAD_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                    THREAD_ID.with(|m| {
-                        *m.write() = ROption::RSome(thread_id);
-                    });
-                    closure_barrier.wait();
-                }
-            })
-            .on_thread_stop(|| {
-                THREAD_ID.with(|m| {
-                    *m.write() = ROption::RNone;
-                });
-            })
-            .build()?;
-        barrier.wait();
-        is_core.store(false, std::sync::atomic::Ordering::Relaxed);
+        let pool = runtime::Runtime::new(threads)?;
 
         Ok(TaskManager {
             pool: ThreadPoolInterface_TO::from_value(
-                std::sync::Arc::new(TokioThreadPool {
-                    pool,
-                    priority: TaskPriority::new(),
-                }),
+                std::sync::Arc::new(ThreadPool { pool }),
                 TU_Opaque,
             ),
             tasks: RArc::new(Semaphore::new(threads)),
@@ -574,9 +534,10 @@ impl TaskManager {
         F: FnOnce() -> R + Eraseable,
         R: Eraseable,
     {
+        let (send, rcv) = futures::channel::oneshot::channel();
         self.pool
-            .spawn_blocking((|| Erased::new(f())).into())
-            .map(|r| r.map(|v| unsafe { v.to_owned::<R>() }).into_result())
+            .spawn_blocking((move || drop(send.send(f()))).into());
+        rcv.map(|r| r.into_diagnostic().map_err(|e| e.into()))
     }
 
     /// Join on the results of multiple futures according to the configured task aggregation

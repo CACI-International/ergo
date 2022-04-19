@@ -87,6 +87,7 @@ not work correctly with this flag, so the default is `less`. You can:
 * Reference count (non-root) cache values?
 * Debugger and profiler.
 * Maybe don't have a fallback doc string if there is no documentation set.
+* Dropping thread for Values (to avoid possibly large stacks).
 * Progress spinner
 * Improve sources of capture bindings.
 * Improve `Error` storage (prevent storage of nested Errors).

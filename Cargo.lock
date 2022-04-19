@@ -755,6 +755,7 @@ dependencies = [
  "log",
  "num",
  "num_cpus",
+ "parking_lot",
  "pin-project",
  "plugin_tls",
  "serde",
