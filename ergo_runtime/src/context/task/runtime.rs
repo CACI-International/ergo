@@ -12,12 +12,12 @@ use parking_lot::{Condvar, Mutex};
 use std::collections::{BinaryHeap, HashSet, VecDeque};
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 
 const MIN_BLOCKING_POOL_SIZE: usize = 2;
 
-const CONTROL_STATS_DURATION: std::time::Duration = std::time::Duration::from_millis(50);
+const CONTROL_STATS_DURATION: std::time::Duration = std::time::Duration::from_millis(100);
 
 #[derive(Debug)]
 pub struct Runtime {
@@ -115,7 +115,7 @@ impl std::borrow::Borrow<u64> for Task {
 struct Waker {
     id: u64,
     pool: Weak<TaskPool>,
-    woke: AtomicBool,
+    state: AtomicU8,
 }
 
 impl std::task::Wake for Waker {
@@ -126,11 +126,27 @@ impl std::task::Wake for Waker {
     fn wake_by_ref(self: &Arc<Self>) {
         if let Some(pool) = self.pool.upgrade() {
             let mut guard = pool.tasks.lock();
-            self.woke.store(true, Ordering::Relaxed);
-            if let Some(task) = guard.pending.take(&self.id) {
-                guard.ready.push(task);
-                pool.waiting_on_ready.notify_one();
+            if self
+                .state
+                .compare_exchange(0, 1, Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
+            {
+                if let Some(task) = guard.pending.take(&self.id) {
+                    guard.ready.push(task);
+                    drop(guard);
+                    pool.waiting_on_ready.notify_one();
+                }
             }
+        }
+    }
+}
+
+impl Drop for Waker {
+    fn drop(&mut self) {
+        if let Some(pool) = self.pool.upgrade() {
+            let mut guard = pool.tasks.lock();
+            self.state.store(2, Ordering::Relaxed);
+            guard.pending.remove(&self.id);
         }
     }
 }
@@ -140,7 +156,7 @@ impl Waker {
         Arc::new(Waker {
             id,
             pool: Arc::downgrade(pool),
-            woke: Default::default(),
+            state: Default::default(),
         })
     }
 }
@@ -222,8 +238,13 @@ impl std::task::Wake for BlockOnWaker {
     }
 
     fn wake_by_ref(self: &Arc<Self>) {
-        self.run.store(true, Ordering::Release);
-        self.thread.unpark();
+        if self
+            .run
+            .compare_exchange(false, true, Ordering::Release, Ordering::Relaxed)
+            .is_ok()
+        {
+            self.thread.unpark();
+        }
     }
 }
 
@@ -321,14 +342,18 @@ impl TaskPool {
         if let Some(mut task) = self.next_ready_task() {
             use std::task::{Context, Poll, Waker};
             let waker = Waker::from(task.waker.clone());
-            task.waker.woke.store(false, Ordering::Relaxed);
+            task.waker.state.store(0, Ordering::Relaxed);
             if let Poll::Pending = Pin::new(&mut task.future).poll(&mut Context::from_waker(&waker))
             {
                 let mut guard = self.tasks.lock();
-                if task.waker.woke.load(Ordering::Relaxed) {
-                    guard.ready.push(task);
-                } else {
-                    guard.pending.insert(task);
+                match task.waker.state.load(Ordering::Relaxed) {
+                    0 => {
+                        guard.pending.insert(task);
+                    }
+                    1 => {
+                        guard.ready.push(task);
+                    }
+                    _ => (),
                 }
             }
         }
