@@ -301,7 +301,6 @@ impl RuntimeHandle {
         let mut ready = 0;
         let mut bored = 0;
         while !self.inner.shutdown() {
-            std::thread::sleep(CONTROL_STATS_DURATION);
             let blocking_tasks = &self.inner.blocking_tasks;
             let ready_now = blocking_tasks.tasks.lock().len();
             let bored_now = blocking_tasks.bored.swap(0, Ordering::Relaxed);
@@ -329,6 +328,7 @@ impl RuntimeHandle {
             if let Err(e) = result {
                 log::error!("blocking thread launch error: {}", e);
             }
+            std::thread::sleep(CONTROL_STATS_DURATION);
         }
     }
 }
