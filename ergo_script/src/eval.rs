@@ -17,7 +17,6 @@ use ergo_runtime::{
     Context, EvaluatedValue, Value,
 };
 use futures::future::{BoxFuture, FutureExt};
-use log::error;
 use std::collections::{BTreeMap, HashMap};
 
 pub const EVAL_TASK_PRIORITY: u32 = 100;
@@ -154,7 +153,6 @@ impl Scope {
 
     pub fn add(&self, cap: Option<CaptureKey>, key: EvaluatedValue, value: Value) -> bool {
         self.inner
-            .as_ref()
             .lock()
             .insert(ScopeEntryKey { cap, key }, value)
             .is_some()
@@ -162,11 +160,7 @@ impl Scope {
 
     pub fn into_inner(self) -> Vec<(Option<CaptureKey>, EvaluatedValue, Value)> {
         match std::sync::Arc::try_unwrap(self.inner) {
-            Err(a) => {
-                // TODO should this panic instead?
-                error!("set scope unexpectedly persisted");
-                a.lock().clone()
-            }
+            Err(a) => std::mem::take(&mut *a.lock()),
             Ok(v) => v.into_inner(),
         }
         .into_iter()
