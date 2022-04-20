@@ -9,6 +9,7 @@
 
 use crate::abi_stable::{closure::ClosureOnce, future::BoxFuture};
 use parking_lot::{Condvar, Mutex};
+use std::cell::UnsafeCell;
 use std::collections::{BinaryHeap, HashSet, VecDeque};
 use std::future::Future;
 use std::pin::Pin;
@@ -58,27 +59,25 @@ struct BlockingTask {
 
 #[derive(Default)]
 struct TaskPool {
-    tasks: Mutex<Tasks>,
+    tasks: Mutex<BinaryHeap<Arc<Task>>>,
     waiting_on_ready: Condvar,
 }
 
-#[derive(Default)]
-struct Tasks {
-    ready: BinaryHeap<Task>,
-    pending: HashSet<Task>,
-}
-
 struct Task {
+    id: u64,
     priority: u32,
-    future: BoxFuture<'static, ()>,
-    waker: Arc<Waker>,
+    future: TaskFuture,
+    pool: Weak<TaskPool>,
+    state: AtomicU8,
 }
 
-impl Task {
-    pub fn id(&self) -> u64 {
-        self.waker.id
+impl PartialEq for Task {
+    fn eq(&self, other: &Self) -> bool {
+        self.priority == other.priority
     }
 }
+
+impl Eq for Task {}
 
 impl PartialOrd for Task {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
@@ -92,72 +91,43 @@ impl Ord for Task {
     }
 }
 
-impl PartialEq for Task {
-    fn eq(&self, other: &Self) -> bool {
-        self.id().eq(&other.id())
-    }
-}
+const READY: u8 = 0;
+const PENDING: u8 = 1;
+const COMPLETE: u8 = 2;
 
-impl Eq for Task {}
-
-impl std::hash::Hash for Task {
-    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
-        self.id().hash(h);
-    }
-}
-
-impl std::borrow::Borrow<u64> for Task {
-    fn borrow(&self) -> &u64 {
-        &self.waker.id
-    }
-}
-
-struct Waker {
-    id: u64,
-    pool: Weak<TaskPool>,
-    state: AtomicU8,
-}
-
-impl std::task::Wake for Waker {
+impl std::task::Wake for Task {
     fn wake(self: Arc<Self>) {
-        self.wake_by_ref();
-    }
-
-    fn wake_by_ref(self: &Arc<Self>) {
         if let Some(pool) = self.pool.upgrade() {
-            let mut guard = pool.tasks.lock();
             if self
                 .state
-                .compare_exchange(0, 1, Ordering::Relaxed, Ordering::Relaxed)
+                .compare_exchange(PENDING, READY, Ordering::Relaxed, Ordering::Relaxed)
                 .is_ok()
             {
-                if let Some(task) = guard.pending.take(&self.id) {
-                    guard.ready.push(task);
-                    drop(guard);
-                    pool.waiting_on_ready.notify_one();
-                }
+                pool.tasks.lock().push(self);
+                pool.waiting_on_ready.notify_one();
             }
         }
     }
 }
 
-impl Drop for Waker {
-    fn drop(&mut self) {
-        if let Some(pool) = self.pool.upgrade() {
-            let mut guard = pool.tasks.lock();
-            self.state.store(2, Ordering::Relaxed);
-            guard.pending.remove(&self.id);
-        }
-    }
-}
+struct TaskFuture(Mutex<Option<BoxFuture<'static, ()>>>);
 
-impl Waker {
-    pub fn new(id: u64, pool: &Arc<TaskPool>) -> Arc<Self> {
-        Arc::new(Waker {
-            id,
-            pool: Arc::downgrade(pool),
-            state: Default::default(),
-        })
+impl TaskFuture {
+    pub fn new(future: BoxFuture<'static, ()>) -> Self {
+        TaskFuture(Mutex::new(Some(future)))
+    }
+
+    pub fn poll(&self, cx: &mut std::task::Context) -> bool {
+        let mut guard = self.0.lock();
+        if let Some(fut) = guard.as_mut() {
+            let done = Pin::new(fut).poll(cx).is_ready();
+            if done {
+                *guard = None;
+            }
+            done
+        } else {
+            true
+        }
     }
 }
 
@@ -172,7 +142,7 @@ impl Runtime {
             let handle = rt.handle.clone();
             std::thread::Builder::new()
                 .name(format!("ergo pool {}", i))
-                .spawn(move || pool_worker(handle))?;
+                .spawn(move || handle.pool_worker())?;
         }
 
         // Blocking pool
@@ -183,7 +153,7 @@ impl Runtime {
             let handle = rt.handle.clone();
             std::thread::Builder::new()
                 .name("ergo pool control".into())
-                .spawn(move || control_worker(handle))?;
+                .spawn(move || handle.control_worker())?;
         }
 
         Ok(rt)
@@ -219,14 +189,14 @@ impl std::borrow::Borrow<RuntimeHandle> for Runtime {
 }
 
 struct BlockOnWaker {
-    run: AtomicBool,
+    state: AtomicU8,
     thread: std::thread::Thread,
 }
 
 impl BlockOnWaker {
     pub fn new() -> Arc<Self> {
         Arc::new(BlockOnWaker {
-            run: AtomicBool::new(false),
+            state: AtomicU8::new(PENDING),
             thread: std::thread::current(),
         })
     }
@@ -239,8 +209,8 @@ impl std::task::Wake for BlockOnWaker {
 
     fn wake_by_ref(self: &Arc<Self>) {
         if self
-            .run
-            .compare_exchange(false, true, Ordering::Release, Ordering::Relaxed)
+            .state
+            .compare_exchange(PENDING, READY, Ordering::Release, Ordering::Relaxed)
             .is_ok()
         {
             self.thread.unpark();
@@ -277,9 +247,10 @@ impl RuntimeHandle {
         // `fut` binding itself.
         let mut fut = unsafe { Pin::new_unchecked(&mut fut) };
         while let Poll::Pending = fut.as_mut().poll(&mut Context::from_waker(&waker)) {
+            std::thread::park();
             while block_on_waker
-                .run
-                .compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed)
+                .state
+                .compare_exchange(READY, PENDING, Ordering::Acquire, Ordering::Relaxed)
                 .is_err()
             {
                 std::thread::park();
@@ -288,10 +259,10 @@ impl RuntimeHandle {
     }
 
     fn new_blocking_pool_thread(&self) -> std::io::Result<()> {
-        let rt = self.clone();
+        let handle = self.clone();
         std::thread::Builder::new()
             .name("ergo blocking pool".into())
-            .spawn(move || blocking_pool_worker(rt))?;
+            .spawn(move || handle.blocking_pool_worker())?;
         Ok(())
     }
 
@@ -313,47 +284,94 @@ impl RuntimeHandle {
 
         Ok(())
     }
+
+    fn pool_worker(&self) {
+        while !self.inner.shutdown() {
+            self.inner.tasks.try_run_task(&self.inner);
+        }
+    }
+
+    fn blocking_pool_worker(&self) {
+        while !self.inner.shutdown() && !self.inner.blocking_tasks.exit() {
+            self.inner.blocking_tasks.try_run_task();
+        }
+    }
+
+    fn control_worker(&self) {
+        let mut ready = 0;
+        let mut bored = 0;
+        while !self.inner.shutdown() {
+            std::thread::sleep(CONTROL_STATS_DURATION);
+            let blocking_tasks = &self.inner.blocking_tasks;
+            let ready_now = blocking_tasks.tasks.lock().len();
+            let bored_now = blocking_tasks.bored.swap(0, Ordering::Relaxed);
+            // Set `ready` to `ready_now` and take the min of the two values
+            let waiting = std::cmp::min(std::mem::replace(&mut ready, ready_now), ready_now);
+            // Set `bored` to `bored_now` and take the min of the two values
+            let wasted = std::cmp::min(std::mem::replace(&mut bored, bored_now), bored_now);
+
+            let pool_size = blocking_tasks.size.lock().target;
+            let result = if waiting > 0 {
+                // If we have a lot of ready and waiting tasks, we need to expand the thread pool.
+                self.set_blocking_pool_size(pool_size + waiting)
+            } else if wasted > 0 && pool_size != MIN_BLOCKING_POOL_SIZE {
+                // Clip `wasted` for safety, though in general it shouldn't be more than pool_size (but
+                // sleep scheduling might be wonky).
+                let wasted = std::cmp::min(wasted, pool_size);
+                // If we had threads not doing anything, we should decrease the thread pool size.
+                self.set_blocking_pool_size(std::cmp::max(
+                    pool_size - wasted,
+                    MIN_BLOCKING_POOL_SIZE,
+                ))
+            } else {
+                Ok(())
+            };
+            if let Err(e) = result {
+                log::error!("blocking thread launch error: {}", e);
+            }
+        }
+    }
 }
 
 impl TaskPool {
     pub fn new_task(self: &Arc<Self>, id: u64, priority: u32, future: BoxFuture<'static, ()>) {
-        let waker = Waker::new(id, self);
-        self.tasks.lock().ready.push(Task {
+        self.tasks.lock().push(Arc::new(Task {
+            id,
             priority,
-            future,
-            waker,
-        });
+            future: TaskFuture::new(future),
+            pool: Arc::downgrade(self),
+            state: AtomicU8::new(READY),
+        }));
         self.waiting_on_ready.notify_one();
     }
 
     // Return an Option to allow spurious wakeup for shutdown
-    fn next_ready_task(&self) -> Option<Task> {
+    fn next_ready_task(&self, inner: &Inner) -> Option<Arc<Task>> {
         let mut guard = self.tasks.lock();
-        if guard.ready.is_empty() {
+        while guard.is_empty() {
             self.waiting_on_ready.wait(&mut guard);
-            return None;
+            if inner.shutdown() {
+                return None;
+            }
         }
-        let ret = guard.ready.pop();
+        let ret = guard.pop();
         debug_assert!(ret.is_some());
         ret
     }
 
-    pub fn try_run_task(&self) {
-        if let Some(mut task) = self.next_ready_task() {
+    pub fn try_run_task(&self, inner: &Inner) {
+        if let Some(task) = self.next_ready_task(inner) {
             use std::task::{Context, Poll, Waker};
-            let waker = Waker::from(task.waker.clone());
-            task.waker.state.store(0, Ordering::Relaxed);
-            if let Poll::Pending = Pin::new(&mut task.future).poll(&mut Context::from_waker(&waker))
+            if task
+                .state
+                .compare_exchange(READY, PENDING, Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
             {
-                let mut guard = self.tasks.lock();
-                match task.waker.state.load(Ordering::Relaxed) {
-                    0 => {
-                        guard.pending.insert(task);
-                    }
-                    1 => {
-                        guard.ready.push(task);
-                    }
-                    _ => (),
+                if task
+                    .future
+                    .poll(&mut Context::from_waker(&task.clone().into()))
+                {
+                    task.state.store(COMPLETE, Ordering::Relaxed);
                 }
             }
         }
@@ -406,49 +424,5 @@ impl Inner {
 
     pub fn shutdown(&self) -> bool {
         self.shutdown.load(Ordering::Relaxed)
-    }
-}
-
-fn pool_worker(handle: RuntimeHandle) {
-    while !handle.inner.shutdown() {
-        handle.inner.tasks.try_run_task();
-    }
-}
-
-fn blocking_pool_worker(handle: RuntimeHandle) {
-    while !handle.inner.shutdown() && !handle.inner.blocking_tasks.exit() {
-        handle.inner.blocking_tasks.try_run_task();
-    }
-}
-
-fn control_worker(handle: RuntimeHandle) {
-    let mut ready = 0;
-    let mut bored = 0;
-    while !handle.inner.shutdown() {
-        std::thread::sleep(CONTROL_STATS_DURATION);
-        let blocking_tasks = &handle.inner.blocking_tasks;
-        let ready_now = blocking_tasks.tasks.lock().len();
-        let bored_now = blocking_tasks.bored.swap(0, Ordering::Relaxed);
-        // Set `ready` to `ready_now` and take the min of the two values
-        let waiting = std::cmp::min(std::mem::replace(&mut ready, ready_now), ready_now);
-        // Set `bored` to `bored_now` and take the min of the two values
-        let wasted = std::cmp::min(std::mem::replace(&mut bored, bored_now), bored_now);
-
-        let pool_size = blocking_tasks.size.lock().target;
-        let result = if waiting > 0 {
-            // If we have a lot of ready and waiting tasks, we need to expand the thread pool.
-            handle.set_blocking_pool_size(pool_size + waiting)
-        } else if wasted > 0 && pool_size != MIN_BLOCKING_POOL_SIZE {
-            // Clip `wasted` for safety, though in general it shouldn't be more than pool_size (but
-            // sleep scheduling might be wonky).
-            let wasted = std::cmp::min(wasted, pool_size);
-            // If we had threads not doing anything, we should decrease the thread pool size.
-            handle.set_blocking_pool_size(std::cmp::max(pool_size - wasted, MIN_BLOCKING_POOL_SIZE))
-        } else {
-            Ok(())
-        };
-        if let Err(e) = result {
-            log::error!("blocking thread launch error: {}", e);
-        }
     }
 }
