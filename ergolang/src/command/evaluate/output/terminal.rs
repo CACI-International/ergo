@@ -151,7 +151,7 @@ impl LogTarget for Output {
 impl TaskStatus {
     pub fn new() -> Self {
         TaskStatus {
-            tasks: Arc::new(Mutex::new(Slab::with_capacity(16))),
+            tasks: Arc::new(Mutex::new(Slab::with_capacity(64))),
         }
     }
 
@@ -161,6 +161,12 @@ impl TaskStatus {
 
     pub fn remove(&mut self, key: usize) {
         self.tasks.lock().unwrap().remove(key);
+    }
+}
+
+impl std::fmt::Debug for TaskStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        self.tasks.lock().fmt(f)
     }
 }
 

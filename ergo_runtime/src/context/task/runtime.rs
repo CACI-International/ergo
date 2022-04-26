@@ -8,40 +8,68 @@
 //! * deadlock tracing
 
 use crate::abi_stable::{closure::ClosureOnce, future::BoxFuture};
-use parking_lot::{Condvar, Mutex};
+use parking_lot::{Condvar, Mutex, RwLock, RwLockUpgradableReadGuard, RwLockWriteGuard};
 use std::cell::UnsafeCell;
-use std::collections::{BinaryHeap, HashSet, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 
 const MIN_BLOCKING_POOL_SIZE: usize = 2;
-
 const CONTROL_STATS_DURATION: std::time::Duration = std::time::Duration::from_millis(100);
+const WORKER_QUEUE_SIZE: u16 = 128;
+
+std::thread_local! {
+    static WORKER_QUEUE: UnsafeCell<Option<WorkerQueue>> = UnsafeCell::new(None);
+}
 
 #[derive(Debug)]
 pub struct Runtime {
     handle: RuntimeHandle,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct RuntimeHandle {
     inner: Arc<Inner>,
 }
 
-#[derive(Default)]
 struct Inner {
     tasks: Arc<TaskPool>,
     blocking_tasks: BlockingTaskPool,
     next_task_id: AtomicU64,
+    stats: ConditionFlag,
     shutdown: AtomicBool,
+}
+
+#[derive(Default)]
+struct ConditionFlag {
+    lock: Mutex<usize>,
+    condition: Condvar,
+}
+
+impl ConditionFlag {
+    pub fn wait(&self) {
+        self.condition.wait(&mut self.lock.lock());
+    }
+
+    pub fn wait_for(&self, duration: std::time::Duration) {
+        self.condition.wait_for(&mut self.lock.lock(), duration);
+    }
+
+    pub fn notify_one(&self) -> bool {
+        self.condition.notify_one()
+    }
+
+    pub fn notify_all(&self) -> bool {
+        self.condition.notify_all() > 0
+    }
 }
 
 #[derive(Default)]
 struct BlockingTaskPool {
     tasks: Mutex<VecDeque<BlockingTask>>,
-    waiting_on_tasks: Condvar,
+    waiting: Condvar,
     size: Mutex<BlockingPoolSize>,
     bored: AtomicUsize,
 }
@@ -53,17 +81,147 @@ struct BlockingPoolSize {
 }
 
 struct BlockingTask {
+    #[allow(dead_code)]
     id: u64,
     f: ClosureOnce<(), ()>,
 }
 
-#[derive(Default)]
+struct Priorities {
+    current: RwLock<u32>,
+    queued: AtomicUsize,
+    ready: Mutex<BTreeMap<u32, (usize, Vec<Arc<Task>>)>>,
+}
+
+impl Default for Priorities {
+    fn default() -> Self {
+        Priorities {
+            current: RwLock::new(u32::MAX),
+            queued: Default::default(),
+            ready: Default::default(),
+        }
+    }
+}
+
+impl Priorities {
+    pub fn ready(&self, task: Arc<Task>) -> Option<Arc<Task>> {
+        let mut current = self.current.upgradable_read();
+        loop {
+            if task.priority == *current {
+                self.queued.fetch_add(1, Ordering::Relaxed);
+                break Some(task);
+            } else if task.priority < *current {
+                let mut wcurrent = RwLockUpgradableReadGuard::upgrade(current);
+                if task.priority >= *wcurrent {
+                    current = RwLockWriteGuard::downgrade_to_upgradable(wcurrent);
+                    continue;
+                }
+                let prev_priority = std::mem::replace(&mut *wcurrent, task.priority);
+                let prev = self.queued.swap(1, Ordering::Relaxed);
+                if prev > 0 {
+                    self.ready.lock().insert(prev_priority, (prev, vec![]));
+                }
+                break Some(task);
+            } else {
+                self.ready
+                    .lock()
+                    .entry(task.priority)
+                    .or_default()
+                    .1
+                    .push(task);
+                break None;
+            }
+        }
+    }
+
+    pub fn verify(&self, task: Arc<Task>) -> Option<Arc<Task>> {
+        let current = self.current.read();
+        if task.state.load(Ordering::Relaxed) == COMPLETE {
+            return None;
+        }
+        if task.priority == *current {
+            Some(task)
+        } else {
+            debug_assert!(task.priority > *current);
+            let mut guard = self.ready.lock();
+            let e = guard.get_mut(&task.priority).unwrap();
+            e.0 -= 1;
+            e.1.push(task);
+            None
+        }
+    }
+
+    pub fn pending(&self, priority: u32) -> Vec<Arc<Task>> {
+        let current = self.current.upgradable_read();
+        if priority == *current {
+            if self.queued.fetch_sub(1, Ordering::Relaxed) == 1 {
+                let mut current = RwLockUpgradableReadGuard::upgrade(current);
+                if priority == *current && self.queued.load(Ordering::Relaxed) == 0 {
+                    let mut guard = self.ready.lock();
+                    if let Some(new_current) = guard.iter().next().map(|(k, _)| *k) {
+                        *current = new_current;
+                        let (c, v) = guard.remove(&new_current).unwrap();
+                        self.queued.store(c + v.len(), Ordering::Relaxed);
+                        return v;
+                    } else {
+                        *current = u32::MAX;
+                    }
+                }
+            }
+        } else {
+            // This case can happen, but should happen infrequently (`verify` should catch things
+            // earlier).
+            debug_assert!(priority > *current);
+            let mut guard = self.ready.lock();
+            let e = guard.get_mut(&priority).unwrap();
+            e.0 -= 1;
+        }
+        vec![]
+    }
+}
+
 struct TaskPool {
-    tasks: Mutex<BinaryHeap<Arc<Task>>>,
-    waiting_on_ready: Condvar,
+    queue: work_queue::Queue<Arc<Task>>,
+    waiting: ConditionFlag,
+    priorities: Priorities,
+}
+
+impl TaskPool {
+    pub fn new(pool_size: usize) -> Self {
+        TaskPool {
+            queue: work_queue::Queue::new(pool_size, WORKER_QUEUE_SIZE),
+            waiting: Default::default(),
+            priorities: Default::default(),
+        }
+    }
+
+    pub fn worker_queues(&self) -> Vec<WorkerQueue> {
+        self.queue
+            .local_queues()
+            .map(|queue| WorkerQueue { queue })
+            .collect()
+    }
+}
+
+struct WorkerQueue {
+    queue: work_queue::LocalQueue<Arc<Task>>,
+}
+
+impl WorkerQueue {
+    pub fn push(&mut self, task: Arc<Task>) {
+        self.queue.push(task);
+    }
+
+    pub fn push_yield(&mut self, task: Arc<Task>) {
+        self.queue.push_yield(task);
+    }
+
+    pub fn pop(&mut self) -> Option<Arc<Task>> {
+        self.queue.pop()
+    }
 }
 
 struct Task {
+    #[allow(dead_code)]
     id: u64,
     priority: u32,
     future: TaskFuture,
@@ -93,20 +251,27 @@ impl Ord for Task {
 
 const READY: u8 = 0;
 const PENDING: u8 = 1;
-const COMPLETE: u8 = 2;
+const TRANSITIONING: u8 = 2;
+const COMPLETE: u8 = 3;
 
 impl std::task::Wake for Task {
     fn wake(self: Arc<Self>) {
-        if let Some(pool) = self.pool.upgrade() {
-            if self
-                .state
-                .compare_exchange(PENDING, READY, Ordering::Relaxed, Ordering::Relaxed)
-                .is_ok()
-            {
-                pool.tasks.lock().push(self);
-                pool.waiting_on_ready.notify_one();
+        if self
+            .state
+            .compare_exchange(PENDING, READY, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+        {
+            if let Some(pool) = self.pool.upgrade() {
+                pool.is_ready(self);
             }
         }
+    }
+}
+
+#[cfg(debug_assertions)]
+impl Drop for Task {
+    fn drop(&mut self) {
+        debug_assert!(self.state.load(Ordering::Relaxed) != READY);
     }
 }
 
@@ -134,15 +299,24 @@ impl TaskFuture {
 impl Runtime {
     pub fn new(pool_size: usize) -> std::io::Result<Self> {
         let rt = Runtime {
-            handle: Default::default(),
+            handle: RuntimeHandle {
+                inner: Arc::new(Inner::new(pool_size)),
+            },
         };
 
         // Normal pool
-        for i in 0..pool_size {
+        for (i, wq) in rt
+            .handle
+            .inner
+            .tasks
+            .worker_queues()
+            .into_iter()
+            .enumerate()
+        {
             let handle = rt.handle.clone();
             std::thread::Builder::new()
                 .name(format!("ergo pool {}", i))
-                .spawn(move || handle.pool_worker())?;
+                .spawn(move || handle.pool_worker(wq))?;
         }
 
         // Blocking pool
@@ -163,6 +337,7 @@ impl Runtime {
         self.inner.indicate_shutdown();
     }
 
+    #[allow(dead_code)]
     pub fn handle(&self) -> RuntimeHandle {
         self.handle.clone()
     }
@@ -285,7 +460,9 @@ impl RuntimeHandle {
         Ok(())
     }
 
-    fn pool_worker(&self) {
+    fn pool_worker(&self, worker_queue: WorkerQueue) {
+        // Safety: the cell provides a valid pointer.
+        WORKER_QUEUE.with(|r| *(unsafe { r.get().as_mut() }.unwrap()) = Some(worker_queue));
         while !self.inner.shutdown() {
             self.inner.tasks.try_run_task(&self.inner);
         }
@@ -328,50 +505,108 @@ impl RuntimeHandle {
             if let Err(e) = result {
                 log::error!("blocking thread launch error: {}", e);
             }
-            std::thread::sleep(CONTROL_STATS_DURATION);
+            self.inner.stats.wait_for(CONTROL_STATS_DURATION);
         }
     }
 }
 
+fn worker_queue<R, F: FnOnce(Option<&mut WorkerQueue>) -> R>(f: F) -> R {
+    // Safety: the cell provides a valid pointer
+    WORKER_QUEUE.with(|r| f(unsafe { r.get().as_mut() }.unwrap().as_mut()))
+}
+
 impl TaskPool {
     pub fn new_task(self: &Arc<Self>, id: u64, priority: u32, future: BoxFuture<'static, ()>) {
-        self.tasks.lock().push(Arc::new(Task {
+        let task = Arc::new(Task {
             id,
             priority,
             future: TaskFuture::new(future),
             pool: Arc::downgrade(self),
             state: AtomicU8::new(READY),
-        }));
-        self.waiting_on_ready.notify_one();
+        });
+        if let Some(task) = self.priorities.ready(task) {
+            self.push(task);
+        }
+    }
+
+    fn push(&self, task: Arc<Task>) {
+        worker_queue(|wq| {
+            if let Some(wq) = wq {
+                wq.push(task);
+            } else {
+                self.queue.push(task);
+            }
+        });
+        self.waiting.notify_one();
+    }
+
+    fn push_yield(&self, task: Arc<Task>) {
+        worker_queue(|wq| {
+            if let Some(wq) = wq {
+                wq.push_yield(task);
+            } else {
+                self.queue.push(task);
+            }
+        });
+        self.waiting.notify_one();
+    }
+
+    pub fn is_ready(&self, task: Arc<Task>) {
+        if let Some(task) = self.priorities.ready(task) {
+            self.push_yield(task);
+        }
+    }
+
+    fn pop_priority_task(&self) -> Option<Arc<Task>> {
+        loop {
+            let task = worker_queue(|wq| wq.unwrap().pop())?; // unwrap because this should only be called from a worker thread
+            let ret = self.priorities.verify(task);
+            if ret.is_some() {
+                break ret;
+            }
+        }
     }
 
     // Return an Option to allow spurious wakeup for shutdown
     fn next_ready_task(&self, inner: &Inner) -> Option<Arc<Task>> {
-        let mut guard = self.tasks.lock();
-        while guard.is_empty() {
-            self.waiting_on_ready.wait(&mut guard);
+        let mut task = self.pop_priority_task();
+        let mut attempt = 0;
+        while task.is_none() {
+            if attempt < 10 {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+                attempt += 1;
+            } else {
+                self.waiting.wait();
+            }
             if inner.shutdown() {
                 return None;
             }
+            task = self.pop_priority_task();
         }
-        let ret = guard.pop();
-        debug_assert!(ret.is_some());
-        ret
+        task
     }
 
     pub fn try_run_task(&self, inner: &Inner) {
         if let Some(task) = self.next_ready_task(inner) {
-            use std::task::{Context, Poll, Waker};
+            use std::task::Context;
             if task
                 .state
-                .compare_exchange(READY, PENDING, Ordering::Relaxed, Ordering::Relaxed)
+                .compare_exchange(READY, TRANSITIONING, Ordering::Relaxed, Ordering::Relaxed)
                 .is_ok()
             {
+                for t in self.priorities.pending(task.priority) {
+                    self.push_yield(t);
+                }
+                task.state.store(PENDING, Ordering::Relaxed);
                 if task
                     .future
                     .poll(&mut Context::from_waker(&task.clone().into()))
                 {
-                    task.state.store(COMPLETE, Ordering::Relaxed);
+                    if task.state.swap(COMPLETE, Ordering::Relaxed) == READY {
+                        for t in self.priorities.pending(task.priority) {
+                            self.push_yield(t);
+                        }
+                    }
                 }
             }
         }
@@ -380,8 +615,9 @@ impl TaskPool {
 
 impl BlockingTaskPool {
     pub fn new_task(&self, id: u64, f: ClosureOnce<(), ()>) {
-        self.tasks.lock().push_back(BlockingTask { id, f });
-        self.waiting_on_tasks.notify_one();
+        let task = BlockingTask { id, f };
+        self.tasks.lock().push_back(task);
+        self.waiting.notify_one();
     }
 
     pub fn exit(&self) -> bool {
@@ -399,8 +635,7 @@ impl BlockingTaskPool {
         let mut guard = self.tasks.lock();
         if guard.is_empty() {
             self.bored.fetch_add(1, Ordering::Relaxed);
-            self.waiting_on_tasks
-                .wait_for(&mut guard, CONTROL_STATS_DURATION);
+            self.waiting.wait_for(&mut guard, CONTROL_STATS_DURATION);
             return None;
         }
         let ret = guard.pop_front();
@@ -416,13 +651,190 @@ impl BlockingTaskPool {
 }
 
 impl Inner {
+    pub fn new(pool_size: usize) -> Self {
+        Inner {
+            tasks: Arc::new(TaskPool::new(pool_size)),
+            blocking_tasks: Default::default(),
+            next_task_id: Default::default(),
+            stats: Default::default(),
+            shutdown: Default::default(),
+        }
+    }
+
     pub fn indicate_shutdown(&self) {
         self.shutdown.store(true, Ordering::Relaxed);
-        self.tasks.waiting_on_ready.notify_all();
-        self.blocking_tasks.waiting_on_tasks.notify_all();
+        self.tasks.waiting.notify_all();
+        self.blocking_tasks.waiting.notify_all();
+        self.stats.notify_all();
     }
 
     pub fn shutdown(&self) -> bool {
         self.shutdown.load(Ordering::Relaxed)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use futures::{channel::oneshot::channel, future::FutureExt};
+
+    async fn spawn<F: Future + Send + 'static>(
+        rt: RuntimeHandle,
+        priority: u32,
+        fut: F,
+    ) -> F::Output
+    where
+        F::Output: Send + 'static,
+    {
+        let (fut, handle) = fut.remote_handle();
+        rt.spawn(priority, BoxFuture::new(fut));
+        handle.await
+    }
+
+    async fn spawn_blocking<R: Send + 'static, F: FnOnce() -> R + Send + Sync + 'static>(
+        rt: RuntimeHandle,
+        f: F,
+    ) -> R {
+        let (snd, rcv) = channel();
+        rt.spawn_blocking(
+            (move || {
+                snd.send(f()).map_err(|_| ()).unwrap();
+                ()
+            })
+            .into(),
+        );
+        rcv.await.unwrap()
+    }
+
+    fn block<F: Future + Send>(rt: &RuntimeHandle, fut: F) -> F::Output {
+        let (snd, mut rcv) = channel();
+        rt.block_on(async move { snd.send(fut.await).map_err(|_| ()).unwrap() });
+        rcv.try_recv().unwrap().unwrap()
+    }
+
+    #[test]
+    fn basic() {
+        let rt = Runtime::new(2).unwrap();
+        let a = async { 42 };
+        let f = spawn(rt.handle(), 100, a);
+        let result = block(&rt, f);
+        assert_eq!(result, 42);
+    }
+
+    #[test]
+    fn multiple() {
+        let rt = Runtime::new(2).unwrap();
+        let a = spawn(rt.handle(), 100, async { 1 });
+        let b = spawn(rt.handle(), 100, async { 2 });
+        let c = spawn(rt.handle(), 100, async { 3 });
+        let d = spawn(rt.handle(), 100, async { 4 });
+        let e = spawn(rt.handle(), 100, async { 5 });
+        let result = block(&rt, async { futures::join!(a, b, c, d, e) });
+        assert_eq!(result, (1, 2, 3, 4, 5));
+    }
+
+    #[test]
+    fn priorities() {
+        let rt = Runtime::new(2).unwrap();
+        let a = spawn(rt.handle(), 100, async { 1 });
+        let b = spawn(rt.handle(), 100, async { a.await });
+        let c = spawn(rt.handle(), 80, async { 3 });
+        let d = spawn(rt.handle(), 80, async { 4 });
+        let e = spawn(rt.handle(), 80, async { futures::join!(c, d) });
+        let result = block(&rt, async { futures::join!(e, b) });
+        assert_eq!(result, ((3, 4), 1));
+    }
+
+    #[test]
+    fn many() {
+        let rt = Runtime::new(2).unwrap();
+        let a = {
+            let hdl = rt.handle();
+            spawn(rt.handle(), 100, async move {
+                for _ in 0..1000 {
+                    spawn(hdl.clone(), 100, async { () }).await;
+                }
+            })
+        }
+        .shared();
+        let b = {
+            let hdl = rt.handle();
+            spawn(rt.handle(), 100, async move {
+                for _ in 0..1000 {
+                    spawn(hdl.clone(), 80, async { () }).await;
+                }
+            })
+        }
+        .shared();
+        let c = {
+            let hdl = rt.handle();
+            spawn(rt.handle(), 100, async move {
+                for _ in 0..10 {
+                    spawn(hdl.clone(), 50, a.clone()).await;
+                }
+            })
+        };
+        let d = {
+            let hdl = rt.handle();
+            spawn(rt.handle(), 100, async move {
+                for _ in 0..10 {
+                    spawn(hdl.clone(), 100, b.clone()).await;
+                }
+            })
+        };
+        let result = block(&rt, async { futures::join!(c, d) });
+        assert_eq!(result, ((), ()));
+    }
+
+    #[test]
+    fn blocking() {
+        let rt = Runtime::new(2).unwrap();
+        let mut g = vec![];
+        for n in 2..100 {
+            g.push(
+                spawn_blocking(rt.handle(), move || {
+                    std::thread::sleep(std::time::Duration::from_millis(n / 2))
+                })
+                .boxed(),
+            );
+        }
+        block(&rt, futures::future::join_all(g));
+    }
+
+    #[test]
+    fn priority_order() {
+        let rt = Runtime::new(1).unwrap();
+        let hdl = rt.handle();
+        let v = Arc::new(AtomicU64::new(0));
+        let v2 = v.clone();
+        let f = spawn(hdl.clone(), 100, async move {
+            let v = v2.clone();
+            let a = spawn(hdl.clone(), 5, async move {
+                drop(v.compare_exchange(4, 5, Ordering::Relaxed, Ordering::Relaxed));
+            });
+            let v = v2.clone();
+            let b = spawn(hdl.clone(), 2, async move {
+                drop(v.compare_exchange(1, 2, Ordering::Relaxed, Ordering::Relaxed));
+            });
+            let v = v2.clone();
+            let c = spawn(hdl.clone(), 6, async move {
+                drop(v.compare_exchange(5, 6, Ordering::Relaxed, Ordering::Relaxed));
+            });
+            let v = v2.clone();
+            let d = spawn(hdl.clone(), 1, async move {
+                drop(v.compare_exchange(0, 1, Ordering::Relaxed, Ordering::Relaxed));
+            });
+            let v = v2.clone();
+            let e = spawn(hdl.clone(), 4, async move {
+                drop(v.compare_exchange(3, 4, Ordering::Relaxed, Ordering::Relaxed));
+            });
+            let v = v2.clone();
+            let f = spawn(hdl.clone(), 3, async move {
+                drop(v.compare_exchange(2, 3, Ordering::Relaxed, Ordering::Relaxed));
+            });
+            futures::join!(a, b, c, d, e, f);
+        });
+        block(&rt, f);
+        assert_eq!(v.load(Ordering::Relaxed), 6);
     }
 }

@@ -35,7 +35,7 @@ pub use error_scope::ErrorScope;
 pub use evaluating::Evaluating;
 pub use shared_state::SharedState;
 pub use store::{Item, ItemContent, ItemName, Store};
-pub use task::{thread_id, LocalKey, TaskManager, TaskPermit};
+pub use task::{LocalKey, TaskManager, TaskPermit};
 pub use traits::{TraitGenerator, TraitGeneratorByTrait, TraitGeneratorByType, Traits};
 
 /// Runtime context which is immutable.

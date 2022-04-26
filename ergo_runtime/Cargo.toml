@@ -21,6 +21,7 @@ plugin_tls = "0.3"
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1", features = ["parking_lot","rt-multi-thread","sync"] }
 uuid = { version = "0.8", features = ["v5"] }
+work-queue = "0.1"
 
 [dev-dependencies]
 plugin_tls = { version = "0.3", features = ["host"] }
