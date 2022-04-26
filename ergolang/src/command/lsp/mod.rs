@@ -1,9 +1,11 @@
 use super::format::Formatter;
+use ergo_runtime::async_executor;
 use ergo_runtime::source::{Location, Source};
 use ergo_script::ast::tokenize;
-use lspower::jsonrpc::Result;
-use lspower::lsp::*;
-use lspower::{Client, LanguageServer, LspService, Server};
+use futures::{channel::mpsc, stream::TryStreamExt};
+use tower_lsp::jsonrpc::Result;
+use tower_lsp::lsp_types::*;
+use tower_lsp::{Client, LanguageServer, LspService, Server};
 
 mod files;
 
@@ -15,23 +17,112 @@ pub struct Lsp {}
 
 impl super::Command for Lsp {
     fn run(self) -> std::result::Result<(), String> {
-        let stdin = tokio::io::stdin();
-        let stdout = tokio::io::stdout();
-
-        let (service, messages) = LspService::new(|client| Service {
+        let (service, socket) = LspService::new(|client| Service {
             _client: client,
             files: Default::default(),
         });
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .worker_threads(2)
-            .build()
-            .unwrap()
-            .block_on(
-                Server::new(stdin, stdout)
-                    .interleave(messages)
-                    .serve(service),
-            );
+
+        let rt = async_executor::Runtime::new(2).map_err(|e| e.to_string())?;
+
+        use std::io::{Read, Write};
+
+        let (stdin_send, stdin_recv) = mpsc::unbounded();
+        let stdin = stdin_recv.into_async_read();
+        rt.spawn_blocking(
+            (move || {
+                let stdin = std::io::stdin();
+                let mut stdin = stdin.lock();
+                loop {
+                    let mut buf = vec![0u8; 1024];
+                    let to_send = match stdin.read(&mut buf) {
+                        Ok(amt) => {
+                            buf.resize(amt, 0);
+                            Ok(buf.into_boxed_slice())
+                        }
+                        Err(e) => {
+                            if e.kind() == std::io::ErrorKind::Interrupted {
+                                continue;
+                            }
+                            Err(e)
+                        }
+                    };
+                    if stdin_send.unbounded_send(to_send).is_err() {
+                        break;
+                    }
+                }
+            })
+            .into(),
+        );
+
+        let (stdout_send, stdout_recv) = std::sync::mpsc::channel();
+        struct Stdout(Option<std::sync::mpsc::Sender<Box<[u8]>>>);
+        use std::pin::Pin;
+        use std::task::{Context, Poll};
+        impl futures::io::AsyncWrite for Stdout {
+            fn poll_write(
+                mut self: Pin<&mut Self>,
+                _cx: &mut Context,
+                mut buf: &[u8],
+            ) -> Poll<std::io::Result<usize>> {
+                let orig_length = buf.len();
+                while !buf.is_empty() {
+                    let mut sbuf = Vec::with_capacity(1024);
+                    let to_copy = std::cmp::min(sbuf.capacity(), buf.len());
+                    sbuf.extend_from_slice(&buf[..to_copy]);
+                    buf = &buf[to_copy..];
+                    if self
+                        .0
+                        .as_mut()
+                        .unwrap()
+                        .send(sbuf.into_boxed_slice())
+                        .is_err()
+                    {
+                        return Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into()));
+                    }
+                }
+                Poll::Ready(Ok(orig_length))
+            }
+
+            fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<std::io::Result<()>> {
+                Poll::Ready(Ok(()))
+            }
+
+            fn poll_close(
+                mut self: Pin<&mut Self>,
+                _cx: &mut Context,
+            ) -> Poll<std::io::Result<()>> {
+                self.0 = None;
+                Poll::Ready(Ok(()))
+            }
+        }
+        let stdout = Stdout(Some(stdout_send));
+        rt.spawn_blocking(
+            (move || {
+                let stdout = std::io::stdout();
+                let mut stdout = stdout.lock();
+                'outer: while let Ok(buf) = stdout_recv.recv() {
+                    loop {
+                        if let Err(e) = stdout.write_all(&buf) {
+                            if e.kind() == std::io::ErrorKind::Interrupted {
+                                continue;
+                            } else {
+                                break 'outer;
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                    if let Err(e) = stdout.flush() {
+                        if e.kind() != std::io::ErrorKind::Interrupted {
+                            break;
+                        }
+                    }
+                }
+            })
+            .into(),
+        );
+
+        rt.block_on(Server::new(stdin, stdout, socket).serve(service));
         Ok(())
     }
 }
@@ -212,9 +303,10 @@ impl<'a> tokenize::StringSlice<'a> for RopeSlice<'a> {
     }
 }
 
-#[lspower::async_trait]
+#[tower_lsp::async_trait]
 impl LanguageServer for Service {
     async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
+        log::info!("initialize");
         let mut capabilities = ServerCapabilities::default();
         capabilities.semantic_tokens_provider = Some(
             SemanticTokensServerCapabilities::SemanticTokensOptions(SemanticTokensOptions {
@@ -241,6 +333,7 @@ impl LanguageServer for Service {
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
+        log::info!("did_change");
         let mut source = self.files.content_mut(&params.text_document.uri).await;
         for change in params.content_changes {
             if let Some(r) = change.range {
@@ -260,6 +353,7 @@ impl LanguageServer for Service {
     }
 
     async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
+        log::info!("formatting");
         let source = self.files.content(&params.text_document.uri).await;
 
         let formatter = Formatter { line_width: 100 };
@@ -292,6 +386,7 @@ impl LanguageServer for Service {
         &self,
         params: SemanticTokensParams,
     ) -> Result<Option<SemanticTokensResult>> {
+        log::info!("semantic");
         use tokenize::{LeaderToken, PairedToken, SymbolicToken, Token};
 
         let source = self.files.content(&params.text_document.uri).await;

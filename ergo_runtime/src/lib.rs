@@ -64,6 +64,8 @@ pub use error::{Error, RResult, Result};
 pub use source::Source;
 pub use value::{EvaluatedValue, IdentifiedValue, TypedValue, Value};
 
+pub use context::task::runtime as async_executor;
+
 pub trait ResultIterator<T> {
     /// Collect values into a Result, where errors will be aggregated.
     fn collect_result<R: FromIterator<T>>(self) -> Result<R>;

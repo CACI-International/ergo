@@ -4,9 +4,10 @@
 #![allow(improper_ctypes_definitions)]
 
 use crate::abi_stable::{
-    closure::ClosureOnce,
+    closure::ClosureOnceT,
     external_types::RMutex,
     future::{BoxFuture, LocalBoxFuture},
+    marker_type::UnsyncSend,
     sabi_trait,
     sabi_trait::prelude::*,
     std_types::{RArc, RBox, ROption, RVec},
@@ -17,8 +18,7 @@ use crate::error::DiagnosticInfo;
 use crate::Error;
 use futures::future::{abortable, try_join_all, AbortHandle, Aborted, Future, FutureExt};
 use std::cell::Cell;
-//use tokio::runtime as tokio_runtime;
-mod runtime;
+pub mod runtime;
 
 /// Create a task local value.
 #[macro_export]
@@ -208,7 +208,7 @@ async fn acquire_owned(this: &RArc<Semaphore>, mut count: u32) -> SemaphorePermi
 trait ThreadPoolInterface: Clone + Debug + Send + Sync {
     fn spawn_ok(&self, priority: u32, future: BoxFuture<'static, ()>);
 
-    fn spawn_blocking(&self, f: ClosureOnce<(), ()>);
+    fn spawn_blocking(&self, f: ClosureOnceT<'static, UnsyncSend, (), ()>);
 
     fn block_on<'a>(&self, future: LocalBoxFuture<'a, ()>);
 
@@ -226,7 +226,7 @@ impl ThreadPoolInterface for std::sync::Arc<ThreadPool> {
         self.pool.spawn(priority, future);
     }
 
-    fn spawn_blocking(&self, f: ClosureOnce<(), ()>) {
+    fn spawn_blocking(&self, f: ClosureOnceT<'static, UnsyncSend, (), ()>) {
         self.pool.spawn_blocking(f);
     }
 
@@ -348,8 +348,8 @@ impl TaskManager {
     /// operation). The concurrent task is spawned on the IO thread pool.
     pub fn spawn_blocking<F, R>(&self, f: F) -> impl Future<Output = Result<R, Error>> + 'static
     where
-        F: FnOnce() -> R + Eraseable,
-        R: Eraseable,
+        F: FnOnce() -> R + Send + 'static,
+        R: Send + 'static,
     {
         let (send, rcv) = futures::channel::oneshot::channel();
         self.pool

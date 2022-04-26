@@ -1,6 +1,6 @@
 //! ABI-stable closures.
 
-use crate::type_erase::{Eraseable, Erased, ErasedTrivial};
+use crate::type_erase::{Eraseable, EraseableT, Erased, ErasedT, ErasedTrivial, SyncSendMarker};
 use abi_stable::{std_types, StableAbi};
 
 /// A function pointer.
@@ -40,12 +40,15 @@ pub type Args4<A, B, C, D> = std_types::Tuple4<A, B, C, D>;
 
 #[derive(StableAbi)]
 #[repr(C)]
-pub struct ClosureOnce<Args, Ret> {
-    f: extern "C" fn(Erased, Args) -> Ret,
-    data: Erased,
+pub struct ClosureOnceT<'a, SyncSend, Args, Ret> {
+    f: extern "C" fn(ErasedT<'a, SyncSend>, Args) -> Ret,
+    data: ErasedT<'a, SyncSend>,
 }
 
-impl<Args, Ret> std::fmt::Debug for ClosureOnce<Args, Ret> {
+pub type ClosureOnce<Args, Ret> =
+    ClosureOnceT<'static, abi_stable::marker_type::SyncSend, Args, Ret>;
+
+impl<'a, SyncSend, Args, Ret> std::fmt::Debug for ClosureOnceT<'a, SyncSend, Args, Ret> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         f.debug_struct("ClosureOnce")
             .field("f", &(&self.f as *const _))
@@ -54,16 +57,24 @@ impl<Args, Ret> std::fmt::Debug for ClosureOnce<Args, Ret> {
     }
 }
 
-impl<Ret> ClosureOnce<(), Ret> {
-    pub fn new<F: FnOnce() -> Ret + Eraseable>(f: F) -> Self {
+impl<'a, SyncSend: SyncSendMarker, Ret> ClosureOnceT<'a, SyncSend, (), Ret> {
+    pub fn new<F: FnOnce() -> Ret + EraseableT<'a, SyncSend>>(f: F) -> Self {
         #[allow(improper_ctypes_definitions)]
-        extern "C" fn func<F: FnOnce() -> Ret, Ret>(data: Erased, _: ()) -> Ret {
+        extern "C" fn func<
+            'k,
+            SyncSend: SyncSendMarker,
+            F: FnOnce() -> Ret + EraseableT<'k, SyncSend>,
+            Ret,
+        >(
+            data: ErasedT<'k, SyncSend>,
+            _: (),
+        ) -> Ret {
             (unsafe { data.to_owned::<F>() })()
         }
 
-        ClosureOnce {
-            f: func::<F, Ret>,
-            data: Erased::new(f),
+        ClosureOnceT {
+            f: func::<SyncSend, F, Ret>,
+            data: ErasedT::new(f),
         }
     }
 
@@ -72,9 +83,9 @@ impl<Ret> ClosureOnce<(), Ret> {
     }
 }
 
-impl<F, Ret> From<F> for ClosureOnce<(), Ret>
+impl<'a, SyncSend: SyncSendMarker, F, Ret> From<F> for ClosureOnceT<'a, SyncSend, (), Ret>
 where
-    F: FnOnce() -> Ret + Eraseable,
+    F: FnOnce() -> Ret + EraseableT<'a, SyncSend>,
 {
     fn from(f: F) -> Self {
         Self::new(f)

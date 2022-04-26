@@ -25,9 +25,9 @@ term = "*"
 terminal_size = "*"
 
 ## LSP-specific dependencies
-lspower = "1.5"
+tower-lsp = { version = "0.17", default-features = false, features = ["runtime-agnostic"] }
 ropey = "1.3"
-tokio = { version = "1", features = ["io-std", "rt", "rt-multi-thread", "sync"] }
+tokio = { version = "1", features = ["parking_lot", "sync"] }
 
 [target.'cfg(unix)'.dependencies]
 termios = "0.3"

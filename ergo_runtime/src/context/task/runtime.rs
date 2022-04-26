@@ -7,7 +7,7 @@
 //! * deadlock detection
 //! * deadlock tracing
 
-use crate::abi_stable::{closure::ClosureOnce, future::BoxFuture};
+use crate::abi_stable::{closure::ClosureOnceT, future::BoxFuture, marker_type::UnsyncSend};
 use parking_lot::{Condvar, Mutex, RwLock, RwLockUpgradableReadGuard, RwLockWriteGuard};
 use std::cell::UnsafeCell;
 use std::collections::{BTreeMap, VecDeque};
@@ -80,10 +80,12 @@ struct BlockingPoolSize {
     target: usize,
 }
 
+type BlockingTaskFn = ClosureOnceT<'static, UnsyncSend, (), ()>;
+
 struct BlockingTask {
     #[allow(dead_code)]
     id: u64,
-    f: ClosureOnce<(), ()>,
+    f: BlockingTaskFn,
 }
 
 struct Priorities {
@@ -409,7 +411,7 @@ impl RuntimeHandle {
     /// Runs a function on the runtime.
     ///
     /// Blocking tasks will be serviced by a separate, dynamic thread pool.
-    pub fn spawn_blocking(&self, f: ClosureOnce<(), ()>) {
+    pub fn spawn_blocking(&self, f: BlockingTaskFn) {
         let id = self.inner.next_task_id.fetch_add(1, Ordering::Relaxed);
         self.inner.blocking_tasks.new_task(id, f);
     }
@@ -614,7 +616,7 @@ impl TaskPool {
 }
 
 impl BlockingTaskPool {
-    pub fn new_task(&self, id: u64, f: ClosureOnce<(), ()>) {
+    pub fn new_task(&self, id: u64, f: BlockingTaskFn) {
         let task = BlockingTask { id, f };
         self.tasks.lock().push_back(task);
         self.waiting.notify_one();

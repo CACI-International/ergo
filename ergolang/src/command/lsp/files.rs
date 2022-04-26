@@ -1,7 +1,7 @@
-use lspower::lsp::Url;
 use ropey::Rope;
 use std::collections::HashMap;
 use tokio::sync::{RwLock, RwLockMappedWriteGuard, RwLockReadGuard, RwLockWriteGuard};
+use tower_lsp::lsp_types::Url;
 
 #[derive(Debug, Default)]
 pub struct Files {

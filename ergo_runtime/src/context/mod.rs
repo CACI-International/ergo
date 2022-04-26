@@ -15,7 +15,7 @@ mod evaluating;
 mod log;
 mod shared_state;
 mod store;
-mod task;
+pub(crate) mod task;
 mod traits;
 
 use self::log::EmptyLogTarget;
