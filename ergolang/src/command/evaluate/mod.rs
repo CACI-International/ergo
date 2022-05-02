@@ -101,13 +101,6 @@ pub struct Evaluate {
     /// May be "off", "on", or "aggressive".
     pub lint: Option<Option<ergo_script::LintLevel>>,
 
-    #[clap(long)]
-    /// Enable deadlock detection.
-    ///
-    /// This comes with a performance penalty but may be useful to determine circular evaluation
-    /// cases.
-    pub detect_deadlock: bool,
-
     // #[structopt(long)]
     #[clap(skip)]
     /// Enable evaluation backtraces on errors.
@@ -328,8 +321,7 @@ impl Evaluate {
                             logger.new_error(e);
                         }
                     }
-                })
-                .detect_deadlock(self.detect_deadlock),
+                }),
             load_path,
         )
         .expect("failed to create script context");

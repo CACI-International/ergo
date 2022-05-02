@@ -11,8 +11,8 @@ use std::fmt;
 mod diagnostic_sources;
 mod dynamic_scope;
 mod error_scope;
-mod evaluating;
 mod log;
+mod progress;
 mod shared_state;
 mod store;
 pub(crate) mod task;
@@ -32,7 +32,7 @@ pub use self::log::{
 pub use diagnostic_sources::{SourceId, Sources};
 pub use dynamic_scope::{DynamicScope, DynamicScopeKey, DynamicScopeRef};
 pub use error_scope::ErrorScope;
-pub use evaluating::Evaluating;
+pub(crate) use progress::Progress;
 pub use shared_state::SharedState;
 pub use store::{Item, ItemContent, ItemName, Store};
 pub use task::{LocalKey, TaskManager, TaskPermit};
@@ -52,6 +52,8 @@ pub struct GlobalContext {
     pub task: TaskManager,
     /// The type traits interface.
     pub traits: Traits,
+    /// The progress tracking interface (for deadlock detection).
+    pub(crate) progress: Progress,
 }
 
 impl GlobalContext {
@@ -76,8 +78,6 @@ pub struct Context {
     pub dynamic_scope: DynamicScope,
     /// The error propagation interface.
     pub error_scope: ErrorScope,
-    /// The currently evaluating values.
-    pub(crate) evaluating: Evaluating,
 }
 
 /// A builder for a Context.
@@ -88,7 +88,6 @@ pub struct ContextBuilder {
     threads: Option<usize>,
     aggregate_errors: Option<bool>,
     error_scope: Option<ErrorScope>,
-    detect_deadlock: bool,
 }
 
 trait Fork {
@@ -165,15 +164,9 @@ impl ContextBuilder {
         self
     }
 
-    /// Set whether deadlock detection is enabled.
-    /// Default is false.
-    pub fn detect_deadlock(mut self, value: bool) -> Self {
-        self.detect_deadlock = value;
-        self
-    }
-
     /// Create a Context.
     pub fn build(self) -> Result<Context, BuilderError> {
+        let progress = Progress::default();
         Ok(Context {
             global: RArc::new(GlobalContext {
                 log: Log::new(
@@ -182,13 +175,17 @@ impl ContextBuilder {
                 ),
                 shared_state: SharedState::new(),
                 store: Store::new(self.store_dir.unwrap_or(std::env::temp_dir())),
-                task: TaskManager::new(self.threads, self.aggregate_errors.unwrap_or(false))
-                    .map_err(BuilderError::TaskManagerError)?,
+                task: TaskManager::new(
+                    self.threads,
+                    self.aggregate_errors.unwrap_or(false),
+                    progress.clone(),
+                )
+                .map_err(BuilderError::TaskManagerError)?,
                 traits: Default::default(),
+                progress,
             }),
             dynamic_scope: Default::default(),
             error_scope: self.error_scope.unwrap_or_default(),
-            evaluating: Evaluating::new(self.detect_deadlock),
         })
     }
 }
@@ -223,42 +220,18 @@ impl Context {
 
     /// Evaluate a value.
     pub async fn eval(value: &mut Value) -> crate::Result<()> {
-        let mut sources: Vec<crate::source::Source<()>> = Vec::new();
-        if Self::with(|ctx| ctx.evaluating.deadlock_detect_enabled()) {
-            let mut set = std::collections::HashSet::<u128>::default();
-            while !value.is_evaluated() {
-                sources.push(crate::metadata::Source::get(&value));
-                if !set.insert(value.immediate_id().await.id) {
-                    *value = crate::error! {
-                        labels: [
-                            primary(crate::metadata::Source::get(&value).with("while evaluating this value"))
-                        ],
-                        error: "circular evaluation detected"
-                    }.into();
-                    break;
-                }
-                value.eval_once().await;
-            }
-        } else {
-            while !value.is_evaluated() {
-                value.eval_once().await;
-            }
-        }
-        sources.dedup_by(|a, b| crate::source::Source::total_eq(a, b));
+        Context::global()
+            .progress
+            .eval_checking_progress(value)
+            .await?;
+        debug_assert!(value.is_evaluated());
         if value.is_type::<crate::types::Error>() {
-            let source = crate::metadata::Source::get(&value);
+            let source = crate::metadata::Source::get_origin(&value);
             if let Some(error) = value.as_mut::<crate::types::Error>() {
                 error.modify_diagnostics(|d| {
                     use crate::error::DiagnosticInfo;
                     if d.labels.is_empty() {
                         d.add_primary_label(source.with("while evaluating this value"));
-                        let mut iter = sources.iter().rev().enumerate();
-                        iter.next();
-                        for (i, s) in iter {
-                            d.add_secondary_label(
-                                s.with(format!("({}) while evaluating this value", i)),
-                            );
-                        }
                     }
                 });
             }
@@ -391,7 +364,6 @@ impl Fork for Context {
             global: self.global.fork(),
             dynamic_scope: self.dynamic_scope.fork(),
             error_scope: self.error_scope.fork(),
-            evaluating: self.evaluating.fork(),
         }
     }
 
@@ -399,6 +371,5 @@ impl Fork for Context {
         self.global.join(forked.global);
         self.dynamic_scope.join(forked.dynamic_scope);
         self.error_scope.join(forked.error_scope);
-        self.evaluating.join(forked.evaluating);
     }
 }

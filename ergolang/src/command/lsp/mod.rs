@@ -22,7 +22,10 @@ impl super::Command for Lsp {
             files: Default::default(),
         });
 
-        let rt = async_executor::Runtime::new(2).map_err(|e| e.to_string())?;
+        let rt = async_executor::Runtime::builder()
+            .pool_size(2)
+            .build()
+            .map_err(|e| e.to_string())?;
 
         use std::io::{Read, Write};
 

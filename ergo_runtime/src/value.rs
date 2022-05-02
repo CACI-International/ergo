@@ -531,8 +531,20 @@ impl Value {
     /// Get the value's identity, evaluating the value as necessary to get a more accurate
     /// identity.
     pub async fn eval_id(&mut self) -> Identity {
-        while self.immediate_id().await.should_eval && !self.is_evaluated() {
-            self.eval_once().await;
+        let ctx = Context::global();
+        let _token = ctx.progress.attempt_progress();
+        while self.immediate_id().await.should_eval {
+            match ctx.progress.eval_once_checking_progress(self).await {
+                Ok(true) => break,
+                Ok(false) => continue,
+                Err(_) => {
+                    // Bail out, assuming the error will be caught in later evaluation.
+                    // FIXME this would be better if the function returned a Result, however the
+                    // places where it's used don't have Results either. Maybe interact directly
+                    // with the error scope?
+                    break;
+                }
+            }
         }
         self.immediate_id().await
     }
@@ -542,6 +554,12 @@ impl Value {
     pub async fn id(&self) -> u128 {
         let mut v = self.clone();
         v.eval_id().await.id
+    }
+
+    /// Get the value's referential identity, which is unique to a particular Value instance in
+    /// memory.
+    pub fn referential_id(&self) -> usize {
+        self.id.as_ref() as *const ValueId as usize
     }
 
     /// Get the value's type, if evaluated.
@@ -816,21 +834,13 @@ where
 {
     fn next(self, id: EvalForId<U128>) -> future::BoxFuture<'static, Value> {
         future::BoxFuture::new(async move {
-            let lock_id = self.as_ref() as *const _ as usize;
-            if Context::with(|ctx| ctx.evaluating.locking_would_deadlock(lock_id)) {
-                return crate::error!(error: "deadlock detected").into();
-            }
-
             let mut guard = self.complete.cache_default(id.id.into()).lock().await;
             if let Some(v) = &*guard {
                 v.clone()
             } else {
-                Context::with(|ctx| ctx.evaluating.locked(lock_id));
-                let val =
-                    Context::fork(|ctx| ctx.evaluating.push(lock_id), (self.func.clone())()).await;
+                let val = (self.func.clone())().await;
                 *guard = Some(val.clone());
                 drop(guard);
-                Context::with(|ctx| ctx.evaluating.unlocked(lock_id));
                 val
             }
         })
@@ -847,18 +857,7 @@ where
     Fut: std::future::Future<Output = Value> + Send,
 {
     fn next(self, _id: EvalForId<U128>) -> future::BoxFuture<'static, Value> {
-        future::BoxFuture::new(async move {
-            let lock_id = self.as_ref() as *const _ as usize;
-            if Context::with(|ctx| ctx.evaluating.locking_would_deadlock(lock_id)) {
-                return crate::error!(error: "deadlock detected").into();
-            }
-
-            Context::with(|ctx| ctx.evaluating.locked(lock_id));
-            let val =
-                Context::fork(|ctx| ctx.evaluating.push(lock_id), (self.func.clone())()).await;
-            Context::with(|ctx| ctx.evaluating.unlocked(lock_id));
-            val
-        })
+        future::BoxFuture::new(async move { (self.func.clone())().await })
     }
 }
 
@@ -1000,9 +999,15 @@ pub struct EvaluatedValue(IdentifiedValue);
 
 impl EvaluatedValue {
     pub async fn from_value(mut v: Value) -> Self {
-        while !v.is_evaluated() {
-            v.eval_once().await;
+        if let Err(e) = Context::eval(&mut v).await {
+            // Ensure that, one way or another, `v` is an evaluated value.  We could change this to
+            // return Errors early, but it's possible somebody would want an `EvaluatedValue` that
+            // is an `Error`.
+            if !v.is_evaluated() {
+                v = e.into();
+            }
         }
+        debug_assert!(v.is_evaluated());
         EvaluatedValue(IdentifiedValue::from_value_immediate(v).await)
     }
 
@@ -1012,6 +1017,13 @@ impl EvaluatedValue {
 
     pub fn id(&self) -> &u128 {
         self.0.id()
+    }
+
+    /// Check whether the evaluate value is an error, and if so return Err.
+    pub fn check_error(self) -> crate::Result<Self> {
+        Ok(EvaluatedValue(IdentifiedValue(crate::try_value!(
+            self.0 .0
+        ))))
     }
 
     /// Get the mutable Value.

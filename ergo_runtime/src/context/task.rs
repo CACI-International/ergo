@@ -293,9 +293,32 @@ impl TaskManager {
     pub fn new(
         num_threads: Option<usize>,
         aggregate_errors: bool,
+        progress: super::progress::Progress,
     ) -> Result<Self, futures::io::Error> {
         let threads = std::cmp::max(1, num_threads.unwrap_or_else(num_cpus::get));
-        let pool = runtime::Runtime::new(threads)?;
+        let abort_handles: RArc<RMutex<RVec<AbortHandleInterface_TO<'static, RBox<()>>>>> =
+            RArc::new(RMutex::new(Default::default()));
+        let pool = {
+            let abort_handles = abort_handles.clone();
+            let abort_handles2 = abort_handles.clone();
+            let progress2 = progress.clone();
+            runtime::Runtime::builder()
+                .pool_size(threads)
+                .on_inactivity(move || {
+                    progress.indicate_deadlock();
+                    for handle in abort_handles.lock().iter() {
+                        handle.abort();
+                    }
+                })
+                .on_maintenance(move |rthandle| {
+                    if progress2.check_for_deadlock(rthandle.has_blocking_tasks()) {
+                        for handle in abort_handles2.lock().iter() {
+                            handle.abort();
+                        }
+                    }
+                })
+                .build()?
+        };
 
         Ok(TaskManager {
             pool: ThreadPoolInterface_TO::from_value(
@@ -303,7 +326,7 @@ impl TaskManager {
                 TU_Opaque,
             ),
             tasks: RArc::new(Semaphore::new(threads)),
-            abort_handles: RArc::new(RMutex::new(Default::default())),
+            abort_handles,
             threads,
             aggregate_errors,
         })

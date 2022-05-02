@@ -17,8 +17,12 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 
 const MIN_BLOCKING_POOL_SIZE: usize = 2;
-const CONTROL_STATS_DURATION: std::time::Duration = std::time::Duration::from_millis(100);
+pub const MAINTENANCE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+const INACTIVITY_DURATION: std::time::Duration = std::time::Duration::from_secs(1);
 const WORKER_QUEUE_SIZE: u16 = 128;
+
+const INACTIVITY_INTERVALS: usize =
+    (INACTIVITY_DURATION.as_millis() / MAINTENANCE_INTERVAL.as_millis()) as usize;
 
 std::thread_local! {
     static WORKER_QUEUE: UnsafeCell<Option<WorkerQueue>> = UnsafeCell::new(None);
@@ -27,6 +31,12 @@ std::thread_local! {
 #[derive(Debug)]
 pub struct Runtime {
     handle: RuntimeHandle,
+}
+
+pub struct Builder {
+    pool_size: usize,
+    inactivity: Option<Box<dyn FnMut() + Send + 'static>>,
+    maintenance: Option<Box<dyn FnMut(&RuntimeHandle) + Send + 'static>>,
 }
 
 #[derive(Clone)]
@@ -38,7 +48,9 @@ struct Inner {
     tasks: Arc<TaskPool>,
     blocking_tasks: BlockingTaskPool,
     next_task_id: AtomicU64,
-    stats: ConditionFlag,
+    maintenance: ConditionFlag,
+    on_inactivity: Option<Mutex<Box<dyn FnMut() + Send + 'static>>>,
+    on_maintenance: Option<Mutex<Box<dyn FnMut(&RuntimeHandle) + Send + 'static>>>,
     shutdown: AtomicBool,
 }
 
@@ -48,29 +60,12 @@ struct ConditionFlag {
     condition: Condvar,
 }
 
-impl ConditionFlag {
-    pub fn wait(&self) {
-        self.condition.wait(&mut self.lock.lock());
-    }
-
-    pub fn wait_for(&self, duration: std::time::Duration) {
-        self.condition.wait_for(&mut self.lock.lock(), duration);
-    }
-
-    pub fn notify_one(&self) -> bool {
-        self.condition.notify_one()
-    }
-
-    pub fn notify_all(&self) -> bool {
-        self.condition.notify_all() > 0
-    }
-}
-
 #[derive(Default)]
 struct BlockingTaskPool {
     tasks: Mutex<VecDeque<BlockingTask>>,
     waiting: Condvar,
     size: Mutex<BlockingPoolSize>,
+    currently_running: AtomicUsize,
     bored: AtomicUsize,
 }
 
@@ -92,6 +87,47 @@ struct Priorities {
     current: RwLock<u32>,
     queued: AtomicUsize,
     ready: Mutex<BTreeMap<u32, (usize, Vec<Arc<Task>>)>>,
+}
+
+struct TaskPool {
+    queue: work_queue::Queue<Arc<Task>>,
+    waiting: ConditionFlag,
+    priorities: Priorities,
+    made_progress: AtomicBool,
+    currently_polling: AtomicUsize,
+}
+
+struct WorkerQueue {
+    queue: work_queue::LocalQueue<Arc<Task>>,
+}
+
+struct Task {
+    #[allow(dead_code)]
+    id: u64,
+    priority: u32,
+    future: TaskFuture,
+    pool: Weak<TaskPool>,
+    state: AtomicU8,
+}
+
+struct TaskFuture(Mutex<Option<BoxFuture<'static, ()>>>);
+
+impl ConditionFlag {
+    pub fn wait(&self) {
+        self.condition.wait(&mut self.lock.lock());
+    }
+
+    pub fn wait_for(&self, duration: std::time::Duration) {
+        self.condition.wait_for(&mut self.lock.lock(), duration);
+    }
+
+    pub fn notify_one(&self) -> bool {
+        self.condition.notify_one()
+    }
+
+    pub fn notify_all(&self) -> bool {
+        self.condition.notify_all() > 0
+    }
 }
 
 impl Default for Priorities {
@@ -181,18 +217,14 @@ impl Priorities {
     }
 }
 
-struct TaskPool {
-    queue: work_queue::Queue<Arc<Task>>,
-    waiting: ConditionFlag,
-    priorities: Priorities,
-}
-
 impl TaskPool {
     pub fn new(pool_size: usize) -> Self {
         TaskPool {
             queue: work_queue::Queue::new(pool_size, WORKER_QUEUE_SIZE),
             waiting: Default::default(),
             priorities: Default::default(),
+            made_progress: AtomicBool::new(false),
+            currently_polling: AtomicUsize::new(0),
         }
     }
 
@@ -202,10 +234,6 @@ impl TaskPool {
             .map(|queue| WorkerQueue { queue })
             .collect()
     }
-}
-
-struct WorkerQueue {
-    queue: work_queue::LocalQueue<Arc<Task>>,
 }
 
 impl WorkerQueue {
@@ -220,15 +248,6 @@ impl WorkerQueue {
     pub fn pop(&mut self) -> Option<Arc<Task>> {
         self.queue.pop()
     }
-}
-
-struct Task {
-    #[allow(dead_code)]
-    id: u64,
-    priority: u32,
-    future: TaskFuture,
-    pool: Weak<TaskPool>,
-    state: AtomicU8,
 }
 
 impl PartialEq for Task {
@@ -277,8 +296,6 @@ impl Drop for Task {
     }
 }
 
-struct TaskFuture(Mutex<Option<BoxFuture<'static, ()>>>);
-
 impl TaskFuture {
     pub fn new(future: BoxFuture<'static, ()>) -> Self {
         TaskFuture(Mutex::new(Some(future)))
@@ -298,11 +315,51 @@ impl TaskFuture {
     }
 }
 
-impl Runtime {
-    pub fn new(pool_size: usize) -> std::io::Result<Self> {
+impl Default for Builder {
+    fn default() -> Self {
+        Builder {
+            pool_size: 1,
+            inactivity: None,
+            maintenance: None,
+        }
+    }
+}
+
+impl Builder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn pool_size(mut self, pool_size: usize) -> Self {
+        self.pool_size = pool_size;
+        self
+    }
+
+    pub fn on_inactivity<F: FnMut() + Send + 'static>(mut self, callback: F) -> Self {
+        self.inactivity = Some(Box::new(callback));
+        self
+    }
+
+    pub fn on_maintenance<F: FnMut(&RuntimeHandle) + Send + 'static>(
+        mut self,
+        callback: F,
+    ) -> Self {
+        self.maintenance = Some(Box::new(callback));
+        self
+    }
+
+    pub fn build(self) -> std::io::Result<Runtime> {
         let rt = Runtime {
             handle: RuntimeHandle {
-                inner: Arc::new(Inner::new(pool_size)),
+                inner: Arc::new(Inner {
+                    tasks: Arc::new(TaskPool::new(self.pool_size)),
+                    blocking_tasks: Default::default(),
+                    next_task_id: Default::default(),
+                    maintenance: Default::default(),
+                    on_inactivity: self.inactivity.map(Mutex::new),
+                    on_maintenance: self.maintenance.map(Mutex::new),
+                    shutdown: Default::default(),
+                }),
             },
         };
 
@@ -333,6 +390,12 @@ impl Runtime {
         }
 
         Ok(rt)
+    }
+}
+
+impl Runtime {
+    pub fn builder() -> Builder {
+        Default::default()
     }
 
     pub fn shutdown(&self) {
@@ -416,14 +479,23 @@ impl RuntimeHandle {
         self.inner.blocking_tasks.new_task(id, f);
     }
 
+    /// Poll the given future to completion.
     pub fn block_on<'a, Fut: std::future::Future<Output = ()> + 'a>(&self, mut fut: Fut) {
         let block_on_waker = BlockOnWaker::new();
-        use std::task::{Context, Poll, Waker};
+        use std::task::{Context, Waker};
         let waker = Waker::from(block_on_waker.clone());
         // Safety: we guarantee that `fut` will not be moved after this call by overwriting the
         // `fut` binding itself.
         let mut fut = unsafe { Pin::new_unchecked(&mut fut) };
-        while let Poll::Pending = fut.as_mut().poll(&mut Context::from_waker(&waker)) {
+        let tasks = &self.inner.tasks;
+        loop {
+            tasks.made_progress.store(true, Ordering::Relaxed);
+            tasks.currently_polling.fetch_add(1, Ordering::Relaxed);
+            let result = fut.as_mut().poll(&mut Context::from_waker(&waker));
+            tasks.currently_polling.fetch_sub(1, Ordering::Relaxed);
+            if result.is_ready() {
+                break;
+            }
             std::thread::park();
             while block_on_waker
                 .state
@@ -433,6 +505,18 @@ impl RuntimeHandle {
                 std::thread::park();
             }
         }
+    }
+
+    /// Returns whether there are any blocking tasks in the pool.
+    pub fn has_blocking_tasks(&self) -> bool {
+        let blocking_tasks_ready = !self.inner.blocking_tasks.tasks.lock().is_empty();
+        let blocking_tasks_running = self
+            .inner
+            .blocking_tasks
+            .currently_running
+            .load(Ordering::Relaxed)
+            > 0;
+        blocking_tasks_ready || blocking_tasks_running
     }
 
     fn new_blocking_pool_thread(&self) -> std::io::Result<()> {
@@ -479,35 +563,62 @@ impl RuntimeHandle {
     fn control_worker(&self) {
         let mut ready = 0;
         let mut bored = 0;
+        let mut inactive_intervals = 0;
         while !self.inner.shutdown() {
-            let blocking_tasks = &self.inner.blocking_tasks;
-            let ready_now = blocking_tasks.tasks.lock().len();
-            let bored_now = blocking_tasks.bored.swap(0, Ordering::Relaxed);
-            // Set `ready` to `ready_now` and take the min of the two values
-            let waiting = std::cmp::min(std::mem::replace(&mut ready, ready_now), ready_now);
-            // Set `bored` to `bored_now` and take the min of the two values
-            let wasted = std::cmp::min(std::mem::replace(&mut bored, bored_now), bored_now);
+            // Blocking pool resize logic
+            {
+                let blocking_tasks = &self.inner.blocking_tasks;
+                let ready_now = blocking_tasks.tasks.lock().len();
+                let bored_now = blocking_tasks.bored.swap(0, Ordering::Relaxed);
+                // Set `ready` to `ready_now` and take the min of the two values
+                let waiting = std::cmp::min(std::mem::replace(&mut ready, ready_now), ready_now);
+                // Set `bored` to `bored_now` and take the min of the two values
+                let wasted = std::cmp::min(std::mem::replace(&mut bored, bored_now), bored_now);
 
-            let pool_size = blocking_tasks.size.lock().target;
-            let result = if waiting > 0 {
-                // If we have a lot of ready and waiting tasks, we need to expand the thread pool.
-                self.set_blocking_pool_size(pool_size + waiting)
-            } else if wasted > 0 && pool_size != MIN_BLOCKING_POOL_SIZE {
-                // Clip `wasted` for safety, though in general it shouldn't be more than pool_size (but
-                // sleep scheduling might be wonky).
-                let wasted = std::cmp::min(wasted, pool_size);
-                // If we had threads not doing anything, we should decrease the thread pool size.
-                self.set_blocking_pool_size(std::cmp::max(
-                    pool_size - wasted,
-                    MIN_BLOCKING_POOL_SIZE,
-                ))
-            } else {
-                Ok(())
-            };
-            if let Err(e) = result {
-                log::error!("blocking thread launch error: {}", e);
+                let pool_size = blocking_tasks.size.lock().target;
+                let result = if waiting > 0 {
+                    // If we have a lot of ready and waiting tasks, we need to expand the thread pool.
+                    self.set_blocking_pool_size(pool_size + waiting)
+                } else if wasted > 0 && pool_size != MIN_BLOCKING_POOL_SIZE {
+                    // Clip `wasted` for safety, though in general it shouldn't be more than pool_size (but
+                    // sleep scheduling might be wonky).
+                    let wasted = std::cmp::min(wasted, pool_size);
+                    // If we had threads not doing anything, we should decrease the thread pool size.
+                    self.set_blocking_pool_size(std::cmp::max(
+                        pool_size - wasted,
+                        MIN_BLOCKING_POOL_SIZE,
+                    ))
+                } else {
+                    Ok(())
+                };
+                if let Err(e) = result {
+                    log::error!("blocking thread launch error: {}", e);
+                }
             }
-            self.inner.stats.wait_for(CONTROL_STATS_DURATION);
+            // Inactivity logic
+            if let Some(cb) = &self.inner.on_inactivity {
+                let made_progress = self
+                    .inner
+                    .tasks
+                    .made_progress
+                    .swap(false, Ordering::Relaxed);
+                let tasks_polling = self.inner.tasks.currently_polling.load(Ordering::Relaxed) > 0;
+                let has_blocking_tasks = self.has_blocking_tasks();
+                if made_progress || tasks_polling || has_blocking_tasks {
+                    inactive_intervals = 0;
+                } else {
+                    inactive_intervals += 1;
+                    if inactive_intervals >= INACTIVITY_INTERVALS {
+                        (*cb.lock())();
+                        inactive_intervals = 0;
+                    }
+                }
+            }
+            // General maintenance callback
+            if let Some(cb) = &self.inner.on_maintenance {
+                (*cb.lock())(self);
+            }
+            self.inner.maintenance.wait_for(MAINTENANCE_INTERVAL);
         }
     }
 }
@@ -600,6 +711,8 @@ impl TaskPool {
                     self.push_yield(t);
                 }
                 task.state.store(PENDING, Ordering::Relaxed);
+                self.made_progress.store(true, Ordering::Relaxed);
+                self.currently_polling.fetch_add(1, Ordering::Relaxed);
                 if task
                     .future
                     .poll(&mut Context::from_waker(&task.clone().into()))
@@ -610,6 +723,7 @@ impl TaskPool {
                         }
                     }
                 }
+                self.currently_polling.fetch_sub(1, Ordering::Relaxed);
             }
         }
     }
@@ -637,7 +751,7 @@ impl BlockingTaskPool {
         let mut guard = self.tasks.lock();
         if guard.is_empty() {
             self.bored.fetch_add(1, Ordering::Relaxed);
-            self.waiting.wait_for(&mut guard, CONTROL_STATS_DURATION);
+            self.waiting.wait_for(&mut guard, MAINTENANCE_INTERVAL);
             return None;
         }
         let ret = guard.pop_front();
@@ -647,27 +761,19 @@ impl BlockingTaskPool {
 
     pub fn try_run_task(&self) {
         if let Some(BlockingTask { f, .. }) = self.next_task() {
+            self.currently_running.fetch_add(1, Ordering::Relaxed);
             f.call();
+            self.currently_running.fetch_sub(1, Ordering::Relaxed);
         }
     }
 }
 
 impl Inner {
-    pub fn new(pool_size: usize) -> Self {
-        Inner {
-            tasks: Arc::new(TaskPool::new(pool_size)),
-            blocking_tasks: Default::default(),
-            next_task_id: Default::default(),
-            stats: Default::default(),
-            shutdown: Default::default(),
-        }
-    }
-
     pub fn indicate_shutdown(&self) {
         self.shutdown.store(true, Ordering::Relaxed);
         self.tasks.waiting.notify_all();
         self.blocking_tasks.waiting.notify_all();
-        self.stats.notify_all();
+        self.maintenance.notify_all();
     }
 
     pub fn shutdown(&self) -> bool {
@@ -714,9 +820,13 @@ mod test {
         rcv.try_recv().unwrap().unwrap()
     }
 
+    fn rt(pool_size: usize) -> Runtime {
+        Runtime::builder().pool_size(pool_size).build().unwrap()
+    }
+
     #[test]
     fn basic() {
-        let rt = Runtime::new(2).unwrap();
+        let rt = rt(2);
         let a = async { 42 };
         let f = spawn(rt.handle(), 100, a);
         let result = block(&rt, f);
@@ -725,7 +835,7 @@ mod test {
 
     #[test]
     fn multiple() {
-        let rt = Runtime::new(2).unwrap();
+        let rt = rt(2);
         let a = spawn(rt.handle(), 100, async { 1 });
         let b = spawn(rt.handle(), 100, async { 2 });
         let c = spawn(rt.handle(), 100, async { 3 });
@@ -737,7 +847,7 @@ mod test {
 
     #[test]
     fn priorities() {
-        let rt = Runtime::new(2).unwrap();
+        let rt = rt(2);
         let a = spawn(rt.handle(), 100, async { 1 });
         let b = spawn(rt.handle(), 100, async { a.await });
         let c = spawn(rt.handle(), 80, async { 3 });
@@ -749,7 +859,7 @@ mod test {
 
     #[test]
     fn many() {
-        let rt = Runtime::new(2).unwrap();
+        let rt = rt(2);
         let a = {
             let hdl = rt.handle();
             spawn(rt.handle(), 100, async move {
@@ -790,7 +900,7 @@ mod test {
 
     #[test]
     fn blocking() {
-        let rt = Runtime::new(2).unwrap();
+        let rt = rt(2);
         let mut g = vec![];
         for n in 2..100 {
             g.push(
@@ -805,7 +915,7 @@ mod test {
 
     #[test]
     fn priority_order() {
-        let rt = Runtime::new(1).unwrap();
+        let rt = rt(1);
         let hdl = rt.handle();
         let v = Arc::new(AtomicU64::new(0));
         let v2 = v.clone();
