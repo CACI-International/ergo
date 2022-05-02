@@ -54,6 +54,8 @@
   identity of the expression.
 * Fix a bug with `Iter` types where very large iterators would cause a stack
   overflow (which occurred when the value was dropped).
+* Remove the `--detect-deadlock` argument. Deadlock detection is now done
+  automatically with no meaningful performance implications.
 
 ### Breaking Changes
 * Any use of `!` should be replaced with equivalent code.
