@@ -883,11 +883,10 @@ async fn partition(func: _, iter: _) -> Value {
                 ),
             )
             .await;
-            let key = key.as_evaluated().await;
+            let key = key.as_evaluated().await.check_error()?;
             Ok((key, v))
         }))
-        .await
-        .unwrap();
+        .await?;
 
     let mut result: BTreeMap<_, Vec<_>> = Default::default();
     for (k, v) in keyed {
@@ -953,7 +952,7 @@ mod test {
         fn partition(t) {
             t.assert_eq(
                 "self:Iter:partition (fn :x -> x:0) [[a,1],[b,2],[c,3],[a,4],[c,5],[b,6],[b,7],[c,8]]",
-                "{c = [[c,3],[c,5],[c,8]], b = [[b,2],[b,6],[b,7]], a = [[a,1],[a,4]] }"
+                "{c = [[c,3],[c,5],[c,8]], b = [[b,2],[b,6],[b,7]], a = [[a,1],[a,4]]}"
             );
         }
 
