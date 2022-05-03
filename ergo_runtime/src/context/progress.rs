@@ -22,6 +22,7 @@ pub struct Progress {
 #[repr(C)]
 struct Inner {
     made_progress: AtomicBool,
+    made_progress_last: AtomicBool,
     attempting_progress: AtomicUsize,
     deadlock_detected: AtomicBool,
     intervals: AtomicUsize,
@@ -47,7 +48,10 @@ impl Progress {
     /// token while calling this function in a loop.
     ///
     /// Returns whether the value is evaluated.
-    pub async fn eval_once_checking_progress(&self, value: &mut Value) -> crate::Result<bool> {
+    pub(crate) async fn eval_once_checking_progress(
+        &self,
+        value: &mut Value,
+    ) -> crate::Result<bool> {
         value.eval_once().await;
         if value.is_evaluated() {
             self.inner.made_progress.store(true, Ordering::Relaxed);
@@ -77,7 +81,7 @@ impl Progress {
     /// Get a token related to a progress attempt.
     ///
     /// When dropped, the attempt is considered completed.
-    pub fn attempt_progress(&self) -> AttemptToken {
+    pub(crate) fn attempt_progress(&self) -> AttemptToken {
         self.inner
             .attempting_progress
             .fetch_add(1, Ordering::Relaxed);
@@ -85,7 +89,7 @@ impl Progress {
     }
 
     /// Evaluate a value, checking for progress and deadlock.
-    pub async fn eval_checking_progress(&self, value: &mut Value) -> crate::Result<()> {
+    pub(crate) async fn eval_checking_progress(&self, value: &mut Value) -> crate::Result<()> {
         let _token = self.attempt_progress();
         while !self.eval_once_checking_progress(value).await? {}
         debug_assert!(value.is_evaluated());
@@ -97,9 +101,12 @@ impl Progress {
     /// This assumes it is called once per runtime maintenance interval.
     ///
     /// Returns whether deadlock was indicated.
-    pub fn check_for_deadlock(&self, has_blocking_tasks: bool) -> bool {
+    pub(crate) fn check_for_deadlock(&self, has_blocking_tasks: bool) -> bool {
         let any_attempting = self.inner.attempting_progress.load(Ordering::Relaxed) > 0;
         let made_progress = self.inner.made_progress.swap(false, Ordering::Relaxed);
+        self.inner
+            .made_progress_last
+            .store(made_progress, Ordering::Relaxed);
         if any_attempting && !made_progress && !has_blocking_tasks {
             if self.inner.intervals.fetch_add(1, Ordering::Relaxed) + 1 == DEADLOCK_INTERVALS {
                 self.indicate_deadlock();
@@ -119,5 +126,10 @@ impl Progress {
     /// Return whether evaluation is deadlocked.
     pub fn is_deadlocked(&self) -> bool {
         self.inner.deadlock_detected.load(Ordering::Relaxed)
+    }
+
+    /// Return whether progress has been made in the most recent maintenance cycle.
+    pub fn made_progress(&self) -> bool {
+        self.inner.made_progress_last.load(Ordering::Relaxed)
     }
 }

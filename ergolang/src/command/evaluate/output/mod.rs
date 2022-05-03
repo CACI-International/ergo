@@ -13,6 +13,7 @@ pub trait Output: LogTarget {
     fn set_log_level(&mut self, log_level: LogLevel);
     fn new_error(&mut self, err: Error);
     fn interrupt(&mut self);
+    fn indicate_progress(&mut self);
     fn update(&mut self);
     fn take_errors(&mut self) -> ergo_runtime::error::Diagnostics;
 }
@@ -57,6 +58,10 @@ impl Output for OutputInstance {
 
     fn interrupt(&mut self) {
         self.inner.interrupt()
+    }
+
+    fn indicate_progress(&mut self) {
+        self.inner.indicate_progress()
     }
 
     fn update(&mut self) {

@@ -29,10 +29,13 @@ struct TaskStatus {
     tasks: Arc<Mutex<Slab<String>>>,
 }
 
+const PROGRESS_SPINNER: &'static [char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
 #[derive(Default)]
 struct Progress {
     timings: HashMap<RVec<RString>, (std::time::Duration, usize)>,
     pending: HashMap<RVec<RString>, usize>,
+    spinner_state: usize,
 }
 
 struct Errors {
@@ -68,6 +71,11 @@ impl super::Output for Output {
 
     fn interrupt(&mut self) {
         self.errors.interrupts += 1;
+        self.need_update = true;
+    }
+
+    fn indicate_progress(&mut self) {
+        self.progress.spinner_state = (self.progress.spinner_state + 1) % PROGRESS_SPINNER.len();
         self.need_update = true;
     }
 
@@ -218,7 +226,12 @@ impl Render for Progress {
 
         let t = chrono::naive::NaiveTime::from_hms(0, 0, 0)
             + chrono::Duration::from_std(duration_remaining).unwrap();
-        write!(to, "Progress: {} remaining", count_remaining + 1)?;
+        write!(
+            to,
+            "{} Progress: {} remaining",
+            PROGRESS_SPINNER[self.spinner_state],
+            count_remaining + 1
+        )?;
         if duration_remaining != std::time::Duration::default() {
             write!(to, " ({})", t)?;
         }

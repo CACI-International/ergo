@@ -154,8 +154,6 @@ pub trait LogTarget: Send {
     fn pause_logging(&mut self) {}
 
     /// Resume log output.
-    ///
-    /// This differs from `with_id` in that the shared future can be directly supplied.
     #[sabi(last_prefix_field)]
     fn resume_logging(&mut self) {}
 }

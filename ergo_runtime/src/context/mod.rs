@@ -32,7 +32,7 @@ pub use self::log::{
 pub use diagnostic_sources::{SourceId, Sources};
 pub use dynamic_scope::{DynamicScope, DynamicScopeKey, DynamicScopeRef};
 pub use error_scope::ErrorScope;
-pub(crate) use progress::Progress;
+pub use progress::Progress;
 pub use shared_state::SharedState;
 pub use store::{Item, ItemContent, ItemName, Store};
 pub use task::{LocalKey, TaskManager, TaskPermit};
@@ -52,8 +52,10 @@ pub struct GlobalContext {
     pub task: TaskManager,
     /// The type traits interface.
     pub traits: Traits,
-    /// The progress tracking interface (for deadlock detection).
-    pub(crate) progress: Progress,
+    /// The progress tracking interface.
+    ///
+    /// This is primarily used internally for deadlock detection.
+    pub progress: Progress,
 }
 
 impl GlobalContext {
@@ -73,7 +75,7 @@ impl GlobalContext {
 #[derive(Debug, StableAbi)]
 #[repr(C)]
 pub struct Context {
-    global: RArc<GlobalContext>,
+    pub global: RArc<GlobalContext>,
     /// The dynamic scoping interface.
     pub dynamic_scope: DynamicScope,
     /// The error propagation interface.

@@ -414,6 +414,7 @@ impl Evaluate {
         }
 
         let loaded = runtime.evaluate_string("<command line>", &to_eval);
+        let progress = runtime.ctx.global.progress.clone();
 
         let (complete_send, complete) = std::sync::mpsc::channel();
 
@@ -447,8 +448,7 @@ impl Evaluate {
 
             drop(signal_handler_task);
 
-            let sources =
-                runtime.block_on(async { ergo_runtime::Context::global().diagnostic_sources() });
+            let sources = runtime.ctx.global.diagnostic_sources();
             drop(runtime);
 
             drop(complete_send.send(()));
@@ -457,6 +457,9 @@ impl Evaluate {
 
         loop {
             if let Ok(mut g) = logger.lock() {
+                if progress.made_progress() {
+                    g.indicate_progress();
+                }
                 g.update();
             }
             match complete.recv_timeout(std::time::Duration::from_millis(50)) {

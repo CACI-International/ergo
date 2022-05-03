@@ -31,6 +31,8 @@ impl super::Output for Output {
 
     fn interrupt(&mut self) {}
 
+    fn indicate_progress(&mut self) {}
+
     fn update(&mut self) {}
 
     fn take_errors(&mut self) -> ergo_runtime::error::Diagnostics {
