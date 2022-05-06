@@ -81,16 +81,16 @@ ergo_traits_fn! {
     crate::ergo_display_basic!(traits, String);
 
     impl traits::Stored for String {
-        async fn put(&self, _stored_ctx: &traits::StoredContext, item: crate::context::ItemContent) -> crate::RResult<()> {
+        async fn put(&self, _stored_ctx: &traits::StoredContext, data: &mut traits::PutData<'_>) -> crate::RResult<()> {
             crate::error_info!(
                 labels: [ primary(Source::get(SELF_VALUE).with("while storing this value")) ],
-                { bincode::serialize_into(item, &self.0) }
+                { bincode::serialize_into(data, &self.0) }
             ).into()
         }
 
-        async fn get(_stored_ctx: &traits::StoredContext, item: crate::context::ItemContent) -> crate::RResult<Erased> {
+        async fn get(_stored_ctx: &traits::StoredContext, data: &mut traits::GetData<'_>) -> crate::RResult<Erased> {
             crate::error_info!(
-                { bincode::deserialize_from(item).map(|s| Erased::new(String(s))) }
+                { bincode::deserialize_from(data).map(|s| Erased::new(String(s))) }
             ).into()
         }
     }

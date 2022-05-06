@@ -41,16 +41,16 @@ ergo_traits_fn! {
     }
 
     impl traits::Stored for Unset {
-        async fn put(&self, _stored_ctx: &traits::StoredContext, item: crate::context::ItemContent) -> crate::RResult<()> {
+        async fn put(&self, _stored_ctx: &traits::StoredContext, data: &mut traits::PutData<'_>) -> crate::RResult<()> {
             crate::error_info!(
                 labels: [ primary(Source::get(SELF_VALUE).with("while storing this value")) ],
-                { bincode::serialize_into(item, &()) }
+                { bincode::serialize_into(data, &()) }
             ).into()
         }
 
-        async fn get(_stored_ctx: &traits::StoredContext, item: crate::context::ItemContent) -> crate::RResult<Erased> {
+        async fn get(_stored_ctx: &traits::StoredContext, data: &mut traits::GetData<'_>) -> crate::RResult<Erased> {
             crate::error_info!(
-                { bincode::deserialize_from(item).map(|()| Erased::new(Unset)) }
+                { bincode::deserialize_from(data).map(|()| Erased::new(Unset)) }
             ).into()
         }
     }

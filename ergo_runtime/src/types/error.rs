@@ -2,9 +2,7 @@
 
 use crate as ergo_runtime;
 use crate::type_system::{ergo_traits_fn, ErgoType};
-use crate::{
-    depends, metadata::Source, traits, DependenciesConstant, GetDependenciesConstant, TypedValue,
-};
+use crate::{depends, traits, DependenciesConstant, GetDependenciesConstant, TypedValue};
 
 /// Script error type.
 pub use crate::Error;
@@ -74,6 +72,7 @@ where
 }
 
 ergo_traits_fn! {
+    /*
     impl traits::Stored for Error {
         async fn put(&self, _stored_ctx: &traits::StoredContext, item: crate::context::ItemContent) -> crate::RResult<()> {
             // Never store aborted errors.
@@ -95,6 +94,7 @@ ergo_traits_fn! {
             }).into()
         }
     }
+    */
 
     traits::IntoTyped::<super::Bool>::add_impl::<Error>(traits);
 

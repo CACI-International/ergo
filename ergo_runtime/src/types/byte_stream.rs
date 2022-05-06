@@ -10,7 +10,6 @@ use crate::abi_stable::{
     StableAbi,
 };
 use crate::{
-    context::ItemContent,
     io::{self, AsyncReadExt, BoxAsyncRead},
     metadata::Source,
     traits,
@@ -106,19 +105,30 @@ ergo_traits_fn! {
     crate::ergo_type_name!(traits, ByteStream);
 
     impl traits::Stored for ByteStream {
-        async fn put(&self, _stored_ctx: &traits::StoredContext, item: ItemContent) -> crate::RResult<()> {
+        async fn put(&self, _stored_ctx: &traits::StoredContext, data: &mut traits::PutData<'_>) -> crate::RResult<()> {
             crate::error_info!(
                 labels: [
                     primary(Source::get(SELF_VALUE).with("while storing this value"))
                 ],
                 async {
-                    io::copy(&mut self.read(), &mut io::Blocking::new(item)).await.map(|_| ())
+                    if data.may_block() {
+                        let mut v: Vec<u8> = Vec::new();
+                        io::copy(&mut self.read(), &mut v).await.map(|_| ())?;
+                        std::io::copy(&mut std::io::Cursor::new(v), data).map(|_| ())
+                    }
+                    else {
+                        io::copy(&mut self.read(), &mut futures::io::AllowStdIo::new(data)).await.map(|_| ())
+                    }
                 }
             ).into()
         }
 
-        async fn get(_stored_ctx: &traits::StoredContext, item: ItemContent) -> crate::RResult<Erased> {
-            Ok(Erased::new(ByteStream::new(io::Blocking::new(item)))).into()
+        async fn get(_stored_ctx: &traits::StoredContext, data: &mut traits::GetData<'_>) -> crate::RResult<Erased> {
+            crate::error_info!({
+                let mut v: Vec<u8> = Vec::new();
+                std::io::copy(data, &mut v)?;
+                crate::Result::Ok(Erased::new(ByteStream::from(v)))
+            }).into()
         }
     }
 

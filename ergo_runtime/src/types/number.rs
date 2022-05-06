@@ -244,16 +244,16 @@ ergo_traits_fn! {
     traits::IntoTyped::<super::String>::add_impl::<Number>(traits);
 
     impl traits::Stored for Number {
-        async fn put(&self, _stored_ctx: &traits::StoredContext, item: crate::context::ItemContent) -> crate::RResult<()> {
+        async fn put(&self, _stored_ctx: &traits::StoredContext, data: &mut traits::PutData<'_>) -> crate::RResult<()> {
             crate::error_info!(
                 labels: [ primary(Source::get(SELF_VALUE).with("while storing this value")) ],
-                { bincode::serialize_into(item, &self.num()) }
+                { bincode::serialize_into(data, &self.num()) }
             ).into()
         }
 
-        async fn get(_stored_ctx: &traits::StoredContext, item: crate::context::ItemContent) -> crate::RResult<Erased> {
+        async fn get(_stored_ctx: &traits::StoredContext, data: &mut traits::GetData<'_>) -> crate::RResult<Erased> {
             crate::error_info!(
-                { bincode::deserialize_from(item).map(|n: BigRational| Erased::new(Number::from(n))) }
+                { bincode::deserialize_from(data).map(|n: BigRational| Erased::new(Number::from(n))) }
             ).into()
         }
     }

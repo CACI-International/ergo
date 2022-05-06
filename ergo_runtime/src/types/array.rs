@@ -69,7 +69,7 @@ ergo_traits_fn! {
     traits::Nested::add_impl::<Array>(traits);
 
     impl traits::Stored for Array {
-        async fn put(&self, stored_ctx: &traits::StoredContext, item: crate::context::ItemContent) -> crate::RResult<()> {
+        async fn put(&self, stored_ctx: &traits::StoredContext, data: &mut traits::PutData<'_>) -> crate::RResult<()> {
             crate::error_info!(
                 labels: [
                     primary(Source::get(SELF_VALUE).with("while storing this value"))
@@ -79,20 +79,20 @@ ergo_traits_fn! {
                     let mut writes = Vec::new();
                     for v in self.0.iter().cloned() {
                         ids.push(v.id().await);
-                        writes.push(stored_ctx.write_to_store(v));
+                        writes.push(stored_ctx.write_value(v));
                     }
                     crate::Context::global().task.join_all(writes).await?;
-                    bincode::serialize_into(item, &ids)
+                    bincode::serialize_into(data, &ids)
                 }
             ).into()
         }
 
-        async fn get(stored_ctx: &traits::StoredContext, item: crate::context::ItemContent) -> crate::RResult<Erased> {
+        async fn get(stored_ctx: &traits::StoredContext, data: &mut traits::GetData<'_>) -> crate::RResult<Erased> {
             crate::error_info!(
                 async {
-                    let ids: Vec<u128> = bincode::deserialize_from(item)?;
+                    let ids: Vec<u128> = bincode::deserialize_from(data)?;
                     let values = crate::Context::global().task
-                        .join_all(ids.into_iter().map(|id| stored_ctx.read_from_store(id)))
+                        .join_all(ids.into_iter().map(|id| stored_ctx.read_value(id)))
                         .await?;
                     crate::Result::Ok(Erased::new(Array(values.into())))
                 }

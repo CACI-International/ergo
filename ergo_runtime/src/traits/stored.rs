@@ -1,48 +1,124 @@
 //! Stored ergo trait, allowing values to be written to and read from the store.
 
-use super::{type_name, type_name_for};
 use crate as ergo_runtime;
 use crate::abi_stable::{
-    std_types::RArc,
-    type_erase::{Erased, ErasedTrivial},
-    StableAbi,
+    future::BoxFuture, sabi_trait, sabi_trait::prelude::*, sabi_types::RMut, std_types::RBox,
+    type_erase::Erased, u128::U128, DynTrait, StableAbi,
 };
-use crate::context::{Context, Item, ItemContent};
-use crate::metadata::Source;
-use crate::type_system::{ergo_trait, Type};
+use crate::type_system::ergo_trait;
 use crate::{Result, Value};
-use std::io::{Read, Write};
 
 /// Context passed to Stored traits.
 #[derive(StableAbi)]
 #[repr(C)]
-pub struct StoredContext {
-    store_item: Item,
+pub struct StoredContext(StoredContextInterface_TO<'static, RBox<()>>);
+
+/// The storage context interface.
+#[sabi_trait]
+pub trait StoredContextInterface: Sync + Send {
+    fn write_value(&self, v: Value) -> BoxFuture<'_, crate::RResult<()>>;
+    fn read_value(&self, id: &U128) -> BoxFuture<'_, crate::RResult<Value>>;
+    fn has_value(&self, id: &U128) -> BoxFuture<'_, crate::RResult<bool>>;
+}
+
+#[derive(StableAbi)]
+#[repr(C)]
+#[sabi(impl_InterfaceType(IoWrite, Send, Sync))]
+struct PutInterface;
+
+#[derive(StableAbi)]
+#[repr(C)]
+pub struct PutData<'a>(DynTrait<'static, RMut<'a, ()>, PutInterface>, bool);
+
+impl<'a> PutData<'a> {
+    pub fn new<T: std::io::Write + Send + Sync + 'static>(
+        target: &'a mut T,
+        may_block: bool,
+    ) -> Self {
+        PutData(
+            DynTrait::from_any_ptr(RMut::new(target), PutInterface),
+            may_block,
+        )
+    }
+
+    /// Return whether writing to this value may block.
+    pub fn may_block(&self) -> bool {
+        self.1
+    }
+}
+
+impl<'a> std::io::Write for PutData<'a> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.flush()
+    }
+}
+
+#[derive(StableAbi)]
+#[repr(C)]
+#[sabi(impl_InterfaceType(IoRead, Send, Sync))]
+struct GetInterface;
+
+#[derive(StableAbi)]
+#[repr(C)]
+pub struct GetData<'a>(DynTrait<'static, RMut<'a, ()>, GetInterface>, bool);
+
+impl<'a> GetData<'a> {
+    pub fn new<T: std::io::Read + Send + Sync + 'static>(
+        target: &'a mut T,
+        may_block: bool,
+    ) -> Self {
+        GetData(
+            DynTrait::from_any_ptr(RMut::new(target), GetInterface),
+            may_block,
+        )
+    }
+
+    /// Return whether reading from this value may block.
+    pub fn may_block(&self) -> bool {
+        self.1
+    }
+}
+
+impl<'a> std::io::Read for GetData<'a> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.0.read(buf)
+    }
 }
 
 /// Stored trait information.
 #[ergo_trait]
 pub trait Stored {
-    async fn put(&self, stored_ctx: &StoredContext, item: ItemContent) -> crate::RResult<()>;
-    async fn get(stored_ctx: &StoredContext, item: ItemContent) -> crate::RResult<Erased>;
+    async fn put(&self, stored_ctx: &StoredContext, data: &mut PutData<'_>) -> crate::RResult<()>;
+    async fn get(stored_ctx: &StoredContext, data: &mut GetData<'_>) -> crate::RResult<Erased>;
 }
 
 impl StoredContext {
-    fn new(store_item: Item) -> Self {
-        StoredContext { store_item }
+    /// Create a new StoredContext from the given interface.
+    pub fn new<T: StoredContextInterface + 'static>(context: T) -> Self {
+        StoredContext(StoredContextInterface_TO::from_value(context, TU_Opaque))
     }
 
-    /// Read the given value from the store.
-    pub async fn read_from_store(&self, id: u128) -> Result<Value> {
-        read_from_store(&self.store_item, id).await
+    /// Write the given value.
+    pub async fn write_value(&self, v: Value) -> Result<()> {
+        self.0.write_value(v).await.into()
     }
 
-    /// Write the given value to the store.
-    pub async fn write_to_store(&self, v: Value) -> Result<()> {
-        write_to_store(&self.store_item, v).await
+    /// Read the value with the given identity.
+    pub async fn read_value(&self, id: u128) -> Result<Value> {
+        self.0.read_value(&id.into()).await.into()
+    }
+
+    /// Check whether the value with the given identity is available.
+    pub async fn has_value(&self, id: u128) -> Result<bool> {
+        self.0.has_value(&id.into()).await.into()
     }
 }
 
+/*
 /// Read a Value from the store by id.
 pub async fn read_from_store(store_item: &Item, id: u128) -> Result<Value> {
     crate::error_info! {
@@ -99,3 +175,4 @@ pub async fn write_to_store(store_item: &Item, mut v: Value) -> Result<()> {
         }
     }
 }
+*/

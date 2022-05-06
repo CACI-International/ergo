@@ -100,6 +100,12 @@ fn ergo_trait_definition(trt: ItemTrait) -> TokenStream {
                     syn::ReturnType::Default => parse_quote! { () },
                     syn::ReturnType::Type(_, tp) => *tp,
                 };
+                for p in &m.sig.generics.params {
+                    errs.extend(
+                        syn::Error::new(p.span(), "no generics may be used in methods")
+                            .to_compile_error(),
+                    );
+                }
 
                 funcs.push((is_async, m.sig.ident, rcvr, args, ret));
             }
@@ -114,9 +120,9 @@ fn ergo_trait_definition(trt: ItemTrait) -> TokenStream {
         let mut fn_args = Vec::new();
         match rcvr {
             ReceiverType::Reference(span) => {
-                fn_args.push(quote_spanned! { *span=> &'a ergo_runtime::value::Value });
-                fn_args.push(quote_spanned! { *span=> &'a ergo_runtime::type_system::Type });
-                fn_args.push(quote_spanned! { *span=> &'a ergo_runtime::abi_stable::type_erase::Erased });
+                fn_args.push(quote_spanned! { *span=> &'ergo_trait ergo_runtime::value::Value });
+                fn_args.push(quote_spanned! { *span=> &'ergo_trait ergo_runtime::type_system::Type });
+                fn_args.push(quote_spanned! { *span=> &'ergo_trait ergo_runtime::abi_stable::type_erase::Erased });
             }
             ReceiverType::Owned(span) => {
                 fn_args.push(quote_spanned! { *span=> ergo_runtime::value::Value });
@@ -125,8 +131,30 @@ fn ergo_trait_definition(trt: ItemTrait) -> TokenStream {
         }
         for (_, t) in args {
             let mut ty = t.clone();
-            if let syn::Type::Reference(tr) = &mut ty {
-                tr.lifetime = Some(parse_quote! { 'a });
+            match &mut ty {
+                syn::Type::Reference(tr) => {
+                    tr.lifetime = Some(parse_quote! { 'ergo_trait });
+                }
+                syn::Type::Path(p) => {
+                    for seg in &mut p.path.segments {
+                        match &mut seg.arguments {
+                            syn::PathArguments::AngleBracketed(generics) => {
+                                for arg in &mut generics.args {
+                                    match arg {
+                                        syn::GenericArgument::Lifetime(lt) => {
+                                            if lt.ident == "_" {
+                                                lt.ident = syn::Ident::new("ergo_trait", lt.ident.span());
+                                            }
+                                        }
+                                        _ => ()
+                                    }
+                                }
+                            }
+                            _ => ()
+                        }
+                    }
+                }
+                _ => ()
             }
             fn_args.push(quote_spanned! { ty.span() => #ty });
         }
@@ -138,7 +166,7 @@ fn ergo_trait_definition(trt: ItemTrait) -> TokenStream {
         };
 
         let fn_ret = if *is_async {
-            parse_quote! { ergo_runtime::abi_stable::future::BoxFuture<'a, #ret> }
+            parse_quote! { ergo_runtime::abi_stable::future::BoxFuture<'ergo_trait, #ret> }
         } else {
             ret
         };
@@ -150,7 +178,7 @@ fn ergo_trait_definition(trt: ItemTrait) -> TokenStream {
             colon_token: Some(Default::default()),
             ty: parse_quote! {
                     ergo_runtime::abi_stable::closure::FnPtr<
-                        for<'a> extern "C" fn(&'a ergo_runtime::abi_stable::type_erase::Erased, #(#fn_args),*)
+                        for<'ergo_trait> extern "C" fn(&'ergo_trait ergo_runtime::abi_stable::type_erase::Erased, #(#fn_args),*)
                             -> #fn_ret
                     >
             },
@@ -422,6 +450,12 @@ fn do_ergo_trait_impl(
                     syn::ReturnType::Default => parse_quote! { () },
                     syn::ReturnType::Type(_, tp) => *tp,
                 };
+                for p in &m.sig.generics.params {
+                    errs.extend(
+                        syn::Error::new(p.span(), "no generics may be used in method.s")
+                            .to_compile_error(),
+                    );
+                }
 
                 funcs.push((is_async, m.sig.ident, rcvr, args, ret, m.block));
             }
@@ -432,8 +466,7 @@ fn do_ergo_trait_impl(
     let mut generics = imp.generics.clone();
     let (_, type_generics, _) = imp.generics.split_for_impl();
     let type_generics = type_generics.as_turbofish();
-    generics.params.insert(0, parse_quote! { 'a });
-
+    generics.params.insert(0, parse_quote! { 'ergo_trait });
     let (impl_generics, _, where_clause) = generics.split_for_impl();
 
     let untyped = if let syn::Type::Infer(_) = &ty {
@@ -470,14 +503,14 @@ fn do_ergo_trait_impl(
 
         match rcvr {
             ReceiverType::Reference(span) => {
-                fn_args.insert(0, quote_spanned! { *span=> #[allow(non_snake_case,unused)] SELF_VALUE: &'a ergo_runtime::value::Value });
+                fn_args.insert(0, quote_spanned! { *span=> #[allow(non_snake_case,unused)] SELF_VALUE: &'ergo_trait ergo_runtime::value::Value });
                 fn_args.insert(
                     1,
-                    quote_spanned! { *span=> #[allow(non_snake_case,unused)] SELF_TYPE: &'a ergo_runtime::type_system::Type }
+                    quote_spanned! { *span=> #[allow(non_snake_case,unused)] SELF_TYPE: &'ergo_trait ergo_runtime::type_system::Type }
                 );
                 fn_args.insert(
                     2,
-                    quote_spanned! { *span=> ergo_trait_erased: &'a ergo_runtime::abi_stable::type_erase::Erased },
+                    quote_spanned! { *span=> ergo_trait_erased: &'ergo_trait ergo_runtime::abi_stable::type_erase::Erased },
                 );
                 self_bind = Some(if untyped {
                     quote_spanned! { *span=> #[allow(unused)] let ergo_trait_self = ergo_trait_erased; }
@@ -503,8 +536,30 @@ fn do_ergo_trait_impl(
 
         for (n, t) in args {
             let mut ty = t.clone();
-            if let syn::Type::Reference(tr) = &mut ty {
-                tr.lifetime = Some(parse_quote! { 'a });
+            match &mut ty {
+                syn::Type::Reference(tr) => {
+                    tr.lifetime = Some(parse_quote! { 'ergo_trait });
+                }
+                syn::Type::Path(p) => {
+                    for seg in &mut p.path.segments {
+                        match &mut seg.arguments {
+                            syn::PathArguments::AngleBracketed(generics) => {
+                                for arg in &mut generics.args {
+                                    match arg {
+                                        syn::GenericArgument::Lifetime(lt) => {
+                                            if lt.ident == "_" {
+                                                lt.ident = syn::Ident::new("ergo_trait", lt.ident.span());
+                                            }
+                                        }
+                                        _ => ()
+                                    }
+                                }
+                            }
+                            _ => ()
+                        }
+                    }
+                }
+                _ => ()
             }
             fn_args.push(quote! { #n: #ty });
         }
@@ -512,7 +567,7 @@ fn do_ergo_trait_impl(
         let ret = ret.clone();
 
         let fn_ret = if *is_async {
-            parse_quote! { ergo_runtime::abi_stable::future::BoxFuture<'a, #ret> }
+            parse_quote! { ergo_runtime::abi_stable::future::BoxFuture<'ergo_trait, #ret> }
         } else {
             ret
         };
@@ -533,7 +588,7 @@ fn do_ergo_trait_impl(
 
         quote_spanned! { name.span() =>
             #[allow(improper_ctypes_definitions)]
-            extern "C" fn #name #impl_generics(#[allow(non_snake_case,unused)] TRAIT_DATA: &'a ergo_runtime::abi_stable::type_erase::Erased,
+            extern "C" fn #name #impl_generics(#[allow(non_snake_case,unused)] TRAIT_DATA: &'ergo_trait ergo_runtime::abi_stable::type_erase::Erased,
                 #(#fn_args),*)
                 -> #fn_ret
             #where_clause
