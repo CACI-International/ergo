@@ -75,7 +75,7 @@ impl ErrorScope {
         ErrorScope {
             on_error: RArc::new(RMutex::new(ErrorScopeInnerInterface_TO::from_value(
                 ErrorScopeInner::new(on_error),
-                TU_Opaque,
+                TD_Opaque,
             ))),
         }
     }

@@ -118,7 +118,7 @@ impl LogTaskKey {
     /// This will panic if the type does not match the stored type.
     pub fn into<T: 'static>(self) -> Result<T, Self> {
         self.0
-            .into_unerased()
+            .downcast_into()
             .map(RBox::into_inner)
             .map_err(|e| LogTaskKey(e.into_inner()))
     }
@@ -174,7 +174,7 @@ impl LogTarget for EmptyLogTarget {
 
 /// Create a logger reference.
 pub fn logger_ref<T: LogTarget + 'static>(target: T) -> Arc<Logger> {
-    Arc::new(RMutex::new(LogTarget_TO::from_value(target, TU_Unerasable)))
+    Arc::new(RMutex::new(LogTarget_TO::from_value(target, TD_CanDowncast)))
 }
 
 /// The logging interface.

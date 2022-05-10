@@ -180,7 +180,7 @@ struct Semaphore(SemaphoreInterface_TO<'static, RBox<()>>, usize);
 impl Semaphore {
     pub fn new(permits: usize) -> Self {
         Semaphore(
-            SemaphoreInterface_TO::from_value(tokio::sync::Semaphore::new(permits), TU_Opaque),
+            SemaphoreInterface_TO::from_value(tokio::sync::Semaphore::new(permits), TD_Opaque),
             permits,
         )
     }
@@ -323,7 +323,7 @@ impl TaskManager {
         Ok(TaskManager {
             pool: ThreadPoolInterface_TO::from_value(
                 std::sync::Arc::new(ThreadPool { pool }),
-                TU_Opaque,
+                TD_Opaque,
             ),
             tasks: RArc::new(Semaphore::new(threads)),
             abort_handles,
@@ -345,7 +345,7 @@ impl TaskManager {
         let (future, abort_handle) = abortable(f);
         self.abort_handles
             .lock()
-            .push(AbortHandleInterface_TO::from_value(abort_handle, TU_Opaque));
+            .push(AbortHandleInterface_TO::from_value(abort_handle, TD_Opaque));
         let (future, handle) = future.remote_handle();
         self.pool.spawn_ok(priority, BoxFuture::new(future));
         handle

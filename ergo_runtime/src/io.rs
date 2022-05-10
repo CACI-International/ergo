@@ -248,7 +248,7 @@ pub struct BoxAsyncRead<'a> {
 impl<'a> BoxAsyncRead<'a> {
     pub fn new<R: AsyncRead + Send + 'a>(r: R) -> Self {
         BoxAsyncRead {
-            inner: AsyncReadInterface_TO::from_value(r, TU_Opaque),
+            inner: AsyncReadInterface_TO::from_value(r, TD_Opaque),
         }
     }
 }
@@ -311,7 +311,7 @@ pub struct BoxAsyncWrite<'a> {
 impl<'a> BoxAsyncWrite<'a> {
     pub fn new<W: AsyncWrite + Send + 'a>(w: W) -> Self {
         BoxAsyncWrite {
-            inner: AsyncWriteInterface_TO::from_value(w, TU_Opaque),
+            inner: AsyncWriteInterface_TO::from_value(w, TD_Opaque),
         }
     }
 }

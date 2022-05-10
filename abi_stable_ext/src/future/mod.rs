@@ -6,6 +6,7 @@
 use abi_stable::{
     sabi_trait,
     sabi_trait::prelude::*,
+    sabi_types::RMut,
     std_types::{RBox, RSliceMut},
     StableAbi,
 };
@@ -260,7 +261,7 @@ pub struct LocalBoxFuture<'a, T> {
 impl<'a, T: StableAbi> LocalBoxFuture<'a, T> {
     pub fn new<Fut: future::Future<Output = T> + 'a>(f: Fut) -> Self {
         LocalBoxFuture {
-            inner: LocalFuture_TO::from_value(f, TU_Opaque),
+            inner: LocalFuture_TO::from_value(f, TD_Opaque),
         }
     }
 }
@@ -300,7 +301,7 @@ impl<'a, T: StableAbi /* TODO + std::marker::Unpin*/> BoxFuture<'a, T> {
     /// Create a new boxed future.
     pub fn new<Fut: future::Future<Output = T> + Send + 'a>(f: Fut) -> Self {
         BoxFuture {
-            inner: Future_TO::from_value(f, TU_Opaque),
+            inner: Future_TO::from_value(f, TD_Opaque),
         }
     }
 }
@@ -365,7 +366,7 @@ impl<T: StableAbi + Clone + Send + Sync> BoxSharedFuture<T> {
     /// Create a new boxed shared future.
     pub fn new<Fut: future::Future<Output = T> + Send + 'static>(f: Fut) -> Self {
         BoxSharedFuture {
-            inner: SharedFuture_TO::from_value(f.shared(), TU_Opaque),
+            inner: SharedFuture_TO::from_value(f.shared(), TD_Opaque),
         }
     }
 
@@ -376,7 +377,7 @@ impl<T: StableAbi + Clone + Send + Sync> BoxSharedFuture<T> {
         T: Send + Sync + Clone + std::marker::Unpin,
     {
         BoxSharedFuture {
-            inner: SharedFuture_TO::from_value(f.shared().into_future(), TU_Opaque),
+            inner: SharedFuture_TO::from_value(f.shared().into_future(), TD_Opaque),
         }
     }
 
@@ -386,7 +387,7 @@ impl<T: StableAbi + Clone + Send + Sync> BoxSharedFuture<T> {
         T: 'static,
     {
         BoxSharedFuture {
-            inner: SharedFuture_TO::from_value(Ready(Some(v)), TU_Opaque),
+            inner: SharedFuture_TO::from_value(Ready(Some(v)), TD_Opaque),
         }
     }
 }
@@ -446,7 +447,7 @@ impl<T> BoxSharedFuture<T> {
                     get_fut: f,
                     stored: Default::default(),
                 },
-                TU_Opaque,
+                TD_Opaque,
             ),
         }
     }
@@ -604,19 +605,19 @@ trait BufMut {
 
 #[derive(StableAbi)]
 #[repr(C)]
-struct BufMutWrap<'a>(BufMut_TO<'a, &'a mut ()>);
+struct BufMutWrap<'a>(BufMut_TO<'a, RMut<'a, ()>>);
 
 impl<'a> bytes::BufMut for BufMutWrap<'a> {
     fn remaining_mut(&self) -> usize {
-        BufMut::remaining_mut(&self.0)
+        self.0.remaining_mut()
     }
 
     unsafe fn advance_mut(&mut self, cnt: usize) {
-        BufMut::advance_mut(&mut self.0, cnt)
+        self.0.advance_mut(cnt)
     }
 
     fn bytes_mut(&mut self) -> &mut [std::mem::MaybeUninit<u8>] {
-        let r: &mut [u8] = BufMut::bytes_mut(&mut self.0).into();
+        let r: &mut [u8] = self.0.bytes_mut().into();
         unsafe { std::mem::transmute(r) }
     }
 }

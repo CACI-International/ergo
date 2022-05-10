@@ -52,7 +52,7 @@ mod rwlock {
         pub fn new() -> Self {
             RwLock(RwLockInterface_TO::from_value(
                 std::sync::Arc::new(tokio::sync::RwLock::new(())),
-                TU_Opaque,
+                TD_Opaque,
             ))
         }
 

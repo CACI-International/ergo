@@ -56,7 +56,7 @@ impl Unbound {
         F: Fn(Value) -> Fut + Clone + Send + Sync + 'static,
         Fut: std::future::Future<Output = Value> + Send,
     {
-        TypedValue::with_id(Unbound(UnboundAbi_TO::from_value(bind, TU_Opaque)), id)
+        TypedValue::with_id(Unbound(UnboundAbi_TO::from_value(bind, TD_Opaque)), id)
     }
 
     /// Bind the value.
@@ -67,7 +67,7 @@ impl Unbound {
 
 impl std::fmt::Debug for Unbound {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "Unbound ({:p})", self.0.obj.sabi_erased_ref())
+        write!(f, "Unbound ({:p})", self.0.obj.sabi_erased_ref().get())
     }
 }
 

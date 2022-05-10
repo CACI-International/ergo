@@ -62,7 +62,7 @@ impl ByteStream {
                 })),
                 stream: Arc::new(stream),
             },
-            TU_Opaque,
+            TD_Opaque,
         );
         ByteStream {
             source,

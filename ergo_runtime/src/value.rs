@@ -199,7 +199,7 @@ mod value_id {
                 state: std::cell::UnsafeCell::new(State {
                     deps: std::mem::ManuallyDrop::new(GetId_TO::from_value(
                         |v| future::BoxFuture::new(async move { id(v).await.map(|v| v.into()) }),
-                        TU_Opaque,
+                        TD_Opaque,
                     )),
                 }),
                 tag: AtomicU8::new(0),
@@ -489,7 +489,7 @@ impl Value {
                 func,
                 complete: Default::default(),
             }),
-            TU_Opaque,
+            TD_Opaque,
         );
         Value {
             id: RArc::new(id.into()),
@@ -510,7 +510,7 @@ impl Value {
         D: Into<ValueId>,
     {
         let next =
-            DynamicNext_TO::from_value(std::sync::Arc::new(DynamicImpure { func }), TU_Opaque);
+            DynamicNext_TO::from_value(std::sync::Arc::new(DynamicImpure { func }), TD_Opaque);
         Value {
             id: RArc::new(id.into()),
             metadata: Default::default(),

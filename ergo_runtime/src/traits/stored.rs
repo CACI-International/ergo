@@ -99,7 +99,7 @@ pub trait Stored {
 impl StoredContext {
     /// Create a new StoredContext from the given interface.
     pub fn new<T: StoredContextInterface + 'static>(context: T) -> Self {
-        StoredContext(StoredContextInterface_TO::from_value(context, TU_Opaque))
+        StoredContext(StoredContextInterface_TO::from_value(context, TD_Opaque))
     }
 
     /// Write the given value.

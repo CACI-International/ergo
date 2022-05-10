@@ -30,7 +30,7 @@ impl<'a, T> BoxStream<'a, T> {
     /// Create a new boxed stream.
     pub fn new<Strm: futures::stream::Stream<Item = T> + Send + 'a>(strm: Strm) -> Self {
         BoxStream {
-            inner: Stream_TO::from_value(strm, TU_Opaque),
+            inner: Stream_TO::from_value(strm, TD_Opaque),
         }
     }
 }
