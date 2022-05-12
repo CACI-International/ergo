@@ -1,0 +1,60 @@
+plugin = ergo plugin
+
+path-base-dir = {
+    p = plugin:Path:join plugin:env:project-dir _path
+    plugin:fs:create-dir $p
+    $p
+}
+
+## Create a Path based on a generator function, and call the function on it.
+##
+## Arguments: `(Function :function)`
+##
+## This will create a deterministic path (in the project working directory) based on the identity of
+## `function`, then call `function` with the path.
+##
+## The parent directory of the created path is guaranteed to exist, but the path itself may not
+## exist.
+##
+## Returns the path.
+##
+## ### Example Usage
+## ```ergo
+## out = Path:for <| fn :p -> exec touch $$p
+## ```
+for = fn :f -> {
+    p = plugin:Path:join $path-base-dir <| plugin:value:identity $f
+    f $p
+    $p
+}
+
+## Match a path value or bind the source path of the value.
+##
+## Arguments: `:source`
+##
+## Keyed Arguments:
+## * `parent` - if present, the parent directory of the source path will be used.
+## * `no-source` - the value to bind if no source information is available, defaulting to
+##   `std:env:current-dir`.
+##
+## When called in a pattern expression and bound, if the bound value is a Path, `source` will be
+## bound to that path. Otherwise `source` will be bound to the source path of the bound value, or
+## its parent directory if `parent` is present. If the bound value has no source path,
+## `default` is bound.
+##
+## This is of particular use with function arguments to get function call site source paths and
+## allow them to be overriden.
+or-source = fn ^{:parent,:no-source} :x -> :binding -> plugin:match $binding [
+    plugin:Path :p -> { $x = $p }
+    plugin:Unset :u -> {
+        $x = plugin:match (plugin:value:source-path $u) [
+            plugin:Path :p -> plugin:match $parent [$unset -> $p, _ -> plugin:Path:parent $p]
+            $unset -> plugin:match $no-source [
+                $unset -> plugin:env:current-dir
+                :other -> $other
+            ]
+        ]
+    }
+]
+
+{ for, or-source }

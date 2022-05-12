@@ -21,6 +21,12 @@ impl std::fmt::Display for Path {
     }
 }
 
+impl<'a> From<std::borrow::Cow<'a, std::path::Path>> for Path {
+    fn from(p: std::borrow::Cow<'a, std::path::Path>) -> Self {
+        Path(p.into_owned().into())
+    }
+}
+
 impl<'a> From<&'a std::path::Path> for Path {
     fn from(p: &'a std::path::Path) -> Self {
         Path(p.to_owned().into())
@@ -82,14 +88,14 @@ ergo_traits_fn! {
     crate::ergo_display_basic!(traits, Path);
 
     impl traits::Stored for Path {
-        async fn put(&self, _stored_ctx: &traits::StoredContext, data: &mut traits::PutData<'_>) -> crate::RResult<()> {
+        async fn put(&self, data: &mut traits::PutData<'_>) -> crate::RResult<()> {
             crate::error_info!(
                 labels: [ primary(Source::get(SELF_VALUE).with("while storing this value")) ],
                 { bincode::serialize_into(data, self.0.as_ref().as_ref()) }
             ).into()
         }
 
-        async fn get(_stored_ctx: &traits::StoredContext, data: &mut traits::GetData<'_>) -> crate::RResult<Erased> {
+        async fn get(data: &mut traits::GetData<'_>) -> crate::RResult<Erased> {
             crate::error_info!(
                 { bincode::deserialize_from(data).map(|p: std::path::PathBuf| Erased::new(Path::from(p))) }
             ).into()

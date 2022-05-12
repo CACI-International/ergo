@@ -3,6 +3,7 @@ use ergo_runtime::{plugin_entry, types, Context, EvaluatedValue, Value};
 
 mod array;
 mod bool;
+mod cache;
 mod env;
 mod error;
 mod exec;
@@ -20,6 +21,7 @@ mod net;
 mod number;
 mod order;
 mod path;
+mod sqlite;
 mod string;
 mod sync;
 pub mod task;
@@ -74,6 +76,7 @@ fn entry() -> ergo_runtime::Result<Value> {
     Ok(make_string_map! {
         "Array" = array::r#type(),
         "Bool" = bool::r#type(),
+        "Cache" = cache::r#type(),
         "Error" = error::r#type(),
         "Function" = function::r#type(),
         "Iter" = iter::r#type(),

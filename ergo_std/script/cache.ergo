@@ -1,0 +1,25 @@
+plugin = ergo plugin
+
+once-cache = plugin:Cache:memory ()
+project-cache = plugin:Cache:open <| plugin:Path:join plugin:env:project-dir _cache
+
+## Ensure a value is only evaluated once (per identity) in the process lifetime.
+##
+## Arguments: `:value`
+##
+## Keyed Arguments:
+## * `:key` - the cache key to use; see `std:Cache:entry`.
+##
+## This invariant is already true of any single value, however if values are recreated throughout
+## the runtime, this allows deduplication based on the identity.
+once = fn :value ^{:key} -> plugin:Cache:entry ^{key} $once-cache $value
+
+## Cache a value to the project cache.
+##
+## Arguments: `:value`
+##
+## Keyed Arguments:
+## See `std:Cache:entry`
+cache = fn ^:args -> plugin:Cache:entry $project-cache ^$args
+
+{ once, cache }

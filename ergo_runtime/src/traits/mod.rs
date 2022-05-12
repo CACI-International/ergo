@@ -13,7 +13,7 @@ pub(crate) use bind::{bind_array, bind_map};
 pub use display::{display, display_any, to_string, Display, DisplayImpl, Formatter};
 pub use into::{into, into_for, into_trait, IntoTyped, IntoTypedImpl};
 pub use nested::{eval_nested, Nested, NestedImpl, NestedValues};
-pub use stored::{GetData, PutData, Stored, StoredContext, StoredContextInterface, StoredImpl};
+pub use stored::{GetData, GetDataInterface, PutData, PutDataInterface, Stored, StoredImpl};
 pub use type_name::{
     type_error, type_error_for, type_error_for_t, type_name, type_name_for, TypeName, TypeNameImpl,
 };

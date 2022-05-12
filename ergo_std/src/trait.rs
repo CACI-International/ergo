@@ -217,7 +217,7 @@ mod stored {
         Context::global().traits.add_impl::<traits::Stored>(tp.clone(), {
             let mut imp = ergo_trait_impl! {
                 impl traits::Stored for _ {
-                    async fn put(&self, stored_ctx: &traits::StoredContext, item: ergo_runtime::context::ItemContent) -> ergo_runtime::RResult<()> {
+                    async fn put(&self, data: &mut traits::PutData<'_>) -> ergo_runtime::RResult<()> {
                         ergo_runtime::error_info!(
                             labels: [
                                 primary(Source::get(SELF_VALUE).with("while storing this value"))
@@ -228,17 +228,17 @@ mod stored {
                                     args: types::args::Arguments::positional(vec![SELF_VALUE.clone()]).unchecked()
                                 }.into()))).await;
                                 let id = to_put.id().await;
-                                stored_ctx.write_to_store(to_put).await?;
-                                bincode::serialize_into(item, &id)
+                                data.write_value(to_put).await?;
+                                bincode::serialize_into(data, &id)
                             }
                         ).into()
                     }
 
-                    async fn get(stored_ctx: &traits::StoredContext, item: ergo_runtime::context::ItemContent) -> ergo_runtime::RResult<Erased> {
+                    async fn get(mut data: &mut traits::GetData<'_>) -> ergo_runtime::RResult<Erased> {
                         ergo_runtime::error_info!(
                             async {
-                                let id: u128 = bincode::deserialize_from(item)?;
-                                let to_get = stored_ctx.read_from_store(id).await?;
+                                let id: u128 = bincode::deserialize_from(&mut data)?;
+                                let to_get = data.read_value(id).await?;
                                 let trait_data = unsafe { TRAIT_DATA.as_ref::<TraitData>() };
                                 let mut value = traits::bind(trait_data.get.clone(), types::Args {
                                     args: types::args::Arguments::positional(vec![to_get]).unchecked()

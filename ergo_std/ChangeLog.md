@@ -25,6 +25,10 @@
 * Add `std:fs:file-size` to get the size of a file in bytes.
 * Add `std:fs:rename` to rename files and directories.
 * Add `std:env:concurrent-tasks` to provide the runtime task concurrency.
+* Add `std:env:project-dir` to get the project working directory.
+* Add `std:Cache` to create caches (both in-memory and persisted to disk).
+  * Caches now use sqlite to store values.
+* Add `std:once` to add values to an in-memory cache.
 
 #### Modifications
 * Removed the `std:by-content` function, as one shouldn't be reinterpreting
@@ -56,6 +60,14 @@
     * conversion to `Bool`, `Number`, `String`, and `ByteStream`
 * Remove `std:env:get` in favor of `std:env:vars`, which is a `Map` of all of
   the process's environment variables.
+* Rename `std:env:user-cache` and `std:env:system-cache` to `std:env:user-dir`
+  and `std:env:system-dir`.
+* Remove the `no-persist` option from `std:cache` (use `std:once`).
+* Support caching top-level errors in `std:cache` by setting the `allow-error` keyed
+  argument to `top`.
+* Remove `std:Path:new` and `std:Path:with-output`.
+* Add `std:Path:for`, which is very similar to `std:Path:with-output` but is
+  doing something slightly different, so it's worthwhile to have a new name.
 
 ### Migration
 * Remove the use of `std:by-content`. If it was being used to compare nested
@@ -88,9 +100,14 @@
   * `std:Array:Of` -> `std:Array:of`
   * `std:Map:Values` -> `std:Map:values`
   * `std:Map:Of` -> `std:Map:of`
+  * `std:env:user-cache` -> `std:env:user-dir`
+  * `std:env:system-cache` -> `std:env:system-dir`
 * Update the use of `std:exec`, passing `stdin` with the returned function and
   changing `exit-status` to `exit` and `complete` to `success`.
 * Change `std:env:get ENV_VAR` to `std:env:vars:ENV_VAR`.
+* Change `std:cache ^no-persist :value` to `std:once :value`.
+* Replace uses of `std:Path:new` and `std:Path:with-output` with
+  `std:Path:for`, which will produce deterministic paths.
 
 ## 1.0.0-rc.3  -- 2021-12-14
 * No changes.

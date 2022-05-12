@@ -105,7 +105,7 @@ ergo_traits_fn! {
     crate::ergo_type_name!(traits, ByteStream);
 
     impl traits::Stored for ByteStream {
-        async fn put(&self, _stored_ctx: &traits::StoredContext, data: &mut traits::PutData<'_>) -> crate::RResult<()> {
+        async fn put(&self, data: &mut traits::PutData<'_>) -> crate::RResult<()> {
             crate::error_info!(
                 labels: [
                     primary(Source::get(SELF_VALUE).with("while storing this value"))
@@ -123,7 +123,7 @@ ergo_traits_fn! {
             ).into()
         }
 
-        async fn get(_stored_ctx: &traits::StoredContext, data: &mut traits::GetData<'_>) -> crate::RResult<Erased> {
+        async fn get(data: &mut traits::GetData<'_>) -> crate::RResult<Erased> {
             crate::error_info!({
                 let mut v: Vec<u8> = Vec::new();
                 std::io::copy(data, &mut v)?;

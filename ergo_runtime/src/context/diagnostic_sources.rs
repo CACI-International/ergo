@@ -1,11 +1,10 @@
 //! Sources used in diagnostic messages.
 
-use super::Item;
 use crate as ergo_runtime;
 use crate::abi_stable::{
     external_types::RMutex,
     path::PathBuf,
-    std_types::{RDuration, RHashMap, ROption, RString, RVec},
+    std_types::{RHashMap, ROption, RString, RVec},
     StableAbi,
 };
 use cachemap::CacheMap;
@@ -18,65 +17,18 @@ pub type SourceId = u64;
 #[derive(StableAbi)]
 #[repr(C)]
 enum Source {
-    None,
-    String {
-        name: RString,
-        content: RString,
-    },
-    File {
-        path: PathBuf,
-        mod_time: RDuration, // since unix epoch
-        content: ROption<RString>,
-    },
-    BinaryFile {
-        path: PathBuf,
-    },
-}
-
-impl Default for Source {
-    fn default() -> Self {
-        Source::None
-    }
+    String { name: RString, content: RString },
+    File { path: PathBuf, content: RString },
+    BinaryFile { path: PathBuf },
 }
 
 /// A runtime store of all of the sources in use.
 #[derive(StableAbi, crate::type_system::ErgoType)]
 #[repr(C)]
 pub struct Sources {
-    item: ROption<Item>,
-    source_ids: CacheMap<SourceId, RMutex<Source>>,
+    source_ids: CacheMap<SourceId, ROption<Source>>,
     file_ids: RMutex<RHashMap<PathBuf, SourceId>>,
     source_line_starts: CacheMap<SourceId, RVec<usize>>,
-}
-
-// If duration is missing, it represents a binary file (we don't care about the content).
-type StoredData = Vec<(std::path::PathBuf, SourceId, Option<std::time::Duration>)>;
-
-impl std::ops::Drop for Sources {
-    fn drop(&mut self) {
-        if let ROption::RSome(item) = &mut self.item {
-            let content = match unsafe { item.write_unguarded() } {
-                Err(e) => {
-                    log::error!("could not open diagnostic source info for writing: {}", e);
-                    return;
-                }
-                Ok(v) => v,
-            };
-            let entries: StoredData = std::mem::take(&mut self.source_ids)
-                .into_iter()
-                .filter_map(|(k, v)| match v.into_inner() {
-                    Source::File { path, mod_time, .. } => {
-                        Some((path.into(), k, Some(mod_time.into())))
-                    }
-                    Source::BinaryFile { path } => Some((path.into(), k, None)),
-                    _ => None,
-                })
-                .collect();
-            if let Err(e) = bincode::serialize_into(content, &entries) {
-                log::error!("error while serializing diagnostic source info: {}", e);
-            }
-        }
-    }
 }
 
 pub enum SourceName<'a> {
@@ -115,48 +67,8 @@ fn binary_file_id<P: AsRef<std::path::Path>>(path: P) -> SourceId {
 }
 
 impl Sources {
-    pub fn new(item: super::Item) -> Self {
-        let stored: StoredData = if item.exists() {
-            let result = unsafe { item.read_unguarded() }
-                .map_err(|e| e.to_string())
-                .and_then(|content| bincode::deserialize_from(content).map_err(|e| e.to_string()));
-            match result {
-                Ok(v) => v,
-                Err(e) => {
-                    log::warn!("failed to read diagnostic source info ({}), discarding", e);
-                    Default::default()
-                }
-            }
-        } else {
-            Default::default()
-        };
-        let mut source_ids = Vec::new();
-        let mut file_ids = Vec::new();
-        for (path, id, mod_time) in stored {
-            file_ids.push((PathBuf::from(path.clone()), id));
-            source_ids.push((
-                id,
-                RMutex::new(match mod_time {
-                    Some(mod_time) => Source::File {
-                        path: path.into(),
-                        mod_time: mod_time.into(),
-                        content: ROption::RNone,
-                    },
-                    None => Source::BinaryFile { path: path.into() },
-                }),
-            ));
-        }
+    pub fn new() -> Self {
         Sources {
-            item: ROption::RSome(item),
-            source_ids: source_ids.into_iter().collect(),
-            file_ids: RMutex::new(file_ids.into_iter().collect()),
-            source_line_starts: Default::default(),
-        }
-    }
-
-    pub fn empty() -> Self {
-        Sources {
-            item: ROption::RNone,
             source_ids: Default::default(),
             file_ids: RMutex::new(Default::default()),
             source_line_starts: Default::default(),
@@ -175,16 +87,11 @@ impl Sources {
                 }
             } else {
                 let id = file_id(path.as_ref())?;
-                let mod_time = std::fs::metadata(path.as_ref()).and_then(|meta| meta.modified())?;
-                let duration = mod_time
-                    .duration_since(std::time::SystemTime::UNIX_EPOCH)
-                    .unwrap_or_default();
-                let content = ROption::RSome(std::fs::read_to_string(path.as_ref())?.into());
+                let content = std::fs::read_to_string(path.as_ref())?.into();
                 guard.insert(path.clone(), id);
                 self.source_ids.cache(id, || {
-                    RMutex::new(Source::File {
+                    ROption::RSome(Source::File {
                         path: path.clone(),
-                        mod_time: duration.into(),
                         content,
                     })
                 });
@@ -212,7 +119,7 @@ impl Sources {
                 let id = binary_file_id(path.as_ref());
                 guard.insert(path.clone(), id);
                 self.source_ids.cache(id, || {
-                    RMutex::new(Source::BinaryFile { path: path.clone() })
+                    ROption::RSome(Source::BinaryFile { path: path.clone() })
                 });
             }
         }
@@ -230,7 +137,7 @@ impl Sources {
         content.hash(&mut hfn);
         let id = hfn.finish();
         self.source_ids.cache(id, || {
-            RMutex::new(Source::String {
+            ROption::RSome(Source::String {
                 name: name.into(),
                 content: content.into(),
             })
@@ -243,20 +150,14 @@ impl Sources {
         self.get(id).map(|source| match source {
             Source::File { path, .. } | Source::BinaryFile { path } => SourceName::Path(path),
             Source::String { name, .. } => SourceName::String(name.as_str()),
-            _ => panic!("invalid source state"),
         })
     }
 
     /// Get the content of a source.
     pub fn content(&self, id: SourceId) -> Option<&str> {
         self.get(id).and_then(|source| match source {
-            Source::File {
-                content: ROption::RSome(content),
-                ..
-            }
-            | Source::String { content, .. } => Some(content.as_str()),
+            Source::File { content, .. } | Source::String { content, .. } => Some(content.as_str()),
             Source::BinaryFile { .. } => None,
-            _ => panic!("invalid source state"),
         })
     }
 
@@ -264,113 +165,12 @@ impl Sources {
     pub fn path(&self, id: SourceId) -> Option<std::path::PathBuf> {
         self.get(id).and_then(|source| match source {
             Source::File { path, .. } | Source::BinaryFile { path } => Some(path.clone().into()),
-            _ => None,
+            Source::String { .. } => None,
         })
     }
 
     fn get(&self, id: SourceId) -> Option<&Source> {
-        unsafe fn return_ref<'a, T: std::ops::Deref<Target = Source> + 'a>(
-            guard: T,
-        ) -> Option<&'a Source> {
-            Some(std::ptr::NonNull::from(&*guard).as_ref())
-        }
-
-        let m = self
-            .source_ids
-            .cache(id, || RMutex::new(Default::default()));
-        let mut guard = m.lock();
-        match &mut *guard {
-            Source::None => None,
-            Source::File {
-                content,
-                path,
-                mod_time,
-            } if content.is_none() => {
-                // Check whether the file content is up-to-date prior to loading
-                // This path must result in either changing the entry to Source::None or
-                // populating content.
-                match std::fs::metadata(path.as_ref()).and_then(|meta| meta.modified()) {
-                    Ok(fs_mod_time) => {
-                        let fs_mod_time: RDuration = fs_mod_time
-                            .duration_since(std::time::SystemTime::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .into();
-                        if mod_time != &fs_mod_time {
-                            // Recalculate id
-                            match file_id(path.as_ref()) {
-                                Ok(new_id) => {
-                                    if new_id != id {
-                                        // Id mismatch, remove old entry and insert a new one
-                                        let path =
-                                            match std::mem::replace(&mut *guard, Source::None) {
-                                                Source::File { path, .. } => path,
-                                                _ => panic!("invalid source content"),
-                                            };
-                                        drop(guard);
-                                        self.file_ids.lock().insert(path.clone(), new_id);
-                                        self.source_ids.cache(new_id, || {
-                                            RMutex::new(
-                                                match std::fs::read_to_string(path.as_ref()) {
-                                                    Ok(content) => Source::File {
-                                                        content: ROption::RSome(content.into()),
-                                                        path,
-                                                        mod_time: fs_mod_time,
-                                                    },
-                                                    Err(e) => {
-                                                        log::error!(
-                                                            "error reading source '{}': {}",
-                                                            path.display(),
-                                                            e
-                                                        );
-                                                        Source::None
-                                                    }
-                                                },
-                                            )
-                                        });
-                                        return None;
-                                    }
-                                }
-                                Err(e) => {
-                                    log::error!("error reading source '{}': {}", path.display(), e);
-                                    *guard = Source::None;
-                                    return None;
-                                }
-                            }
-                        }
-
-                        // Populate content and mod time
-                        match std::fs::read_to_string(path.as_ref()) {
-                            Ok(c) => {
-                                *mod_time = fs_mod_time;
-                                *content = ROption::RSome(c.into());
-                                // Safety: guard is guaranteed to be a Source::File with content
-                                // populated, so future get() calls will not alter it.
-                                unsafe { return_ref(guard) }
-                            }
-                            Err(e) => {
-                                log::error!("error reading source '{}': {}", path.display(), e);
-                                *guard = Source::None;
-                                None
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        log::error!(
-                            "error getting metadata for source '{}': {}",
-                            path.display(),
-                            e
-                        );
-                        *guard = Source::None;
-                        None
-                    }
-                }
-            }
-            _ => {
-                // Safety: guard is guaranteed to either be a Source::File with content populated
-                // or a Source::String, so future get() calls will not alter it.
-                unsafe { return_ref(guard) }
-            }
-        }
+        self.source_ids.cache_default(id).as_ref().into()
     }
 }
 

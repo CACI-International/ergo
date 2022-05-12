@@ -1,14 +1,17 @@
 //! Environment variable functions.
 
-use ergo_runtime::{metadata::Doc, traits, types, value::match_value, Context, Value};
+use ergo_runtime::{
+    depends, metadata::Doc, nsid, traits, types, value::match_value, Context, Value,
+};
 
 pub fn module() -> Value {
     crate::make_string_map! {
         "home" = home(),
         "path-search" = path_search(),
         "current-dir" = current_dir(),
-        "user-cache" = user_cache(),
-        "system-cache" = system_cache(),
+        "project-dir" = project_work(),
+        "user-dir" = user_work(),
+        "system-dir" = system_work(),
         "config" = config(),
         "os" = os(),
         "arch" = arch(),
@@ -48,20 +51,29 @@ fn current_dir() -> Value {
     v
 }
 
-fn user_cache() -> Value {
+fn project_work() -> Value {
+    let mut v = Value::dynamic(
+        || async { types::Path::from(Context::global().env.project_directory()).into() },
+        depends![const nsid!(std::env::project_dir)],
+    );
+    Doc::set_string(&mut v, "A project-wide working directory path.");
+    v
+}
+
+fn user_work() -> Value {
     let path = directories::ProjectDirs::from("", "", "ergo").map(|d| d.cache_dir().to_owned());
     let mut v = match path {
         Some(path) => types::Path::from(path).into(),
         None => ergo_runtime::error! {
-            error: "the user cache directory could not be retrieved"
+            error: "the user work directory could not be retrieved"
         }
         .into(),
     };
-    Doc::set_string(&mut v, "A user-level cache directory path.");
+    Doc::set_string(&mut v, "A user-wide working directory path.");
     v
 }
 
-fn system_cache() -> Value {
+fn system_work() -> Value {
     let mut path = if cfg!(unix) {
         Some(std::path::Path::new("/var/cache/ergo"))
     } else if cfg!(windows) {
@@ -87,11 +99,11 @@ fn system_cache() -> Value {
     let mut v = match path {
         Some(path) => types::Path::from(path).into(),
         None => ergo_runtime::error! {
-            error: "the system cache directory could not be retrieved"
+            error: "the system work directory could not be retrieved"
         }
         .into(),
     };
-    Doc::set_string(&mut v, "A system-level cache directory path.");
+    Doc::set_string(&mut v, "A system-wide working directory path.");
     v
 }
 

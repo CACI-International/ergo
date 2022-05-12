@@ -77,7 +77,7 @@ impl Migration {
 
 impl super::Command for Migrate {
     fn run(self) -> Result<(), String> {
-        let sources = Sources::empty();
+        let sources = Sources::new();
         let mut migrations = Vec::new();
         for f in self.files {
             let source_id = sources.add_file(f).map_err(|e| e.to_string())?;

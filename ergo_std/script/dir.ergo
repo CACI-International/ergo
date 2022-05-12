@@ -1,4 +1,4 @@
-plugin = ergo plugin
+plugin = !id <| ergo plugin
 
 ## Create a value that will evaluate to the first argument which successfully binds.
 ## 
@@ -7,18 +7,20 @@ plugin = ergo plugin
 ## This is a shortcut for `:a -> match $$a $$cases`.
 matches = fn :cases -> :a -> plugin:match $a $cases
 
+mcache = ergo cache
 mdoc = ergo doc
 mnet = ergo net
+mpath = ergo path
 mtest = ergo test
 mtype = ergo type
 
 ## Load a remote archive.
 ##
 ## Fetches the archive with `net:unarchive ^enter`, and loads the archive from the root directory.
-## Caches the returned value.
+## Caches the returned value using `std:cache`.
 ##
 ## All arguments are forwarded to `std:net:http`.
-ergo-remote = fn ^:args -> ergo <| plugin:value:cache <| mnet:unarchive ^enter ^$args
+ergo-remote = fn ^:args -> ergo <| mcache:cache <| mnet:unarchive ^enter ^$args
 
 ## Return any bound value as-is.
 ##
@@ -56,50 +58,6 @@ default = fn :target as :default-value -> :v -> {
 ## ```
 partial = fn :f ^:args -> fn ^:args2 -> f ^$args ^$args2
 
-## Run a command that produces an output path, where the path to create is passed as an argument to
-## the given function.
-##
-## Arguments: `(Function :function)`
-##
-## Returns the output path, relying on the value returned by the function. Execution of that value
-## _must_ make the path valid for future use.
-##
-## ### Example Usage
-## ```ergo
-## out = Path:with-output <| fn :p -> exec touch $$p
-## ```
-with-output-path = fn :f -> {
-    file = plugin:Path:new ()
-    f $file
-    $file
-}
-
-## Match a path value or bind the source path of the value.
-##
-## Arguments: `:source`
-##
-## Keyed Arguments:
-## * `parent` - if present, the parent directory of the source path will be used.
-## * `no-source` - the value to bind if no source information is available, defaulting to
-##   `std:env:current-dir`.
-##
-## When called in a pattern expression and bound, if the bound value is a Path, `source` will be
-## bound to that path. Otherwise `source` will be bound to the source path of the bound value, or
-## its parent directory if `parent` is present. If the bound value has no source path,
-## `default` is bound.
-##
-## This is of particular use with function arguments to get function call site source paths and
-## allow them to be overriden.
-path-or-source = fn ^{:parent,no-source = default :no-source as plugin:env:current-dir} :x -> matches [
-    plugin:Path :p -> { $x = $p }
-    plugin:Unset :u -> {
-        $x = plugin:match (plugin:value:source-path $u) [
-            plugin:Path :p -> plugin:match $parent [$unset -> $p, _ -> plugin:Path:parent $p]
-            $unset -> $no-source
-        ]
-    }
-]
-
 ## Create a recursive function. The passed function will be passed itself as the first argument, and
 ## all other arguments will be forwarded.
 ##
@@ -130,7 +88,7 @@ recursive = fn :f -> fn ^:args -> f $f ^$args
 ## Returns a function which will share results based on the arguments. Thus, if you call the
 ## function more than once on the same arguments, it will only be evaluated once with those
 ## arguments.
-memoize = fn (plugin:Function :f) -> fn ^:args -> plugin:value:cache (no-persist=true) <| f ^$args
+memoize = fn (plugin:Function :f) -> fn ^:args -> mcache:once <| f ^$args
 
 ## Import values by index in a binding expression.
 ##
@@ -290,6 +248,10 @@ extend-type = fn :tp :map -> plugin:Type:modify $tp <| plugin:value:merge (plugi
     Bool = plugin:Bool
 
     ##mdoc:module
+    ## Caches of values.
+    Cache = plugin:Cache
+
+    ##mdoc:module
     ## Runtime errors.
     Error = plugin:Error
 
@@ -322,7 +284,7 @@ extend-type = fn :tp :map -> plugin:Type:modify $tp <| plugin:value:merge (plugi
 
     ##mdoc:module
     ## File paths.
-    Path = extend-type plugin:Path {with-output = $with-output-path, or-source = $path-or-source}
+    Path = extend-type plugin:Path $mpath
 
     ##mdoc:module
     ## Strings.
@@ -433,7 +395,8 @@ extend-type = fn :tp :map -> plugin:Type:modify $tp <| plugin:value:merge (plugi
     test = $mtest
 
     # Functions
-    import {:cache,:debug,:equal,:identity,:merge,:variable} = plugin:value
+    import {:debug,:equal,:identity,:merge,:variable} = plugin:value
+    import {:cache,:once} = $mcache
     import {:optional,:required} = $mtype
     default
     ergo-remote

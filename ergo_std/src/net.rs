@@ -2,7 +2,6 @@
 
 use ergo_runtime::abi_stable::{bst::BstMap, type_erase::Erased, StableAbi};
 use ergo_runtime::{
-    context::ItemContent,
     depends,
     error::{Diagnostic, DiagnosticInfo},
     io,
@@ -262,16 +261,16 @@ ergo_runtime::type_system::ergo_traits_fn! {
     ergo_runtime::ergo_type_name!(traits, HttpStatus);
 
     impl traits::Stored for HttpStatus {
-        async fn put(&self, _ctx: &traits::StoredContext, mut into: ItemContent) -> ergo_runtime::RResult<()> {
-            bincode::serialize_into(&mut into, &self.0)
+        async fn put(&self, data: &mut traits::PutData<'_>) -> ergo_runtime::RResult<()> {
+            bincode::serialize_into(data, &self.0)
                 .add_primary_label(Source::get(SELF_VALUE).with("while storing this value"))
                 .map_err(|e| e.into())
                 .into()
         }
 
-        async fn get(_ctx: &traits::StoredContext, mut from: ItemContent) -> ergo_runtime::RResult<Erased>
+        async fn get(data: &mut traits::GetData<'_>) -> ergo_runtime::RResult<Erased>
         {
-            bincode::deserialize_from(&mut from)
+            bincode::deserialize_from(data)
                 .map(|status| Erased::new(HttpStatus(status)))
                 .into_diagnostic()
                 .map_err(|e| e.into())

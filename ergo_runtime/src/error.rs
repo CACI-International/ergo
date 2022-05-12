@@ -374,11 +374,82 @@ impl ErrorOrDiagnostic {
             ErrorOrDiagnostic::Diagnostic(d) => d.into(),
         }
     }
+
+    fn modify_diagnostic<F: FnOnce(&mut Diagnostic)>(&mut self, f: F) {
+        match self {
+            ErrorOrDiagnostic::Error(_) => (),
+            ErrorOrDiagnostic::Diagnostic(d) => f(d),
+        }
+    }
 }
 
 impl From<ErrorOrDiagnostic> for Error {
     fn from(e: ErrorOrDiagnostic) -> Self {
         e.into_error()
+    }
+}
+
+impl DiagnosticInfo for ErrorOrDiagnostic {
+    type Output = Self;
+
+    fn into_diagnostic(self) -> Self::Output {
+        self
+    }
+
+    fn set_severity(mut self, severity: Severity) -> Self::Output {
+        self.modify_diagnostic(|d| d.set_severity(severity));
+        self
+    }
+
+    fn set_message<S: ToString>(mut self, message: S) -> Self::Output {
+        self.modify_diagnostic(|d| d.set_message(message));
+        self
+    }
+
+    fn add_label(mut self, label: Label) -> Self::Output {
+        self.modify_diagnostic(|d| d.add_label(label));
+        self
+    }
+
+    fn add_note<S: ToString>(mut self, note: S) -> Self::Output {
+        self.modify_diagnostic(|d| d.add_note(note));
+        self
+    }
+}
+
+impl<T> DiagnosticInfo for std::result::Result<T, ErrorOrDiagnostic> {
+    type Output = Self;
+
+    fn into_diagnostic(self) -> Self::Output {
+        self
+    }
+
+    fn set_severity(mut self, severity: Severity) -> Self::Output {
+        if let Err(e) = &mut self {
+            e.modify_diagnostic(|d| d.set_severity(severity));
+        }
+        self
+    }
+
+    fn set_message<S: ToString>(mut self, message: S) -> Self::Output {
+        if let Err(e) = &mut self {
+            e.modify_diagnostic(|d| d.set_message(message));
+        }
+        self
+    }
+
+    fn add_label(mut self, label: Label) -> Self::Output {
+        if let Err(e) = &mut self {
+            e.modify_diagnostic(|d| d.add_label(label));
+        }
+        self
+    }
+
+    fn add_note<S: ToString>(mut self, note: S) -> Self::Output {
+        if let Err(e) = &mut self {
+            e.modify_diagnostic(|d| d.add_note(note));
+        }
+        self
     }
 }
 

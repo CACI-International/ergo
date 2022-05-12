@@ -91,7 +91,7 @@ ergo_traits_fn! {
     traits::Nested::add_impl::<Map>(traits);
 
     impl traits::Stored for Map {
-        async fn put(&self, stored_ctx: &traits::StoredContext, data: &mut traits::PutData<'_>) -> crate::RResult<()> {
+        async fn put(&self, data: &mut traits::PutData<'_>) -> crate::RResult<()> {
             crate::error_info!(
                 labels: [
                     primary(Source::get(SELF_VALUE).with("while storing this value"))
@@ -103,8 +103,8 @@ ergo_traits_fn! {
                         let k = k.clone();
                         let v = v.clone();
                         ids.insert(*k.id(), v.id().await);
-                        writes.push(stored_ctx.write_value(k.into()));
-                        writes.push(stored_ctx.write_value(v));
+                        writes.push(data.write_value(k.into()));
+                        writes.push(data.write_value(v));
                     }
                     crate::Context::global().task.join_all(writes).await?;
                     bincode::serialize_into(data, &ids)
@@ -112,13 +112,13 @@ ergo_traits_fn! {
             ).into()
         }
 
-        async fn get(stored_ctx: &traits::StoredContext, data: &mut traits::GetData<'_>) -> crate::RResult<Erased> {
+        async fn get(mut data: &mut traits::GetData<'_>) -> crate::RResult<Erased> {
             crate::error_info!(
                 async {
-                    let ids: BTreeMap<u128, u128> = bincode::deserialize_from(data)?;
+                    let ids: BTreeMap<u128, u128> = bincode::deserialize_from(&mut data)?;
                     let mut vals = BstMap::new();
-                    let keys: Vec<_> = ids.iter().map(|i| stored_ctx.read_value(*i.0)).collect();
-                    let values: Vec<_> = ids.iter().map(|i| stored_ctx.read_value(*i.1)).collect();
+                    let keys: Vec<_> = ids.iter().map(|i| data.read_value(*i.0)).collect();
+                    let values: Vec<_> = ids.iter().map(|i| data.read_value(*i.1)).collect();
 
                     let read = crate::Context::global().task.join_all(vec![
                         crate::Context::global().task.join_all(keys),

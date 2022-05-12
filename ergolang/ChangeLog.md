@@ -56,6 +56,8 @@
   overflow (which occurred when the value was dropped).
 * Remove the `--detect-deadlock` argument. Deadlock detection is now done
   automatically with no meaningful performance implications.
+* Remove the internal `store` interface from the runtime context, opting for a
+  much simpler strategy that just provides the project working directory.
 
 ### Breaking Changes
 * Any use of `!` should be replaced with equivalent code.

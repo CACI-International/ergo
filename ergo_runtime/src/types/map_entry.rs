@@ -56,24 +56,24 @@ ergo_traits_fn! {
     traits::Nested::add_impl::<MapEntry>(traits);
 
     impl traits::Stored for MapEntry {
-        async fn put(&self, stored_ctx: &traits::StoredContext, data: &mut traits::PutData<'_>) -> crate::RResult<()> {
+        async fn put(&self, data: &mut traits::PutData<'_>) -> crate::RResult<()> {
             crate::error_info!(
                 labels: [ primary(Source::get(SELF_VALUE).with("while storing this value")) ],
                 async {
                     let ids = (self.key.id().await, self.value.id().await);
-                    stored_ctx.write_value(self.key.clone()).await?;
-                    stored_ctx.write_value(self.value.clone()).await?;
+                    data.write_value(self.key.clone()).await?;
+                    data.write_value(self.value.clone()).await?;
                     bincode::serialize_into(data, &ids)
                 }
             ).into()
         }
 
-        async fn get(stored_ctx: &traits::StoredContext, data: &mut traits::GetData<'_>) -> crate::RResult<Erased> {
+        async fn get(mut data: &mut traits::GetData<'_>) -> crate::RResult<Erased> {
             crate::error_info!(
                 async {
-                    let ids: (u128, u128) = bincode::deserialize_from(data)?;
-                    let key = stored_ctx.read_value(ids.0).await?;
-                    let value = stored_ctx.read_value(ids.1).await?;
+                    let ids: (u128, u128) = bincode::deserialize_from(&mut data)?;
+                    let key = data.read_value(ids.0).await?;
+                    let value = data.read_value(ids.1).await?;
                     crate::Result::Ok(Erased::new(MapEntry { key, value }))
                 }
             ).into()

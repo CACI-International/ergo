@@ -464,6 +464,37 @@ impl std::fmt::Debug for RuntimeHandle {
     }
 }
 
+/// An executor that allows blocking on an async task by parking the current thread.
+#[derive(Default)]
+pub struct MiniExecutor(());
+
+impl MiniExecutor {
+    pub fn block_on<'a, Fut: std::future::Future<Output = R> + 'a, R: 'a>(
+        &self,
+        mut fut: Fut,
+    ) -> R {
+        let block_on_waker = BlockOnWaker::new();
+        use std::task::{Context, Poll, Waker};
+        let waker = Waker::from(block_on_waker.clone());
+        // Safety: we guarantee that `fut` will not be moved after this call by overwriting the
+        // `fut` binding itself.
+        let mut fut = unsafe { Pin::new_unchecked(&mut fut) };
+        loop {
+            if let Poll::Ready(ret) = fut.as_mut().poll(&mut Context::from_waker(&waker)) {
+                break ret;
+            }
+            std::thread::park();
+            while block_on_waker
+                .state
+                .compare_exchange(READY, PENDING, Ordering::Acquire, Ordering::Relaxed)
+                .is_err()
+            {
+                std::thread::park();
+            }
+        }
+    }
+}
+
 impl RuntimeHandle {
     /// Spawns a future onto the runtime that will be run to completion.
     pub fn spawn(&self, priority: u32, future: BoxFuture<'static, ()>) {

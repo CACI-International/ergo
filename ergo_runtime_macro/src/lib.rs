@@ -1,8 +1,8 @@
 //! Proc-macros for the `ergo_runtime` crate.
 
 use proc_macro::TokenStream;
-use quote::{quote, quote_spanned};
-use syn::{parse_macro_input, ItemFn, LitStr};
+use quote::quote;
+use syn::{parse_macro_input, ItemFn};
 
 mod derive_ergo_type;
 mod ergo_fn;
@@ -76,26 +76,6 @@ pub fn plugin_entry(_attr: TokenStream, item: TokenStream) -> TokenStream {
             }
 
             #f
-        }
-    }
-    .into()
-}
-
-/// Create an item name.
-#[proc_macro]
-pub fn item_name(ts: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(ts as LitStr);
-
-    let s = input.value();
-    if !s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-        quote_spanned! {
-            input.span() => {
-                compile_error!("literals may only have ascii alphanumeric and underscore characters");
-            }
-        }
-    } else {
-        quote! {
-            unsafe { &*(#s as *const str as *const ergo_runtime::context::ItemName) }
         }
     }
     .into()

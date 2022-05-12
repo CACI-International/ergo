@@ -1,5 +1,6 @@
 plugin = ergo plugin
 type = ergo type
+path = ergo path
 
 cache-name = ERGO_NET_CACHE
 
@@ -91,8 +92,7 @@ download = fn (plugin:String :url) (plugin:Path :target) ^:rest -> {
 ## The url can resolve to any content that `fs:unarchive` accepts.
 ##
 ## Returns the unpacked remote archive directory.
-unarchive = fn (enter=:enter) ^:args -> {
-    unpacked-dir = plugin:Path:new ()
+unarchive = fn (enter=:enter) ^:args -> path:for <| fn :unpacked-dir -> {
     result = http ^$args
     result:complete
     plugin:fs:unarchive $unpacked-dir result:body

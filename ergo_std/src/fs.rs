@@ -1,7 +1,6 @@
 //! Filesystem runtime functions.
 
 use ergo_runtime::{
-    context::item_name,
     depends,
     error::{Diagnostic, DiagnosticInfo},
     io,
@@ -13,7 +12,6 @@ use ergo_runtime::{
     Context, Value,
 };
 use glob::glob;
-use serde::{Deserialize, Serialize};
 use sha::sha1::Sha1;
 use std::path::Path;
 
@@ -682,15 +680,20 @@ async fn track(file: _, (force_check): [_]) -> Value {
     let force_check = force_check.is_some();
 
     let loaded_info = Context::global().shared_state.get(|| {
-        let store = Context::global().store.item(item_name!("track"));
-        LoadedTrackInfo::new(store)
+        let file = Context::global().env.project_directory().join("_track");
+        let log = Context::global().log.sublog("fs:track");
+        LoadedTrackInfo::new(file, log)
     })?;
 
     let hash = {
         let file_entry = loaded_info.info.get(file.clone());
         let mut guard = file_entry.lock().await;
         match &mut *guard {
-            Some((_, Some(v))) if !force_check => *v,
+            Some(FileData {
+                computed_content_hash: true,
+                content_hash,
+                ..
+            }) if !force_check => *content_hash,
             other => {
                 ergo_runtime::error_info!(notes: [format_args!("path was {}", file.display())], {
                     let meta = std::fs::metadata(&file)?;
@@ -698,24 +701,22 @@ async fn track(file: _, (force_check): [_]) -> Value {
 
                     let calc_hash = other
                         .as_ref()
-                        .map(|(data, _)| data.modification_time < modification_time)
+                        .map(|data| data.modification_time < modification_time)
                         .unwrap_or(true);
 
                     ergo_runtime::Result::Ok(if calc_hash {
                         let f = std::fs::File::open(&file)?;
                         let content_hash = ergo_runtime::hash::hash_read(f)?;
-                        *other = Some((
-                            FileData {
-                                modification_time,
-                                content_hash,
-                            },
-                            Some(content_hash),
-                        ));
+                        *other = Some(FileData {
+                            modification_time,
+                            content_hash,
+                            computed_content_hash: true,
+                        });
                         content_hash
                     } else {
                         let inner = other.as_mut().unwrap();
-                        inner.1 = Some(inner.0.content_hash);
-                        inner.0.content_hash
+                        inner.computed_content_hash = true;
+                        inner.content_hash
                     })
                 })?
             }
@@ -772,52 +773,106 @@ impl<K: Eq + std::hash::Hash, V: Default> RefHashMap<K, V> {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug)]
 struct FileData {
     modification_time: std::time::SystemTime,
     content_hash: u128,
+    computed_content_hash: bool,
 }
 
 #[derive(ErgoType)]
 struct LoadedTrackInfo {
-    pub info:
-        RefHashMap<std::path::PathBuf, futures::lock::Mutex<Option<(FileData, Option<u128>)>>>,
-    item: ergo_runtime::context::Item,
+    pub info: RefHashMap<std::path::PathBuf, futures::lock::Mutex<Option<FileData>>>,
+    persist: std::path::PathBuf,
+    log: ergo_runtime::context::Log,
 }
 
 impl LoadedTrackInfo {
-    pub fn new(item: ergo_runtime::context::Item) -> ergo_runtime::Result<Self> {
-        let info = if item.exists() {
-            let content = unsafe { item.read_unguarded() }.into_diagnostic()?;
-            let stored: Vec<(std::path::PathBuf, FileData)> =
-                bincode::deserialize_from(content).into_diagnostic()?;
-            stored
-                .into_iter()
-                .map(|(k, v)| (k, futures::lock::Mutex::new(Some((v, None)))))
-                .collect()
-        } else {
-            Default::default()
-        };
-        Ok(LoadedTrackInfo { info, item })
+    pub fn new(
+        persist: std::path::PathBuf,
+        log: ergo_runtime::context::Log,
+    ) -> ergo_runtime::Result<Self> {
+        let mut entries = Vec::new();
+
+        let result = ergo_runtime::error_info! {{
+            use crate::sqlite::{Connection, Duration, U128, State};
+            use std::time::{SystemTime};
+
+            let conn = Connection::open(&persist)?;
+            conn.execute("CREATE TABLE IF NOT EXISTS tracked_files (
+                path TEXT NOT NULL,
+                mod_time_secs INTEGER NOT NULL,
+                mod_time_nsecs INTEGER NOT NULL,
+                content_u8 INTEGER NOT NULL, content_l8 INTEGER NOT NULL
+            )")?;
+            let mut stmt = conn.prepare("SELECT path, mod_time_secs, mod_time_nsecs, content_u8, content_l8 FROM tracked_files")?;
+            while let State::Row = stmt.next()? {
+                let path: String = stmt.read(0)?;
+                let Duration(mod_time) = stmt.read(1)?;
+                let U128(content_hash) = stmt.read(3)?;
+                entries.push((
+                    std::path::PathBuf::from(path),
+                    SystemTime::UNIX_EPOCH + mod_time,
+                    content_hash,
+                ));
+            }
+            ergo_runtime::Result::Ok(())
+        }};
+
+        if let Err(e) = result {
+            log.error(format_args!("error reading file tracking database: {}", e));
+        }
+
+        let info = entries
+            .into_iter()
+            .map(|(path, modification_time, content_hash)| {
+                (
+                    path,
+                    futures::lock::Mutex::new(Some(FileData {
+                        modification_time,
+                        content_hash,
+                        computed_content_hash: false,
+                    })),
+                )
+            })
+            .collect();
+
+        Ok(LoadedTrackInfo { info, persist, log })
     }
 }
 
 impl std::ops::Drop for LoadedTrackInfo {
     fn drop(&mut self) {
-        let content = match unsafe { self.item.write_unguarded() } {
-            Err(e) => {
-                eprintln!("could not open fs::track info for writing: {}", e);
-                return;
+        let result = ergo_runtime::error_info! {{
+            use crate::sqlite::{Connection, Duration, U128, Transaction, State};
+            use std::time::SystemTime;
+
+            let conn = Connection::open(&self.persist)?;
+            let transaction = Transaction::new(&conn)?;
+            conn.execute("DELETE FROM tracked_files")?;
+            for (path, data) in std::mem::take(&mut self.info)
+                .into_entries()
+                .into_iter()
+                .filter_map(|(k, v)| v.into_inner().map(|v| (k,v)))
+            {
+                match (path.to_str(), data.modification_time.duration_since(SystemTime::UNIX_EPOCH)) {
+                    (Some(path), Ok(dur)) => {
+                        let mut stmt = conn.prepare("INSERT INTO tracked_files (
+                            path, mod_time_secs, mod_time_nsecs, content_u8, content_l8
+                        ) VALUES (?,?,?,?,?)")?;
+                        stmt.bind(1, path)?;
+                        stmt.bind(2, Duration(dur))?;
+                        stmt.bind(4, U128(data.content_hash))?;
+                        while stmt.next()? != State::Done {}
+                    }
+                    _ => ()
+                }
             }
-            Ok(v) => v,
-        };
-        let entries = std::mem::take(&mut self.info).into_entries();
-        let entries: Vec<(std::path::PathBuf, FileData)> = entries
-            .into_iter()
-            .filter_map(|(k, v)| v.into_inner().map(|v| (k, v.0)))
-            .collect();
-        if let Err(e) = bincode::serialize_into(content, &entries) {
-            eprintln!("error while serializing fs::track info: {}", e);
+            transaction.commit()
+        }};
+        if let Err(e) = result {
+            self.log
+                .error(format_args!("error writing file tracking database: {}", e));
         }
     }
 }

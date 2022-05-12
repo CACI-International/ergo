@@ -80,14 +80,12 @@ not work correctly with this flag, so the default is `less`. You can:
   * Right now it only cancels tasks.
 * Persist command timing information for better estimates.
 * Add value dependency tree print to help debug consistency issues.
-* Deduplicate values based on identity.
 * Strongly control the lifetime of the thread pool using weak references in the
   runtime.
   * This will allow loaded plugins to be properly dropped rather than leaked.
-* Reference count (non-root) cache values?
 * Debugger and profiler.
 * Maybe don't have a fallback doc string if there is no documentation set.
 * Dropping thread for Values (to avoid possibly large stacks).
 * Improve sources of capture bindings.
-* Improve `Error` storage (prevent storage of nested Errors).
-* Improve caching speed (using sqlite, in-memory map, etc)
+* Change Array/Args binding to set unbound trailing values to Unset.
+* File locking.

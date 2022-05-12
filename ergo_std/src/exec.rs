@@ -8,7 +8,6 @@ use ergo_runtime::abi_stable::{
     StableAbi,
 };
 use ergo_runtime::{
-    context::ItemContent,
     depends,
     error::DiagnosticInfo,
     io::{self, Blocking},
@@ -467,16 +466,16 @@ ergo_runtime::type_system::ergo_traits_fn! {
     ergo_runtime::ergo_type_name!(traits, ExitStatus);
 
     impl traits::Stored for ExitStatus {
-        async fn put(&self, _ctx: &traits::StoredContext, mut into: ItemContent) -> ergo_runtime::RResult<()> {
-            bincode::serialize_into(&mut into, &self.0.clone().into_option())
+        async fn put(&self, data: &mut traits::PutData<'_>) -> ergo_runtime::RResult<()> {
+            bincode::serialize_into(data, &self.0.clone().into_option())
                 .add_primary_label(Source::get(SELF_VALUE).with("while storing this value"))
                 .map_err(|e| e.into())
                 .into()
         }
 
-        async fn get(_ctx: &traits::StoredContext, mut from: ItemContent) -> ergo_runtime::RResult<Erased>
+        async fn get(data: &mut traits::GetData<'_>) -> ergo_runtime::RResult<Erased>
         {
-            bincode::deserialize_from(&mut from)
+            bincode::deserialize_from(data)
                 .map(|status: Option<i32>| Erased::new(ExitStatus(status.into())))
                 .into_diagnostic()
                 .map_err(|e| e.into())

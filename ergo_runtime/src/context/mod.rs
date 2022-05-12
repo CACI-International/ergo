@@ -1,6 +1,5 @@
 //! The runtime context.
 
-use crate as ergo_runtime;
 use crate::abi_stable::{std_types::RArc, StableAbi};
 use crate::{
     type_system::{ErgoTrait, ErgoType, Type},
@@ -10,20 +9,15 @@ use std::fmt;
 
 mod diagnostic_sources;
 mod dynamic_scope;
+mod env;
 mod error_scope;
 mod log;
 mod progress;
 mod shared_state;
-mod store;
 pub(crate) mod task;
 mod traits;
 
 use self::log::EmptyLogTarget;
-
-/// Create a literal item name.
-///
-/// Item names must contain only ascii alphanumeric characters.
-pub use ergo_runtime_macro::item_name;
 
 pub use self::log::{
     logger_ref, Log, LogEntry, LogLevel, LogTarget, LogTask, LogTaskKey, Logger, LoggerRef,
@@ -31,10 +25,10 @@ pub use self::log::{
 };
 pub use diagnostic_sources::{SourceId, Sources};
 pub use dynamic_scope::{DynamicScope, DynamicScopeKey, DynamicScopeRef};
+pub use env::Environment;
 pub use error_scope::ErrorScope;
 pub use progress::Progress;
 pub use shared_state::SharedState;
-pub use store::{Item, ItemContent, ItemName, Store};
 pub use task::{LocalKey, TaskManager, TaskPermit};
 pub use traits::{TraitGenerator, TraitGeneratorByTrait, TraitGeneratorByType, Traits};
 
@@ -46,8 +40,8 @@ pub struct GlobalContext {
     pub log: Log,
     /// The shared state interface.
     pub shared_state: SharedState,
-    /// The storage interface.
-    pub store: Store,
+    /// The environment interface.
+    pub env: Environment,
     /// The task management interface.
     pub task: TaskManager,
     /// The type traits interface.
@@ -62,11 +56,7 @@ impl GlobalContext {
     /// Get the shared set of diagnostic sources loaded in the runtime.
     pub fn diagnostic_sources(&self) -> shared_state::SharedStateRef<Sources> {
         self.shared_state
-            .get::<Sources, _>(|| {
-                Ok(Sources::new(
-                    self.store.item(item_name!("diagnostic_sources")),
-                ))
-            })
+            .get::<Sources, _>(|| Ok(Sources::new()))
             .unwrap()
     }
 }
@@ -86,7 +76,7 @@ pub struct Context {
 #[derive(Default)]
 pub struct ContextBuilder {
     logger: Option<LoggerRef>,
-    store_dir: Option<std::path::PathBuf>,
+    storage_dir: Option<std::path::PathBuf>,
     threads: Option<usize>,
     aggregate_errors: Option<bool>,
     error_scope: Option<ErrorScope>,
@@ -138,9 +128,9 @@ impl ContextBuilder {
         self
     }
 
-    /// Set the storage directory.
+    /// Set the project storage directory.
     pub fn storage_directory(mut self, dir: std::path::PathBuf) -> Self {
-        self.store_dir = Some(dir);
+        self.storage_dir = Some(dir);
         self
     }
 
@@ -175,8 +165,8 @@ impl ContextBuilder {
                     self.logger
                         .unwrap_or_else(|| logger_ref(EmptyLogTarget).into()),
                 ),
+                env: Environment::new(self.storage_dir.unwrap_or(std::env::temp_dir())),
                 shared_state: SharedState::new(),
-                store: Store::new(self.store_dir.unwrap_or(std::env::temp_dir())),
                 task: TaskManager::new(
                     self.threads,
                     self.aggregate_errors.unwrap_or(false),

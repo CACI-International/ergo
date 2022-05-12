@@ -1,22 +1,15 @@
 //! Value-related intrinsics.
 
-use ergo_runtime::abi_stable::external_types::RMutex;
 use ergo_runtime::{
-    context::item_name,
     metadata::{Runtime, Source},
-    traits,
-    type_system::ErgoType,
-    types,
+    traits, types,
     value::EvalForId,
     Context, Value,
 };
 use futures::future::{BoxFuture, FutureExt};
-use std::collections::HashMap as CacheMap;
-use std::sync::Arc;
 
 pub fn module() -> Value {
     crate::make_string_map! {
-        "cache" = cache(),
         "debug" = debug(),
         "dynamic" = crate::make_string_map! {
             "get" = dynamic_binding_get(),
@@ -34,109 +27,6 @@ pub fn module() -> Value {
         "source-path" = source_path(),
         "variable" = variable()
     }
-}
-
-#[derive(ErgoType)]
-struct Cached {
-    map: RMutex<CacheMap<u128, Arc<futures::lock::Mutex<Option<Value>>>>>,
-}
-
-impl Default for Cached {
-    fn default() -> Self {
-        Cached {
-            map: RMutex::new(Default::default()),
-        }
-    }
-}
-
-#[types::ergo_fn]
-/// Cache a value by identity.
-///
-/// Arguments: `:value`
-///
-/// Keyed Arguments:
-/// * `:no-persist`: If present, the caching will not be persisted (only runtime caching will occur).
-/// * `:allow-error`: If present, an Error result will be persistently cached (as opposed to being
-/// propagated without persisting).
-///
-/// Caches the given value both at runtime and to persistent storage (to be cached across invocations).
-///
-/// If cached to persistent storage, the returned value is typically a deeply evaluated value
-/// (since all values need to be evaluated to persist the value). Otherwise the value is not deeply
-/// evaluated as the runtime cache can be used.
-///
-/// Returns a value with an identity derived from that of the argument, possibly loading the value
-/// from a persisted store rather than evaluating it. If not yet persisted, a copy of the value is
-/// evaluated and stored for future calls.
-///
-/// Multiple values with the same id will be deduplicated to the same single runtime value.
-async fn cache(value: _, (no_persist): [_], (allow_error): [_]) -> Value {
-    let id = value.id().await;
-
-    let no_persist = no_persist.is_some();
-    let allow_error = allow_error.is_some();
-
-    let cached = Context::global()
-        .shared_state
-        .get(|| Ok(Cached::default()))
-        .unwrap();
-
-    let entry = cached
-        .map
-        .lock()
-        .entry(id)
-        .or_insert_with(|| Arc::new(futures::lock::Mutex::new(None)))
-        .clone();
-    let mut guard = entry.lock().await;
-    if guard.is_none() {
-        let cached_value = if no_persist {
-            value
-        } else {
-            let store = Context::global().store.item(item_name!("cache"));
-            let log = Context::global().log.sublog("cache");
-
-            let mut stored_val = match traits::read_from_store(&store, id).await {
-                Ok(val) => {
-                    log.debug(format!("successfully read cached value for {}", id));
-                    val
-                }
-                Err(err) => {
-                    log.debug(format!(
-                        "failed to read cache value for {}, (re)caching: {}",
-                        id, err
-                    ));
-                    let mut value = value.clone();
-                    // Copy the value before evaluating to retain the identity for write_to_store.
-                    let orig_value = value.clone();
-                    if !allow_error {
-                        Context::eval(&mut value).await?;
-                    }
-                    if let Err(e) = traits::write_to_store(&store, orig_value).await {
-                        log.warn(format!("failed to cache value for {}: {}", id, e));
-                    } else {
-                        log.debug(format!("wrote cache value for {}", id));
-                    }
-
-                    // Read the stored value to ensure the returned value has a consistent identity
-                    // whether we have a cache hit or miss.
-                    match traits::read_from_store(&store, id).await {
-                        Ok(val) => val,
-                        Err(err) => {
-                            log.debug(format!(
-                                "failed to read just-written value for {}: {}; falling back to original value",
-                                id, err
-                            ));
-                            value.clone()
-                        }
-                    }
-                }
-            };
-            stored_val.copy_metadata(&value); // TODO should this _not_ copy source location?
-            stored_val
-        };
-        *guard = Some(cached_value);
-    }
-    guard.as_ref().unwrap().clone()
 }
 
 #[types::ergo_fn]
