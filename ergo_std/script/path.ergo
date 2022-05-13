@@ -1,7 +1,7 @@
 plugin = ergo plugin
 
 path-base-dir = {
-    p = plugin:Path:join plugin:env:project-dir _path
+    p = plugin:Path:join plugin:env:project-dir std path
     plugin:fs:create-dir $p
     $p
 }

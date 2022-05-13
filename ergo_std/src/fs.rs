@@ -680,9 +680,11 @@ async fn track(file: _, (force_check): [_]) -> Value {
     let force_check = force_check.is_some();
 
     let loaded_info = Context::global().shared_state.get(|| {
-        let file = Context::global().env.project_directory().join("_track");
+        let std_dir = Context::global().env.project_directory().join("std");
+        std::fs::create_dir_all(&std_dir)
+            .add_note(format_args!("path was {}", std_dir.display()))?;
         let log = Context::global().log.sublog("fs:track");
-        LoadedTrackInfo::new(file, log)
+        LoadedTrackInfo::new(std_dir.join("track"), log)
     })?;
 
     let hash = {

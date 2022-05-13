@@ -1,7 +1,11 @@
 plugin = ergo plugin
 
 once-cache = plugin:Cache:memory ()
-project-cache = plugin:Cache:open <| plugin:Path:join plugin:env:project-dir _cache
+project-cache = plugin:Cache:open {
+    p = plugin:Path:join plugin:env:project-dir std cache
+    plugin:fs:create-dir <| plugin:Path:parent $p
+    $p
+}
 
 ## Ensure a value is only evaluated once (per identity) in the process lifetime.
 ##
