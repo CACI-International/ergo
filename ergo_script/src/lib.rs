@@ -525,20 +525,25 @@ mod test {
         )
     }
 
+    #[test]
+    fn block_with_tilde() -> Result<(), String> {
+        script_eval_to("{~something}", SRMap(&[("something", SRUnit)]))
+    }
+
     mod merge {
         use super::*;
 
         #[test]
         fn array() -> Result<(), String> {
             script_eval_to(
-                ":arr = [b,c]\n[a,^$arr,d]",
+                ":arr = [b,c]\n[a,^arr,d]",
                 SRArray(&[SRString("a"), SRString("b"), SRString("c"), SRString("d")]),
             )
         }
 
         #[test]
         fn array_invalid() -> Result<(), String> {
-            script_fail("[a,^b,c]")?;
+            script_parse_fail("[a,~b,c]")?;
             Ok(())
         }
 
@@ -567,11 +572,6 @@ mod test {
         }
 
         #[test]
-        fn block_with_string() -> Result<(), String> {
-            script_eval_to("{^something}", SRMap(&[("something", SRUnit)]))
-        }
-
-        #[test]
         fn command_array() -> Result<(), String> {
             script_eval_to(
                 ":to_array = fn ^:args -> args:positional\nto_array a ^[b,c] d ^[e,f]",
@@ -593,21 +593,21 @@ mod test {
                 SRArray(&[SRString("a"), SRString("b")]),
             )?;
             script_eval_to(
-                ":kw = fn ^:args -> args:keyed\nkw a ^{k=3} (d=4) b ^e",
+                ":kw = fn ^:args -> args:keyed\nkw a ^{k=3} ~d=4 b ~e",
                 SRMap(&[("k", SRString("3")), ("d", SRString("4")), ("e", SRUnit)]),
             )?;
             script_eval_to(
-                ":kw = fn ^{:something} -> $something\nkw (something = hi)",
+                ":kw = fn ~:something -> $something\nkw ~something=hi",
                 SRString("hi"),
             )?;
-            script_fail("nokw = fn ^{:something} -> (); nokw ^kw")?;
+            script_fail("nokw = fn ~:something -> (); nokw ~kw")?;
             Ok(())
         }
 
         #[test]
         fn command_args() -> Result<(), String> {
             script_eval_to(
-                "to_array = fn ^:args -> args:positional\np = fn _ ^:rest -> to_array ^$rest\np 1 2 3",
+                "to_array = fn ^:args -> args:positional\np = fn _ ^:rest -> to_array ^rest\np 1 2 3",
                 SRArray(&[SRString("2"), SRString("3")])
             )
         }

@@ -20,6 +20,8 @@ pub enum Tree {
     Hash(Box<Source<Tree>>),
     DoubleHash(Box<Source<Tree>>),
     Equal(Box<Source<Tree>>, Box<Source<Tree>>),
+    Tilde(Box<Source<Tree>>),
+    TildeEqual(Box<Source<Tree>>, Box<Source<Tree>>),
     Arrow(Box<Source<Tree>>, Box<Source<Tree>>),
     Colon(Box<Source<Tree>>, Box<Source<Tree>>),
     // Groups
@@ -388,6 +390,8 @@ where
         //   Dollar
         //   Colon Prefix
         //   Colon (Left assoc)
+        //   TildeEqual (Left assoc)
+        //   Tilde Prefix
         //   Caret Prefix
         //   Hash/DoubleHash Prefix
         //   Arrow (Right assoc)
@@ -640,11 +644,42 @@ where
             )
         }
 
+        fn tilde_equal<E>(toks: &mut Toks) -> TResult<E> {
+            left_bin_op(
+                toks,
+                |v| v.is_symbol(&SymbolicToken::TildeEqual),
+                colon,
+                |_, mut a, mut b| {
+                    let ac = a.pop_back().unwrap();
+                    let mut ret = a;
+                    let bc = b.pop_front().unwrap();
+                    let c = (ac, bc)
+                        .into_source()
+                        .map(|(a, b)| Tree::TildeEqual(a.into(), b.into()));
+                    ret.push_back(c);
+                    ret.extend(b);
+                    ret
+                },
+            )
+        }
+
+        fn tilde_prefixes<E>(toks: &mut Toks) -> TResult<E> {
+            prefix_op(
+                toks,
+                |t| t.is_symbol(&SymbolicToken::Tilde),
+                tilde_equal,
+                |s, t| match s {
+                    TreeOrSymbol::Symbol(SymbolicToken::Tilde) => Tree::Tilde(t.into()),
+                    _ => panic!("unexpected symbol"),
+                },
+            )
+        }
+
         fn caret_prefixes<E>(toks: &mut Toks) -> TResult<E> {
             prefix_op(
                 toks,
                 |t| t.is_symbol(&SymbolicToken::Caret),
-                colon,
+                tilde_prefixes,
                 |s, t| match s {
                     TreeOrSymbol::Symbol(SymbolicToken::Caret) => Tree::Caret(t.into()),
                     _ => panic!("unexpected symbol"),
@@ -936,6 +971,13 @@ mod test {
         assert_single("^a", Caret(s("a")));
         assert_single("^a b c", Caret(src(Parens(vec![s("a"), s("b"), s("c")]))));
         assert_single("a ^b c", Parens(vec![s("a"), src(Caret(s("b"))), s("c")]));
+    }
+
+    #[test]
+    fn tilde() {
+        assert_single("~a", Tilde(s("a")));
+        assert_single("~a=b", Tilde(src(TildeEqual(s("a"), s("b")))));
+        assert_single("~a = b", Equal(src(Tilde(s("a"))), s("b")));
     }
 
     #[test]

@@ -34,6 +34,8 @@ pub enum SymbolicToken {
     Colon,
     ColonPrefix,
     Dollar,
+    Tilde,
+    TildeEqual,
     Arrow,
     Pipe,
     PipeLeft,
@@ -107,6 +109,14 @@ impl<T> Token<T> {
 
     pub fn dollar() -> Self {
         Token::Symbol(SymbolicToken::Dollar)
+    }
+
+    pub fn tilde() -> Self {
+        Token::Symbol(SymbolicToken::Tilde)
+    }
+
+    pub fn tilde_equal() -> Self {
+        Token::Symbol(SymbolicToken::TildeEqual)
     }
 
     pub fn arrow() -> Self {
@@ -197,10 +207,11 @@ impl fmt::Display for SymbolicToken {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use SymbolicToken::*;
         match self {
-            Equal => write!(f, "="),
+            Equal | TildeEqual => write!(f, "="),
             Caret => write!(f, "^"),
             Colon | ColonPrefix => write!(f, ":"),
             Dollar => write!(f, "$"),
+            Tilde => write!(f, "~"),
             Arrow => write!(f, "->"),
             Pipe => write!(f, "|"),
             PipeLeft => write!(f, "<|"),
@@ -556,9 +567,15 @@ finish_at!(FinishAtGroup, true);
 /// Normal tokenization, with an optional (compile-time) behavior to finish after the first group
 /// completes. This is used for string expression parsing.
 struct Normal<T> {
-    nested: Vec<Source<PairedToken>>,
+    nested: Vec<NestedState>,
     previous_was_boundary: bool,
+    tilde_equal: bool,
     _finish_at: T,
+}
+
+struct NestedState {
+    open: Source<PairedToken>,
+    tilde_equal: bool,
 }
 
 impl<T> Normal<T> {
@@ -566,7 +583,25 @@ impl<T> Normal<T> {
         Normal {
             nested: Default::default(),
             previous_was_boundary: true,
+            tilde_equal: false,
             _finish_at: finish_at,
+        }
+    }
+
+    fn push_nested(&mut self, open: Source<PairedToken>) {
+        self.nested.push(NestedState {
+            open,
+            tilde_equal: std::mem::take(&mut self.tilde_equal),
+        });
+    }
+
+    fn pop_nested(&mut self) -> Option<Source<PairedToken>> {
+        match self.nested.pop() {
+            Some(state) => {
+                self.tilde_equal = state.tilde_equal;
+                Some(state.open)
+            }
+            None => None,
         }
     }
 }
@@ -580,13 +615,17 @@ impl<'tok, T: FinishAt + 'tok, S: StringSlice<'tok>> NextToken<'tok, S> for Norm
             .as_ref()
             .nested
             .last()
-            .map(|t| t == &PairedToken::Bracket || t == &PairedToken::Curly)
+            .map(|t| &t.open == &PairedToken::Bracket || &t.open == &PairedToken::Curly)
             .unwrap_or(!T::GROUP);
         token_else_string(this, position, |c, this, position| {
             let me = this.as_mut();
             let previous_was_boundary =
                 std::mem::replace(&mut me.previous_was_boundary, false) || position.line_start;
+            if previous_was_boundary {
+                me.tilde_equal = false;
+            }
             TokenElseString::Some(match c {
+                '=' if me.tilde_equal => Token::tilde_equal(),
                 '=' => Token::equal(),
                 '^' => Token::caret(),
                 ':' => {
@@ -608,6 +647,10 @@ impl<'tok, T: FinishAt + 'tok, S: StringSlice<'tok>> NextToken<'tok, S> for Norm
                     } else {
                         Token::dollar()
                     }
+                }
+                '~' => {
+                    me.tilde_equal = true;
+                    Token::tilde()
                 }
                 '-' if position.match_skip(">") => Token::arrow(),
                 '|' if position.match_skip(">") => Token::pipe_right(),
@@ -632,11 +675,11 @@ impl<'tok, T: FinishAt + 'tok, S: StringSlice<'tok>> NextToken<'tok, S> for Norm
                     }
                 }
                 '(' => {
-                    me.nested.push(position.source(PairedToken::Paren));
+                    me.push_nested(position.source(PairedToken::Paren));
                     Token::paren()
                 }
                 ')' => {
-                    let last = me.nested.pop();
+                    let last = me.pop_nested();
                     if let Some(&PairedToken::Paren) = last.as_ref().map(|t| &**t) {
                         if T::GROUP && me.nested.is_empty() {
                             this.finish();
@@ -650,11 +693,11 @@ impl<'tok, T: FinishAt + 'tok, S: StringSlice<'tok>> NextToken<'tok, S> for Norm
                     }
                 }
                 '{' => {
-                    me.nested.push(position.source(PairedToken::Curly));
+                    me.push_nested(position.source(PairedToken::Curly));
                     Token::curly()
                 }
                 '}' => {
-                    let last = me.nested.pop();
+                    let last = me.pop_nested();
                     if let Some(&PairedToken::Curly) = last.as_ref().map(|t| &**t) {
                         if T::GROUP && me.nested.is_empty() {
                             this.finish();
@@ -668,11 +711,11 @@ impl<'tok, T: FinishAt + 'tok, S: StringSlice<'tok>> NextToken<'tok, S> for Norm
                     }
                 }
                 '[' => {
-                    me.nested.push(position.source(PairedToken::Bracket));
+                    me.push_nested(position.source(PairedToken::Bracket));
                     Token::bracket()
                 }
                 ']' => {
-                    let last = me.nested.pop();
+                    let last = me.pop_nested();
                     if let Some(&PairedToken::Bracket) = last.as_ref().map(|t| &**t) {
                         if T::GROUP && me.nested.is_empty() {
                             this.finish();
@@ -721,7 +764,7 @@ impl<'tok, T: FinishAt + 'tok, S: StringSlice<'tok>> NextToken<'tok, S> for Norm
 
     fn close(mut self) -> Result<usize, Source<Error>> {
         if let Some(last) = self.nested.pop() {
-            Err(last.map(Error::UnmatchedOpeningToken))
+            Err(last.open.map(Error::UnmatchedOpeningToken))
         } else {
             Ok(0)
         }
@@ -1434,7 +1477,7 @@ mod test {
     #[test]
     fn string_ends() {
         assert_tokens(
-            "a[b]c{d}e(f)g:h,i;j^k=l\nm n|o<|p|>q->r\"s\"t$u",
+            "a[b]c{d}e(f)g:h,i;j^k=l\nm n|o<|p|>q->r\"s\"t$u~v=w",
             &[
                 Token::string("a"),
                 Token::bracket(),
@@ -1476,6 +1519,10 @@ mod test {
                 Token::string("t"),
                 Token::dollar(),
                 Token::string("u"),
+                Token::tilde(),
+                Token::string("v"),
+                Token::tilde_equal(),
+                Token::string("w"),
             ],
         );
     }
@@ -1884,6 +1931,87 @@ mod test {
             Error::UnmatchedClosingToken(PairedToken::Paren, None),
         );
         assert_err("## $(\na", Error::UnmatchedOpeningToken(PairedToken::Paren));
+    }
+
+    #[test]
+    fn tilde_equal() {
+        assert_tokens(
+            "a ~b = c",
+            &[
+                Token::string("a"),
+                Token::tilde(),
+                Token::string("b"),
+                Token::equal(),
+                Token::string("c"),
+            ],
+        );
+        assert_tokens(
+            "a ~b=c = d",
+            &[
+                Token::string("a"),
+                Token::tilde(),
+                Token::string("b"),
+                Token::tilde_equal(),
+                Token::string("c"),
+                Token::equal(),
+                Token::string("d"),
+            ],
+        );
+        assert_tokens(
+            "a = b ~c=d",
+            &[
+                Token::string("a"),
+                Token::equal(),
+                Token::string("b"),
+                Token::tilde(),
+                Token::string("c"),
+                Token::tilde_equal(),
+                Token::string("d"),
+            ],
+        );
+        assert_tokens(
+            "a = b ~c\nd=e",
+            &[
+                Token::string("a"),
+                Token::equal(),
+                Token::string("b"),
+                Token::tilde(),
+                Token::string("c"),
+                Token::next(),
+                Token::string("d"),
+                Token::equal(),
+                Token::string("e"),
+            ],
+        );
+    }
+
+    #[test]
+    fn nested_tilde_equal() {
+        assert_tokens(
+            "a = b ~(c ~d=e)=[f (g ~h)]",
+            &[
+                Token::string("a"),
+                Token::equal(),
+                Token::string("b"),
+                Token::tilde(),
+                Token::paren(),
+                Token::string("c"),
+                Token::tilde(),
+                Token::string("d"),
+                Token::tilde_equal(),
+                Token::string("e"),
+                Token::close(),
+                Token::tilde_equal(),
+                Token::bracket(),
+                Token::string("f"),
+                Token::paren(),
+                Token::string("g"),
+                Token::tilde(),
+                Token::string("h"),
+                Token::close(),
+                Token::close(),
+            ],
+        );
     }
 
     #[test]

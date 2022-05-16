@@ -16,11 +16,11 @@ mtype = ergo type
 
 ## Load a remote archive.
 ##
-## Fetches the archive with `net:unarchive ^enter`, and loads the archive from the root directory.
+## Fetches the archive with `net:unarchive ~enter`, and loads the archive from the root directory.
 ## Caches the returned value using `std:cache`.
 ##
 ## All arguments are forwarded to `std:net:http`.
-ergo-remote = fn ^:args -> ergo <| mcache:cache <| mnet:unarchive ^enter ^$args
+ergo-remote = fn ^:args -> ergo <| mcache:cache <| mnet:unarchive ~enter ^$args
 
 ## Return any bound value as-is.
 ##

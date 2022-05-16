@@ -55,7 +55,7 @@ array-of = fn (Function :T) -> fn :target -> Array :a -> {
 ## Match a value allowing `Unset` values.
 ##
 ## Arguments: `:target`
-optional = fn :target -> :v -> match (value:equal ^exact $v $unset) [
+optional = fn :target -> :v -> match (value:equal ~exact $v $unset) [
     Bool:true -> ()
     _ -> { $target = $v }
 ]
@@ -65,7 +65,7 @@ optional = fn :target -> :v -> match (value:equal ^exact $v $unset) [
 ## This is only useful if the binding argument would normally accept an `Unset` value.
 ##
 ## Arguments: `:target`
-required = fn :target -> :v -> match (value:equal ^exact $v $unset) [
+required = fn :target -> :v -> match (value:equal ~exact $v $unset) [
     Bool:true -> Error:new (source=$v) "required value missing"
     _ -> { $target = $v }
 ]

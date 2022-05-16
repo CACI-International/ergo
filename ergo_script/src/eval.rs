@@ -463,9 +463,6 @@ impl ExprEvaluator {
                     let val_source = Source::get(&val);
                     drop(Context::eval(&mut val).await);
                     match_value! { val.clone(),
-                        s@types::String(_) => {
-                            env.insert(Source::imbue(val_source.clone().with(s.into())).as_evaluated().await, Source::imbue(val_source.with(types::Unit.into())));
-                        }
                         types::Array(arr) => {
                             // TODO should this implicitly evaluate to a unit type when the array is
                             // empty?

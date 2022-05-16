@@ -62,6 +62,10 @@
   * This is convenient for optional args in functions, with the tradeoff that,
     to provide possibly-better error messages, users should mark required
     arguments with a type or other function to check that they are present.
+* Add a new syntax for setting keyed arguments (`~key`/`~key=value`) and
+  disallow merging strings.
+* Change the merge operator (`^`) to imply a get when followed by a string
+  literal. Thus, `^$something` can be simply `^something`.
 
 ### Breaking Changes
 * Any use of `!` should be replaced with equivalent code.
@@ -78,6 +82,8 @@
   latter: `a:b` is now lazily evaluated.
 * Any `{ a, b, c }` in what used to be a pattern context should be changed to
   `{ :a, :b, :c }`.
+* Change `^key` to `~key`, and optionally change `(key=value)` keyed args to
+  `~key=value`.
 
 ## 1.0.0-rc.3  -- 2021-12-14
 * Properly remove previously-set keys when a key is set to `unset`.

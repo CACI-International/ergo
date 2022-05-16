@@ -137,7 +137,7 @@ mod test {
         }
 
         fn stringify_pretty(t) {
-            t.assert_eq("self:json:parse <| self:json:stringify ^pretty {
+            t.assert_eq("self:json:parse <| self:json:stringify ~pretty {
                     a = (), b = self:Number:from 1, c = self:Bool:true, d = [str]
                 }",
                 "{ a = (), b = self:Number:from 1, c = self:Bool:true, d = [str] }"

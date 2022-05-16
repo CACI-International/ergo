@@ -282,7 +282,22 @@ fn to_basic_block_item<E>(
     match t {
         // string_implies should only affect direct descendants, set to None for caret and equal
         Tree::Caret(t) => {
-            to_expression(migrations, ctx.string_implies(StringImplies::None), *t)?;
+            let (t_source, t) = t.take();
+            match &t {
+                Tree::String(s) => {
+                    migrations.push(Migration::syntax(
+                        source,
+                        "you can no longer merge strings; use `~` to set keyed values",
+                        Some(format!("~{}", s)),
+                    ));
+                }
+                _ => (),
+            }
+            to_expression(
+                migrations,
+                ctx.string_implies(StringImplies::None),
+                t_source.with(t),
+            )?;
             Ok("merge")
         }
         Tree::Equal(a, b) => {

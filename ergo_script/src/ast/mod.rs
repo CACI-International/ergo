@@ -1457,7 +1457,7 @@ mod test {
             // maps should not issue unused binding lints
             assert_no_lint_message("a = 1; b = 2");
             // commands should not issue unused binding lints
-            assert_no_lint_message("a (b=1)");
+            assert_no_lint_message("a (b=1) ~c=2");
             // nested bindings should not issue unused binding lints
             assert_no_lint_message("{:a,:b} = $c");
         }

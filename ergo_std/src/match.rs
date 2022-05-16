@@ -112,7 +112,7 @@ mod test {
 
         fn match_error(t) {
             t.assert_fail("self:match (self:Error:new doh) [a -> a]");
-            t.assert_eq("self:match ^allow-error (self:Error:new doh) [self:Error _ -> error]", "error");
+            t.assert_eq("self:match ~allow-error (self:Error:new doh) [self:Error _ -> error]", "error");
         }
 
         fn match_failure(t) {
@@ -120,7 +120,7 @@ mod test {
         }
 
         fn match_case_body_error(t) {
-            t.assert_eq("self:Type:get ^allow-error <| self:match 1 [1 -> self:Error:new NO, 1 -> 2]", "self:Error");
+            t.assert_eq("self:Type:get ~allow-error <| self:match 1 [1 -> self:Error:new NO, 1 -> 2]", "self:Error");
         }
 
         fn match_case_body_bind_failure(t) {

@@ -463,7 +463,7 @@ impl LanguageServer for Service {
                         results.push(tok.location, TokenType::VARIABLE, Default::default());
                         last_dollar = true;
                     }
-                    Token::Symbol(Caret | Pipe | PipeLeft | PipeRight) => {
+                    Token::Symbol(Caret | Pipe | PipeLeft | PipeRight | Tilde | TildeEqual) => {
                         results.push(tok.location, TokenType::MACRO, Default::default())
                     }
                     Token::Symbol(Hash) => {

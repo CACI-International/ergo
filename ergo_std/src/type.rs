@@ -267,8 +267,8 @@ mod test {
             t.assert_eq("self:Type:get ()", "self:Unit");
             t.assert_eq("self:Type:get $unset", "self:Unset");
             t.assert_fail("self:Type:get <| self:Error:new err");
-            t.assert_eq("self:Type:get ^allow-error <| self:Error:new err", "self:Error");
-            t.assert_eq("self:Type:get ^no-eval {[a,b]}", "$unset");
+            t.assert_eq("self:Type:get ~allow-error <| self:Error:new err", "self:Error");
+            t.assert_eq("self:Type:get ~no-eval {[a,b]}", "$unset");
             t.assert_eq("self:Type :MyType = self:Type:new my_type
             i = MyType:new a b c
             self:match (self:Type:get $i) [$MyType -> ()]
@@ -282,7 +282,7 @@ mod test {
         fn any(t) {
             t.assert_success("self:Type:any _ = hello");
             t.assert_fail("self:Type:any _ = self:Error:new err");
-            t.assert_success("self:Type:any ^allow-error _ = self:Error:new err");
+            t.assert_success("self:Type:any ~allow-error _ = self:Error:new err");
         }
 
         fn name(t) {

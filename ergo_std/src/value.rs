@@ -341,7 +341,7 @@ mod test {
             t.assert_eq("self:value:merge hi ()", "()");
             t.assert_eq("self:value:merge {a = [1,2,3], b = { x = 1, y = 2 }, c = hi} {a = [4], b = { x = 42, z = 3 }}",
                 "{a = [1,2,3,4], b = { x = 42, y = 2, z = 3 }, c = hi}");
-            t.assert_eq("self:value:merge ^array-merge {a = [{z=1},2,3], b = [1]} {a = [{y=4}], b = [4,5,6]}",
+            t.assert_eq("self:value:merge ~array-merge {a = [{z=1},2,3], b = [1]} {a = [{y=4}], b = [4,5,6]}",
                 "{a = [{y=4,z=1},2,3], b = [4,5,6]}");
         }
 
@@ -350,8 +350,8 @@ mod test {
             t.assert_eq("self:value:equal \"$\"abc\"$\"def\"\" \"$\"a\"bcdef\"", "self:Bool:true");
             t.assert_eq("self:value:equal a b", "self:Bool:false");
             t.assert_eq("self:value:equal a {\"a\"}", "self:Bool:true");
-            t.assert_eq("self:value:equal ^exact a {\"a\"}", "self:Bool:false");
-            t.assert_eq("self:value:equal ^exact {\"a\"} {\"a\"}", "self:Bool:true");
+            t.assert_eq("self:value:equal ~exact a {\"a\"}", "self:Bool:false");
+            t.assert_eq("self:value:equal ~exact {\"a\"} {\"a\"}", "self:Bool:true");
         }
     }
 }

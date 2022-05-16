@@ -168,12 +168,17 @@ impl<'a, 's: 'a, S: Clone + Into<Cow<'s, str>>> FormatTree<S> {
         while let Some(tree) = trees.next() {
             let mut should_skip_sep = false;
             match tree {
-                FormatTree::Token(Token::Symbol(SymbolicToken::Colon)) => {
+                FormatTree::Token(Token::Symbol(
+                    SymbolicToken::Colon | SymbolicToken::TildeEqual,
+                )) => {
                     skip_sep = true;
                     should_skip_sep = true;
                 }
                 FormatTree::Token(Token::Symbol(
-                    SymbolicToken::ColonPrefix | SymbolicToken::Hash | SymbolicToken::DoubleHash,
+                    SymbolicToken::ColonPrefix
+                    | SymbolicToken::Hash
+                    | SymbolicToken::DoubleHash
+                    | SymbolicToken::Tilde,
                 )) => {
                     should_skip_sep = true;
                 }

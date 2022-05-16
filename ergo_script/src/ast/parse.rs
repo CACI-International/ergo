@@ -91,6 +91,8 @@ pub enum Error<TreeError> {
     BadDollar,
     /// A caret operator was in an invalid position.
     BadCaret,
+    /// A tilde operator was in an invalid position.
+    BadTilde,
     /// An equal operator was in an invalid position.
     BadEqual,
     /// An attribute was in an invalid position.
@@ -105,6 +107,7 @@ impl<E: fmt::Display> fmt::Display for Error<E> {
             Error::TreeParse(t) => t.fmt(f),
             Error::BadDollar => write!(f, "a dollar must be followed by a string"),
             Error::BadCaret => write!(f, "cannot merge values here"),
+            Error::BadTilde => write!(f, "keyed arguments cannot be set here"),
             Error::BadEqual => write!(f, "cannot bind values here"),
             Error::BadAttribute => write!(
                 f,
@@ -273,11 +276,37 @@ fn to_basic_block_item<E>(
     let (source, t) = t.take();
 
     match t {
-        // string_implies should only affect direct descendants, set to None for caret and equal
+        // string_implies should only affect direct descendants, set to None when not Get/Set in
+        // the following cases
         Tree::Caret(t) => Ok(BlockItem::Merge(to_expression(
-            ctx.string_implies(StringImplies::None),
+            ctx.string_implies(StringImplies::Get),
             *t,
         )?)),
+        Tree::Tilde(t) => {
+            let (t_source, t) = (*t).take();
+            match t {
+                Tree::TildeEqual(a, b) => Ok(BlockItem::Bind(
+                    to_expression(ctx.string_implies(StringImplies::Set), *a)?,
+                    to_expression(ctx.string_implies(StringImplies::None), *b)?,
+                )),
+                // elaborate a set of an unquoted string literal `~:a` to `~:a=:a`
+                Tree::ColonPrefix(t) if t.is_string() => {
+                    let s = (*t).map(|t| match t {
+                        Tree::String(s) => Expression::string(s),
+                        _ => panic!("unexpected tree type"),
+                    });
+                    Ok(BlockItem::Bind(
+                        source.clone().with(Expression::set(s.clone())),
+                        source.with(Expression::set(s)),
+                    ))
+                }
+                // elaborate a tilde without a TildeEqual `~a` to `~a=()`
+                other => Ok(BlockItem::Bind(
+                    to_expression(ctx.string_implies(StringImplies::Set), t_source.with(other))?,
+                    t_source.with(Expression::unit()),
+                )),
+            }
+        }
         Tree::Equal(a, b) => Ok(BlockItem::Bind(
             to_expression(ctx.string_implies(StringImplies::Set), *a)?,
             to_expression(ctx.string_implies(StringImplies::None), *b)?,
@@ -328,9 +357,8 @@ fn to_basic_array_item<E>(
     let (source, t) = t.take();
 
     match t {
-        // string_implies should only affect direct descendants, set to None for caret
         Tree::Caret(t) => Ok(ArrayItem::Merge(to_expression(
-            ctx.string_implies(StringImplies::None),
+            ctx.string_implies(StringImplies::Get),
             *t,
         )?)),
         t => to_expression(ctx, source.with(t)).map(ArrayItem::Expr),
@@ -376,6 +404,10 @@ fn to_expression<E>(
         Tree::Caret(_) => {
             // Caret not allowed in expressions
             Err(vec![source.with(Error::BadCaret)])
+        }
+        Tree::Tilde(_) | Tree::TildeEqual(..) => {
+            // Tilde not allowed in expressions
+            Err(vec![source.with(Error::BadTilde)])
         }
         Tree::Dollar(t) => {
             // Dollar may only be followed by a string.
@@ -736,6 +768,28 @@ mod test {
     }
 
     #[test]
+    fn command_tilde() {
+        assert_single(
+            "hello ~name=world",
+            E::command(
+                src(E::get(s("hello"))),
+                command_items![bind(src(E::set(s("name"))), s("world"))],
+            ),
+        );
+    }
+
+    #[test]
+    fn command_tilde_implied() {
+        assert_single(
+            "hello ~name",
+            E::command(
+                src(E::get(s("hello"))),
+                command_items![bind(src(E::set(s("name"))), src(E::unit()))],
+            ),
+        );
+    }
+
+    #[test]
     fn bind() {
         assert_block_item(
             ":a= echo()",
@@ -910,6 +964,20 @@ mod test {
                         src(E::get(s("b")))
                     )])),
                 )),
+            ),
+        );
+    }
+
+    #[test]
+    fn function_tilde() {
+        assert_single(
+            "fn ~:name -> s",
+            E::function(
+                src(E::command(
+                    src(E::get(s("fn"))),
+                    command_items![bind(src(E::set(s("name"))), src(E::set(s("name"))))],
+                )),
+                s("s"),
             ),
         );
     }
