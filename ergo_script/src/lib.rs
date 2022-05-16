@@ -611,6 +611,14 @@ mod test {
                 SRArray(&[SRString("2"), SRString("3")])
             )
         }
+
+        #[test]
+        fn command_missing_args() -> Result<(), String> {
+            script_eval_to(
+                "f = fn :a :b :c -> [$a,$b,$c]; f 1",
+                SRArray(&[SRString("1"), SRUnset, SRUnset]),
+            )
+        }
     }
 
     mod binding {
@@ -656,9 +664,19 @@ mod test {
         }
 
         #[test]
-        fn array_mismatch() -> Result<(), String> {
+        fn array_extra_values() -> Result<(), String> {
             script_fail("fn [:a,:b] -> () |> [1,2,3]")?;
-            script_fail("[:a,:b,:c] = [1,2]; $a")?;
+            Ok(())
+        }
+
+        #[test]
+        fn array_missing_values() -> Result<(), String> {
+            script_eval_to("[:a,:b,:c] = [1,2]; $c", SRUnset)?;
+            script_eval_to("[:a,:b,^:rest,:c] = [1,2,3]; $rest", SRArray(&[]))?;
+            script_eval_to(
+                "[:a,:b,^:rest,:c,:d] = [1,2,3]; [$c,$d]",
+                SRArray(&[SRUnset, SRString("3")]),
+            )?;
             Ok(())
         }
 

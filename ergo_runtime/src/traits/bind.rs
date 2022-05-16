@@ -101,10 +101,11 @@ where
                         }
                     }
                     to_v => {
-                        match from.next_back() {
-                            None => Err(t_source.with("no value matches this binding").into_error())?,
-                            Some(from_v) => bind_no_error(to_v, from_v).await?,
-                        }
+                        // If `from` is missing a `to` element, use `Unset`.
+                        let to_bind = from.next_back().unwrap_or_else(|| {
+                            Source::imbue(t_source.with(types::Unset.into()))
+                        });
+                        bind_no_error(to_v, to_bind).await?;
                     }
                 }
             }
@@ -136,12 +137,11 @@ where
                         first_rest = false;
                     }
                     to_v => {
-                        match from.next() {
-                            None => Err(t_source.with("no value matches this binding").into_error())?,
-                            Some(from_v) => {
-                                bind_no_error(to_v, from_v).await?;
-                            }
-                        }
+                        // If `from` is missing a `to` element, use `Unset`.
+                        let to_bind = from.next().unwrap_or_else(|| {
+                            Source::imbue(t_source.with(types::Unset.into()))
+                        });
+                        bind_no_error(to_v, to_bind).await?;
                     }
                 }
             }
