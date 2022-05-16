@@ -5,7 +5,7 @@ if exists("b:current_syntax")
 	finish
 endif
 
-set iskeyword=%,&,',*,+,45-57,63-90,95-122,~
+set iskeyword=!,%,&,',*,+,45-57,63-90,95-122,~
 
 let b:current_syntax = "ergo"
 

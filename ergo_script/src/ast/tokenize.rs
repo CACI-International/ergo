@@ -3,7 +3,7 @@
 //! This does more than "traditional" tokenization, incorporating some parts of what might be
 //! considered parsing to have context-aware tokenization.
 //!
-//! The output stream of tokens is whitespace-agnostic. Commas and semicolons interpreted as
+//! The output stream of tokens is whitespace-agnostic. Commas and semicolons are interpreted as
 //! expression separators where relevant (within curly and bracket tokens). Specifically,
 //! whitespace and commas/semicolons are interpreted as follows:
 //!
