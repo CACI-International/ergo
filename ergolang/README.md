@@ -83,5 +83,4 @@ not work correctly with this flag, so the default is `less`. You can:
 * Debugger and profiler.
 * Maybe don't have a fallback doc string if there is no documentation set.
 * Dropping thread for Values (to avoid possibly large stacks).
-* Improve sources of capture bindings.
 * File locking.

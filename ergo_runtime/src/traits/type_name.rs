@@ -3,7 +3,6 @@
 use crate as ergo_runtime;
 use crate::abi_stable::std_types::RString;
 use crate::error::{Diagnostic, DiagnosticInfo, ErrorOrDiagnostic};
-use crate::metadata::Source;
 use crate::type_system::{ergo_trait, ErgoType, Type};
 use crate::Value;
 
@@ -39,7 +38,7 @@ pub fn type_error(v: Value, expected: &str) -> ErrorOrDiagnostic {
     let name = type_name(&v);
     ErrorOrDiagnostic::Diagnostic(
         Diagnostic::from(format!("type error: expected {}, got {}", expected, name))
-            .add_primary_label(Source::get(&v).with("")),
+            .add_value_sources("value", &v),
     )
 }
 

@@ -168,6 +168,82 @@ pub trait DiagnosticInfo {
     {
         self.add_label(Label::secondary(label))
     }
+
+    fn add_value_sources<R>(self, name: &str, v: &crate::Value) -> R
+    where
+        Self: Sized + DiagnosticInfo<Output = R>,
+        R: DiagnosticInfo<Output = R>,
+    {
+        use crate::metadata::Source;
+        let sources = match v.get_metadata(&Source) {
+            None => return self.into_diagnostic(),
+            Some(sources) => sources,
+        };
+        let mut sources = sources.iter().rev().enumerate().peekable();
+        let mut me = self.into_diagnostic();
+        if let Some((_, source)) = sources.next() {
+            me = me.add_primary_label(source.clone().with(format_args!("'{}'", name)));
+        }
+        while let Some((i, source)) = sources.next() {
+            if sources.peek().is_some() {
+                me = me.add_secondary_label(
+                    source
+                        .clone()
+                        .with(format_args!("'{}' passed here ({})", name, i)),
+                );
+            } else {
+                me = me.add_secondary_label(
+                    source.clone().with(format_args!("'{}' created here", name)),
+                );
+            }
+        }
+        me
+    }
+
+    fn add_value_content<'a>(
+        self,
+        name: &'a str,
+        v: crate::Value,
+    ) -> futures::future::BoxFuture<'a, Self::Output>
+    where
+        Self: Sized + Send + 'a,
+        Self::Output: Send + 'a,
+    {
+        use futures::future::FutureExt;
+        const TO_STRING_LENGTH_LIMIT: usize = 80;
+        let tp = crate::traits::type_name(&v);
+        async move {
+            self.add_note(match crate::traits::to_string(v).await {
+                Ok(s) => {
+                    if s.len() > TO_STRING_LENGTH_LIMIT {
+                        format!(
+                            "'{}' was {}: `{}...`",
+                            name,
+                            tp,
+                            &s[..TO_STRING_LENGTH_LIMIT]
+                        )
+                    } else {
+                        format!("'{}' was {}: `{}`", name, tp, s)
+                    }
+                }
+                Err(_) => format!("'{}' was {}", name, tp),
+            })
+        }
+        .boxed()
+    }
+
+    fn add_value_info<'a, R>(
+        self,
+        name: &'a str,
+        v: &crate::Value,
+    ) -> futures::future::BoxFuture<'a, R>
+    where
+        Self: Sized + DiagnosticInfo<Output = R>,
+        R: DiagnosticInfo<Output = R> + Send + 'a,
+    {
+        self.add_value_sources(name, v)
+            .add_value_content(name, v.clone())
+    }
 }
 
 impl DiagnosticInfo for Diagnostic {
