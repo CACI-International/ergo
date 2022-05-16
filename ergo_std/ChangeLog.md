@@ -24,6 +24,7 @@
 * Add `std:Type:name` to get the name of a type.
 * Add `std:fs:file-size` to get the size of a file in bytes.
 * Add `std:fs:rename` to rename files and directories.
+* Add `std:fs:lock` to get advisory locks on files.
 * Add `std:env:concurrent-tasks` to provide the runtime task concurrency.
 * Add `std:env:project-dir` to get the project working directory.
 * Add `std:Cache` to create caches (both in-memory and persisted to disk).

@@ -24,6 +24,7 @@ pub fn module() -> Value {
         "file-size" = file_size(),
         "file-type" = file_type(),
         "glob" = glob_(),
+        "lock" = lock(),
         "read" = read(),
         "remove" = remove(),
         "rename" = rename(),
@@ -981,4 +982,65 @@ async fn append(file: types::Path, bytes: _) -> Value {
         }
     )?;
     types::Unit.into()
+}
+
+#[types::ergo_fn]
+/// Acquire a lock on a file while evaluating a value.
+///
+/// Arguments: `(Path :file) :value`
+///
+/// Keyed Arguments:
+/// * `shared` - if present, a shared lock (rather than an exclusive lock) will be acquired.
+///
+/// `file` will be created if it does not exist, otherwise it must be readable and writable by the
+/// user.
+///
+/// **Note**: this only acquires advisory locks, so a process _not_ acquiring a lock before
+/// accessing a file will still be able to do so. This acquires per-process locks, so acts more
+/// like a recursive lock wrt each process: if you call `std:fs:lock` on the same file in the same
+/// ergo evaluation process, it will succeed. It is primarily for deconflicting access among
+/// separate processes. Also, on unix systems it acquires a POSIX lock, which may not interact with
+/// old-style FLOCK locks at all.
+///
+/// Returns the result of evaluating `value`.
+async fn lock(file: types::Path, mut value: _, (shared): [_]) -> Value {
+    use std::fs::{File, OpenOptions};
+
+    let shared = shared.is_some();
+    let f = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(file.as_ref().as_ref())
+        .add_note(format_args!("file was {}", file.as_ref().display()))?;
+
+    /// Simple wrapper to allow `file_guard::lock` to use `std::ops::Deref` while still passing
+    /// ownership to the closure and back.
+    struct OwnedFile(File);
+    impl std::ops::Deref for OwnedFile {
+        type Target = File;
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+
+    let guard = Context::global()
+        .task
+        .spawn_blocking(move || {
+            file_guard::lock(
+                OwnedFile(f),
+                if shared {
+                    file_guard::Lock::Shared
+                } else {
+                    file_guard::Lock::Exclusive
+                },
+                0,
+                1,
+            )
+            .add_note(format_args!("file was {}", file.as_ref().display()))
+        })
+        .await??;
+    Context::eval(&mut value).await?;
+    drop(guard);
+    value
 }
