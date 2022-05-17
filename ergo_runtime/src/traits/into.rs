@@ -12,6 +12,7 @@ use crate::abi_stable::{
 use crate::context::{Context, Traits};
 use crate::dependency::GetDependencies;
 use crate::depends;
+use crate::error::DiagnosticInfo;
 use crate::metadata::Source;
 use crate::type_system::{
     ergo_trait, ergo_trait_impl, ergo_traits_fn, ErgoTrait, ErgoType, Ref, Trait, Type,
@@ -85,18 +86,21 @@ pub async fn into_for(tp: &Type, mut v: Value) -> crate::Result<Value> {
     let src = Source::get(&v); // Update source in case it changed
     let from_t = type_name(&v);
     let trt = into_trait(tp.clone());
-    let t = Context::global()
+    let t = match Context::global()
         .traits
         .get_impl(v.ergo_type().unwrap(), &trt)
-        .ok_or_else(|| {
+    {
+        Some(t) => t,
+        None => {
             let to_t = type_name_for(tp);
-            crate::error! {
-                labels: [
-                    primary(src.with(format!("value has type {}", from_t)))
-                ],
-                error: format!("cannot convert value into {}", to_t)
+            return Err(crate::diagnostic! {
+                message: format!("cannot convert value into {}", to_t)
             }
-        })?;
+            .add_value_info("value", &v)
+            .await
+            .into());
+        }
+    };
     let t = IntoTyped::<crate::types::Unit>::create(unsafe { Ref::new(t) });
     let mut v = t.into_typed(v).await;
     Context::eval(&mut v).await?;

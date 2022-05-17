@@ -183,21 +183,20 @@ pub trait DiagnosticInfo {
             None => return self.into_diagnostic(),
             Some(sources) => sources,
         };
-        let mut sources = sources.iter().rev().enumerate().peekable();
+        let mut sources = sources.iter().enumerate().peekable();
         let mut me = self.into_diagnostic();
-        if let Some((_, source)) = sources.next() {
-            me = me.add_primary_label(source.clone().with(format_args!("'{}'", name)));
-        }
         while let Some((i, source)) = sources.next() {
-            if sources.peek().is_some() {
+            if sources.peek().is_none() {
+                me = me.add_primary_label(source.clone().with(format_args!("'{}'", name)));
+            } else if i == 0 {
+                me = me.add_primary_label(
+                    source.clone().with(format_args!("'{}' created here", name)),
+                );
+            } else {
                 me = me.add_secondary_label(
                     source
                         .clone()
                         .with(format_args!("'{}' passed here ({})", name, i)),
-                );
-            } else {
-                me = me.add_secondary_label(
-                    source.clone().with(format_args!("'{}' created here", name)),
                 );
             }
         }
