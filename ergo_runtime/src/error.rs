@@ -807,6 +807,21 @@ impl Error {
             _ => (),
         }
     }
+
+    /// Call a function on all diagnostics in this Error.
+    pub fn visit_diagnostics<F>(&self, mut f: F)
+    where
+        F: FnMut(&Diagnostic),
+    {
+        match &self.inner {
+            InnerError::Errors(errs) => {
+                for e in errs {
+                    f(e);
+                }
+            }
+            _ => (),
+        }
+    }
 }
 
 impl AsRef<ExternalError> for Error {

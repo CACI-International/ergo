@@ -11,7 +11,7 @@ use ergo_runtime::{
         u128::U128,
     },
     error::DiagnosticInfo,
-    traits, Context, Result, Value,
+    traits, types, Context, Result, Value,
 };
 use futures::{future::FutureExt, lock::Mutex};
 use std::mem::ManuallyDrop;
@@ -106,11 +106,15 @@ mod schema {
     load!(init);
     load!(read_entry);
     load!(read_value);
+    load!(read_diagnostic_sources);
     load!(write_entry);
     load!(write_reference);
     load!(write_value);
+    load!(write_path);
+    load!(write_diagnostic_source);
     load!(delete_unused_values);
     load!(delete_unused_paths);
+    load!(delete_unused_diagnostic_sources);
 }
 
 struct List<T> {
@@ -176,11 +180,24 @@ mod pending {
         pub expiration_time: Option<i64>,
     }
 
+    pub struct DiagnosticSource {
+        pub value: u128,
+        pub path: std::path::PathBuf,
+        pub binary_source: bool,
+    }
+
+    pub struct Path {
+        pub value: u128,
+        pub path: std::path::PathBuf,
+    }
+
     #[derive(Default)]
     pub struct Writes {
         pub(super) values: List<Value>,
         pub(super) references: List<ValueReference>,
         pub(super) entries: List<CacheEntry>,
+        pub(super) diagnostic_sources: List<DiagnosticSource>,
+        pub(super) paths: List<Path>,
     }
 
     impl Writes {
@@ -190,15 +207,23 @@ mod pending {
                 values,
                 references,
                 entries,
+                diagnostic_sources,
+                paths,
             }: Self,
         ) {
             self.values.append(values);
             self.references.append(references);
             self.entries.append(entries);
+            self.diagnostic_sources.append(diagnostic_sources);
+            self.paths.append(paths);
         }
 
         pub fn is_empty(&self) -> bool {
-            self.values.is_empty() && self.references.is_empty() && self.entries.is_empty()
+            self.values.is_empty()
+                && self.references.is_empty()
+                && self.entries.is_empty()
+                && self.diagnostic_sources.is_empty()
+                && self.paths.is_empty()
         }
     }
 }
@@ -319,6 +344,37 @@ impl<'a, W> SqliteCacheWriter<'a, W> {
                                 to: id
                             });
                         }
+
+                        // Special handling of Error and Path:
+                        // * Error handling is so that we can attempt to restore the diagnostic
+                        // source upon load.
+                        // * Path handling is to transfer path ownership and tie the lifetime of
+                        // the file to the cache.
+                        ergo_runtime::value::match_value!{&v.clone(),
+                            e@types::Error{..} => {
+                                let mut source_ids = std::collections::HashSet::new();
+                                e.visit_diagnostics(|d| source_ids.extend(d.labels.iter().map(|l| l.label.source_id)));
+                                let sources = Context::global().diagnostic_sources();
+                                for source_id in source_ids {
+                                    if let Some(path) = sources.path(source_id) {
+                                        pending_writes.diagnostic_sources.push(pending::DiagnosticSource {
+                                            value: id,
+                                            path,
+                                            binary_source: sources.content(source_id).is_none()
+                                        });
+                                    }
+                                }
+                            },
+                            p@types::Path{..} => {
+                                if p.take_ownership() {
+                                    pending_writes.paths.push(pending::Path {
+                                        value: id,
+                                        path: p.path().into()
+                                    });
+                                }
+                            },
+                            _ => ()
+                        };
                     }
 
                     Result::Ok(v)
@@ -380,6 +436,19 @@ impl Db {
                 stmt.bind(5, expiration_time)?;
                 while stmt.next()? != sqlite::State::Done {}
             }
+            for pending::DiagnosticSource { value, path, binary_source } in writes.diagnostic_sources.into_iter() {
+                let mut stmt = conn.prepare(schema::write_diagnostic_source)?;
+                stmt.bind(1, sqlite::U128(value))?;
+                stmt.bind(3, sqlite::Path(path))?;
+                stmt.bind(4, sqlite::Bool(binary_source))?;
+                while stmt.next()? != sqlite::State::Done {}
+            }
+            for pending::Path { value, path } in writes.paths.into_iter() {
+                let mut stmt = conn.prepare(schema::write_path)?;
+                stmt.bind(1, sqlite::U128(value))?;
+                stmt.bind(3, sqlite::Path(path))?;
+                while stmt.next()? != sqlite::State::Done {}
+            }
             transaction.commit()
         }}
     }
@@ -401,6 +470,7 @@ impl Db {
                 let path: String = stmt.read(0)?;
                 paths.push(std::path::PathBuf::from(path));
             }
+            conn.execute(schema::delete_unused_diagnostic_sources)?;
             transaction.commit()
         }}?;
 
@@ -474,7 +544,27 @@ impl SqliteCache {
                             };
                             let mut get_data = traits::GetData::new(&mut reader);
                             let data = s.get(&mut get_data).await.into_result()?;
-                            Result::Ok(unsafe { Value::new(RArc::new(tp), RArc::new(data), id) })
+
+                            let val = unsafe { Value::new(RArc::new(tp), RArc::new(data), id) };
+
+                            // Load Error diagnostic sources.
+                            if val.is_type::<types::Error>() {
+                                let sources = Context::global().diagnostic_sources();
+                                let conn = self.db.connection.lock().await;
+                                let mut stmt = conn.prepare(schema::read_diagnostic_sources)?;
+                                stmt.bind(1, sqlite::U128(id))?;
+                                while let sqlite::State::Row = stmt.next()? {
+                                    let sqlite::Path(source_path) = stmt.read(0)?;
+                                    let sqlite::Bool(binary_source) = stmt.read(1)?;
+                                    if binary_source {
+                                        sources.add_binary_file(source_path);
+                                    } else {
+                                        drop(sources.add_file(source_path));
+                                    }
+                                }
+                            }
+
+                            Result::Ok(val)
                         } else {
                             Err(format!(
                                 "no stored trait for {}",

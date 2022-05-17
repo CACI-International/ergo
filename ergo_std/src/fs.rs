@@ -253,8 +253,8 @@ async fn copy(from: types::Path, to: types::Path, (shallow): [_], (follow_symlin
 
     log.debug(format!(
         "copying {} to {}",
-        from.as_ref().0.as_ref().display(),
-        to.as_ref().0.as_ref().display()
+        from.as_ref().display(),
+        to.as_ref().display()
     ));
 
     let follow_symlinks = follow_symlinks.is_some();
@@ -286,8 +286,8 @@ async fn copy(from: types::Path, to: types::Path, (shallow): [_], (follow_symlin
     };
 
     recursive_link(
-        from.as_ref().0.as_ref(),
-        to.as_ref().0.as_ref(),
+        from.as_ref().as_ref(),
+        to.as_ref().as_ref(),
         &link_mode,
         follow_symlinks,
     )
@@ -305,7 +305,7 @@ async fn copy(from: types::Path, to: types::Path, (shallow): [_], (follow_symlin
 ///
 /// If the path does not exist or the user does not have permission to the path, returns `Unset`.
 async fn file_size(path: types::Path) -> Value {
-    std::fs::symlink_metadata(path.as_ref().0.as_ref())
+    std::fs::symlink_metadata(path.as_ref().as_ref())
         .map(|m| types::Number::from(m.len()).into())
         .unwrap_or(types::Unset.into())
 }
@@ -323,7 +323,7 @@ async fn file_size(path: types::Path) -> Value {
 ///
 /// If the path does not exist or the user does not have permission to the path, returns `Unset`.
 async fn file_type(path: types::Path) -> Value {
-    std::fs::symlink_metadata(path.as_ref().0.as_ref())
+    std::fs::symlink_metadata(path.as_ref().as_ref())
         .map(|m| {
             types::String::from(if m.file_type().is_dir() {
                 "directory"
@@ -346,8 +346,8 @@ async fn file_type(path: types::Path) -> Value {
 ///
 /// Returns a `Unit` value that creates the directory and ancestors if they do not exist.
 async fn create_dir(path: types::Path) -> Value {
-    std::fs::create_dir_all(path.as_ref().0.as_ref())
-        .add_note(format_args!("directory was {}", path.as_ref().0.display()))?;
+    std::fs::create_dir_all(path.as_ref().as_ref())
+        .add_note(format_args!("directory was {}", path.as_ref().display()))?;
     types::Unit.into()
 }
 
@@ -609,7 +609,7 @@ async fn unarchive(destination: types::Path, mut archive: _) -> Value {
     }
 
     match_value! { archive,
-        types::Path(p) => {
+        p@types::Path { .. } => {
             let path = p.as_ref();
             if path.is_dir() {
                 recursive_link(&path, &to_path, &LinkMode::Copy, false)

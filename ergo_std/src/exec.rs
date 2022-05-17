@@ -34,7 +34,7 @@ impl From<types::String> for CommandString {
 
 impl From<types::Path> for CommandString {
     fn from(p: types::Path) -> Self {
-        CommandString(p.0.into())
+        CommandString(p.path().into())
     }
 }
 

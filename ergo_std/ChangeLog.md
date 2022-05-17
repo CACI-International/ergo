@@ -69,6 +69,8 @@
 * Remove `std:Path:new` and `std:Path:with-output`.
 * Add `std:Path:for`, which is very similar to `std:Path:with-output` but is
   doing something slightly different, so it's worthwhile to have a new name.
+* Add `std:Path:owned` to mark a path as owned, which will delete the path when
+  the value is no longer used. The cache takes ownership of these paths.
 
 ### Migration
 * Remove the use of `std:by-content`. If it was being used to compare nested

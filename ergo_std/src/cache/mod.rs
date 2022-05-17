@@ -95,12 +95,12 @@ async fn open(path: _) -> Value {
 ///     * `Bool:true`, `()` - allow errors to be cached
 ///     * `top` - allow only the immediate value passed to the function to be cached if it is an
 ///       error
-async fn entry(cache: Cache, value: _, (key): [_], (error_handling): [_]) -> Value {
+async fn entry(cache: Cache, value: _, (key): [_], (allow_error): [_]) -> Value {
     let key = match key {
         Some(v) => v.id().await,
         None => value.id().await,
     };
-    let error_handling = match error_handling {
+    let error_handling = match allow_error {
         None => ErrorHandling::Error,
         Some(mut v) => {
             let src = ergo_runtime::metadata::Source::get(&v);

@@ -13,6 +13,7 @@ pub fn r#type() -> Value {
         tp: types::Path::ergo_type(),
         index: crate::make_string_map! {
             "from" = from(),
+            "owned" = owned(),
             "join" = join(),
             "name" = name(),
             "parent" = parent(),
@@ -29,6 +30,18 @@ pub fn r#type() -> Value {
 /// Arguments: `:value`
 async fn from(value: _) -> Value {
     traits::into::<types::Path>(value).await?.into()
+}
+
+#[types::ergo_fn]
+/// Create an owned Path.
+///
+/// Arguments: `Into:into $Path |> :path`
+///
+/// An owned Path is identical to a normal Path, however it has a side effect of deleting the Path
+/// (whether a file or directory, if existing at all) when the value is no longer used.
+async fn owned(path: _) -> Value {
+    let path = traits::into::<types::Path>(path).await?.to_owned();
+    path.into_owned().into()
 }
 
 #[types::ergo_fn]

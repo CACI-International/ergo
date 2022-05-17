@@ -145,7 +145,7 @@ fn home() -> Value {
 async fn path_search(mut string_or_path: _) -> Value {
     Context::eval(&mut string_or_path).await?;
     match_value! { string_or_path,
-        p@types::Path(_) => p.into(),
+        p@types::Path{..} => p.into(),
         types::String(name) => {
             let paths = std::env::var_os("PATH")
                 .map(|path| std::env::split_paths(&path).collect())

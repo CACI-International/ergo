@@ -94,7 +94,8 @@ pub fn match_value(ts: TokenStream) -> TokenStream {
     let type_cases = type_cases.into_iter().map(|(tp, bind, body)| {
         quote! {
             #tp => {
-                let #bind = ergo_match_value_e.as_type::<#tp>().unwrap().#get_bind_val();
+                let ergo_match_value_typed = ergo_match_value_e.as_type::<#tp>().unwrap();
+                let #bind = ergo_match_value_typed.#get_bind_val();
                 #body
             }
         }

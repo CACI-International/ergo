@@ -72,6 +72,41 @@ impl Readable for Duration {
     }
 }
 
+/// A Bindable/Readable std::path::PathBuf.
+pub struct Path(pub std::path::PathBuf);
+
+impl Bindable for Path {
+    fn bind(self, stmt: &mut Statement<'_>, index: usize) -> Result<()> {
+        stmt.bind(
+            index,
+            promote_result(self.0.to_str().ok_or("cannot convert path to string"))?,
+        )
+    }
+}
+
+impl Readable for Path {
+    fn read(stmt: &Statement<'_>, index: usize) -> Result<Self> {
+        let path: String = stmt.read(index)?;
+        Ok(Path(path.into()))
+    }
+}
+
+/// A Bindable/Readable bool.
+pub struct Bool(pub bool);
+
+impl Bindable for Bool {
+    fn bind(self, stmt: &mut Statement<'_>, index: usize) -> Result<()> {
+        stmt.bind(index, &Value::Integer(self.0 as _))
+    }
+}
+
+impl Readable for Bool {
+    fn read(stmt: &Statement<'_>, index: usize) -> Result<Self> {
+        let val: i64 = stmt.read(index)?;
+        Ok(Bool(val != 0))
+    }
+}
+
 /// Encapsulate a transaction.
 ///
 /// When the type is dropped, if `commit()` hasn't been called, a rollback is performed.

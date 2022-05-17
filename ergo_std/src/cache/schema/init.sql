@@ -20,13 +20,25 @@ CREATE TABLE IF NOT EXISTS stored (
 	PRIMARY KEY (id_u8, id_l8)
 );
 
--- A table of (optional) paths associated with stored values.
+-- A table of (optional) paths associated with stored values (typically used for stored owned Paths).
 CREATE TABLE IF NOT EXISTS associated_paths (
 	-- Value identity
 	value_u8 INTEGER,
 	value_l8 INTEGER,
 	-- A path (can be a file or directory) to associate with the value.
 	path TEXT NOT NULL,
+	FOREIGN KEY (value_u8, value_l8) REFERENCES stored (id_u8, id_l8) ON DELETE SET NULL
+);
+
+-- A table of (optional) diagnostic sources associated with stored values (typically used for stored Errors).
+CREATE TABLE IF NOT EXISTS associated_diagnostic_sources (
+	-- Value identity
+	value_u8 INTEGER,
+	value_l8 INTEGER,
+	-- The path to the source.
+	path TEXT NOT NULL,
+	-- Whether the source is a binary or file source.
+	binary INTEGER NOT NULL,
 	FOREIGN KEY (value_u8, value_l8) REFERENCES stored (id_u8, id_l8) ON DELETE SET NULL
 );
 
