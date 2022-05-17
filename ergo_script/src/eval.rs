@@ -135,7 +135,7 @@ impl std::hash::Hash for ScopeEntryKey {
 
 #[derive(Clone)]
 struct Scope {
-    inner: std::sync::Arc<RMutex<HashMap<ScopeEntryKey, Value>>>,
+    inner: std::sync::Arc<RMutex<HashMap<ScopeEntryKey, Option<Value>>>>,
 }
 
 impl std::fmt::Debug for Scope {
@@ -154,8 +154,13 @@ impl Scope {
     pub fn add(&self, cap: Option<CaptureKey>, key: EvaluatedValue, value: Value) -> bool {
         self.inner
             .lock()
-            .insert(ScopeEntryKey { cap, key }, value)
-            .is_some()
+            .insert(ScopeEntryKey { cap, key }, Some(value))
+            .map(|v| v.is_some())
+            .unwrap_or(false)
+    }
+
+    pub fn init(&self, cap: Option<CaptureKey>, key: EvaluatedValue) {
+        self.inner.lock().insert(ScopeEntryKey { cap, key }, None);
     }
 
     pub fn into_inner(self) -> Vec<(Option<CaptureKey>, EvaluatedValue, Value)> {
@@ -164,7 +169,7 @@ impl Scope {
             Ok(v) => v.into_inner(),
         }
         .into_iter()
-        .map(|(k, v)| (k.cap, k.key, v))
+        .map(|(k, v)| (k.cap, k.key, v.unwrap_or(types::Unset.into())))
         .collect()
     }
 }
@@ -187,6 +192,13 @@ impl Scopes {
         let no_value = self.inner.insert(key, Scope::new()).is_none();
         debug_assert!(no_value, "unexpected scope present");
         ScopeCloser(key)
+    }
+
+    pub fn init(&self, scope_key: ScopeKey, cap: Option<CaptureKey>, key: EvaluatedValue) {
+        self.inner
+            .get(&scope_key)
+            .expect("scope disappeared")
+            .init(cap, key)
     }
 
     pub fn insert(
@@ -796,14 +808,26 @@ impl ExprEvaluator {
                     None => types::Unset.into(),
                 }
             },
-            Set(_) => {
+            Set(set) => {
                 let me = self.clone().no_eval_cache();
                 let id = self.value_id();
+                let k = me.child(&set.value).evaluate().await.as_evaluated().await;
+                me.scopes.init(set.scope_key, set.capture_key.clone(), k.clone());
                 types::Unbound::new_no_doc(move |v| {
                     let me = me.clone();
+                    let k = k.clone();
                     async move {
                         let set = unsafe { me.expr.as_ref_unchecked::<ast::Set>() };
-                        let k = me.child(&set.value).evaluate().await.as_evaluated().await;
+
+                        if v.is_type::<types::Unset>() {
+                            use ergo_runtime::error::DiagnosticInfo;
+                            return ergo_runtime::diagnostic! {
+                                labels: [
+                                    primary(me.source().with(""))
+                                ],
+                                message: "cannot bind to Unset"
+                            }.add_value_sources("unset", &v).into_error().into();
+                        }
 
                         if me.scopes.insert(set.scope_key, set.capture_key.clone(), k, v.clone()) {
                             return ergo_runtime::error! {

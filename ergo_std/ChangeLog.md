@@ -109,6 +109,11 @@
 * Change `std:cache ^no-persist :value` to `std:once :value`.
 * Replace uses of `std:Path:new` and `std:Path:with-output` with
   `std:Path:for`, which will produce deterministic paths.
+* You may want to change `std:optional` to `?`, and/or remove `std:required`
+  calls in certain places, depending on the intended behavior of optional
+  values. They both will behave the same as before, however notably `?` will not
+  evaluate values prior to checking for `Unset`, and likewise for `:setter`
+  syntax.
 
 ## 1.0.0-rc.3  -- 2021-12-14
 * No changes.

@@ -51,7 +51,8 @@
   before they would not be evaluated so it would never match. The prior behavior
   had very few and obscure use cases.
 * Add a built-in `!id` function to mark a value as being relevant to the
-  identity of the expression.
+  identity of the expression. A complementary `!no-id` function to do the
+  opposite is also added.
 * Fix a bug with `Iter` types where very large iterators would cause a stack
   overflow (which occurred when the value was dropped).
 * Remove the `--detect-deadlock` argument. Deadlock detection is now done
@@ -66,6 +67,10 @@
   disallow merging strings.
 * Change the merge operator (`^`) to imply a get when followed by a string
   literal. Thus, `^$something` can be simply `^something`.
+* Change set expressions such that they error if bound to `Unset`. This makes
+  all values non-optional by default, and one can make things optional with the
+  new built-in `?` function (e.g. `:something = $unset` errors while `?
+  :something = $unset` does not).
 
 ### Breaking Changes
 * Any use of `!` should be replaced with equivalent code.

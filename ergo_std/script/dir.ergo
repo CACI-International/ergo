@@ -90,6 +90,29 @@ recursive = fn :f -> fn ^:args -> f $f ^$args
 ## arguments.
 memoize = fn (plugin:Function :f) -> fn ^:args -> mcache:once <| f ^$args
 
+## Match a value allowing `Unset` values.
+##
+## Arguments: `:target`
+##
+## Unlike the `?` builtin, this will first evaluate the value before checking for Unset.
+optional = fn :target -> :v -> plugin:match $v [
+    $unset -> ()
+    _ -> { $target = $v }
+]
+
+## Match a value disallowing `Unset` values.
+##
+## This is only useful if the binding argument would normally accept an `Unset` value.
+##
+## Arguments: `:target`
+##
+## Unlike the behavior of `:setter` syntax, this will first evaluate the value before checking for
+## Unset.
+required = fn :target -> :v -> plugin:match $v [
+    $unset -> plugin:Error:new (source=$v) "required value missing"
+    _ -> { $target = $v }
+]
+
 ## Import values by index in a binding expression.
 ##
 ## Arguments: `:descriptor`
@@ -116,7 +139,7 @@ memoize = fn (plugin:Function :f) -> fn ^:args -> mcache:once <| f ^$args
 import = recursive <| fn :self :descr -> :v -> {
     plugin:match $descr [
         plugin:Map :m -> {
-            plugin:Iter:map (fn (plugin:MapEntry:@ :key :value) -> { mtype:required (self $self $value) = plugin:value:source-copy $key v:$key }) $m
+            plugin:Iter:map (fn (plugin:MapEntry:@ :key :value) -> { required (self $self $value) = plugin:value:source-copy $key v:$key }) $m
             ()
         }
         :other -> { $other = $v }
@@ -171,8 +194,6 @@ function-module = fn (plugin:Function :func) :module -> {
 ## second is an Iter with all remaining values.
 iter-split = fn :n :iter -> [plugin:Iter:take $n $iter, plugin:Iter:skip $n $iter]
 
-req = mtype:required
-
 ## Conditionally return a value.
 ##
 ## Arguments: `(Into Bool |> :condition) :if_true [else if :cond2 :if_true2]... [else :if_false]`
@@ -185,8 +206,8 @@ if = fn :cond :if_true ^:rest -> {
         plugin:match (plugin:Bool:from $cond) [
             plugin:Bool:true -> $if_true
             plugin:Bool:false -> plugin:match $rest [
-                [else,if,req :cond2,req :if_true2,^:rest] -> self $self $cond2 $if_true2 $rest
-                [else,req :if_false] -> $if_false
+                [else,if,:cond2,:if_true2,^:rest] -> self $self $cond2 $if_true2 $rest
+                [else,:if_false] -> $if_false
                 [] -> $unset
                 [:other,^_] -> plugin:Error:new (source=$other) "expected `else` or `else if`"
             ]
@@ -399,8 +420,7 @@ extend-type = fn :tp :map -> plugin:Type:modify $tp <| plugin:value:merge (plugi
     # Functions
     import {:debug,:equal,:identity,:merge,:variable} = plugin:value
     import {:cache,:once} = $mcache
-    import {:optional,:required} = $mtype
-    default
+    optional, required, default
     ergo-remote
     exec = plugin:exec
     getopt = function-module plugin:getopt {fn = $getopt-fn}

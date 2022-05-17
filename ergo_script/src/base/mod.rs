@@ -1,6 +1,7 @@
 //! Base environment.
 
 use ergo_runtime::{traits, types, Value};
+use futures::FutureExt;
 
 mod doc;
 mod load;
@@ -32,6 +33,28 @@ pub fn unset() -> Value {
 }
 
 #[types::ergo_fn]
+/// Indicate a binding is optional, allowing an `Unset` value to be bound.
+///
+/// Arguments: `:value -> :bindee`
+pub async fn optional(value: _) -> Value {
+    let deps = ergo_runtime::depends![dyn ergo_runtime::nsid!(optional), value];
+    types::Unbound::new_no_doc(
+        move |arg| {
+            let value = value.clone();
+            async move {
+                if !arg.is_type::<types::Unset>() {
+                    ergo_runtime::try_result!(traits::bind_no_error(value, arg).await);
+                }
+                types::Unit.into()
+            }
+            .boxed()
+        },
+        deps,
+    )
+    .into()
+}
+
+#[types::ergo_fn]
 #[eval_for_id]
 /// Mark the given value as pertinent to the identity of the expression.
 ///
@@ -41,4 +64,19 @@ pub fn unset() -> Value {
 pub async fn eval_for_id(mut v: _) -> Value {
     drop(ergo_runtime::Context::eval(&mut v).await);
     v
+}
+
+#[types::ergo_fn]
+/// Mark the given value as not pertinent to the identity of the expression.
+///
+/// Arguments: `:value`
+///
+/// The given value will _still_ be evaluated, but if it still indicates that it is pertinent to
+/// the identity, the propagation of this indication will cease.
+///
+/// For example, `(!no-id $!id) abc` will effectively disable the properties of `!id` on `abc`.
+pub async fn no_eval_for_id(v: _) -> Value {
+    let mut id = ergo_runtime::value::ValueId::immediate(ergo_runtime::depends![v]).await;
+    id.set_eval_id(false);
+    Value::dynamic(move || async move { v }, id)
 }

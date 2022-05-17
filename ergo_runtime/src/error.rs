@@ -131,6 +131,10 @@ impl Diagnostic {
             )
             .with_notes(self.notes.into_iter().map(|l| l.into()).collect())
     }
+
+    pub fn into_error(self) -> Error {
+        self.into()
+    }
 }
 
 /// A trait for types supporting the addition of diagnostic info.
@@ -529,6 +533,39 @@ impl<T> DiagnosticInfo for std::result::Result<T, ErrorOrDiagnostic> {
     }
 }
 
+/// Create a diagnostic.
+///
+/// ```ignore
+/// diagnostic!{
+///     severity: Bug,
+///     labels: [
+///         primary(...),
+///         secondary(...)
+///     ],
+///     notes: [
+///         "something interesting"
+///     ],
+///     EXPRESSION
+/// }
+/// ```
+///
+/// `severity`, `labels`, and `notes` are all optional, but must
+/// be provided in the above order.
+#[macro_export]
+macro_rules! diagnostic {
+    ( $(severity : $severity:ident ,)? $(labels : [$($labelfn:ident ( $($labelarg:expr),* )),+] ,)?
+      $(notes : [$($note:expr),+] ,)? message: $message:expr ) => {
+        {
+            #[allow(unused_mut)]
+            let mut d: $crate::error::Diagnostic = $message.into();
+            $(d.severity = $crate::error::Severity::$severity;)?
+            $(d.labels = $crate::abi_stable::rvec![$($crate::error::Label::$labelfn ($($labelarg),*)),+];)?
+            $(d.notes = $crate::abi_stable::rvec![$($note.to_string().into()),+];)?
+            d
+        }
+    };
+}
+
 /// Create an error.
 ///
 /// ```ignore
@@ -552,12 +589,12 @@ macro_rules! error {
     ( $(severity : $severity:ident ,)? $(labels : [$($labelfn:ident ( $($labelarg:expr),* )),+] ,)?
       $(notes : [$($note:expr),+] ,)? error : $error:expr ) => {
         {
-            #[allow(unused_mut)]
-            let mut d: $crate::error::Diagnostic = $error.into();
-            $(d.severity = $crate::error::Severity::$severity;)?
-            $(d.labels = $crate::abi_stable::rvec![$($crate::error::Label::$labelfn ($($labelarg),*)),+];)?
-            $(d.notes = $crate::abi_stable::rvec![$($note.to_string().into()),+];)?
-            $crate::error::Error::new(d)
+            $crate::error::Error::new($crate::diagnostic! {
+                $(severity: $severity,)?
+                $(labels: [$($labelfn ( $($labelarg),* )),+],)?
+                $(notes: [$($note),+] ,)?
+                message: $error
+            })
         }
     };
 }
