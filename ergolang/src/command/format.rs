@@ -54,6 +54,7 @@ impl<'a, 's: 'a, S: Clone + Into<Cow<'s, str>>> FormatTree<S> {
     pub fn to_doc(
         &self,
         arena: &'a pretty::Arena<'a>,
+        in_quoted_string: bool,
     ) -> pretty::DocBuilder<'a, pretty::Arena<'a>> {
         use PairedToken::*;
 
@@ -71,6 +72,8 @@ impl<'a, 's: 'a, S: Clone + Into<Cow<'s, str>>> FormatTree<S> {
                                 }
                             }
                             arena.text(s).append(arena.hardline())
+                        } else if s == "$" && in_quoted_string {
+                            arena.text("$$")
                         } else {
                             arena.text(s)
                         }
@@ -100,7 +103,7 @@ impl<'a, 's: 'a, S: Clone + Into<Cow<'s, str>>> FormatTree<S> {
                     Self::children(contents, arena, arena.hardline().flat_alt(arena.text(", "))),
                 ),
                 Quote => arena
-                    .concat(contents.iter().map(|c| c.to_doc(arena)))
+                    .concat(contents.iter().map(|c| c.to_doc(arena, true)))
                     .double_quotes(),
                 Apostrophe | Hash | DoubleHash => arena
                     .text(match token {
@@ -110,7 +113,15 @@ impl<'a, 's: 'a, S: Clone + Into<Cow<'s, str>>> FormatTree<S> {
                         _ => panic!("unexpected paired token"),
                     })
                     .append(arena.space())
-                    .append(arena.concat(contents.iter().map(|c| c.to_doc(arena)))),
+                    .append(arena.concat(contents.iter().map(|c| {
+                        c.to_doc(
+                            arena,
+                            match token {
+                                Apostrophe | DoubleHash => true,
+                                _ => false,
+                            },
+                        )
+                    }))),
             },
         }
     }
@@ -168,17 +179,20 @@ impl<'a, 's: 'a, S: Clone + Into<Cow<'s, str>>> FormatTree<S> {
         while let Some(tree) = trees.next() {
             let mut should_skip_sep = false;
             match tree {
+                // No whitespace before or after (infix)
                 FormatTree::Token(Token::Symbol(
                     SymbolicToken::Colon | SymbolicToken::TildeEqual,
                 )) => {
                     skip_sep = true;
                     should_skip_sep = true;
                 }
+                // No whitespace after (prefix)
                 FormatTree::Token(Token::Symbol(
                     SymbolicToken::ColonPrefix
                     | SymbolicToken::Hash
                     | SymbolicToken::DoubleHash
-                    | SymbolicToken::Tilde,
+                    | SymbolicToken::Tilde
+                    | SymbolicToken::Dollar,
                 )) => {
                     should_skip_sep = true;
                 }
@@ -188,7 +202,7 @@ impl<'a, 's: 'a, S: Clone + Into<Cow<'s, str>>> FormatTree<S> {
                 doc = doc.append(sep.clone());
             }
             skip_sep = should_skip_sep;
-            doc = doc.append(tree.to_doc(arena));
+            doc = doc.append(tree.to_doc(arena, false));
         }
         doc
     }
