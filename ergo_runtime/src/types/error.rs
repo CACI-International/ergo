@@ -72,9 +72,8 @@ where
 }
 
 ergo_traits_fn! {
-    /*
     impl traits::Stored for Error {
-        async fn put(&self, _stored_ctx: &traits::StoredContext, item: crate::context::ItemContent) -> crate::RResult<()> {
+        async fn put(&self, data: &mut traits::PutData<'_>) -> crate::RResult<()> {
             // Never store aborted errors.
             if self.is_aborted() {
                 return crate::RResult::ROk(());
@@ -82,19 +81,18 @@ ergo_traits_fn! {
 
             crate::error_info!(
                 labels: [
-                    primary(Source::get(SELF_VALUE).with("while storing this value"))
+                    primary(crate::metadata::Source::get(SELF_VALUE).with("while storing this value"))
                 ],
-                { bincode::serialize_into(item, self) }
+                { bincode::serialize_into(data, self) }
             ).into()
         }
 
-        async fn get(_stored_ctx: &traits::StoredContext, item: crate::context::ItemContent) -> crate::RResult<crate::abi_stable::type_erase::Erased> {
+        async fn get(data: &mut traits::GetData<'_>) -> crate::RResult<crate::abi_stable::type_erase::Erased> {
             crate::error_info!({
-                bincode::deserialize_from(item).map(|e: Error| crate::abi_stable::type_erase::Erased::new(e))
+                bincode::deserialize_from(data).map(|e: Error| crate::abi_stable::type_erase::Erased::new(e))
             }).into()
         }
     }
-    */
 
     traits::IntoTyped::<super::Bool>::add_impl::<Error>(traits);
 
