@@ -1,7 +1,6 @@
 //! Base environment.
 
 use ergo_runtime::{traits, types, Value};
-use futures::FutureExt;
 
 mod doc;
 mod load;
@@ -30,28 +29,6 @@ pub async fn bind(to: _, from: _) -> Value {
 /// An `Unset` value.
 pub fn unset() -> Value {
     types::Unset.into()
-}
-
-#[types::ergo_fn]
-/// Indicate a binding is optional, allowing an `Unset` value to be bound.
-///
-/// Arguments: `:value -> :bindee`
-pub async fn optional(value: _) -> Value {
-    let deps = ergo_runtime::depends![dyn ergo_runtime::nsid!(optional), value];
-    types::Unbound::new_no_doc(
-        move |arg| {
-            let value = value.clone();
-            async move {
-                if !arg.is_type::<types::Unset>() {
-                    ergo_runtime::try_result!(traits::bind_no_error(value, arg).await);
-                }
-                types::Unit.into()
-            }
-            .boxed()
-        },
-        deps,
-    )
-    .into()
 }
 
 #[types::ergo_fn]

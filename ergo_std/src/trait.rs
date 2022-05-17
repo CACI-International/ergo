@@ -411,7 +411,7 @@ mod test {
             Color:impl orange self:Array
             self:Type:any :a = Color:get abcde
             self:Type:any :b = Color:get []
-            self:Type:any (? :c) = Color:get {}
+            self:Type:any :c = Color:get {}
             [$a,$b,$c]",
                 "[blue, orange, $unset]"
             );

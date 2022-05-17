@@ -106,7 +106,7 @@ ergo_traits_fn! {
 
             crate::try_result!(crate::Context::eval(&mut arg).await);
 
-            crate::value::match_value! { arg,
+            crate::value::match_value! { arg.clone(),
                 super::Index(ind) => {
                     // Return value at index
                     let ind = crate::try_result!(traits::into::<super::Number>(ind).await);
@@ -146,7 +146,9 @@ ergo_traits_fn! {
                 Array(arr) => {
                     crate::try_result!(traits::bind_array(
                             self.0.clone(),
-                            source.with(arr.clone()),
+                            SELF_VALUE,
+                            arr,
+                            &arg,
                             |_,rest| Array(rest.into()).into(),
                     ).await);
                     super::Unit.into()

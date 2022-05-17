@@ -46,7 +46,6 @@ impl Runtime {
             ("doc", base::doc()),
             ("bind", base::bind()),
             ("unset", base::unset()),
-            ("?", base::optional()),
             ("!id", base::eval_for_id()),
             ("!no-id", base::no_eval_for_id()),
         ]
@@ -290,7 +289,7 @@ mod test {
     #[test]
     fn block_unset() -> Result<(), String> {
         script_eval_to(
-            "{? :b = $unset,:beta=two}",
+            "{:b = $unset,:beta=two}",
             SRMap(&[("beta", SRString("two"))]),
         )
     }
@@ -473,19 +472,19 @@ mod test {
     #[test]
     fn function_unset_keyed_argument() -> Result<(), String> {
         script_eval_to(
-            "f = fn ^:args -> args:keyed; f ~a=value ~(? :blah)=$unset",
+            "f = fn ^:args -> args:keyed; f ~a=value ~blah=$unset",
             SRMap(&[("a", SRString("value"))]),
         )
     }
 
     #[test]
     fn set_and_unset() -> Result<(), String> {
-        script_eval_to("{a = 1, ? :a = $unset}", SRMap(&[]))
+        script_eval_to("{a = 1, a = $unset}", SRMap(&[]))
     }
 
     #[test]
     fn merge_and_unset() -> Result<(), String> {
-        script_eval_to("m = {a = 1}, {^$m, ? :a = $unset}", SRMap(&[]))
+        script_eval_to("m = {a = 1}, {^$m, a = $unset}", SRMap(&[]))
     }
 
     #[test]
@@ -616,10 +615,7 @@ mod test {
 
         #[test]
         fn command_missing_args() -> Result<(), String> {
-            script_eval_to(
-                "f = fn :a (? :b) (? :c) -> [$a,$b,$c]; f 1",
-                SRArray(&[SRString("1"), SRUnset, SRUnset]),
-            )
+            script_fail("f = fn :a :b :c -> [$a,$b,$c]; f 1")
         }
     }
 
@@ -674,13 +670,8 @@ mod test {
         #[test]
         fn array_missing_values() -> Result<(), String> {
             script_fail("[:a,:b,:c] = [1,2]; $c")?;
-            script_eval_to("[:a,:b,? :c] = [1,2]; $c", SRUnset)?;
             script_eval_to("[:a,:b,^:rest,:c] = [1,2,3]; $rest", SRArray(&[]))?;
             script_fail("[:a,:b,^:rest,:c,:d] = [1,2,3]; [$c,$d]")?;
-            script_eval_to(
-                "[:a,:b,^:rest,? :c,:d] = [1,2,3]; [$c,$d]",
-                SRArray(&[SRUnset, SRString("3")]),
-            )?;
             Ok(())
         }
 

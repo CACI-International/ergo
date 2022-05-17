@@ -94,7 +94,7 @@ memoize = fn (plugin:Function :f) -> fn ^:args -> mcache:once <| f ^$args
 ##
 ## Arguments: `:target`
 ##
-## Unlike the `?` builtin, this will first evaluate the value before checking for Unset.
+## This will first evaluate the value before checking for Unset.
 optional = fn :target -> :v -> plugin:match $v [
     $unset -> ()
     _ -> { $target = $v }
@@ -106,8 +106,7 @@ optional = fn :target -> :v -> plugin:match $v [
 ##
 ## Arguments: `:target`
 ##
-## Unlike the behavior of `:setter` syntax, this will first evaluate the value before checking for
-## Unset.
+## This will first evaluate the value before checking for Unset.
 required = fn :target -> :v -> plugin:match $v [
     $unset -> plugin:Error:new (source=$v) "required value missing"
     _ -> { $target = $v }

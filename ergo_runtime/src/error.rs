@@ -220,16 +220,16 @@ pub trait DiagnosticInfo {
                 Ok(s) => {
                     if s.len() > TO_STRING_LENGTH_LIMIT {
                         format!(
-                            "'{}' was {}: `{}...`",
+                            "'{}' is {}: `{}...`",
                             name,
                             tp,
                             &s[..TO_STRING_LENGTH_LIMIT]
                         )
                     } else {
-                        format!("'{}' was {}: `{}`", name, tp, s)
+                        format!("'{}' is {}: `{}`", name, tp, s)
                     }
                 }
-                Err(_) => format!("'{}' was {}", name, tp),
+                Err(_) => format!("'{}' is {}", name, tp),
             })
         }
         .boxed()

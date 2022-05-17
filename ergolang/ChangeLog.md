@@ -59,18 +59,10 @@
   automatically with no meaningful performance implications.
 * Remove the internal `store` interface from the runtime context, opting for a
   much simpler strategy that just provides the project working directory.
-* Change `Array`/`Args` binding to set unbound values to Unset.
-  * This is convenient for optional args in functions, with the tradeoff that,
-    to provide possibly-better error messages, users should mark required
-    arguments with a type or other function to check that they are present.
 * Add a new syntax for setting keyed arguments (`~key`/`~key=value`) and
   disallow merging strings.
 * Change the merge operator (`^`) to imply a get when followed by a string
   literal. Thus, `^$something` can be simply `^something`.
-* Change set expressions such that they error if bound to `Unset`. This makes
-  all values non-optional by default, and one can make things optional with the
-  new built-in `?` function (e.g. `:something = $unset` errors while `?
-  :something = $unset` does not).
 
 ### Breaking Changes
 * Any use of `!` should be replaced with equivalent code.

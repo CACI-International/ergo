@@ -8,6 +8,7 @@ use crate::abi_stable::{
     std_types::{ROption, RVec},
     type_erase::Erased,
 };
+use crate::error::DiagnosticInfo;
 use crate::metadata::Source;
 use crate::source::Source as Src;
 use crate::type_system::{ergo_trait, ergo_traits_fn, ErgoTrait, Trait, Type};
@@ -50,7 +51,9 @@ pub async fn bind_no_error(v: Value, arg: Value) -> crate::Result<()> {
 /// The first argument is whether this is the first BindRest, and the second is the values to bind.
 pub(crate) async fn bind_array<F>(
     to: RVec<Value>,
-    from: Src<RVec<Value>>,
+    to_value: &Value,
+    from: RVec<Value>,
+    from_value: &Value,
     mut create_bind_rest: F,
 ) -> crate::Result<()>
 where
@@ -63,7 +66,9 @@ where
 
     fn back<'a, F>(
         to: &'a mut Iter,
+        _to_value: &'a Value,
         from: &'a mut Iter,
+        from_value: &'a Value,
         create_bind_rest: &'a mut F,
     ) -> BoxFuture<'a, crate::Result<()>>
     where
@@ -88,7 +93,13 @@ where
                                                 break;
                                             }
                                         }
-                                        None => Err(Source::get(&to_v).with("no value matches this binding").into_error())?
+                                        None => Err(
+                                            crate::diagnostic! {
+                                                message: "no value in 'values' matches 'target'"
+                                            }
+                                            .add_value_sources("target", &to_v)
+                                            .add_value_info("values", from_value).await
+                                        )?
                                     }
                                 }
                                 // Values were pushed in reverse order
@@ -101,11 +112,17 @@ where
                         }
                     }
                     to_v => {
-                        // If `from` is missing a `to` element, use `Unset`.
-                        let to_bind = from.next_back().unwrap_or_else(|| {
-                            Source::imbue(t_source.with(types::Unset.into()))
-                        });
-                        bind_no_error(to_v, to_bind).await?;
+                        match from.next_back() {
+                            // If `from` is missing a `to` element, error
+                            None => Err(
+                                crate::diagnostic! {
+                                    message: "there are not enough 'values' to bind 'target'"
+                                }
+                                .add_value_sources("target", &to_v)
+                                .add_value_info("values", from_value).await
+                            )?,
+                            Some(from_v) => bind_no_error(to_v, from_v).await?,
+                        }
                     }
                 }
             }
@@ -116,8 +133,9 @@ where
 
     fn forward<'a, F>(
         to: &'a mut Iter,
+        to_value: &'a Value,
         from: &'a mut Iter,
-        from_source: Src<()>,
+        from_value: &'a Value,
         create_bind_rest: &'a mut F,
     ) -> BoxFuture<'a, crate::Result<()>>
     where
@@ -126,22 +144,27 @@ where
         async move {
             let mut first_rest = true;
             while let Some(t) = to.next() {
-                let t_source = Source::get(&t);
                 match_value!{t,
                     types::BindRest(rest) => {
-                        back(to, from, create_bind_rest).await?;
+                        back(to, to_value, from, from_value, create_bind_rest).await?;
                         bind_no_error(
                             rest,
-                            Source::imbue(from_source.with(create_bind_rest(first_rest, from.collect()))),
+                            Source::copy(from_value, create_bind_rest(first_rest, from.collect())),
                         ).await?;
                         first_rest = false;
                     }
                     to_v => {
-                        // If `from` is missing a `to` element, use `Unset`.
-                        let to_bind = from.next().unwrap_or_else(|| {
-                            Source::imbue(t_source.with(types::Unset.into()))
-                        });
-                        bind_no_error(to_v, to_bind).await?;
+                        match from.next() {
+                            // If `from` is missing a `to` element, error
+                            None => Err(
+                                crate::diagnostic! {
+                                    message: "there are not enough values in 'value' to bind 'target'"
+                                }
+                                .add_value_sources("target", &to_v)
+                                .add_value_info("value", from_value).await
+                            )?,
+                            Some(from_v) => bind_no_error(to_v, from_v).await?,
+                        }
                     }
                 }
             }
@@ -150,7 +173,14 @@ where
             if !remaining.is_empty() {
                 let mut errs = Vec::new();
                 for v in remaining {
-                    errs.push(Source::get(&v).with("extraneous value").into_error());
+                    errs.push(
+                        crate::diagnostic! {
+                            message: "extraneous value when binding"
+                        }
+                        .add_value_sources("target", to_value)
+                        .add_value_info("value", &v).await
+                        .into()
+                    );
                 }
                 Err(crate::Error::aggregate(errs))
             } else {
@@ -159,22 +189,29 @@ where
         }.boxed()
     }
 
-    let (from_source, from) = from.take();
     let mut to = to.into_iter();
     let mut from = from.into_iter();
 
-    forward(&mut to, &mut from, from_source, &mut create_bind_rest).await
+    forward(
+        &mut to,
+        to_value,
+        &mut from,
+        from_value,
+        &mut create_bind_rest,
+    )
+    .await
 }
 
 /// Returns the remaining items in `from` that were not bound if `return_rest` is true and
 /// `BindRestKey` is not a key in `to`.
 pub(crate) async fn bind_map(
     mut to: BstMap<EvaluatedValue, Value>,
-    from: Src<BstMap<EvaluatedValue, Value>>,
+    to_value: &Value,
+    mut from: BstMap<EvaluatedValue, Value>,
+    from_value: &Value,
     return_rest: bool,
 ) -> crate::Result<BstMap<EvaluatedValue, Value>> {
     let rest = to.remove(&EvaluatedValue::from(types::BindRestKey));
-    let (from_source, mut from) = from.take();
     for (k, to_v) in to.into_iter() {
         bind_no_error(
             to_v,
@@ -182,7 +219,7 @@ pub(crate) async fn bind_map(
                 from_v
             } else {
                 // If `from` is missing a `to` key, use `Unset`.
-                Source::imbue(from_source.clone().with(types::Unset.into()))
+                Source::copy(&from_value, types::Unset.into())
             },
         )
         .await?;
@@ -198,9 +235,13 @@ pub(crate) async fn bind_map(
                 let mut errs = Vec::new();
                 for (k, _) in from.into_iter() {
                     errs.push(
-                        Source::get(&k)
-                            .with("extraneous key in binding")
-                            .into_error(),
+                        crate::diagnostic! {
+                            message: "extraneous key in binding"
+                        }
+                        .add_value_info("key", &k)
+                        .await
+                        .add_value_sources("target", &to_value)
+                        .into(),
                     );
                 }
                 Err(crate::Error::aggregate(errs))
@@ -208,11 +249,7 @@ pub(crate) async fn bind_map(
         }
         Some(v) => {
             let remaining = from;
-            bind_no_error(
-                v,
-                Source::imbue(from_source.with(types::Map(remaining).into())),
-            )
-            .await?;
+            bind_no_error(v, Source::copy(&from_value, types::Map(remaining).into())).await?;
             Ok(Default::default())
         }
     }

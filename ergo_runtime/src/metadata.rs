@@ -140,7 +140,7 @@ impl Source {
 
     /// Set the source for the given value.
     pub fn set(v: &mut Value, src: crate::Source<()>) {
-        v.set_metadata(&Source, rvec![src]);
+        v.set_metadata(&Self, rvec![src]);
     }
 
     /// Add the latest source for the given value.
@@ -165,6 +165,14 @@ impl Source {
         let (src, mut v) = v.take();
         Self::set(&mut v, src);
         v
+    }
+
+    /// Copy all source information from one value to another.
+    pub fn copy(from: &Value, mut to: Value) -> Value {
+        if let Some(sources) = from.get_metadata(&Self) {
+            to.set_metadata(&Self, sources.as_ref().clone());
+        }
+        to
     }
 }
 

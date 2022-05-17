@@ -819,16 +819,6 @@ impl ExprEvaluator {
                     async move {
                         let set = unsafe { me.expr.as_ref_unchecked::<ast::Set>() };
 
-                        if v.is_type::<types::Unset>() {
-                            use ergo_runtime::error::DiagnosticInfo;
-                            return ergo_runtime::diagnostic! {
-                                labels: [
-                                    primary(me.source().with(""))
-                                ],
-                                message: "cannot bind to Unset"
-                            }.add_value_sources("unset", &v).into_error().into();
-                        }
-
                         if me.scopes.insert(set.scope_key, set.capture_key.clone(), k, v.clone()) {
                             return ergo_runtime::error! {
                                 labels: [

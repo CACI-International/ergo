@@ -251,21 +251,24 @@ impl From<&Arguments> for Dependencies {
 
 async fn bind_args<F>(
     to: &UncheckedArguments,
-    from: Src<UncheckedArguments>,
+    to_value: &Value,
+    from: UncheckedArguments,
+    from_value: &Value,
     create_bind_rest: F,
 ) -> crate::Result<Value>
 where
     F: Fn(UncheckedArguments) -> Value + Send + Sync,
 {
-    let (from_source, from) = from.take();
     // Bind keyed arguments first, then use any additional arguments in the `create_bind_rest` argument of `bind_array`
     let mut keyed_rest =
-        traits::bind_map(to.keyed.clone(), from_source.clone().with(from.keyed), true).await?;
+        traits::bind_map(to.keyed.clone(), to_value, from.keyed, from_value, true).await?;
     // Positional arguments are stored in reverse order, but it's easiest to match them
     // in-order (especially wrt BindRest values).
     traits::bind_array(
         to.positional.iter().rev().cloned().collect(),
-        from_source.with(from.positional.into_iter().rev().collect()),
+        to_value,
+        from.positional.into_iter().rev().collect(),
+        from_value,
         |first, rest| {
             let args = UncheckedArguments::new(
                 rest,
@@ -336,11 +339,9 @@ ergo_traits_fn! {
     impl traits::Bind for Args {
         async fn bind(&self, mut arg: Value) -> Value {
             crate::try_result!(Context::eval(&mut arg).await);
-            let src = Source::get_origin(&arg);
-
-            crate::value::match_value!{ arg,
+            crate::value::match_value!{ arg.clone(),
                 Args { args } => {
-                    bind_args(&self.args, src.with(args), |args| Args { args }.into()).await.into()
+                    bind_args(&self.args, SELF_VALUE, args, &arg, |args| Args { args }.into()).await.into()
                 }
                 super::Index(ind) => {
                     args_index(ind, &self.args).await
