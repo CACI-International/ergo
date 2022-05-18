@@ -1,8 +1,9 @@
 //! Value-related intrinsics.
 
 use ergo_runtime::{
+    depends,
     metadata::{Runtime, Source},
-    traits, types,
+    nsid, traits, try_result, types,
     value::EvalForId,
     Context, Value,
 };
@@ -17,6 +18,7 @@ pub fn module() -> Value {
         },
         "equal" = equal(),
         "identity" = identity(),
+        "index" = index(),
         "merge" = merge(),
         "meta" = crate::make_string_map! {
             "eval" = meta_eval(),
@@ -312,6 +314,33 @@ async fn equal(mut a: _, mut b: _, (exact): [_]) -> Value {
     types::Bool(a.id().await == b.id().await).into()
 }
 
+#[types::ergo_fn]
+/// Get indices of a value.
+///
+/// Arguments: `(Map :indices) -> :value`
+///
+/// Indexes `value` with each key of `indices`, and binds the result to each corresponding value of
+/// `indices`.
+async fn index(indices: types::Map) -> Value {
+    let deps = depends![dyn nsid!(std::index), indices];
+    types::Unbound::new_no_doc(
+        move |arg| {
+            let indices = indices.clone();
+            async move {
+                for (k, v) in &indices.as_ref().0 {
+                    let result =
+                        traits::bind(arg.clone(), types::Index(k.clone().into()).into()).await;
+                    try_result!(traits::bind_no_error(v.clone(), result).await);
+                }
+                types::Unit.into()
+            }
+            .boxed()
+        },
+        deps,
+    )
+    .into()
+}
+
 #[cfg(test)]
 mod test {
     ergo_script::tests! {
@@ -352,6 +381,12 @@ mod test {
             t.assert_eq("self:value:equal a {\"a\"}", "self:Bool:true");
             t.assert_eq("self:value:equal ~exact a {\"a\"}", "self:Bool:false");
             t.assert_eq("self:value:equal ~exact {\"a\"} {\"a\"}", "self:Bool:true");
+        }
+
+        fn index(t) {
+            t.assert_eq("self:value:index {:a,:b} = {a = 1, b = 2}", "{a = 1, b = 2}");
+            t.assert_eq("self:value:index {:a} = {a = 1, b = 2}", "{a = 1}");
+            t.assert_eq("self:value:index {:a,:c} = {a = 1, b = 2}", "{a = 1}");
         }
     }
 }

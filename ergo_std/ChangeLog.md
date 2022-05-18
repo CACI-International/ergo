@@ -30,6 +30,13 @@
 * Add `std:Cache` to create caches (both in-memory and persisted to disk).
   * Caches now use sqlite to store values.
 * Add `std:once` to add values to an in-memory cache.
+* Add `std:Path:owned` to mark a path as owned, which will delete the path when
+  the value is no longer used. The cache takes ownership of these paths.
+* Add `std:Path:for`, which is very similar to the previous
+  `std:Path:with-output` but is doing something slightly different, so it's
+  worthwhile to have a new name.
+* Add `std:index` to get indices of a value. It is similar to `std:import` but
+  doesn't support recursive indexing and doesn't error on Unset results.
 
 #### Modifications
 * Removed the `std:by-content` function, as one shouldn't be reinterpreting
@@ -67,10 +74,7 @@
 * Support caching top-level errors in `std:cache` by setting the `allow-error` keyed
   argument to `top`.
 * Remove `std:Path:new` and `std:Path:with-output`.
-* Add `std:Path:for`, which is very similar to `std:Path:with-output` but is
-  doing something slightly different, so it's worthwhile to have a new name.
-* Add `std:Path:owned` to mark a path as owned, which will delete the path when
-  the value is no longer used. The cache takes ownership of these paths.
+* Improve `std:import` to not evaluate values when binding keys.
 
 ### Migration
 * Remove the use of `std:by-content`. If it was being used to compare nested

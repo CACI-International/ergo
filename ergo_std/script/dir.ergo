@@ -120,7 +120,7 @@ required = fn :target -> :v -> plugin:match $v [
 ## will be bound as if `import` were used.
 ## Otherwise, bind the result to the binding expression.
 ##
-## Note that all bound values will be evaluated at the binding site.
+## Note that if any indexed values produce `Unset` or an `Error`, an `Error` will occur.
 ##
 ## ### Example Usage
 ## ```ergo
@@ -133,15 +133,23 @@ required = fn :target -> :v -> plugin:match $v [
 ##
 ## # Renaming import
 ## import {path = :stdpath} = $$std
-## stdpath:new()
+## stdpath:from my/path
 ## ```
 import = recursive <| fn :self :descr -> :v -> {
     plugin:match $descr [
         plugin:Map :m -> {
-            plugin:Iter:map (fn (plugin:MapEntry:@ :key :value) -> { required (self $self $value) = plugin:value:source-copy $key v:$key }) $m
+            plugin:Iter:map (fn (plugin:MapEntry:@ :key :value) -> { 
+                plugin:value:index { :$key = :result } = $v
+                plugin:match (plugin:value:equal ~exact $result $unset) [
+                    plugin:Bool:true -> plugin:Error:new (source=$key) "missing index"
+                    _ -> ()
+                ]
+                self $self $value = $result
+                ()
+            }) $m
             ()
         }
-        :other -> { $other = $v }
+        :other -> { $other = $v; () }
     ]
 }
 
@@ -417,7 +425,7 @@ extend-type = fn :tp :map -> plugin:Type:modify $tp <| plugin:value:merge (plugi
     test = $mtest
 
     # Functions
-    import {:debug,:equal,:identity,:merge,:variable} = plugin:value
+    import {:debug,:equal,:identity,:index,:merge,:variable} = plugin:value
     import {:cache,:once} = $mcache
     optional, required, default
     ergo-remote

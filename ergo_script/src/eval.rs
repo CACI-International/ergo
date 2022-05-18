@@ -10,7 +10,7 @@ use ergo_runtime::abi_stable::external_types::RMutex;
 use ergo_runtime::Result;
 use ergo_runtime::{
     depends,
-    error::ErrorOrDiagnostic,
+    error::{DiagnosticInfo, ErrorOrDiagnostic},
     metadata::{self, Source},
     nsid, traits, try_result, types,
     value::{match_value, ValueId},
@@ -820,13 +820,12 @@ impl ExprEvaluator {
                         let set = unsafe { me.expr.as_ref_unchecked::<ast::Set>() };
 
                         if me.scopes.insert(set.scope_key, set.capture_key.clone(), k, v.clone()) {
-                            return ergo_runtime::error! {
+                            return ergo_runtime::diagnostic! {
                                 labels: [
-                                    primary(me.source().with("")),
-                                    secondary(Source::get(&v).with("value being bound"))
+                                    primary(me.source().with(""))
                                 ],
-                                error: "cannot bind a setter more than once"
-                            }.into();
+                                message: "cannot bind a setter more than once"
+                            }.add_value_info("value being bound", &v).await.into_error().into();
                         }
                         types::Unit.into()
                     }.boxed()
