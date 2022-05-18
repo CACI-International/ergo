@@ -15,7 +15,7 @@
 			}
 
 			body {
-				padding: 0.5in;
+				padding: 0.4in;
 				column-gap: 0.25in;
 				column-fill: auto;
 				max-width: 800px;
@@ -32,7 +32,7 @@
 					width: 8.5in;
 					height: 11in;
 					box-sizing: border-box;
-					font-size: 6.5pt;
+					font-size: 6.4pt;
 					max-width: none;
 					color-adjust: exact;
 				}
@@ -43,7 +43,7 @@
 						column-count: 3;
 						width: 11in;
 						height: 8.5in;
-						font-size: 7pt;
+						font-size: 7.2pt;
 					}
 				}
 			}
@@ -96,10 +96,6 @@
 				color: #000;
 				background-color: #EEE;
 				font-style: normal;
-			}
-
-			span.pattern {
-				background-color: #FFB;
 			}
 
 			span.opt {
@@ -156,7 +152,7 @@
 				<div>array</div>
 			</div>
 			<div class="row subset">
-				<div><em>^</em>:value</div>
+				<div><em>^</em>arr</div>
 				<div>merge array</div>
 			</div>
 			<div class="row">
@@ -164,20 +160,28 @@
 				<div>map or block</div>
 			</div>
 			<div class="row subset">
-				<div><span class="pattern">a</span> <em>=</em> 1</div>
-				<div>binding (left is a pattern expression)</div>
+				<div>a <em>=</em> 1<br><em>~</em>a<em>=</em>1</div>
+				<div>binding</div>
 			</div>
 			<div class="row subset">
-				<div><em>^</em>:value</div>
-				<div>merge array (sequence values)<br>merge map (keys)<br>merge string (as key)</div>
+				<div><em>^</em>value</div>
+				<div>merge array (sequence values)<br>merge map (keys)<br>merge unbound (match extra keys when binding)</div>
 			</div>
 			<div class="row">
 				<div><em>(</em>cmd a b c<em>)</em></div>
 				<div>group (subexpression)</div>
 			</div>
 			<div class="row">
+				<div><em>_</em> = 123</div>
+				<div>bind to any value</div>
+			</div>
+			<div class="row">
 				<div><em>:</em>a</div>
-				<div>get<br><span class="pattern">set</span></div>
+				<div>set</div>
+			</div>
+			<div class="row">
+				<div><em>$</em>a</div>
+				<div>get</div>
 			</div>
 			<div class="row">
 				<div>a<em>:</em>b</div>
@@ -185,30 +189,26 @@
 			</div>
 			<div class="row">
 				<div>cmd<em> </em>a<em> </em>b</div>
-				<div>command<br><span class="pattern">pattern command</span></div>
+				<div>command</div>
 			</div>
 			<div class="row subset">
-				<div><em>(</em><span class="pattern">key</span> <em>=</em> value<em>)</em></div>
+				<div><em>~</em>key<em>=</em>value<br><em>(</em>key <em>=</em> value<em>)</em></div>
 				<div>keyed argument</div>
 			</div>
 			<div class="row subset">
-				<div><em>^</em>:value</div>
-				<div>merge array (args)<br>merge map (keyed args)<br>merge string (as key)</div>
+				<div><em>^</em>value</div>
+				<div>merge array (args)<br>merge map (keyed args)<br>merge args</div>
 			</div>
 			<div class="row">
-				<div><span class="pattern">:a</span> <em>-></em> cmd :a</div>
-				<div>unbound (left is a pattern expression)</div>
-			</div>
-			<div class="row">
-				<div><em>!</em>cmd arg</div>
-				<div>force<br><span class="pattern">interpret as expression</span></div>
+				<div>:a <em>-></em> cmd $a</div>
+				<div>unbound</div>
 			</div>
 			<div class="row">
 				<div><em># </em>my comment</div>
 				<div>line comment</div>
 			</div>
 			<div class="row">
-				<div>cmd <em>#</em>a <em>#</em>(b {c=1}) d</div>
+				<div>cmd a <em>#</em>(b {c=1}) d</div>
 				<div>tree comment</div>
 			</div>
 			<div class="row">
@@ -223,7 +223,7 @@
 				<h3>In quoted strings, block strings, and doc comments:</h3>
 			</div>
 			<div class="row subset">
-				<div>"hello <em>^</em>name"<br>## document <em>^</em>(a b c)</div>
+				<div>"hello <em>$</em>name"<br>## document <em>$(</em>a b c<em>)</em></div>
 				<div>insert value as string</div>
 			</div>
 			<div class="row">
@@ -243,52 +243,43 @@
 			</div>
 			<div class="row">
 				<div>{<em>abc</em>}</div>
-				<div>same as <code>{:abc = :abc}</code><br>(binding an outer value into scope)</div>
+				<div>same as <code>abc = $abc</code><br>(binding an outer value into scope)</div>
 			</div>
 			<div class="row">
-				<div><em>a</em>:b:c</div>
-				<div>same as <code>:a:b:c</code></div>
+				<div>~<em>abc</em></div>
+				<div>same as <code>~abc=()</code><br>(convenient for flags)</div>
 			</div>
 			<div class="row">
-				<div><em>cmd</em> a b c</div>
-				<div>same as <code>:cmd a b c</code></div>
+				<div>{<em>:abc</em>}<br>~<em>:abc</em></div>
+				<div>same as <code>abc=:abc</code><br>(binding a value for the outer scope)</div>
+			</div>
+			<div class="row">
+				<div><em>str</em>:b:c<br><em>str</em> a b c<br>"hello $(<em>str</em>)"<br>^<em>str</em></div>
+				<div>same as <code>$str</code></div>
 			</div>
 			<div class="row">
 				<div><em>a</em> = 1</div>
 				<div>same as <code>:a = 1</code></div>
 			</div>
-			<div class="row">
-				<div>"hello ^(<em>name</em>)"</div>
-				<div>same as <code>"hello ^(:name)"</code></div>
-			</div>
 			<p>Commas are interchangeable with semicolons and newlines.</p>
-			<p>Spaces in groups are interchangeable with newlines.</p>
-			<p>Within <span class="pattern">pattern expressions</span> a <code>_</code> string will match any value.</p>
+			<p>Spaces in groups (parens) are interchangeable with newlines.</p>
 		</section>
 		<section>
 			<h2>Builtin Bindings</h2>
 			<div class="row">
-				<div><em>fn</em> :x -> :x</div>
-				<div>match command arguments</div>
+				<div><em>fn</em> :x :y ^:z -> $x</div>
+				<div>match arguments</div>
 			</div>
 			<div class="row">
-				<div><em>pat</em> :x -> :x</div>
-				<div>match pattern command arguments</div>
-			</div>
-			<div class="row">
-				<div><em>index</em> :i -> :i</div>
+				<div><em>index</em> :i -> $i</div>
 				<div>match index operation</div>
 			</div>
 			<div class="row">
-				<div><em>index</em> :v :i</div>
-				<div>index operation (as a function)</div>
-			</div>
-			<div class="row">
-				<div><em>bind</em> :target :v</div>
+				<div><em>bind</em> $target $v</div>
 				<div>bind operation (as a function)</div>
 			</div>
 			<div class="row">
-				<div>:<em>unset</em></div>
+				<div>$<em>unset</em></div>
 				<div>an unset value</div>
 			</div>
 			<div class="row">
@@ -296,24 +287,28 @@
 				<div>load a file<br><span class="opt">call result with extra arguments</span></div>
 			</div>
 			<div class="row">
-				<div><em>doc</em> :v</div>
+				<div><em>doc</em> $v</div>
 				<div>get documentation for a value</div>
 			</div>
 			<div class="row">
-				<div><em>doc:path</em> ()</div>
-				<div>get the current doc path</div>
+				<div><em>doc:path</em></div>
+				<div>the current doc path</div>
 			</div>
 			<div class="row">
-				<div><em>doc:write</em> path :v</div>
+				<div><em>doc:write</em> path $v</div>
 				<div>write docs to the path</div>
 			</div>
 			<div class="row">
-				<div><em>doc:child</em> path :v</div>
+				<div><em>doc:child</em> path $v</div>
 				<div>write child docs to the subpath</div>
 			</div>
 			<div class="row">
-				<div><em>doc:value</em> ()</div>
-				<div>get the value being documented</div>
+				<div><em>doc:value</em></div>
+				<div>the value being documented</div>
+			</div>
+			<div class="row">
+				<div><em>doc:raw</em> $v</div>
+				<div>get the raw doc metadata for a value</div>
 			</div>
 			<div class="row">
 				<div><em>std</em>:String</div>
@@ -322,6 +317,14 @@
 			<div class="row">
 				<div><em>workspace</em>:value</div>
 				<div>load the first ancestor workspace.ergo</div>
+			</div>
+			<div class="row">
+				<div><em>!id</em> $abc</div>
+				<div>indicate a value is relevant to the expression identity</div>
+			</div>
+			<div class="row">
+				<div><em>!no-id</em> $abc</div>
+				<div>indicate a value is not relevant to the expression identity</div>
 			</div>
 		</section>
 		<section>
@@ -359,11 +362,11 @@
 				<div>document the read function</div>
 			</div>
 			<div class="row">
-				<div><em>ergo -de :ergo</em></div>
+				<div><em>ergo -de $ergo</em></div>
 				<div>document the ergo function</div>
 			</div>
 			<div class="row">
-				<div><em>ergo -de :fn</em></div>
+				<div><em>ergo -de $fn</em></div>
 				<div>document the fn function</div>
 			</div>
 			<div class="row">
@@ -382,34 +385,33 @@
 				<div>execute an external program</div>
 			</div>
 			<div class="row">
-				<div><em>std:cache</em> :value</div>
+				<div><em>std:cache</em> $value</div>
 				<div>persistently cache a value's result</div>
 			</div>
 			<div class="row long">
-				<div><em>std:if</em> :condition :value <em>else</em> :otherwise</div>
+				<div><em>std:if</em> $condition $value <em>else</em> $otherwise</div>
 				<div>conditionally evaluate to one value or another</div>
 			</div>
 			<div class="row long">
-				<div><em>std:import</em> {Path = {new}, if} = :std</div>
+				<div><em>std:import</em> {Path = {:new}, :if} = $std</div>
 				<div>evaluate and bind values from a map into scope</div>
 			</div>
 			<div class="row">
-				<div><em>std:match</em> :value [<br>  std:String :str -> :str<br>  :else -> :else<br>]</div>
+				<div><em>std:match</em> $value [<br>  std:String :str -> $str<br>  :else -> $else<br>]</div>
 				<div>evaluate a value and match to the first case that successfully binds the value</div>
 			</div>
 			<div class="row">
-				<div><em>std:task</em> "my task" :value</div>
+				<div><em>std:task</em> "my task" $value</div>
 				<div>concurrently evaluate a value as a task</div>
 			</div>
 		</section>
 		<section>
 			<h2>Values</h2>
 			<p>
-				Values are lazily evaluated (unless <code>!</code> is used) and
-				automatically calculate an identity based on the values they
-				use and their syntactic content. This identity is what e.g.
-				<code>std:cache</code> uses as a cache key without evaluating
-				the value at all.
+				Values are lazily evaluated and automatically calculate an
+				identity based on the values they use and their syntactic
+				content. This identity is what e.g. <code>std:cache</code> uses
+				as a cache key without evaluating the value at all.
 			</p>
 			<p>
 				Values which use dynamic bindings (<code>std:dynamic</code>)
