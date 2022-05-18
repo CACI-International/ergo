@@ -81,5 +81,4 @@ not work correctly with this flag, so the default is `less`. You can:
 * Persist command timing information for better estimates.
 * Add value dependency tree print to help debug consistency issues.
 * Debugger and profiler.
-* Maybe don't have a fallback doc string if there is no documentation set.
 * Dropping thread for Values (to avoid possibly large stacks).

@@ -1,6 +1,6 @@
 //! Error functions.
 
-use ergo_runtime::{metadata::Source, traits, type_system::ErgoType, types, Value};
+use ergo_runtime::{error::DiagnosticInfo, traits, type_system::ErgoType, types, Value};
 
 pub fn r#type() -> Value {
     types::Type {
@@ -34,11 +34,14 @@ async fn display(value: _) -> Value {
 ///
 /// `message` is displayed as a string in the Error.
 async fn new(message: _, (source): [_]) -> Value {
-    let source = match source {
-        None => Source::get(&message),
-        Some(v) => Source::get_origin(&v),
-    };
+    let source = source.unwrap_or_else(|| message.clone());
 
     let message = traits::to_string(message).await?;
-    source.with(message).into_error().into()
+    ergo_runtime::diagnostic! {
+        message: message
+    }
+    .add_value_info("source", &source)
+    .await
+    .into_error()
+    .into()
 }
