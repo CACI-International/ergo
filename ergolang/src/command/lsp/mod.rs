@@ -437,11 +437,12 @@ impl LanguageServer for Service {
                                 "std",
                                 "workspace",
                                 "fn",
-                                "pat",
                                 "index",
+                                "doc",
                                 "bind",
                                 "unset",
-                                "doc",
+                                "!id",
+                                "!no-id",
                             ]
                             .into_iter()
                             .any(|k| **s == k)

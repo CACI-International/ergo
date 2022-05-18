@@ -6,7 +6,7 @@ use ergo_runtime::{
     error::DiagnosticInfo,
     metadata::{self, Doc, DocValueKey},
     nsid, traits, try_result, types,
-    value::match_value,
+    value::{match_value, EvalForId},
     Context, Source, Value,
 };
 use futures::future::FutureExt;
@@ -91,29 +91,65 @@ fn write_doc(path: &std::path::Path, md: &str) -> Result<(), String> {
 
 /// The doc function, supporting a number of indexed functions as well.
 pub fn doc() -> Value {
-    let value: Value = types::ergo_fn_value! {
-        /// Get the value currently being documented, if any.
-        ///
-        /// Arguments: `()`
-        ///
-        /// Returns the value being documented, or Unset if no value is being documented.
-        async fn value(_: types::Unit) -> Value {
-            Context::with(|ctx| ctx.dynamic_scope.get(&DocValueKey).map(|v| v.as_ref().clone().into()))
-                .unwrap_or(types::Unset.into())
-        }
-    };
+    let mut value = Value::dynamic_impure(
+        || async {
+            Context::with(|ctx| {
+                ctx.dynamic_scope
+                    .get(&DocValueKey)
+                    .map(|v| v.as_ref().clone().into())
+            })
+            .unwrap_or(types::Unset.into())
+        },
+        EvalForId::set(depends![const nsid!(doc::value)]),
+    );
+    Doc::set_string(
+        &mut value,
+        "The value currently being documented, if any.
 
-    let path: Value = types::ergo_fn_value! {
-        /// Get the current documentation path, if any.
-        ///
-        /// Arguments: `()`
-        ///
-        /// Returns the doc Path, or Unset if no Path is present (documentation is not being
-        /// written to the filesystem).
-        async fn path(_: types::Unit) -> Value {
+Evaluates to the value being documented, or Unset if no value is being documented.",
+    );
+
+    let mut path = Value::dynamic_impure(
+        || async {
             match DocPath::get() {
                 None => types::Unset.into(),
-                Some(p) => types::Path::from(p.current()).into()
+                Some(p) => types::Path::from(p.current()).into(),
+            }
+        },
+        EvalForId::set(depends![const nsid!(doc::path)]),
+    );
+    Doc::set_string(&mut path,
+        "The current documentation path, if any.
+
+Evaluates to the doc Path, or Unset if no Path is present (documentation is not being written to the filesystem)."
+    );
+
+    let raw: Value = types::ergo_fn_value! {
+        /// Get the raw documentation metadata.
+        ///
+        /// Arguments: `:value`
+        ///
+        /// Returns either a `String` or `Unset`.
+        ///
+        /// Unlike `doc`, this will not create a doc string describing the type when no
+        /// documentation string has been set, nor will it evaluate the given value until a doc
+        /// metadata is available.
+        async fn raw(value: _) -> Value {
+            match value.get_metadata(&Doc) {
+                None => types::Unset.into(),
+                Some(v) => {
+                    let mut v = v.owned();
+                    let doc_v = value.clone();
+                    crate::Context::fork(
+                        |ctx| {
+                            ctx.dynamic_scope
+                                .set(&metadata::Source::get(&value).with(DocValueKey), doc_v)
+                        },
+                        crate::Context::eval(&mut v),
+                    )
+                    .await?;
+                    v
+                }
             }
         }
     };
@@ -213,6 +249,7 @@ pub fn doc() -> Value {
             let path = path.clone();
             let write = write.clone();
             let child = child.clone();
+            let raw = raw.clone();
             let source = metadata::Source::get(&v);
             async move {
                 match_value! {v,
@@ -233,6 +270,8 @@ pub fn doc() -> Value {
                             child
                         } else if s == "write" {
                             write
+                        } else if s == "raw" {
+                            raw
                         } else {
                             metadata::Source::get(&ind).with("unknown index").into_error().into()
                         }
@@ -249,10 +288,13 @@ Arguments: `:value`
 
 Returns the documentation string.
 
+## Values
+* `path` - The documentation output path, if any.
+* `value` - The value being documented, if any.
+
 ## Functions
 * `child` - Write documentation to a relative path.
-* `path` - Get the documentation output path, if any.
-* `value` - Get the value being documented, if any.
+* `raw` - Get the raw documentation metadata for a value.
 * `write` - Write documentation to the given output path.",
     )
     .into()

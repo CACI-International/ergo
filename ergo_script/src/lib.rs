@@ -379,7 +379,7 @@ mod test {
         #[test]
         fn expression_value() -> Result<(), String> {
             script_eval_to(
-                "## doc $(doc:value () |>:v)
+                "## doc $(doc:value:v)
                 a = { v = comment }
                 doc $a",
                 SRString("doc comment"),

@@ -80,7 +80,7 @@ module = :val -> {
             values = ($values
                 | plugin:Iter:order (fn :a :b -> plugin:String:compare a:name b:name)
                 | plugin:Iter:map (fn :e -> {
-                    plugin:match (doc:path()) [
+                    plugin:match doc:path [
                         $unset -> "* $(e:name): $(summary e:value)"
                         _ -> {
                             child = doc:child (path-safe e:name) e:value

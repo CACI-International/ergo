@@ -63,6 +63,8 @@
   disallow merging strings.
 * Change the merge operator (`^`) to imply a get when followed by a string
   literal. Thus, `^$something` can be simply `^something`.
+* Add `doc:raw` to get the raw documentation metadata.
+* Change `doc:value` and `doc:path` to be values rather than functions.
 
 ### Breaking Changes
 * Any use of `!` should be replaced with equivalent code.
@@ -81,6 +83,8 @@
   `{ :a, :b, :c }`.
 * Change `^key` to `~key`, and optionally change `(key=value)` keyed args to
   `~key=value`.
+* Change `doc:value ()` and `doc:path ()` to `doc:value` and `doc:path`,
+  respectively.
 
 ## 1.0.0-rc.3  -- 2021-12-14
 * Properly remove previously-set keys when a key is set to `unset`.
