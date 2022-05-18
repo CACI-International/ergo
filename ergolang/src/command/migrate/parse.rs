@@ -243,15 +243,18 @@ fn string_parts<E>(
                             Some("^"),
                         ));
                     } else if s.contains('$') {
-                        migrations.push(Migration::syntax(
-                            {
-                                let mut s = source;
-                                s.location.length -= 1;
-                                s
-                            },
-                            "a literal `$` in quoted strings must be escaped as `$$`",
-                            Some(s.split('$').collect::<Vec<_>>().join("$$")),
-                        ));
+                        for (i, _) in s.match_indices('$') {
+                            migrations.push(Migration::syntax(
+                                {
+                                    let mut s = source;
+                                    s.location.start += i;
+                                    s.location.length = 1;
+                                    s
+                                },
+                                "a literal `$` in quoted strings must be escaped as `$$`",
+                                Some("$$"),
+                            ));
+                        }
                     }
                 }
                 StringTree::Expression(tree) => {

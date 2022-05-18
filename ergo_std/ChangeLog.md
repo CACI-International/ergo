@@ -80,7 +80,7 @@
   ```
   { result, metadata-value } = std:meta:eval KEY :value
   ```
-* Replace `std:eval` calls with `std:Typed`. In patterns, they are
+* Replace `std:eval` calls with `std:Type:any`. In patterns, they are
   interchangeable. In normal expressions, `std:eval :v` can be converted to
   `{std:Typed :v = :v; :v}`, though you may no longer need `std:eval` semantics
   at all.
