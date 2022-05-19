@@ -71,12 +71,6 @@ pub struct Evaluate {
     /// The output format.
     pub format: OutputFormat,
 
-    #[clap(short = 'E', long, default_value = "3", parse(try_from_str = parse_error_limit))]
-    /// The number of frames of context to display with each error.
-    ///
-    /// Specify "none" to display all frames.
-    pub error_limit: std::option::Option<usize>,
-
     #[clap(short, long)]
     /// The maximum number of jobs to run concurrently.
     ///
@@ -101,7 +95,6 @@ pub struct Evaluate {
     /// May be "off", "on", or "aggressive".
     pub lint: Option<Option<ergo_script::LintLevel>>,
 
-    // #[structopt(long)]
     #[clap(skip)]
     /// Enable evaluation backtraces on errors.
     pub backtrace: bool,

@@ -147,6 +147,9 @@ impl Sources {
 
     /// Get the name of a source.
     pub fn name(&self, id: SourceId) -> Option<SourceName> {
+        if id == 0 {
+            return Some(SourceName::String("<missing>"));
+        }
         self.get(id).map(|source| match source {
             Source::File { path, .. } | Source::BinaryFile { path } => SourceName::Path(path),
             Source::String { name, .. } => SourceName::String(name.as_str()),
@@ -155,9 +158,12 @@ impl Sources {
 
     /// Get the content of a source.
     pub fn content(&self, id: SourceId) -> Option<&str> {
+        if id == 0 {
+            return Some("");
+        }
         self.get(id).and_then(|source| match source {
             Source::File { content, .. } | Source::String { content, .. } => Some(content.as_str()),
-            Source::BinaryFile { .. } => None,
+            Source::BinaryFile { .. } => Some(""),
         })
     }
 

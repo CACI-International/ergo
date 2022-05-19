@@ -76,6 +76,7 @@ pub mod plugin {
 
     // This struct _must_ be abi-stable, but `tls` and `log_level` (while abi-stable) don't derive
     // StableAbi, so we don't use the derivation here.
+    #[repr(C)]
     pub struct Context {
         tls: plugin_tls::Context,
         log: ROption<log::Log>,

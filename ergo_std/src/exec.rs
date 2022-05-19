@@ -394,25 +394,25 @@ ergo_runtime::type_system::ergo_traits_fn! {
     }
     impl traits::IntoTyped<types::String> for Child {
         async fn into_typed(self) -> Value {
-            try_result!(traits::bind_no_error(self.clone().into(), types::Index(types::String::from(CHILD_SUCCESS_INDEX).into()).into()).await);
+            try_result!(traits::bind_no_error(self.clone().into(), Source::copy(&self, types::Index(types::String::from(CHILD_SUCCESS_INDEX).into()).into())).await);
             traits::into::<types::String>(self.as_ref().stdout.clone()).await.into()
         }
     }
     impl traits::IntoTyped<types::ByteStream> for Child {
         async fn into_typed(self) -> Value {
-            try_result!(traits::bind_no_error(self.clone().into(), types::Index(types::String::from(CHILD_SUCCESS_INDEX).into()).into()).await);
+            try_result!(traits::bind_no_error(self.clone().into(), Source::copy(&self, types::Index(types::String::from(CHILD_SUCCESS_INDEX).into()).into())).await);
             traits::into::<types::ByteStream>(self.as_ref().stdout.clone()).await.into()
         }
     }
     impl traits::Nested for Child {
         async fn nested(&self) -> RVec<Value> {
-            rvec![traits::bind(SELF_VALUE.clone(), types::Index(types::String::from(CHILD_SUCCESS_INDEX).into()).into()).await]
+            rvec![traits::bind(SELF_VALUE.clone(), Source::copy(SELF_VALUE, types::Index(types::String::from(CHILD_SUCCESS_INDEX).into()).into())).await]
         }
     }
     impl traits::Bind for Child {
         async fn bind(&self, arg: Value) -> Value {
             let src = Source::get(&arg);
-            let ind = try_result!(Context::eval_as::<types::Index>(arg).await).to_owned().0;
+            let ind = try_result!(Context::eval_as::<types::Index>(arg.clone()).await).to_owned().0;
             let ind = try_result!(Context::eval_as::<types::String>(ind).await);
             let s = ind.as_ref().as_str();
             match s {
