@@ -1,11 +1,11 @@
 # Syntax and Semantics
 
 This guide describes the syntax of ergo scripts. It starts with the basics of
-parsing and builds on them incrementally. Ergo scripts are parsed in four
-stages; the first 2 are tokenization and tree tokenization (to match paired
-tokens), which occur serially (without loading everything into memory at once).
-The next 2 stages are tree parsing and expression parsing, which do load all
-tree-tokens into memory and recursively parse the structures.
+parsing and builds on them incrementally. Ergo scripts are parsed in three
+stages; the first is tokenization (including some context to match paired
+tokens), which occurs serially (without loading everything into memory at once).
+The next 2 stages are tree parsing and expression parsing, which iterate over
+all tokens and recursively parses the structures that are kept in memory.
 
 ## Tokenization
 Script tokenization is contextual, producing a stream of tokens which can be
@@ -13,7 +13,7 @@ used to build a syntax tree. The resulting stream of tokens contains no
 whitespace. It occurs according to the following rules:
 
 Within a normal context (e.g. not a string):
-* Symbolic tokens are always read as such (`-> : ! = ^ | |> <|`).
+* Symbolic tokens are always read as such (`-> : = ^ | |> <| ~ $`).
 * Paired tokens (`{ } [ ] ( )`) are read and verified to be correctly paired. 
 * Sequences of non-newline whitespace are read as a single whitespace token
   (additional whitespace does not matter to parsing).
@@ -39,12 +39,12 @@ Within a normal context (e.g. not a string):
 * Any sequences of characters that don't match the above are read as a string.
 
 Within a quoted string context:
-* A `^` followed by a paired token will read until the matching paired token
+* A `$` followed by a paired token will read until the matching paired token
   using a normal tokenizing context.
-* A `^` followed by `[-_A-Za-z0-9]+` will read the single word using a normal
+* A `$` followed by `[-_A-Za-z0-9]+` will read the single word using a normal
   tokenizing context.
-* A `^` folowed by a `^` will read as if a single `^` string were in that
-  location (to insert a literal `^`).
+* A `$` folowed by a `$` will read as if a single `$` string were in that
+  location (to insert a literal `$`).
 * Any sequences of characters (including whitespace) that don't match the above
   are read as a string.
 
@@ -53,10 +53,12 @@ Tree parsing ingests the tokens from the previous step and builds a parsed tree
 of items, where the pipe operators (`|`, `|>`, and `<|`) are desugared. It also
 disambiguates infix operators using rules of precedence, where the precedence of
 operators is as follows (descending):
+* `$` (prefix)
 * `:` (prefix)
 * `:` (left associative)
-* `!`/`^` (prefix)
-* `!` (prefix of an entire expression)
+* `~` [.. `=`] (prefix)
+* `^` (prefix)
+* `#`/`##` (prefix)
 * `->` (right associative)
 * `|`/`|>` (left associative)
 * `<|` (right associative)
@@ -66,8 +68,9 @@ operators is as follows (descending):
 
 ### Syntax Sugar
 
-#### Pattern expression strings
-If a pattern expression to the left of a `=` is only a string, this step elaborates this to a set expression:
+#### Set expression strings
+If a string literal is to the left of a `=`, this elaborates to a set
+expression:
 ```ergo
 a = 1
 ```
@@ -87,8 +90,37 @@ the block):
 ```
 is the same as
 ```ergo
-{:a = :a}
+{:a = $a}
 ```
+
+Similarly:
+```ergo
+{:a}
+```
+is the same as
+```ergo
+{:a = $a}
+```
+
+#### Keyed arguments
+Keyed arguments have a few handy shorthands:
+```ergo
+cmd ~a
+```
+is the same as
+```ergo
+cmd ~a=()
+```
+which is useful for setting flags.
+
+```ergo
+fn ~:a -> ()
+```
+is the same as
+```ergo
+fn ~a=:a -> ()
+```
+which is useful for matching keyed arguments.
 
 #### Pipe operators
 Pipe operators desugar in the following ways:
@@ -107,19 +139,21 @@ a b c |> :d # same as (a b c) :d
 a b |>:<| c d # same as (a b):(c d)
 ```
 
-#### Index/Command strings
-If a string is the value to index or first child of a command or pattern
-command, it will desugar to a get expression:
+#### Index/Command/Merge strings
+If a string is the value to index, first child of a command, or the value to
+merge, it will desugar to a get expression:
 ```ergo
 f a b c
 map:ind
 g :z = 1
+a ^rest
 ```
 is the same as
 ```ergo
-:f a b c
-:map:ind
-(!:g) :z = 1
+$f a b c
+$map:ind
+$g :z = 1
+a ^$rest
 ```
 
 The resulting AST tree is composed of operations, strings, doc comments, and
@@ -129,13 +163,13 @@ groupings.
 If a string is the lone value being merged into a quoted string, it will desugar
 to a get expression:
 ```ergo
-"hello ^name"
-## Arguments: ^(args)
+"hello $name"
+## Arguments: $(args)
 ```
 is the same as
 ```ergo
-"hello ^(:name)"
-## Arguments: ^(:args)
+"hello $($name)"
+## Arguments: $($args)
 ```
 
 ## Expression Parsing
@@ -143,11 +177,8 @@ Finally, the parsed trees from the previous step are parsed into script
 expressions. This step:
 * ensures `^` is applied in valid expressions (within
   blocks/arrays/commands),
-* ensures `=` is applied in valid expressions (within blocks/commands), and
-* removes any tree-commented (`#`) expressions, and
-* parses the colon operators, the string `_`, and commands differently based on
-  whether the expression is a pattern expression (left of a `=` or `->`) or a
-  normal expression.
+* ensures `~` and `=` are applied in valid expressions (within blocks/commands), and
+* removes any tree-commented (`#`) expressions.
 
 Below are examples of the valid expressions in the language:
 
@@ -161,8 +192,8 @@ Evalutaes to a unit value.
 ```ergo
 _ = something
 ```
-In a pattern expression, the unquoted string `_` evaluates to a value which can
-be successfully bound with any value.
+The string `_` evaluates to a value which can be successfully bound with any
+value.
 
 ### String
 ```ergo
@@ -178,13 +209,13 @@ Strings evaluates to literal string values.
 
 ### Compound String
 ```ergo
-"compound ^string"
-' ^(doc :value)
+"compound $string"
+' $(doc $value)
 ' some additional info over
 ' multiple lines
 ```
-Compound strings are any quoted strings with at least one `^` expression within.
-The value parsed by the `^` will be displayed in the string at that location.
+Compound strings are any quoted strings with at least one `$` expression within.
+The value parsed by the `$` will be displayed in the string at that location.
 
 ### Array
 ```ergo
@@ -221,7 +252,7 @@ are not constrained to strings, they can be _any_ value.
 ### Function
 ```ergo
 _ -> b
-f = fn :a :b -> [:a,:b]
+f = fn :a :b -> [$a,$b]
 ```
 Functions are created with the `->` operator. Note that functions are so-named
 for familiarity, but are actually _unbound_ values which may be bound later. The
@@ -229,10 +260,8 @@ for familiarity, but are actually _unbound_ values which may be bound later. The
 arguments in a binding, but you can also create unbound values (like the above
 `_ -> b`) which can be used in other contexts aside from just commands.
 
-The left side of a `->` operator is parsed as a pattern expression.
-
 A function expression evaluates to a value which, when bound, will bind to the
-left pattern expression and (if successful) return the right expression with the
+left expression and (if successful) return the right expression with the
 captured values.
 
 ### Bind Statement
@@ -242,19 +271,15 @@ a = 1
 ```
 Bind statements are created with the `=` operator.
 
-The left side of a `=` operator is parsed as a pattern expression.
-
 Bind statements are only valid within blocks and commands.
 
 ### Get
 ```ergo
-:a
-:[a,b]
+$a
 ```
 To get a value from the enclosing lexical binding scope, you precede the key
-with `:`. This is _only_ in normal expressions, in pattern expressions a `:`
-evaluates to a set expression (see below). A get expression captures the bound
-value, or an error occurs if no such binding exists.
+with `$`. A get expression captures the bound value, or an error occurs (at
+parse time) if no such binding exists.
 
 ### Set
 ```ergo
@@ -262,9 +287,8 @@ value, or an error occurs if no such binding exists.
 :a -> b
 :[a,b] = 1
 ```
-In a pattern expression (the left side of `=` and `->`), a colon preceding an
-expression will cause the expression to be evaluated as a _normal_ expression
-and used as a key to create a binding in the current scope. A set expression
+A colon preceding an expression will cause the expression to be evaluated and
+used as a key to create a binding in the current scope. A set expression
 evaluates to an unbound value which, when bound, will populate the set value in
 all expressions that have captured the binding with a get expression.
 
@@ -272,20 +296,16 @@ all expressions that have captured the binding with a get expression.
 ```ergo
 a:b
 a:b:c
-:a:b:c
-a:b:c = [1,2]
+$a:b:c
 ```
 The index operator `:` is an infix left-associative operator which will evaluate
 both subexpressions and bind the left with an Index containing the right. One
 can match such a binding with the builtin `index` function:
 ```ergo
-ind-to-array = index :a -> [:a]
-ind-to-array:b # Evaluates to [b]
+ind-to-array = index :a -> [$a]
+ind-to-array:42 # Evaluates to [42]
 ```
 The expression evaluates to the result of indexing. 
-
-*Sugar*: Index expressions will evaluate as if they were written as `!a:b` (see
-the `Force` operator) if the left side is a captured expression.
 
 The `Array` and `Map` types support indexing to retrieve the contents. For maps,
 index with the map key. If the key does not exist, the expression will evaluate
@@ -295,8 +315,8 @@ number to index from the end; if the index does not exist an error will occur.
 ### Command
 ```ergo
 std:exec ls -l
-:my-fn a b c
-my-fn (kwarg=123) a b c
+$my-fn a b c
+my-fn ~kwarg=123 a b c
 f a b (c d e)
 ```
 A command expression is any group in a normal expression (where parentheses can
@@ -310,65 +330,22 @@ statements or map merge statements will set the keyed arguments in `Args`.
 The expression evaluates to the result of binding the first child with the
 `Args` value. One can match such a binding with the builtin `fn` function:
 ```ergo
-pair = fn :x :y (extra = :z) -> std:if :z [:x,:y,:z] else [:x,:y]
+pair = fn :x :y ~extra=:z -> std:if $z [$x,$y,$z] else [$x,$y]
 pair 1 2 # evaluates to [1,2]
-pair (extra=3) 1 2 # evaluates to [1,2,3]
+pair ~extra=3 1 2 # evaluates to [1,2,3]
 ```
-
-### Pattern Command
-```ergo
-f a b c = d
-```
-A pattern command expression is any group in a pattern expression (where
-parentheses can be used to create groups) that has more than one child. This
-behaves identically to command expressions, including the use of a `:` suffix to
-call with no arguments.
-
-The difference is that instead of binding an `Args`-typed value, it
-binds a `PatternArgs`-typed value to differentiate the case. One can match such a
-binding with the builtin `pat` function:
-```ergo
-unpair = pat :x :y (extra = :z) -> :value -> {
-    bind :x value:0
-    bind :y value:1
-    std:if :z (bind :z value:2)
-}
-unpair :a :b = [1,2] # 'a' now evaluates to 1, 'b' now evaluates to 2
-unpair (extra=:c) :a :b = [1,2,3] # a => 1, b => 2, c => 3
-unpair (unpair :a :b) (unpair :c :d) = [[1,2],[3,4]] # a => 1, b => 2, c => 3, d => 4
-```
-
-Note that `pat` returns a value that will be applied in the pattern expression,
-so typically you want the right hand side to evaluate to a function/unbound
-value that will then be bound to whatever value is bound subsequently (e.g.,
-`:value` in the above is bound to the right-hand side of the `=` statements).
-
-### Force Expression
-```ergo
-!std:string:format "{}" :a
-std:string:format "{}" !(f :a)
-```
-A force expression uses a prefix `!` to force the following expression to be
-evaluated and captured as soon as possible. _As soon as possible_ means as soon
-as all nested captures are resolved/bound.
-
-The prefix may be at the very start of a grouping (e.g. as it is in the second
-case above) or directly before a group item expression (as in the third case).
-
-The expression is actually applied prior to any other expression at a syntactic
-level rather than during runtime evaluation.
 
 ### Merge Statement
 ```ergo
 a = [1,2]
-b = [^:a,3,4] # same as [1,2,3,4]
+b = [^a,3,4] # same as [1,2,3,4]
 
-^:map
+^map
 m = {a = 1, b = 2}
-k = {a = 5, ^:m, b = 3, c = 4} # same as {a = 1, b = 3, c = 4}
+k = {a = 5, ^m, b = 3, c = 4} # same as {a = 1, b = 3, c = 4}
 
 command = [ls,-l]
-exec ^{pwd = /home} ^:command
+exec ^{pwd = /home} ^command
 ```
 A merge statement uses a prefix `^` to indicate that a value should be merged
 into the enclosing array/block/command expression.
@@ -378,26 +355,21 @@ concatenated in-place.
 
 In blocks, you may merge a map, and all keys in the map will become bindings in
 the block. You may merge an array to sequentially insert the values of the array
-as expressions in the block. You may merge a string to insert that string as a
-key with a unit value.
+as expressions in the block.
 
-In command and pattern command expressions, in any position following the first
-child a map (for keyed arguments), array (for positional arguments), string (for
-a keyed argument with no value, useful for flags) or Args/PatternArgs can be
-merged. 
-
-In quoted strings, you can merge any value which can be displayed.
+In commands, any position following the function to call may merge a map (for
+keyed arguments), array (for positional arguments), or Args.
 
 ### Doc Comments
 ```ergo
 ## Provide a friendly greeting.
-hello = fn :name -> "Hello, ^name!"
+hello = fn :name -> "Hello, $name!"
 
-## ^(doc :hello) But not too friendly.
-warn-of-fire = fn :name -> "^(hello :name) Your pants are on fire."
+## $(doc $hello) But not too friendly.
+warn-of-fire = fn :name -> "$(hello $name) Your pants are on fire."
 
 ## A map containing:
-## ^(doc (doc:value()):something)
+## $(doc doc:value:something)
 map = {
     something = my-value
 }
@@ -408,7 +380,7 @@ items (i.e. blocks and arrays) and within parentheses prior to exactly one
 expression. Multiple lines of doc comments are merged together into a single
 comment on the first non-doc-comment expression that follows them.
 
-Doc comments may contain `^` just like quoted strings, which will evaluate the
+Doc comments may contain `$` just like quoted strings, which will evaluate the
 value and display it at that location within the string.
 
 ### Attributes

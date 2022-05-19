@@ -387,7 +387,7 @@ where
 
         // Resolve operators
         // Precedence (descending):
-        //   Dollar
+        //   Dollar Prefix
         //   Colon Prefix
         //   Colon (Left assoc)
         //   TildeEqual (Left assoc)

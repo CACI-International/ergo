@@ -46,15 +46,6 @@ pub enum OutputFormat {
     Auto,
 }
 
-fn parse_error_limit(arg: &str) -> Result<Option<usize>, std::num::ParseIntError> {
-    if arg == "none" {
-        Ok(None)
-    } else {
-        use std::str::FromStr;
-        usize::from_str(arg).map(Some)
-    }
-}
-
 #[derive(Debug, clap::Args)]
 /// Effio ergo sum.
 ///

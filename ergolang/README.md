@@ -82,3 +82,5 @@ not work correctly with this flag, so the default is `less`. You can:
 * Add value dependency tree print to help debug consistency issues.
 * Debugger and profiler.
 * Dropping thread for Values (to avoid possibly large stacks).
+* Improve cache reads (batch them).
+* Figure out how to add backtraces.

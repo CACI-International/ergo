@@ -4,15 +4,19 @@
 * [std](#std) - Access the standard library.
 * [workspace](#workspace) - Access the first ancestor workspace.
 * [fn](#fn) - Match `Args` Values
-* [pat](#pat) - Match `PatternArgs` Values
-* [index](#index) - Match `Index` Values or manually index a value
+* [index](#index) - Match `Index` values.
 * [bind](#bind) - Manually bind a value
 * [unset](#unset) - An `Unset`-typed value
 * [doc](#doc) - Document values.
   * [doc:write](#doc-write) - Write documentation for a value to the filesystem.
   * [doc:child](#doc-child) - Write child documentation.
-  * [doc:path](#doc-path) - Get the current documentation path, if any.
-  * [doc:value](#doc-value) - Get the current value being documented, if any.
+  * [doc:path](#doc-path) - The current documentation path, if any.
+  * [doc:raw](#doc-raw) - Get the raw documentation metadata.
+  * [doc:value](#doc-value) - The current value being documented, if any.
+* [!id](#id) - Indicate a value's result is relevant to the identity of the
+  value.
+* [!no-id](#no-id) - Indicate a value's result is relevant to the identity of the
+  value.
 
 
 <div class="function">
@@ -34,7 +38,7 @@ can access values in the `std` library directly:
 
 ```ergo
 std:String:format
-:std
+$std
 std:exec
 ```
 
@@ -49,7 +53,7 @@ if `ergo path/to/ancestor/workspace.ergo` was called. Thus, you can access the
 
 ```ergo
 workspace:something a b c
-:workspace
+$workspace
 workspace a b c
 ```
 
@@ -69,31 +73,13 @@ f 1 2 3
 
 <div class="function">
 
-## `pat`
-The `pat` function is used to decompose `PatternArgs` values when binding.
-
-```ergo
-f = pat :a :b -> :v -> ()
-f :x :y = 1
-```
-
-</div>
-
-
-<div class="function">
-
 ## `index`
 The `index` function is used to match the `Index` value when binding.
 
 ```ergo
-v = index :a -> "index=^a"
+v = index :a -> "index=$a"
 v:my-ind # evaluates to "index=my-ind"
 ```
-
-It can also be used to manually index a value (rather than using script syntax).
-This makes the index operation always delayed rather than it possibly being a
-capture expression based on the semantics of the `:` operator.  For example,
-`index :a b` will result in the same value as `a:b`.
 
 </div>
 
@@ -101,12 +87,11 @@ capture expression based on the semantics of the `:` operator.  For example,
 
 ## `bind`
 The `bind` function is used to bind a value without using script syntax. For
-example, `bind :a :b` is the same as `!:a = :b`. This makes the bind operation
-always delayed rather than executed immediately as normal bind statements are.
+example, `bind $a $b` is the same as `$a = $b`.
 
 ```ergo
-bind-single-array-value = pat :a -> [:v] -> bind :a :v
-bind-single-array-value :x = [1]
+bind-single-array-value = fn :a -> [:v] -> { bind $a $v; () }
+bind-single-array-value :x = [1] # `x` is set to `1`
 ```
 
 </div>
@@ -118,7 +103,7 @@ The `unset` value is an `Unset`-typed value.
 
 ```ergo
 x = [1,2,3]
-x = :unset
+x = $unset
 ```
 
 </div>
@@ -131,7 +116,7 @@ The `doc` function returns the documentation metadata attached to a value.
 ```ergo
 ## It is my value after all.
 v = my-value
-doc :v # evaluates to "It is my value after all."
+doc $v # evaluates to "It is my value after all."
 ```
 
 ### Functions
@@ -147,7 +132,7 @@ path.
 ```ergo
 ## It is my value after all.
 v = my-value
-doc:write my/doc/output :v
+doc:write my/doc/output $v
 ```
 
 </div>
@@ -162,7 +147,7 @@ returns the generated path.
 
 ```ergo
 ## Some map containing:
-## [some value](^(doc:child some-value (doc:value () |>:v)))
+## [some value]($(doc:child some-value doc:value:v))
 m = {
     ## Some value.
     v = val
@@ -175,10 +160,19 @@ m = {
 
 <a name="doc-path"></a>
 #### `path`
-Get the current documentation path, if set. Returns `Unset` if not set.
+The current documentation path, if set. Evaluates to `Unset` if not set.
+
+</div>
+
+<div class="function">
+
+<a name="doc-raw"></a>
+#### `raw`
+Get the raw documentation metadata, which may be `Unset`.
 
 ```ergo
-doc:path ()
+my-value = 123
+doc:raw $my-value # Evaluates to `Unset` rather that a placeholder with the value type.
 ```
 
 </div>
@@ -187,13 +181,39 @@ doc:path ()
 
 <a name="doc-value"></a>
 #### `value`
-Get the current value being documented, if any. Returns `Unset` if not set.
+The current value being documented, if any. Evaluates to `Unset` if not set.
+
+</div>
+
+</div>
+
+<div class="function">
+
+## `!id`
+The `!id` function is used to indicate that a value should be evaluated when the
+identity is needed, and the result of evaluation will be incorporated in the
+identity.
 
 ```ergo
-doc:value ()
+a = std:String:from <| std:exec date
+b = !id $a
+std:identity $a # Will always be the same (based on the literal `std:String:from ...` syntax)
+std:identity $b # Will change as the output from running the external `date` program changes
 ```
 
 </div>
 
+<div class="function">
+
+## `!no-id`
+The `!no-id` function is the opposite of `!id`; it indicates that a value
+shouldn't be used in the identity. This is only useful on values which have
+already been marked as relevant to the identity. Generally it should be applied
+directly on the function that is marked as being id-relevant.
+
+```ergo
+a = (!no-id $!id) <| std:String:from <| std:exec date
+std:identity $a # Will always be the same
+```
 
 </div>

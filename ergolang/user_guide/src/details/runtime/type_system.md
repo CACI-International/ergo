@@ -45,26 +45,18 @@ type).
 
 ### Unbound (Function)
 ```ergo
-:a -> :a
+:a -> $a
 ```
 The unbound type, which may be bound to a value with any expression that
-performs a bind (bind statement, command, pattern command, index, etc).
+performs a bind (bind statement, command, index, etc).
 
 ### Args
 ```ergo
-f a b c (k=1)
+f a b c ~k=1
 ```
 The argument type, which is implicitly created in command expressions to group
 arguments to a command (in the above, `a`, `b`, `c`, and the keyed `k=1`
 argument).
-
-### PatternArgs
-```ergo
-f a b c (k=1) = some-value
-```
-The pattern argument type, which is implicitly created in pattern command
-expressions to group arguments to a pattern command (in the above, `a`, `b`,
-`c`, and the keyed `k=1`).
 
 ### Index
 ```ergo

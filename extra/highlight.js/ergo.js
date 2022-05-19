@@ -1,6 +1,6 @@
-var string_merge = {
+var string_interp = {
     className: 'operator',
-    begin: /\^/
+    begin: /\$/
 };
 
 var backslash_escape = {
@@ -16,45 +16,55 @@ function ergo_lang(hljs) {
     return {
         name: "Ergo",
         contains: [
+            // Line comments
             hljs.COMMENT(/# /, /$/),
+            // Doc comments
             {
                 className: 'attribute',
                 begin: /## /,
                 end: /$/,
-                contains: [string_merge]
+                contains: [string_interp]
             },
+            // Built-in functions
             {
                 className: 'built_in',
-                begin: /\b(ergo|pat|fn|index|std|workspace|doc|bind|unset)\b/
+                begin: /(\b(ergo|fn|index|std|workspace|doc|bind|unset)\b|!id\b|!no-id\b)/
             },
+            // Quoted strings
             {
                 className: 'string',
                 begin: '"',
                 end: '"',
-                contains: [string_merge, backslash_escape]
+                contains: [string_interp, backslash_escape]
             },
+            // Block strings
             {
                 className: 'string',
                 begin: /' /,
                 end: /$/,
-                contains: [string_merge]
+                contains: [string_interp]
             },
+            // Operators
             {
                 className: 'operator',
-                begin: /(:|\^|!|->|=)/
+                begin: /(:|\$|\^|->|=|~)/
             },
+            // Grouping
             {
                 className: 'punctuation',
                 begin: /(\(|\)|\{|\}|\[|\]|,|;)/
             },
+            // Attributes
             {
                 className: 'attribute',
                 begin: /##/
             },
+            // Tree comments
             {
                 className: 'comment',
                 begin: /#/
             },
+            // Pipe operators
             {
                 className: 'meta',
                 begin: /(\|>?|<\|)/
