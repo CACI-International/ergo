@@ -10,6 +10,9 @@ path-base-dir = {
 ##
 ## Arguments: `(Function :function)`
 ##
+## Keyed Arguments:
+## * `owned` - if present, create an owned path
+##
 ## This will create a deterministic path (in the project working directory) based on the identity of
 ## `function`, then call `function` with the path.
 ##
@@ -22,8 +25,9 @@ path-base-dir = {
 ## ```ergo
 ## out = Path:for <| fn :p -> exec touch $$p
 ## ```
-for = fn :f -> {
+for = fn ~:owned :f -> {
     p = plugin:Path:join $path-base-dir <| plugin:value:identity $f
+    p = plugin:match (plugin:Bool:from $owned) [plugin:Bool:true -> plugin:Path:owned $p, _ -> $p]
     f $p
     $p
 }
