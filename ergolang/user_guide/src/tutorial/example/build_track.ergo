@@ -1,13 +1,11 @@
 #!/usr/bin/env ergo
 
-std:import { Path, cache, env, exec, fs, source } = :std
+std:import { :Path, :cache, :env, :exec, :fs, :source } = $std
 
 # Compile our code, specifying an output file binding, and caching the result.
-exe = cache {
-    file = Path:new ()
-    exec (env = {PATH = env:vars:PATH}) c++ -o :file (fs:track main.cpp) (fs:track lib.cpp) |>:complete
-    :file
+exe = cache <| Path:for <| fn :file -> {
+    exec ~env={PATH = env:vars:PATH} c++ -o $file (fs:track main.cpp) (fs:track lib.cpp)
 }
 
 # Copy the output to a file in the current directory.
-fs:copy :exe (Path:join (source:dir ()) forty_two)
+fs:copy $exe (Path:join (source:dir ()) forty_two)

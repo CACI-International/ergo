@@ -1,72 +1,74 @@
 #!/usr/bin/env ergo
 
 std:import {
-    cache, default, env, exec, fs, match, net, source, task,
-    Array, Iter, Path
-} = :std
+    :cache, :default, :env, :exec, :fs, :match, :net, :source, :task,
+    :Array, :Iter, :Path
+} = $std
 
 # Convenience bindings for the following functions
-run = fn ^:args -> (exec ^:args):complete
-run-with-path = fn ^:args -> run (env = {PATH = env:vars:PATH}) ^:args
-copy-out = fn :file :name -> fs:copy :file <| Path:join (source:dir ()) :name
+run = fn ^:args -> {exec ^$args; ()}
+run-with-path = fn ^:args -> run ~env={PATH = env:vars:PATH} ^$args
+copy-out = fn :file :name -> fs:copy $file <| Path:join (source:dir ()) $name
 
 ## Compile function, taking one argument indicating the file to compile,
-## and a non-positional `includes` argument.
-compile = fn (includes = default :includes as []) :source-file -> {
-    includes = :includes | Iter:map (fn :i -> [-I,:i]) | Iter:flatten | Array:from
-    cache <| Path:with-output <| fn :out -> {
-        task "compiling ^source-file" (
-            run-with-path c++ -o :out ^:includes -c (!fs:track :source-file)
+## and an `includes` keyed argument.
+compile = fn ~includes=(default :includes as []) :source-file -> {
+    includes = $includes | Iter:map (fn :i -> [-I,$i]) | Iter:flatten | Array:from
+    cache <| Path:for <| fn :out -> {
+        task "compiling $source-file" (
+            run-with-path c++ -o $out ^$includes -c (fs:track $source-file)
         )
     }
 }
 
 ## Linking function, which passes all arguments to the linker.
-link = fn :name ^:args -> cache <| Path:with-output <| fn :out -> {
-    task "linking ^name" <| run-with-path c++ -o :out ^:args
+link = fn :name ^:args -> cache <| Path:for <| fn :out -> {
+    task "linking $name" <| run-with-path c++ -o $out ^$args
 }
 
 ## Executable-linking function, which links all arguments.
-link-exe = :link
+link-exe = $link
 
 ## Library-linking function, which links all arguments as a shared library.
-link-so = fn :name ^:args -> link :name -shared ^:args
+link-so = fn :name ^:args -> link $name -shared ^$args
 
 # Create a library from lib.cpp.
 lib = link-so "add2 library" "-Wl,-hlibadd2.so" (compile lib.cpp) 
 
 # Create an executable using the library.
-exe = link-exe forty_two (compile main.cpp) :lib
+exe = link-exe forty_two (compile main.cpp) $lib
 
 # Download Catch2, build it and get the output include directory.
 Catch2 = {
     catch-source = task "fetching Catch2" <| net:unarchive "https://github.com/catchorg/Catch2/archive/v2.11.1.tar.gz" 
-    catch-source = Path:join :catch-source Catch2-2.11.1
-    build_dir = Path:new ()
+    catch-source = Path:join $catch-source Catch2-2.11.1
     # Run the test suite before returning the library path
     cache {
         task "building/running Catch2 tests" {
-            run-with-path cmake "-DCMAKE_BUILD_TYPE=Release" -S :catch-source -B :build_dir
-            run-with-path (pwd=:build_dir) make -j8
-            run-with-path (pwd=:build_dir) make test
+            Path:for ~owned <| fn :build-dir -> {
+                run-with-path cmake "-DCMAKE_BUILD_TYPE=Release" -S $catch-source -B $build-dir
+                run-with-path ~pwd=$build-dir make -j8
+                run-with-path ~pwd=$build-dir make test
+            }
+            ()
         }
-        Path:join :catch-source single_include
+        Path:join $catch-source single_include
     }
 }
 
 # Create lib directory to link named library for testing
-libpath = cache <| Path:with-output <| fn :dir -> {
-    fs:copy :lib (Path:join :dir libadd2.so)
+libpath = cache <| Path:for <| fn :dir -> {
+    fs:copy $lib (Path:join $dir libadd2.so)
 }
 
 # Create and run a test executable using the library.
-test_prog = link-exe "test program" (compile (includes = [:Catch2]) test.cpp) :lib
-test = run (env = { LD_LIBRARY_PATH = :libpath }) :test_prog
+test_prog = link-exe "test program" (compile ~includes=[$Catch2] test.cpp) $lib
+test = run ~env={ LD_LIBRARY_PATH = $libpath } $test_prog
 
 # Copy results into the current directory.
 copy_result = [
-    copy-out :exe forty_two
-    copy-out :lib libadd2.so
+    copy-out $exe forty_two
+    copy-out $lib libadd2.so
 ]
 
 ## Commands include:
@@ -74,10 +76,10 @@ copy_result = [
 ## * `test` - Run the test program.
 ## * `release` - Build the executable and library and copy to the script's directory.
 match:value [
-    fn () -> { [:exe,:lib], () }
-    fn build -> { [:exe,:lib], () }
+    fn () -> { [$exe,$lib], () }
+    fn build -> { [$exe,$lib], () }
     # Always run the test, regardless of cached test results
-    fn test -> :test
+    fn test -> $test
     # Only copy outputs if the tests have passed.
-    fn release -> { cache :test, :copy_result }
+    fn release -> { cache $test, $copy_result }
 ]

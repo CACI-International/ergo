@@ -1,21 +1,30 @@
 #!/usr/bin/env ergo
 
-std:import {cache, env, exec, fs, source, task, Path} = :std
+std:import {:cache, :env, :exec, :fs, :source, :task, :Path} = $std
 
 # Compile main.cpp
-main = cache <| Path:with-output <| fn :out -> {
-    task "compiling main.cpp" (exec (env = {PATH = env:vars:PATH}) c++ -o :out -c (!fs:track main.cpp)):complete
+main = cache <| Path:for <| fn :out -> {
+    task "compiling main.cpp" {
+        exec ~env={PATH = env:vars:PATH} c++ -o $out -c (fs:track main.cpp)
+        ()
+    }
 }
 
 # Compile lib.cpp
-lib = cache <| Path:with-output <| fn :out -> {
-    task "compiling lib.cpp" (exec (env = {PATH = env:vars:PATH}) c++ -o :out -c (!fs:track lib.cpp)):complete
+lib = cache <| Path:for <| fn :out -> {
+    task "compiling lib.cpp" {
+        exec ~env={PATH = env:vars:PATH} c++ -o $out -c (fs:track lib.cpp)
+        ()
+    }
 }
 
 # Link the object files together
-exe = cache <| Path:with-output <| fn :out -> {
-    task "linking executable" (exec (env = {PATH = env:vars:PATH}) c++ -o :out :main :lib):complete
+exe = cache <| Path:for <| fn :out -> {
+    task "linking executable" {
+        exec ~env={PATH = env:vars:PATH} c++ -o $out $main $lib
+        ()
+    }
 }
 
 # Copy to a file in the current directory.
-fs:copy :exe <| Path:join (source:dir ()) forty_two
+fs:copy $exe <| Path:join (source:dir ()) forty_two

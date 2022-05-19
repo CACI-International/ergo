@@ -49,8 +49,8 @@ the direct path to the `ergo` executable, but using `/usr/bin/env` is encouraged
 
 __Line 3__: A comment! Just like many other languages, `# ` begins comments. The
 commented portion will continue until the end of the line. Note that if a `#` is
-not followed by a space, it is actually a _tree comment_ which comments out the
-following expression tree.
+not followed by a space, it is a _tree comment_ which comments out the following
+expression tree.
 
 __Line 4__: A command to compile `main.cpp` and `lib.cpp` into an executable
 named `forty_two`.
@@ -72,7 +72,7 @@ Instead,
 2. The value returned by the last line of our script is then _evaluated_, which
    is what actually invokes `exec`, running the `c++` program with the given
    arguments.
-3. The `exec` function is applied to the arguments (where `(env = ...)` is
+3. The `exec` function is applied to the arguments (where `~env=...` is
    setting a keyed argument that `exec` uses for environment variables). `exec`
    passes `c++` to the system's `exec` system call, which will look it up in a
    few fixed places. It then returns a value of the result of running the
@@ -81,10 +81,10 @@ Instead,
    noting is that the program is run asynchronously.
 4. The value returned from `exec` is displayed on the command-line.
 
-Thus, `c++` is run only because the value of the last line of the script will
-run it.
+Thus, `c++` is run only because the value of the last line of the script (the
+last line being the value that is returned) will run it.
 
-The `(env = ...)` is indicating to the `exec` command that the environment
+The `~env=...` is indicating to the `exec` command that the environment
 should contain the same `PATH` variable as the `ergo` process. By default,
 `exec` has an empty environment to make environment usage explicit. Most `c++`
 binaries (`gcc`- or `clang`-based, for example) use the `PATH` to find the
@@ -100,7 +100,7 @@ Like shell languages, bare text is interpreted as a string. Strings can contain
 any character except special characters used in the rest of the syntax and
 whitespace. However, you can create strings containing arbitrary characters by
 surrounding them with double quotes (supporting escape sequences) or prefixing
-them with single quotes (raw block strings).
+them with single quotes (block strings).
 
 ```ergo
 this_is_a_string
@@ -123,10 +123,10 @@ separated by commas, newlines, or semicolons indiscriminately.
 { key = value, otherkey = othervalue }
 ```
 
-The syntax for maps is actually the **same** as sequential code blocks; they
-open a new environment scope (which can have bindings that shadow outer
-environments), and the block itself evaluates to the map of environment bindings
-if the final expression in the map is a binding:
+The syntax for maps is the **same** as sequential code blocks; they open a new
+environment scope (which can have bindings that shadow outer environments), and
+the block itself evaluates to the map of environment bindings if the final
+expression in the map is a binding:
 
 ```ergo
 {
@@ -135,7 +135,7 @@ if the final expression in the map is a binding:
 }
 ```
 
-Evaluates to a map with `file` and `output` as keys, whereas
+evaluates to a map with `file` and `output` as keys, whereas
 
 ```ergo
 {
@@ -151,7 +151,7 @@ use earlier ones (unlike basic maps in other languages where the key-value
 bindings are disparate).
 
 ### Commands
-Commands take positional and keyed arguments as inputs (as seen in `(env=...)`)
+Commands take positional and keyed arguments as inputs (as seen in `~env=...`)
 and can interpret them in arbitrary ways. For instance, `exec` accepts a number
 of keyed arguments (as we saw with `env`) and tries to convert positional
 arguments into strings suitable for passing to an external program.
@@ -161,18 +161,16 @@ You may nest commands with parentheses:
 command1 arg1 (command2-giving-arg2 a b c) arg3
 ```
 
-The first value of a command, if it is a string literal, is queried in the
-lexical scope to resolve to a bound value.
+The first value in a command, if it is a string literal (like `command1` above),
+has an implicit get (e.g. `$command1`) to look it up in the environment.
 
 Commands are identified by the presence of arguments. Commands that don't take
 any arguments semantically often are written to take a single unit argument
 (e.g. `command ()`).
 
 ### Binding Retrieval
-Using any value from the binding scope is done by using a colon. For instance,
-`:something` will be the value previously bound to `something` in the enclosing
-scope or ancestor scope. Similarly, indexing into a map or array also uses a
-colon, except prior to the colon the value to index is provided. Like commands,
-if the value to index is a string, it will be retrieved from the current
-bindings. Thus, `my_map:my_key:key2` and `:my_map:my_key:key2` are the same (the
-leading colon is unnecessary).
+Retrieving any value is done by using a dollar (`$`). For instance, `$something`
+will be the value previously bound to `something` in the enclosing scope or
+ancestor scopes. Indexing into a map or array uses a colon: `my-map:some-key`.
+Like commands, if the value to index is a string, it has an implicit get and
+will be retrieved from the current environment (e.g. `$my-map:some-key`).
