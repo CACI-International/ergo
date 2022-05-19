@@ -8,5 +8,6 @@ edition = "2021"
 abi_stable = "0.10"
 bytes = "0.5"
 futures = { version = "0.3", features = ["thread-pool"] }
+log = "0.4"
 pin-project = "1"
 uuid = { version = "0.8", features = ["serde", "v5"] }

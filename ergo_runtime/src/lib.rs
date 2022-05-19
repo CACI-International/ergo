@@ -72,7 +72,42 @@ pub trait ResultIterator<T> {
 }
 
 pub mod plugin {
-    pub use plugin_tls::Context;
+    use abi_stable_ext::{log, std_types::ROption};
+
+    // This struct _must_ be abi-stable, but `tls` and `log_level` (while abi-stable) don't derive
+    // StableAbi, so we don't use the derivation here.
+    pub struct Context {
+        tls: plugin_tls::Context,
+        log: ROption<log::Log>,
+        log_level: log::LevelFilter,
+        source: crate::Source<()>,
+    }
+
+    impl Context {
+        pub fn get(source: crate::Source<()>) -> Self {
+            Context {
+                tls: plugin_tls::Context::get(),
+                log: log::logger().into(),
+                log_level: log::max_level(),
+                source,
+            }
+        }
+
+        pub unsafe fn initialize(self) -> crate::Source<()> {
+            self.tls.initialize_tls();
+            if let ROption::RSome(log) = self.log {
+                if let Err(e) = log::set_boxed_logger(Box::new(log)) {
+                    eprintln!("error while setting logger: {}", e);
+                }
+            }
+            log::set_max_level(self.log_level);
+            self.source
+        }
+
+        pub fn reset() {
+            plugin_tls::Context::reset();
+        }
+    }
 }
 
 impl<T, I> ResultIterator<T> for I

@@ -110,10 +110,13 @@ impl std::iter::Sum for Location {
 
 impl Source<()> {
     /// Create a source from the given source id.
-    pub fn new(source_id: SourceId) -> Self {
+    pub const fn new(source_id: SourceId) -> Self {
         Source {
             value: (),
-            location: Location::default(),
+            location: Location {
+                start: 0,
+                length: 0,
+            },
             source_id,
         }
     }

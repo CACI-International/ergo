@@ -57,7 +57,10 @@ pub fn ergo_fn_value(ts: TokenStream) -> TokenStream {
 
 /// Mark a function as the plugin entrypoint.
 ///
-/// The function must take a single `&Context` argument and return a `Result<Value>`.
+/// The function must take no arguments and return a `Result<Value>`.
+///
+/// This entrypoint will set up thread local storage, a logger (to be used with the `log` crate),
+/// and a static global `ERGO_PLUGIN_SOURCE: Source<()>`.
 #[proc_macro_attribute]
 pub fn plugin_entry(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let f = parse_macro_input!(item as ItemFn);
@@ -71,8 +74,16 @@ pub fn plugin_entry(_attr: TokenStream, item: TokenStream) -> TokenStream {
             pub fn _ergo_plugin(__plugin_ctx: ergo_runtime::plugin::Context)
                 -> ergo_runtime::error::RResult<ergo_runtime::Value>
             {
-                unsafe { __plugin_ctx.initialize_tls(); }
+                unsafe {
+                    _ERGO_PLUGIN_SOURCE = __plugin_ctx.initialize();
+                }
                 #fn_name().into()
+            }
+
+            static mut _ERGO_PLUGIN_SOURCE: ergo_runtime::Source<()> = ergo_runtime::Source::new(0);
+
+            fn plugin_source() -> ergo_runtime::Source<()> {
+                unsafe { _ERGO_PLUGIN_SOURCE }
             }
 
             #f

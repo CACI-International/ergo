@@ -99,15 +99,19 @@ fn main() {
         }
     };
     {
+        use ergo_runtime::abi_stable::log;
+
         std::fs::create_dir_all(log_file.parent().expect("log file is a root directory"))
             .expect("failed to create log output directory");
-        simplelog::WriteLogger::init(
-            std::env::var(format!("{}_LOG", PROGRAM_NAME.to_uppercase()))
-                .map(|v| simplelog::LevelFilter::from_str(&v).expect("invalid program log level"))
-                .unwrap_or(simplelog::LevelFilter::Warn),
+        let level = std::env::var(format!("{}_LOG", PROGRAM_NAME.to_uppercase()))
+            .map(|v| simplelog::LevelFilter::from_str(&v).expect("invalid program log level"))
+            .unwrap_or(simplelog::LevelFilter::Warn);
+        log::set_max_level(level);
+        log::set_boxed_logger(simplelog::WriteLogger::new(
+            level,
             simplelog::Config::default(),
             std::fs::File::create(log_file.clone()).expect("failed to open log file for writing"),
-        )
+        ))
         .unwrap();
     }
 

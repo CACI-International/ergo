@@ -261,7 +261,7 @@ impl LoadData {
                                         )
                                             -> RResult<Value>,
                                     > = unsafe { l.get(PLUGIN_ENTRY.as_bytes()) }?;
-                                    f(ergo_runtime::plugin::Context::get()).into_result()
+                                    f(ergo_runtime::plugin::Context::get(source)).into_result()
                                 }
                             )
                             .map(|v: Value| metadata::Source::imbue(source.with(v)))

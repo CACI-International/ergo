@@ -22,7 +22,11 @@ impl Test {
 
         let plugin = rt
             .ctx
-            .block_on(async move { plugin_entry(ergo_runtime::plugin::Context::get()) })
+            .block_on(async move {
+                plugin_entry(ergo_runtime::plugin::Context::get(
+                    ergo_runtime::Source::missing(()),
+                ))
+            })
             .expect("plugin failed to load");
 
         let env = vec![("self".into(), plugin)].into_iter().collect();

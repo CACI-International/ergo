@@ -31,8 +31,6 @@ mod unit;
 mod unset;
 mod value;
 
-//pub use exec::ExitStatus;
-
 fn make_string_src(s: ergo_runtime::Source<&str>) -> EvaluatedValue {
     let (src, s) = s.take();
     let mut v: EvaluatedValue = types::String::from(s).into();
@@ -58,7 +56,7 @@ macro_rules! make_string_map {
         }
     };
     ( $( $s:literal = $v:expr ),* ) => {
-        $crate::make_string_map! { source ergo_runtime::Source::missing(()), $( $s = $v ),* }
+        $crate::make_string_map! { source $crate::plugin_source(), $( $s = $v ),* }
     };
 }
 
