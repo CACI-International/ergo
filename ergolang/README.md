@@ -20,41 +20,45 @@ used to estimate future performance.
 ```sh
 #!/usr/bin/env ergo
 
-std:import { Path, cache, env, exec, fs = {track} } = :std
+std:import { :Path, :cache, :env, :exec, fs = {:track} } = $std
 
-run_with_path = fn ^:args -> exec (env = {PATH = env:get PATH}) ^:args |>:complete
+run_with_path = fn ^:args -> { exec ~env={PATH = env:vars:PATH} ^args; () }
 
 # Get influxdb-cxx
 influx = {
-  checkout = Path:with-output <| fn :dir -> {
-      exec git clone https://github.com/awegrzyn/influxdb-cxx.git :dir |>:complete
+  checkout = Path:for <| fn :dir -> {
+      exec git clone "https://github.com/awegrzyn/influxdb-cxx.git" $dir
   }
-  include = Path:join :checkout include
-  builddir = Path:with-output <| :dir -> {
-      run_with_path cmake -DCMAKE_BUILD_TYPE=Release -S :checkout -B :dir
+  include = Path:join $checkout include
+  builddir = Path:for <| fn :dir -> {
+      run_with_path cmake -DCMAKE_BUILD_TYPE=Release -S $checkout -B $dir
   }
   lib = cache {
-      run_with_path (pwd = :builddir) make InfluxDB
-      Path:join :builddir lib libInfluxDB.so
+      run_with_path ~pwd=$builddir make InfluxDB
+      Path:join $builddir lib libInfluxDB.so
   }
 
-  { include, lib, libpath = Path:join :builddir lib }
+  { include, lib, libpath = Path:join $builddir lib }
 }
 
 # Create test program
-test = cache <| Path:with-output <| fn :out -> {
-    run_with_path c++ -std=c++17 -o :out -I influx:include (track main.cpp) influx:lib
+test = cache <| Path:for <| fn :out -> {
+    run_with_path c++ -std=c++17 -o $out -I influx:include (track main.cpp) influx:lib
 }
 
-test-dist = Path:join (std:script:dir()) influx-test
+test-dist = Path:join (std:script:dir ()) influx-test
 
 # Create command interface
 commands = {
-  dist = fs:copy :test :test-dist
-  clean = fs:remove :test-dist
-  test = exec (env = {LD_LIBRARY_PATH = influx:libpath}) :test
+  dist = fs:copy $test $test-dist
+  clean = fs:remove $test-dist
+  test = exec ~env={LD_LIBRARY_PATH = influx:libpath} $test
 }
-fn :cmd -> commands::cmd
+## Commands:
+## * dist - build and copy outputs
+## * clean - clean outputs
+## * test - run the test program
+fn :cmd -> commands:$cmd
 ```
 
 If you make the above script executable, then you can run `./script dist`,
