@@ -40,8 +40,9 @@ exe = link-exe forty_two (compile main.cpp) $lib
 
 # Download Catch2, build it and get the output include directory.
 Catch2 = {
-    catch-source = task "fetching Catch2" <| net:unarchive "https://github.com/catchorg/Catch2/archive/v2.11.1.tar.gz" 
-    catch-source = Path:join $catch-source Catch2-2.11.1
+    version = 2.13.9
+    catch-source = task "fetching Catch2" <| net:unarchive "https://github.com/catchorg/Catch2/archive/v$version.tar.gz" 
+    catch-source = Path:join $catch-source "Catch2-$version"
     # Run the test suite before returning the library path
     cache {
         task "building/running Catch2 tests" {
