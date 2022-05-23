@@ -224,17 +224,20 @@ impl Render for Progress {
             }
         }
 
-        let t = chrono::naive::NaiveTime::from_hms(0, 0, 0)
-            + chrono::Duration::from_std(duration_remaining).unwrap();
         write!(
             to,
             "{} Progress: {} remaining",
             PROGRESS_SPINNER[self.spinner_state],
             count_remaining + 1
         )?;
+        /*
+         TODO re-enable when work tracking is given more development
+        let t = chrono::naive::NaiveTime::from_hms(0, 0, 0)
+            + chrono::Duration::from_std(duration_remaining).unwrap();
         if duration_remaining != std::time::Duration::default() {
             write!(to, " ({})", t)?;
         }
+        */
         writeln!(to)
     }
 }
