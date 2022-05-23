@@ -55,14 +55,7 @@ struct Styles {
 }
 
 impl Styles {
-    pub fn new(color_support: ColorSupport) -> Self {
-        let color256 = color_support.0.map(|s| s.has_256).unwrap_or(false);
-
-        // amt should be between 0 and 23, darkest to lightest
-        fn grey(amt: u8) -> Color {
-            Color::Ansi256(0xE8 + amt)
-        }
-
+    pub fn new(_color_support: ColorSupport) -> Self {
         let mut bold = ColorSpec::new();
         bold.set_bold(true);
 
@@ -73,8 +66,8 @@ impl Styles {
         strikethrough.set_dimmed(true).set_fg(Some(Color::Red));
 
         let mut code = ColorSpec::new();
-        code.set_bg(Some(if color256 { grey(4) } else { Color::Cyan }))
-            .set_fg(Some(if color256 { grey(17) } else { Color::Black }))
+        code.set_bg(Some(Color::Black))
+            .set_fg(Some(Color::Cyan))
             .set_reset(false);
 
         let mut link = ColorSpec::new();
