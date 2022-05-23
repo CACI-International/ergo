@@ -201,6 +201,11 @@ function-module = fn (plugin:Function :func) :module -> {
 ## second is an Iter with all remaining values.
 iter-split = fn :n :iter -> [plugin:Iter:take $n $iter, plugin:Iter:skip $n $iter]
 
+## Filter an iterator to values that convert to `Bool:true`.
+##
+## Arguments: `(into $$Iter |> :iter)`
+iter-true = fn :iter -> plugin:Iter:filter (fn :a -> $a) $iter
+
 ## Conditionally return a value.
 ##
 ## Arguments: `(Into Bool |> :condition) :if_true [else if :cond2 :if_true2]... [else :if_false]`
@@ -291,7 +296,7 @@ extend-type = fn :tp :map -> plugin:Type:modify $tp <| plugin:value:merge (plugi
 
     ##mdoc:module
     ## Iterators producing values.
-    Iter = extend-type plugin:Iter {split = $iter-split}
+    Iter = extend-type plugin:Iter {split = $iter-split, true = $iter-true}
 
     ##mdoc:module
     ## Maps of values.
@@ -423,6 +428,28 @@ extend-type = fn :tp :map -> plugin:Type:modify $tp <| plugin:value:merge (plugi
     ##mdoc:module
     ## Test helper functions.
     test = $mtest
+
+    ##mdoc:module
+    ## Trait manipulation functions.
+    trait = {
+        new = plugin:trait:new
+
+        ##mdoc:module
+        ## The Bind trait.
+        Bind = plugin:trait:Bind
+
+        ##mdoc:module
+        ## The Display trait.
+        Display = plugin:trait:Display
+
+        ##mdoc:module
+        ## The Into trait.
+        Into = plugin:trait:Into
+
+        ##mdoc:module
+        ## The Stored trait.
+        Stored = plugin:trait:Stored
+    }
 
     # Functions
     import {:debug,:equal,:identity,:index,:merge,:variable} = plugin:value

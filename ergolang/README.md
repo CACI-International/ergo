@@ -88,3 +88,5 @@ not work correctly with this flag, so the default is `less`. You can:
 * Dropping thread for Values (to avoid possibly large stacks).
 * Improve cache reads (batch them).
 * Figure out how to add backtraces.
+* Invalidate and/or remove cache entries.
+* Extend `~:abc` syntax to apply to any expression with a single setter.

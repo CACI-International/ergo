@@ -32,6 +32,7 @@ pub fn module() -> Value {
 }
 
 #[types::ergo_fn]
+#[eval_for_id]
 /// Change the identity of a value.
 ///
 /// Arguments: `:value`

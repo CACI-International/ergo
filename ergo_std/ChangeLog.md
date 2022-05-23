@@ -12,6 +12,8 @@
 * Add `std:Iter:partition` to partition iterators into a Map of Arrays.
 * Add `std:Iter:chunks` to iterate over consecutive chunks of a given size.
 * Add `std:Iter:new` to create an iterator from a generator function.
+* Add `std:Iter:true` as a convenience to filter values to those that convert to
+  true (useful in combination with `std:Iter:map` as a filter map).
 * Add a `Type` type, and refactor how script types work in general.
   * You can now get the type of any value as a runtime value.
 * Add `std:trait`, which allows access to built-in traits (`Bind`, `Into`,
