@@ -12,3 +12,5 @@ let b:current_syntax = "ergo"
 hi link CocSemDocumentationComment SpecialComment
 hi link CocSemVariable PreProc
 hi link CocSemDefaultLibraryVariable Function
+hi link LspVariable PreProc
+hi link LspMacro Macro
