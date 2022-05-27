@@ -125,7 +125,14 @@ impl super::Command for Lsp {
             .into(),
         );
 
-        rt.block_on(Server::new(stdin, stdout, socket).serve(service));
+        rt.block_on(
+            Server::new(stdin, stdout, socket)
+                // If messages are processed concurrently, the server-side state of files may not
+                // be correct (if a format message and a did_change race). In the future we can
+                // re-enable concurrency when we use the file version ids.
+                .concurrency_level(1)
+                .serve(service),
+        );
         Ok(())
     }
 }
@@ -309,7 +316,6 @@ impl<'a> tokenize::StringSlice<'a> for RopeSlice<'a> {
 #[tower_lsp::async_trait]
 impl LanguageServer for Service {
     async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
-        log::info!("initialize");
         let mut capabilities = ServerCapabilities::default();
         capabilities.semantic_tokens_provider = Some(
             SemanticTokensServerCapabilities::SemanticTokensOptions(SemanticTokensOptions {
@@ -336,7 +342,6 @@ impl LanguageServer for Service {
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
-        log::info!("did_change");
         let mut source = self.files.content_mut(&params.text_document.uri).await;
         for change in params.content_changes {
             if let Some(r) = change.range {
@@ -356,7 +361,6 @@ impl LanguageServer for Service {
     }
 
     async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
-        log::info!("formatting");
         let source = self.files.content(&params.text_document.uri).await;
 
         let formatter = Formatter { line_width: 100 };
@@ -389,7 +393,6 @@ impl LanguageServer for Service {
         &self,
         params: SemanticTokensParams,
     ) -> Result<Option<SemanticTokensResult>> {
-        log::info!("semantic");
         use tokenize::{LeaderToken, PairedToken, SymbolicToken, Token};
 
         let source = self.files.content(&params.text_document.uri).await;
