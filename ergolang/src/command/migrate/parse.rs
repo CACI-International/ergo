@@ -287,7 +287,7 @@ fn to_basic_block_item<E>(
         Tree::Caret(t) => {
             let (t_source, t) = t.take();
             match &t {
-                Tree::String(s) => {
+                Tree::String(s) if s != "_" => {
                     migrations.push(Migration::syntax(
                         source,
                         "you can no longer merge strings; use `~` to set keyed values",
