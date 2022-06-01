@@ -54,6 +54,7 @@ ergo_traits_fn! {
     }
 
     traits::Nested::add_impl::<MapEntry>(traits);
+    traits::Functor::add_nested_impl::<MapEntry>(traits);
 
     impl traits::Stored for MapEntry {
         async fn put(&self, data: &mut traits::PutData<'_>) -> crate::RResult<()> {

@@ -91,6 +91,19 @@ struct Streamed(SharedAsyncStream<futures::stream::BoxStream<'static, Value>>);
 
 ImplGenerator!(Streamed => |self| Ok(self.0.next().await));
 
+#[derive(Clone)]
+struct Map {
+    iter: Iter,
+    f: Value,
+}
+
+ergo_runtime::ImplGenerator!(Map => |self| {
+    match self.iter.next().await? {
+        None => Ok(None),
+        Some(v) => Ok(Some(traits::bind(self.f.clone(), v).await))
+    }
+});
+
 impl GetDependencies for Next {
     fn get_depends(&self) -> Dependencies {
         depends![Next::ergo_type(), self.value, self.iter.next]
@@ -226,6 +239,14 @@ ergo_traits_fn! {
     impl traits::Nested for Iter {
         async fn nested(&self) -> RVec<Value> {
             self.clone().collect().await.unwrap_or_default()
+        }
+    }
+
+    impl traits::Functor for Iter {
+        async fn map(self, f: Value) -> Value {
+            let deps = depends![self, f];
+            let iter = self.to_owned();
+            Iter::new(Map { iter, f, }, deps).into()
         }
     }
 

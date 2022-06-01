@@ -7,6 +7,7 @@ pub fn module() -> Value {
     crate::make_string_map! {
         "Bind" = bind::module(),
         "Display" = display::module(),
+        "Functor" = functor::module(),
         "Into" = into::module(),
         "Stored" = stored::module(),
         "new" = new()
@@ -168,6 +169,70 @@ mod display {
             imp
         });
         r#type.into()
+    }
+}
+
+mod functor {
+    use ergo_runtime::{
+        abi_stable::type_erase::Erased, metadata::Source, traits, type_system::ergo_trait_impl,
+        types, Context, Value,
+    };
+
+    pub fn module() -> Value {
+        crate::make_string_map! {
+            "impl" = r#impl(),
+            "map" = map()
+        }
+    }
+
+    #[types::ergo_fn]
+    /// Implement the Functor trait for a type.
+    ///
+    /// Arguments: `(Function :map) (Type :type)`
+    ///
+    /// `map` should be a function which is passed a mapping bind function and the target
+    /// `type`-typed value. It should bind the mapping function to each inner value, replace the
+    /// inner value with the result, and return the resulting `type`-typed value.
+    ///
+    /// Note that types created with `std:Type:new` have a default Functor implementation that maps
+    /// to the stored value.
+    ///
+    /// The Functor trait is used to provide a type-agnostic way to change inner values.
+    ///
+    /// Returns the passed `type` for convenience (most useful to pipe through multiple
+    /// implementations).
+    async fn r#impl(map: types::Unbound, r#type: types::Type) -> Value {
+        let tp = r#type.as_ref().tp.clone();
+        Context::global().traits.add_impl::<traits::Functor>(tp, {
+            let mut imp = ergo_trait_impl! {
+                impl traits::Functor for _ {
+                    async fn map(self, f: Value) -> Value {
+                        let imp = unsafe { TRAIT_DATA.as_ref::<Value>() }.clone();
+                        traits::bind(imp, Source::imbue(Source::get(&self).with(types::Args {
+                            args: types::args::Arguments::positional(vec![f, self]).unchecked()
+                        }.into()))).await
+                    }
+                }
+            };
+            imp.ergo_trait_data = Erased::new::<Value>(map.into());
+            imp
+        });
+        r#type.into()
+    }
+
+    #[types::ergo_fn]
+    /// Map a function over a value that implements the Functor trait.
+    ///
+    /// Arguments: `(Function :f) :value`
+    ///
+    /// Returns the result of binding `f` with every value contained in `value` (the result is the
+    /// same type as `value`). If `value` does not implement `Functor`, it is returned as-is. The
+    /// metadata of `value` is copied to the returned value.
+    ///
+    /// Note that `f` should match a value directly, _not_ an `Args` (so you should use e.g. `:x ->
+    /// ...`, not `fn :x -> ...`).
+    async fn map(f: _, value: _) -> Value {
+        traits::map(value, f).await.into()
     }
 }
 
@@ -402,6 +467,18 @@ mod test {
             self:trait:Into:into self:Number |> :x = $inst
             $x",
                 "self:Number:new 42"
+            );
+        }
+
+        fn functor_impl(t) {
+            t.assert_eq("MyType = {
+                Self = self:Type:new MyType
+                $Self | self:trait:Functor:impl <| fn :f (Self:@ :a :b) -> Self:new (bind $f $a) $b
+            }
+            inst = MyType:new [a] [b]
+            MyType:@ :a :b = self:trait:Functor:map (:x -> [^x,1]) $inst
+            [$a,$b]",
+                "[[a,1],[b]]"
             );
         }
 

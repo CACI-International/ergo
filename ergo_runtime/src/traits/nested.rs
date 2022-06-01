@@ -11,6 +11,8 @@ use futures::future::{BoxFuture, FutureExt};
 use futures::stream::{futures_unordered::FuturesUnordered, StreamExt};
 
 /// An ergo trait which exposes nested Values within a single Value's data.
+///
+/// This essentially requires the type to be a functor.
 #[ergo_trait]
 pub trait Nested {
     async fn nested(&self) -> RVec<Value>;

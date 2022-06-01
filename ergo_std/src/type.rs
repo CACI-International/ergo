@@ -1,7 +1,7 @@
 //! Type-related functions, including type creation.
 
 use ergo_runtime::abi_stable::{
-    std_types::{RArc, RString},
+    std_types::{RArc, RString, RVec},
     type_erase::Erased,
 };
 use ergo_runtime::{
@@ -67,19 +67,44 @@ async fn new(id: types::String) -> Value {
     let tp = Type::named(id.as_ref().as_str().as_bytes());
     let id = id.to_owned().0;
 
-    Context::global()
-        .traits
-        .add_impl::<traits::TypeName>(tp.clone(), {
-            let mut imp = ergo_trait_impl! {
-                impl traits::TypeName for _ {
-                    fn type_name() -> RString {
-                        unsafe { TRAIT_DATA.as_ref::<RString>() }.clone()
-                    }
+    // Implement TypeName, Nested, and Functor by default
+    let traits = Context::global().traits.clone();
+    traits.add_impl::<traits::TypeName>(tp.clone(), {
+        let mut imp = ergo_trait_impl! {
+            impl traits::TypeName for _ {
+                fn type_name() -> RString {
+                    unsafe { TRAIT_DATA.as_ref::<RString>() }.clone()
                 }
-            };
-            imp.ergo_trait_data = Erased::new::<RString>(id.clone());
-            imp
-        });
+            }
+        };
+        imp.ergo_trait_data = Erased::new::<RString>(id.clone());
+        imp
+    });
+    traits.add_impl::<traits::Nested>(
+        tp.clone(),
+        ergo_trait_impl! {
+            impl traits::Nested for _ {
+                async fn nested(&self) -> RVec<Value> {
+                    let data = unsafe { self.as_ref::<Value>() };
+                    vec![data.clone()].into()
+                }
+            }
+        },
+    );
+    traits.add_impl::<traits::Functor>(
+        tp.clone(),
+        ergo_trait_impl! {
+            impl traits::Functor for _ {
+                async fn map(self, f: Value) -> Value {
+                    let tp = self.ergo_type().unwrap().clone();
+                    let data = unsafe { self.data().unwrap().as_ref::<Value>() }.clone();
+                    let result = ergo_runtime::try_result!(traits::map(data, f).await);
+                    let deps = depends![dyn tp, result];
+                    unsafe { Value::new(RArc::new(tp), RArc::new(Erased::new(result)), deps) }
+                }
+            }
+        },
+    );
 
     let new: Value = {
         let tp = tp.clone();
@@ -239,6 +264,15 @@ mod test {
             MyType:@ :x :y = $val
             [$x,$y]",
                 "[str,()]"
+            );
+        }
+
+        fn default_functor_impl(t) {
+            t.assert_eq("MyType = self:Type:new MyType
+            inst = MyType:new [a] [b]
+            MyType:@ :a :b = self:trait:Functor:map (:x -> [^x,1]) $inst
+            [$a,$b]",
+                "[[a,1],[b,1]]"
             );
         }
 

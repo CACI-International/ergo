@@ -321,7 +321,8 @@ impl traits::NestedValues for Args {
             .chain(self.args.keyed.iter().map(|(k, v)| vec![&**k, v]).flatten())
             .collect()
     }
-    // XXX not entirely correct, skips keys
+
+    // Skips keys, as they cannot be safely mutated.
     fn nested_values_mut(&mut self) -> Vec<&mut Value> {
         self.args
             .positional
@@ -335,6 +336,7 @@ ergo_traits_fn! {
     crate::ergo_type_name!(traits, Args);
 
     traits::Nested::add_impl::<Args>(traits);
+    traits::Functor::add_nested_impl::<Args>(traits);
 
     impl traits::Bind for Args {
         async fn bind(&self, mut arg: Value) -> Value {

@@ -2,6 +2,7 @@
 
 mod bind;
 mod display;
+mod functor;
 mod into;
 mod nested;
 mod stored;
@@ -11,6 +12,7 @@ use crate as ergo_runtime;
 pub use bind::{bind, bind_error, bind_no_error, Bind, BindImpl};
 pub(crate) use bind::{bind_array, bind_map};
 pub use display::{display, display_any, to_string, Display, DisplayImpl, Formatter};
+pub use functor::{map, Functor, FunctorImpl};
 pub use into::{into, into_for, into_trait, IntoTyped, IntoTypedImpl};
 pub use nested::{eval_nested, Nested, NestedImpl, NestedValues};
 pub use stored::{GetData, GetDataInterface, PutData, PutDataInterface, Stored, StoredImpl};

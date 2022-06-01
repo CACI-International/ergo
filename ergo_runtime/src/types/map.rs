@@ -51,7 +51,8 @@ impl traits::NestedValues for Map {
             .flatten()
             .collect()
     }
-    // XXX not entirely correct, skips keys
+
+    // Skips keys, as they cannot be safely mutated.
     fn nested_values_mut(&mut self) -> Vec<&mut Value> {
         self.0.iter_mut().map(|(_, v)| v).collect()
     }
@@ -89,6 +90,7 @@ ergo_traits_fn! {
     traits::IntoTyped::<super::Iter>::add_depending_impl::<Map>(traits);
 
     traits::Nested::add_impl::<Map>(traits);
+    traits::Functor::add_nested_impl::<Map>(traits);
 
     impl traits::Stored for Map {
         async fn put(&self, data: &mut traits::PutData<'_>) -> crate::RResult<()> {

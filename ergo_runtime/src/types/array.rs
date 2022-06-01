@@ -67,6 +67,7 @@ ergo_traits_fn! {
     traits::IntoTyped::<super::Iter>::add_depending_impl::<Array>(traits);
 
     traits::Nested::add_impl::<Array>(traits);
+    traits::Functor::add_nested_impl::<Array>(traits);
 
     impl traits::Stored for Array {
         async fn put(&self, data: &mut traits::PutData<'_>) -> crate::RResult<()> {

@@ -17,7 +17,8 @@
 * Add a `Type` type, and refactor how script types work in general.
   * You can now get the type of any value as a runtime value.
 * Add `std:trait`, which allows access to built-in traits (`Bind`, `Into`,
-  `Stored`, and `Display`) as well as creating custom traits with `new`.
+  `Stored`, `Functor`, and `Display`) as well as creating custom traits with
+  `new`.
 * Add the `std:Type:or` function (which was already in the last release but was
   mistakenly not exported).
 * Extend `std:doc:module` to handle `Type`s too.

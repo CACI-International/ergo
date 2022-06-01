@@ -65,6 +65,7 @@
   literal. Thus, `^$something` can be simply `^something`.
 * Add `doc:raw` to get the raw documentation metadata.
 * Change `doc:value` and `doc:path` to be values rather than functions.
+* Add a `Functor` trait for mapping a function over inner values.
 
 ### Breaking Changes
 * Any use of `!` should be replaced with equivalent code.
