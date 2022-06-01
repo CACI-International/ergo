@@ -81,4 +81,29 @@ if = {
     }
 }
 
-std:test:run { if, type, required }
+f = fn :a ^(std:optargs :b :c) -> {b,c}
+optargs = {
+    none = {
+        {} = f 1
+        std:Bool:true
+    }
+    one = {
+        {b=2} = f 1 2
+        std:Bool:true
+    }
+    all = {
+        {b=2,c=3} = f 1 2 3
+        std:Bool:true
+    }
+    :"too many" = {
+        std:Error _ = f 1 2 3 4
+        std:Bool:true
+    }
+    :"explicit unset" = {
+        f = fn :a ^(std:optargs (std:default :b as ())) -> $b
+        () = f 1
+        std:Bool:true
+    }
+}
+
+std:test:run { if, type, required, optargs }

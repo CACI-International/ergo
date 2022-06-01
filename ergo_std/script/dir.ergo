@@ -112,6 +112,38 @@ required = fn :target -> :v -> plugin:match $v [
     _ -> { $target = $v }
 ]
 
+## Match optional arguments.
+##
+## Arguments: `^:target` -> `^:args`
+##
+## Normally positional arguments will result in an error if missing; this function allows binding of
+## optional positional arguments. If an optional argument is missing, it will be explicitly bound
+## with `unset` (allowing the use of e.g. `default`).
+##
+## ### Example
+## ```
+## f = fn :a :b ^(optargs :c :d) -> {}
+## f 1 # Errors
+## f 1 2 # Succeeds
+## f 1 2 3 # Succeeds
+## f 1 2 3 4 # Succeeds
+## f 1 2 3 4 5 # Errors
+## ```
+optargs = fn ^:target -> fn ^:args -> {
+    # Directly bind keyed arguments; they already handle missing arguments as expected.
+    target:keyed = args:keyed
+    args-n = plugin:Iter:count args:positional
+    target-n = plugin:Iter:count target:positional
+    plugin:match (plugin:Number:compare $args-n $target-n) [
+        plugin:Order:less -> {
+            plugin:Iter:zip ~all target:positional args:positional | plugin:Iter:map (fn [:a,:b] -> { $a = $b })
+        }
+        # Use normal binding error that will result if there are too many args.
+        _ -> { target:positional = args:positional }
+    ]
+    ()
+}
+
 ## Import values by index in a binding expression.
 ##
 ## Arguments: `:descriptor`
@@ -454,7 +486,7 @@ extend-type = fn :tp :map -> plugin:Type:modify $tp <| plugin:value:merge (plugi
     # Functions
     import {:debug,:equal,:identity,:index,:merge,:variable} = plugin:value
     import {:cache,:once} = $mcache
-    optional, required, default
+    default, optional, required, optargs
     ergo-remote
     exec = plugin:exec
     getopt = function-module plugin:getopt {fn = $getopt-fn}

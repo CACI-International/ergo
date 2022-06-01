@@ -266,11 +266,16 @@ async fn filter(func: _, iter: _) -> Value {
 ///
 /// Arguments: `^((Array:Of Into<Iter>) :iters)`
 ///
+/// Keyed Arguments:
+/// * `all` - cause the returned iterator to have as many values as the maximum of the passed
+/// iterators, using `Unset` for missing values.
+///
 /// Returns a new iterator containing arrays where the index in the array corresponds to the
 /// iterator argument to the function. The returned iterator will have only as many values as the
-/// minimum of the passed iterators.
-async fn zip(...) -> Value {
+/// minimum of the passed iterators, unless `all` is passed.
+async fn zip((all): [_], ...) -> Value {
     let iters = REST;
+    let all = all.is_some();
 
     let iters_typed = Context::global()
         .task
@@ -285,22 +290,33 @@ async fn zip(...) -> Value {
         #[derive(Clone)]
         struct Zip {
             iters: Vec<types::Iter>,
+            all: bool,
             args_source: ergo_runtime::Source<()>,
         }
 
         ergo_runtime::ImplGenerator!(Zip => |self| {
             let mut arr = abi_stable::std_types::RVec::with_capacity(self.iters.len());
+            // `has_some` only makes a difference if `all` is true, to determine when to end the iterator.
+            let mut has_some = false;
             for v in self.iters.iter_mut() {
                 match v.next().await? {
-                    None => return Ok(None),
-                    Some(v) => arr.push(v),
+                    None => if self.all { arr.push(types::Unset.into()); } else { return Ok(None) },
+                    Some(v) => {
+                        has_some = true;
+                        arr.push(v);
+                    }
                 }
             }
-            Ok(Some(Source::imbue(self.args_source.clone().with(types::Array(arr).into()))))
+            Ok(if has_some {
+                Some(Source::imbue(self.args_source.clone().with(types::Array(arr).into())))
+            } else {
+                None
+            })
         });
 
         types::Iter::from_generator(Zip {
             iters: iters_typed.into_iter().map(|v| v.to_owned()).collect(),
+            all,
             args_source: ARGS_SOURCE,
         })
     };
@@ -1001,6 +1017,8 @@ mod test {
             t.assert_eq("self:Array:from <| self:Iter:zip [a,b,c,d] [1,2,3,4]", "[[a,1],[b,2],[c,3],[d,4]]");
             t.assert_eq("self:Array:from <| self:Iter:zip [a,b,c,d] [1,2]", "[[a,1],[b,2]]");
             t.assert_eq("self:Array:from <| self:Iter:zip [a,b] [1,2,3,4]", "[[a,1],[b,2]]");
+            t.assert_eq("self:Array:from <| self:Iter:zip ~all [a,b,c,d] [1,2]", "[[a,1],[b,2],[c,$unset],[d,$unset]]");
+            t.assert_eq("self:Array:from <| self:Iter:zip ~all [a,b] [1,2,3,4]", "[[a,1],[b,2],[$unset,3],[$unset,4]]");
             t.assert_eq("self:Array:from <| self:Iter:zip ^[]", "[]");
             t.assert_eq("self:Array:from <| self:Iter:zip [a,b,c]", "[[a],[b],[c]]");
             t.assert_eq("self:Array:from <| self:Iter:zip [a,b] [1,2] [x,y,z]", "[[a,1,x],[b,2,y]]");

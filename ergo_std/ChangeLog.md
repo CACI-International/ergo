@@ -39,6 +39,9 @@
   worthwhile to have a new name.
 * Add `std:index` to get indices of a value. It is similar to `std:import` but
   doesn't support recursive indexing and doesn't error on Unset results.
+* Add an `all` keyed argument to `std:Iter:zip` to replace missing values with
+  `Unset` rather than ending the iterator.
+* Add `std:optargs` as a convenient way to add optional arguments to a function.
 
 #### Modifications
 * Removed the `std:by-content` function, as one shouldn't be reinterpreting
