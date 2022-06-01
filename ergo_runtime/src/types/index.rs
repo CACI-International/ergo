@@ -23,8 +23,21 @@ impl From<Index> for TypedValue<Index> {
     }
 }
 
+impl traits::NestedValues for Index {
+    fn nested_values(&self) -> Vec<&Value> {
+        vec![&self.0]
+    }
+
+    fn nested_values_mut(&mut self) -> Vec<&mut Value> {
+        vec![&mut self.0]
+    }
+}
+
 ergo_traits_fn! {
     crate::ergo_type_name!(traits, Index);
+
+    traits::Nested::add_impl::<Index>(traits);
+    traits::Functor::add_nested_impl::<Index>(traits);
 
     impl traits::Bind for Index {
         async fn bind(&self, arg: Value) -> Value {
