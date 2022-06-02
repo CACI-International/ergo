@@ -32,7 +32,7 @@
 					width: 8.5in;
 					height: 11in;
 					box-sizing: border-box;
-					font-size: 6.4pt;
+					font-size: 6.3pt;
 					max-width: none;
 					color-adjust: exact;
 				}
@@ -43,7 +43,7 @@
 						column-count: 3;
 						width: 11in;
 						height: 8.5in;
-						font-size: 7.2pt;
+						font-size: 7.1pt;
 					}
 				}
 			}
@@ -153,7 +153,7 @@
 			</div>
 			<div class="row subset">
 				<div><em>^</em>arr</div>
-				<div>merge array</div>
+				<div>merge array<br>merge unbound (match items when binding)</div>
 			</div>
 			<div class="row">
 				<div><em>{</em>a=1<em>,</em>cmd arg<em>,</em>c=3<em>}</em></div>
@@ -165,7 +165,7 @@
 			</div>
 			<div class="row subset">
 				<div><em>^</em>value</div>
-				<div>merge array (sequence values)<br>merge map (keys)<br>merge unbound (match extra keys when binding)</div>
+				<div>merge array (sequence values)<br>merge map (keys)<br>merge unbound (match keys when binding)</div>
 			</div>
 			<div class="row">
 				<div><em>(</em>cmd a b c<em>)</em></div>
@@ -197,7 +197,7 @@
 			</div>
 			<div class="row subset">
 				<div><em>^</em>value</div>
-				<div>merge array (args)<br>merge map (keyed args)<br>merge args</div>
+				<div>merge array (positional args)<br>merge map (keyed args)<br>merge args<br>merge unbound (match args when binding)</div>
 			</div>
 			<div class="row">
 				<div>:a <em>-></em> cmd $a</div>
@@ -231,35 +231,39 @@
 			</div>
 			<div class="row">
 				<div>a b <em>&lt;|</em> c d</div>
-				<div>same as <code>a b (c d)</code></div>
+				<div><code>a b (c d)</code></div>
 			</div>
 			<div class="row">
 				<div>a b <em>|></em> c d</div>
-				<div>same as <code>(a b) c d</code></div>
+				<div><code>(a b) c d</code></div>
 			</div>
 			<div class="row">
 				<div>a b <em>|</em> c d</div>
-				<div>same as <code>c d (a b)</code></div>
+				<div><code>c d (a b)</code></div>
 			</div>
 			<div class="row">
 				<div>{<em>abc</em>}</div>
-				<div>same as <code>abc = $abc</code><br>(binding an outer value into scope)</div>
+				<div><code>abc = $abc</code><br>(binding an outer value into scope)</div>
 			</div>
 			<div class="row">
-				<div>~<em>abc</em></div>
-				<div>same as <code>~abc=()</code><br>(convenient for flags)</div>
+				<div>{<em>:abc</em>}</div>
+				<div><code>abc = :abc</code><br>(binding a value <i>for</i> the outer scope)</div>
 			</div>
 			<div class="row">
-				<div>{<em>:abc</em>}<br>~<em>:abc</em></div>
-				<div>same as <code>abc=:abc</code><br>(binding a value for the outer scope)</div>
+				<div>~<em>expr</em></div>
+				<div>
+					if <code>expr</code> contains exactly one <code>:key</code>, <code>~key=expr</code>
+					<br>
+					otherwise, <code>~expr=()</code> (convenient for flags)
+				</div>
 			</div>
 			<div class="row">
 				<div><em>str</em>:b:c<br><em>str</em> a b c<br>"hello $(<em>str</em>)"<br>^<em>str</em></div>
-				<div>same as <code>$str</code></div>
+				<div><code>$str</code></div>
 			</div>
 			<div class="row">
 				<div><em>a</em> = 1</div>
-				<div>same as <code>:a = 1</code></div>
+				<div><code>:a = 1</code></div>
 			</div>
 			<p>Commas are interchangeable with semicolons and newlines.</p>
 			<p>Spaces in groups (parens) are interchangeable with newlines.</p>

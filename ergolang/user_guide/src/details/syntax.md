@@ -114,13 +114,14 @@ cmd ~a=()
 which is useful for setting flags.
 
 ```ergo
-fn ~:a -> ()
+fn ~(default :a as []) -> ()
 ```
 is the same as
 ```ergo
-fn ~a=:a -> ()
+fn ~a=(default :a as []) -> ()
 ```
-which is useful for matching keyed arguments.
+which is useful for matching keys in maps and keyed arguments. Note that this
+shorthand only works when there is exactly one `:string` in the expression.
 
 #### Pipe operators
 Pipe operators desugar in the following ways:

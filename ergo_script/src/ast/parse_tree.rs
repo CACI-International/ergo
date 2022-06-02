@@ -138,11 +138,92 @@ impl From<SymbolicToken> for TreeOrSymbol {
     }
 }
 
+enum Single<T> {
+    None,
+    One(T),
+    Many,
+}
+
+impl<T> std::ops::Add for Single<T> {
+    type Output = Self;
+    fn add(self, rhs: Self) -> Self {
+        use Single::*;
+        match (self, rhs) {
+            (None, None) => None,
+            (One(v), None) => One(v),
+            (None, One(v)) => One(v),
+            _ => Many,
+        }
+    }
+}
+
+impl<T> From<Single<T>> for Option<T> {
+    fn from(s: Single<T>) -> Self {
+        match s {
+            Single::One(t) => Some(t),
+            _ => None,
+        }
+    }
+}
+
+impl<T> From<Option<T>> for Single<T> {
+    fn from(o: Option<T>) -> Self {
+        match o {
+            Some(t) => Single::One(t),
+            None => Single::None,
+        }
+    }
+}
+
+impl<T> std::iter::Sum for Single<T> {
+    fn sum<I>(iter: I) -> Self
+    where
+        I: Iterator<Item = Self>,
+    {
+        iter.reduce(|a, b| a + b).unwrap_or(Single::None)
+    }
+}
+
 impl Tree {
     pub fn is_string(&self) -> bool {
+        self.string().is_some()
+    }
+
+    pub fn string(&self) -> Option<&str> {
         match self {
-            Tree::String(_) => true,
-            _ => false,
+            Tree::String(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    /// If the tree contains exactly one ColonPrefix(String) element, return the string.
+    pub fn single_colon_string(&self) -> Option<&str> {
+        self.single_colon_string_impl().into()
+    }
+
+    fn single_colon_string_impl(&self) -> Single<&str> {
+        use Tree::*;
+
+        match self {
+            String(_) => Single::None,
+            Caret(t) | Dollar(t) | Hash(t) | DoubleHash(t) | Tilde(t) => {
+                t.single_colon_string_impl()
+            }
+            ColonPrefix(t) => t.string().into(),
+            Equal(a, b) | TildeEqual(a, b) | Arrow(a, b) | Colon(a, b) => {
+                a.single_colon_string_impl() + b.single_colon_string_impl()
+            }
+            Parens(tv) | Curly(tv) | Bracket(tv) => {
+                tv.iter().map(|t| t.single_colon_string_impl()).sum()
+            }
+            Quote(stv) | ApostropheBlock(stv) | DoubleHashBlock(stv) => stv
+                .iter()
+                .map(|st| match st.value() {
+                    StringTree::String(_) => Single::None,
+                    StringTree::Expression(t) => t.single_colon_string_impl(),
+                })
+                .sum(),
+            HashBlock(_) => Single::None,
         }
     }
 }

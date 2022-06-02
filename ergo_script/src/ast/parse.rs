@@ -289,22 +289,25 @@ fn to_basic_block_item<E>(
                     to_expression(ctx.string_implies(StringImplies::Set), *a)?,
                     to_expression(ctx.string_implies(StringImplies::None), *b)?,
                 )),
-                // elaborate a set of an unquoted string literal `~:a` to `~:a=:a`
-                Tree::ColonPrefix(t) if t.is_string() => {
-                    let s = (*t).map(|t| match t {
-                        Tree::String(s) => Expression::string(s),
-                        _ => panic!("unexpected tree type"),
-                    });
-                    Ok(BlockItem::Bind(
-                        source.clone().with(Expression::set(s.clone())),
-                        source.with(Expression::set(s)),
-                    ))
+                other => {
+                    match other.single_colon_string() {
+                        // elaborate an expression with a single colon before an unquoted string literal `~(... :a ...)` to `~a=(... :a ...)`
+                        Some(s) => Ok(BlockItem::Bind(
+                            source.clone().with(Expression::set(
+                                source.clone().with(Expression::string(s.into())),
+                            )),
+                            to_expression(ctx, t_source.with(other))?,
+                        )),
+                        // elaborate a tilde without a TildeEqual `~a` to `~a=()`
+                        None => Ok(BlockItem::Bind(
+                            to_expression(
+                                ctx.string_implies(StringImplies::Set),
+                                t_source.with(other),
+                            )?,
+                            t_source.with(Expression::unit()),
+                        )),
+                    }
                 }
-                // elaborate a tilde without a TildeEqual `~a` to `~a=()`
-                other => Ok(BlockItem::Bind(
-                    to_expression(ctx.string_implies(StringImplies::Set), t_source.with(other))?,
-                    t_source.with(Expression::unit()),
-                )),
             }
         }
         Tree::Equal(a, b) => Ok(BlockItem::Bind(
@@ -976,6 +979,26 @@ mod test {
                 src(E::command(
                     src(E::get(s("fn"))),
                     command_items![bind(src(E::set(s("name"))), src(E::set(s("name"))))],
+                )),
+                s("s"),
+            ),
+        );
+    }
+
+    #[test]
+    fn function_tilde_nested() {
+        assert_single(
+            "fn ~(foo :name bar) -> s",
+            E::function(
+                src(E::command(
+                    src(E::get(s("fn"))),
+                    command_items![bind(
+                        src(E::set(s("name"))),
+                        src(E::command(
+                            src(E::get(s("foo"))),
+                            command_items![src(E::set(s("name"))), s("bar")]
+                        ))
+                    )],
                 )),
                 s("s"),
             ),
