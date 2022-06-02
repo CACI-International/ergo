@@ -125,14 +125,7 @@ impl super::Command for Lsp {
             .into(),
         );
 
-        rt.block_on(
-            Server::new(stdin, stdout, socket)
-                // If messages are processed concurrently, the server-side state of files may not
-                // be correct (if a format message and a did_change race). In the future we can
-                // re-enable concurrency when we use the file version ids.
-                .concurrency_level(1)
-                .serve(service),
-        );
+        rt.block_on(Server::new(stdin, stdout, socket).serve(service));
         Ok(())
     }
 }
