@@ -1,4 +1,4 @@
-{:Type,:trait,:match,:Array,:Bool,:Error,:Function,:Iter,:Map,:MapEntry,:String,:value,^_} = ergo plugin
+{:Type,:trait,:match,:Array,:Bool,:Error,:Iter,:Map,:MapEntry,:String,:value,^_} = ergo plugin
 
 ## Match any value, without evaluating it.
 ##
@@ -25,10 +25,10 @@ map-values = fn (Map :fields) -> fn :target -> Map :m -> {
 
 ## Match maps where all keys match a specific type and all values match a specific type.
 ## 
-## Arguments: `(Function :key-type) (Function :value-type)`
+## Arguments: `:Keys :Values`
 ##
 ## Returns a value that will match a Map binding with the given types.
-map-of = fn (Function :Keys) (Function :Values) -> fn :target -> Map :m -> {
+map-of = fn :Keys :Values -> fn :target -> Map :m -> {
     $target = Map:from <| Iter:map (fn (MapEntry:@ (Keys :k) (Values :v)) -> MapEntry:new $k $v) $m
 }
 
@@ -45,10 +45,10 @@ array-values = fn (Array :tps) -> fn :target -> Array :a -> {
 
 ## Match arrays where all values match a specific type.
 ## 
-## Arguments: `(Function :type)`
+## Arguments: `:T`
 ##
-## Returns a value that will match an Array with the given types.
-array-of = fn (Function :T) -> fn :target -> Array :a -> {
+## Returns a value that will match an Array with the given type.
+array-of = fn :T -> fn :target -> Array :a -> {
     $target = Array:from <| Iter:map (fn (T :v) -> $v) $a
 }
 
