@@ -87,6 +87,7 @@
 * Improve `std:import` to not evaluate values when binding keys.
 * Generalize `std:Function:recursive` to `std:recurse`, which allows creating
   arbitrary recursive values. Use with caution!
+* Support merging `Args` in `std:merge`.
 
 ### Migration
 * Remove the use of `std:by-content`. If it was being used to compare nested

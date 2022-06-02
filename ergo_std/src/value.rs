@@ -240,6 +240,8 @@ async fn dynamic_binding_set(bindings: types::Map, mut eval: _) -> Value {
 ///   values are deeply merged.
 ///   * Arrays - The values of `b` are appended to the end of those in `a`. If `array-merge` is
 ///   specified, arrays are element-wise deeply merged.
+///   * Args - The keyed arguments are merged as Maps and the positional arguments are merged as
+///   Arrays.
 /// * Otherwise, `b` is preferred and returned.
 async fn merge(a: _, b: _, (array_merge): [_]) -> Value {
     let array_merge = array_merge.is_some();
@@ -247,6 +249,9 @@ async fn merge(a: _, b: _, (array_merge): [_]) -> Value {
     struct Merger {
         array_merge: bool,
     }
+
+    use ergo_runtime::abi_stable::{bst::BstMap, std_types::RVec};
+    use ergo_runtime::EvaluatedValue;
 
     impl Merger {
         fn merge<'a>(&'a self, mut a: Value, mut b: Value) -> BoxFuture<'a, Value> {
@@ -258,29 +263,23 @@ async fn merge(a: _, b: _, (array_merge): [_]) -> Value {
                     ergo_runtime::value::match_value! { a,
                         types::Map(mut a) => {
                             let types::Map(b) = b.as_type::<types::Map>().unwrap().to_owned();
-                            for (k, bv) in b {
-                                let v = if let Some(av) = a.remove(&k) {
-                                    self.merge(av, bv).await
-                                } else {
-                                    bv
-                                };
-                                a.insert(k, v);
-                            }
+                            self.merge_map(&mut a, b).await;
                             return types::Map(a).into();
                         },
                         types::Array(mut a) => {
                             let types::Array(b) = b.as_type::<types::Array>().unwrap().to_owned();
-                            if self.array_merge {
-                                let merge_len = std::cmp::min(a.len(), b.len());
-                                let mut biter = b.into_iter();
-                                for (av, bv) in a.iter_mut().zip(biter.by_ref().take(merge_len)) {
-                                    *av = self.merge(av.clone(), bv).await;
-                                }
-                                a.extend(biter);
-                            } else {
-                                a.extend(b);
-                            }
+                            self.merge_array(&mut a, b).await;
                             return types::Array(a).into();
+                        },
+                        types::Args { args: mut a } => {
+                            let types::Args { args: mut b } = b.as_type::<types::Args>().unwrap().to_owned();
+                            self.merge_map(&mut a.keyed, b.keyed).await;
+                            // Positional args are stored in reverse order for efficient mutation.
+                            a.positional.reverse();
+                            b.positional.reverse();
+                            self.merge_array(&mut a.positional, b.positional).await;
+                            a.positional.reverse();
+                            return types::Args { args: a }.into();
                         },
                         _ => ()
                     }
@@ -288,6 +287,34 @@ async fn merge(a: _, b: _, (array_merge): [_]) -> Value {
                 b
             }
             .boxed()
+        }
+
+        async fn merge_map(
+            &self,
+            a: &mut BstMap<EvaluatedValue, Value>,
+            b: BstMap<EvaluatedValue, Value>,
+        ) {
+            for (k, bv) in b {
+                let v = if let Some(av) = a.remove(&k) {
+                    self.merge(av, bv).await
+                } else {
+                    bv
+                };
+                a.insert(k, v);
+            }
+        }
+
+        async fn merge_array(&self, a: &mut RVec<Value>, b: RVec<Value>) {
+            if self.array_merge {
+                let merge_len = std::cmp::min(a.len(), b.len());
+                let mut biter = b.into_iter();
+                for (av, bv) in a.iter_mut().zip(biter.by_ref().take(merge_len)) {
+                    *av = self.merge(av.clone(), bv).await;
+                }
+                a.extend(biter);
+            } else {
+                a.extend(b);
+            }
         }
     }
 
@@ -373,6 +400,7 @@ mod test {
                 "{a = [1,2,3,4], b = { x = 42, y = 2, z = 3 }, c = hi}");
             t.assert_eq("self:value:merge ~array-merge {a = [{z=1},2,3], b = [1]} {a = [{y=4}], b = [4,5,6]}",
                 "{a = [{y=4,z=1},2,3], b = [4,5,6]}");
+            t.assert_eq("self:value:merge (fn 1 2 ~key ~a) (fn 3 4 ~key=k ~b)", "fn 1 2 3 4 ~key=k ~a ~b");
         }
 
         fn equal(t) {
