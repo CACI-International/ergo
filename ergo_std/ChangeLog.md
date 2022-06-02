@@ -47,6 +47,7 @@
 * Add `std:dynamic:bind` to deeply bind dynamic bindings in values. This is
   preferable to `std:dynamic:eval` as it leads to fewer mistakes when working
   with dynamic bindings.
+* Add `std:Unset:or` to return the first non-Unset value.
 
 #### Modifications
 * Removed the `std:by-content` function, as one shouldn't be reinterpreting
@@ -112,7 +113,8 @@
   pattern expressions.
 * Change `std:Iter:zip` in pattern (as previously designated) expressions to
   `std:Iter:unzip`.
-* Move `std:default` in normal (as previously designated) expressions.
+* Change `std:default X as Y` in normal (as previously designated) expressions
+  to `std:Unset:or X Y`.
 * Rename the following functions:
   * `std:Any` -> `std:Type:pass`
   * `std:Typed` -> `std:Type:any`

@@ -274,8 +274,20 @@ getopt-fn = :patargs -> :args -> { $patargs = plugin:getopt args:positional }
 ##
 ## Arguments: `(Function :f) :value`
 ##
-## If `value` is Unset, returns `value`, otherwise return `f` applied to `value`.
+## If `value` is Unset, returns `value` (unset), otherwise returns `f` applied to `value`.
 unset-map = fn :f :v -> plugin:match $v [$unset -> $v, _ -> f $v]
+
+## Return the first non-Unset value.
+##
+## Arguments: `^:values`
+##
+## If none of the `values` are not Unset, returns Unset.
+unset-or = fn ^:values -> {
+    result = (plugin:Array:from $values
+        | plugin:Iter:skip-while (fn :v -> plugin:value:equal $v $unset)
+        | plugin:Iter:item)
+    unset-map (fn :m -> m:item) $result
+}
 
 ## Bind a value to each binding provided.
 ##
@@ -389,7 +401,7 @@ dynamic-bind = fn :bindings :value -> {
 
     ##mdoc:module
     ## Unset type.
-    Unset = extend-type plugin:Unset {map = $unset-map}
+    Unset = extend-type plugin:Unset {map = $unset-map, or = $unset-or}
 
     ##mdoc:module
     ## Binding helpers.

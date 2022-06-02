@@ -127,4 +127,23 @@ dynamic = {
     }
 }
 
-std:test:run { if, type, required, optargs, dynamic }
+Unset = {
+    or = {
+        none = {
+            $unset = std:Unset:or ^[]
+            std:Bool:true
+        }
+        one = {
+            $unset = std:Unset:or $unset
+            "a" = std:Unset:or a
+            std:Bool:true
+        }
+        many = {
+            "1" = std:Unset:or $unset { $unset } 1 2 3
+            $unset = std:Unset:or $unset { $unset } $unset
+            std:Bool:true
+        }
+    }
+}
+
+std:test:run { if, type, required, optargs, dynamic, Unset }
