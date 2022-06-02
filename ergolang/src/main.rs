@@ -138,10 +138,8 @@ fn main() {
             if let Some(name) = std::path::PathBuf::from(proc).file_name() {
                 if name == "ergo" {
                     break cli::<ImplicitCommand<command::Evaluate>>();
-                } else if name == "ergo-format" {
+                } else if name == "ergofmt" {
                     break cli::<ImplicitCommand<command::Format>>();
-                } else if name == "ergo-lsp" {
-                    break cli::<ImplicitCommand<command::Lsp>>();
                 }
             }
         }
