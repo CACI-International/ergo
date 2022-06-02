@@ -14,12 +14,13 @@ pub fn r#type() -> Value {
     types::Type {
         tp: types::Iter::ergo_type(),
         index: crate::make_string_map! {
+            "chunks" = chunks(),
             "count" = count(),
             "filter" = filter(),
             "flatten" = flatten(),
             "fold" = fold(),
             "from" = from(),
-            "chunks" = chunks(),
+            "item" = item(),
             "map" = map(),
             "map-lazy" = map_lazy(),
             "new" = new(),
@@ -102,6 +103,28 @@ async fn new(func: _, ...) -> Value {
     });
 
     types::Iter::new(New { func, args }, CALL_DEPENDS).into()
+}
+
+#[types::ergo_fn]
+/// Get the next item from the iterator.
+///
+/// Arguments: `(Into<Iter> :iter)`
+///
+/// Returns either `Unset` (indicating end of iterator), `Error` in case of error, or a `Map` with
+/// two entries:
+/// * `item` - the returned item from the iterator
+/// * `next` - the remaining iterator
+async fn item(iter: _) -> Value {
+    let deps = depends![dyn nsid!(std::iter::next), iter];
+    let mut iter = traits::into::<types::Iter>(iter).await?.to_owned();
+
+    match iter.next().await? {
+        None => types::Unset.into(),
+        Some(v) => crate::make_string_map! {
+            "item" = v,
+            "next" = Value::with_id(iter, deps)
+        },
+    }
 }
 
 #[types::ergo_fn]
@@ -921,6 +944,11 @@ async fn partition(func: _, iter: _) -> Value {
 #[cfg(test)]
 mod test {
     ergo_script::tests! {
+        fn chunks(t) {
+            t.assert_eq("self:Array:from <| self:Iter:chunks 5 [a,b,c,d,e,f,g,h,i,j]", "[[a,b,c,d,e],[f,g,h,i,j]]");
+            t.assert_eq("self:Array:from <| self:Iter:chunks 3 [a,b,c,d,e,f,g,h,i,j]", "[[a,b,c],[d,e,f],[g,h,i],[j]]");
+        }
+
         fn count(t) {
             t.assert_eq("self:Iter:count [a,b,1,2]", "self:Number:from 4");
             t.assert_eq("self:Iter:count []", "self:Number:from 0");
@@ -938,9 +966,11 @@ mod test {
             t.assert_eq("self:Array:from <| self:Iter:flatten [[a,b],[],[],[c,d,e,f],[g]]", "[a,b,c,d,e,f,g]");
         }
 
-        fn chunks(t) {
-            t.assert_eq("self:Array:from <| self:Iter:chunks 5 [a,b,c,d,e,f,g,h,i,j]", "[[a,b,c,d,e],[f,g,h,i,j]]");
-            t.assert_eq("self:Array:from <| self:Iter:chunks 3 [a,b,c,d,e,f,g,h,i,j]", "[[a,b,c],[d,e,f],[g,h,i],[j]]");
+        fn item(t) {
+            t.assert_eq("self:Iter:item [1,2,3] |>:item", "1");
+            t.assert_eq("self:Iter:item (self:Iter:item [1,2,3] |>:next) |>:item", "2");
+            t.assert_eq("self:Iter:item []", "$unset");
+            t.assert_fail("self:Iter:item <| self:Iter:new (fn :arr -> self:Error:new error) [1,2,3]");
         }
 
         fn map(t) {
