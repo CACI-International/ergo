@@ -58,28 +58,31 @@ default = fn :target as :default-value -> :v -> {
 ## ```
 partial = fn :f ^:args -> fn ^:args2 -> f ^$args ^$args2
 
-## Create a recursive function. The passed function will be passed itself as the first argument, and
-## all other arguments will be forwarded.
+## Create a recursive value.
 ##
-## Arguments: `(Function :function)`
+## Arguments: `:generator`
 ##
-## Returns a function that calls the passed function, forwarding arguments.
+## Returns the result of binding `generator` with the result of the binding.
 ##
-## When recursively calling the function, you must also pass the function as the first argument.
 ## *Avoid recursion when possible*, as it is often difficult to reason about value identities and
-## behavior in the lazily-evaluated runtime.
+## behavior in the lazily-evaluated runtime. Functional recursion avoids deadlock detection, so
+## be careful to call in a terminating manner!
 ##
 ## ### Example Usage
 ## ```ergo
-## func = Function:recursive <| fn :self :a :b -> {
-##    # Recursive call
-##    self :self 1 2
+## Map :m = recurse <| :self -> {
+##     x = fn :a -> self:y $$a
+##     y = fn :b -> [$$b, 1]
 ## }
 ##
-## # External call
-## func 1 2
+## Function :f = recurse <| :self -> fn :v -> {
+##     match $$v [
+##         String :s -> $$s
+##         [:a,^:rest] -> self $$a
+##     ]
+## }
 ## ```
-recursive = fn :f -> fn ^:args -> f $f ^$args
+recurse = fn :f -> (fn :l -> l $l) (fn :l -> bind $f (l $l))
 
 ## Memoize a function (cache the function results based purely on arguments).
 ##
@@ -167,7 +170,7 @@ optargs = fn ^:target -> fn ^:args -> {
 ## import {path = :stdpath} = $$std
 ## stdpath:from my/path
 ## ```
-import = recursive <| fn :self :descr -> :v -> {
+import = recurse <| :self -> fn :descr -> :v -> {
     plugin:match $descr [
         plugin:Map :m -> {
             plugin:Iter:map (fn (plugin:MapEntry:@ :key :value) -> { 
@@ -176,7 +179,7 @@ import = recursive <| fn :self :descr -> :v -> {
                     plugin:Bool:true -> plugin:Error:new (source=$key) "missing index"
                     _ -> ()
                 ]
-                self $self $value = $result
+                self $value = $result
                 ()
             }) $m
             ()
@@ -246,11 +249,11 @@ iter-true = fn :iter -> plugin:Iter:filter (fn :a -> $a) $iter
 ## subsequently tested (returning `if_true2` if one evaulates to true), and `if_false` is returned
 ## if no conditions evaluate to true. If the else condition is omitted, `unset` will be returned.
 if = fn :cond :if_true ^:rest -> {
-    do-condition = recursive <| fn :self :cond :if_true :rest -> {
+    do-condition = recurse <| :self -> fn :cond :if_true :rest -> {
         plugin:match (plugin:Bool:from $cond) [
             plugin:Bool:true -> $if_true
             plugin:Bool:false -> plugin:match $rest [
-                [else,if,:cond2,:if_true2,^:rest] -> self $self $cond2 $if_true2 $rest
+                [else,if,:cond2,:if_true2,^:rest] -> self $cond2 $if_true2 $rest
                 [else,:if_false] -> $if_false
                 [] -> $unset
                 [:other,^_] -> plugin:Error:new (source=$other) "expected `else` or `else if`"
@@ -296,6 +299,23 @@ bind-or = fn ^:cases -> :v -> plugin:match $v cases:positional
 ## Extend a type with the given map of indices.
 extend-type = fn :tp :map -> plugin:Type:modify $tp <| plugin:value:merge (plugin:Type:index $tp) $map
 
+## Evaluate a value and all inner values with the given dynamic bindings.
+##
+## Arguments: `(Map :bindings) :value`
+##
+## Returns the result of evaluating `value` with all `bindings` set in the dynamic scope, and sets
+## those bindings on any values within `value` (through the `Functor` trait).
+##
+## It is often preferable to use this function over `std:dynamic:eval`, especially when a value may
+## have arbitrary type and nested values which may possibly interact with dynamic bindings.
+dynamic-bind = fn :bindings :value -> {
+    apply = recurse <| :self -> :value -> {
+        result = plugin:value:dynamic:eval $bindings $value
+        plugin:trait:Functor:map $self $result
+    }
+    bind $apply $value
+}
+
 ##mdoc:module
 ## The ergo standard library.
 ##
@@ -324,7 +344,7 @@ extend-type = fn :tp :map -> plugin:Type:modify $tp <| plugin:value:merge (plugi
 
     ##mdoc:module
     ## Functions and unbound values.
-    Function = extend-type plugin:Function {memoize,partial,pass,recursive,module = $function-module}
+    Function = extend-type plugin:Function {memoize,partial,pass,module = $function-module}
 
     ##mdoc:module
     ## Iterators producing values.
@@ -391,7 +411,7 @@ extend-type = fn :tp :map -> plugin:Type:modify $tp <| plugin:value:merge (plugi
     ##
     ## Generally dynamic bindings are a bit tricky to reason about since there are no syntactic
     ## hints about when they will be present, so take this into consideration when using them.
-    dynamic = plugin:value:dynamic
+    dynamic = { ^plugin:value:dynamic, bind = $dynamic-bind }
 
     ##mdoc:module
     ## Get values related to the program's runtime environment.
@@ -492,6 +512,7 @@ extend-type = fn :tp :map -> plugin:Type:modify $tp <| plugin:value:merge (plugi
     getopt = function-module plugin:getopt {fn = $getopt-fn}
     import
     if
+    recurse
     match = function-module plugin:match {value = $matches}
     task = plugin:task
 }

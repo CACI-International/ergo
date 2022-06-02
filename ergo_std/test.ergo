@@ -106,4 +106,25 @@ optargs = {
     }
 }
 
-std:test:run { if, type, required, optargs }
+dynamic = {
+    bind = {
+        :"same as eval" = {
+            v = std:dynamic:get key
+            "foo" = std:dynamic:eval { key = foo } $v
+            "bar" = std:dynamic:bind { key = bar } $v
+            std:Bool:true
+        }
+        :"affects nested" = {
+            m = {
+                x = {
+                    y = std:dynamic:get key
+                }
+            }
+            $unset = std:dynamic:eval { key = foo } $m |>:x:y
+            "foo" = std:dynamic:bind { key = foo } $m |>:x:y
+            std:Bool:true
+        }
+    }
+}
+
+std:test:run { if, type, required, optargs, dynamic }

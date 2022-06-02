@@ -43,6 +43,9 @@
 * Add an `all` keyed argument to `std:Iter:zip` to replace missing values with
   `Unset` rather than ending the iterator.
 * Add `std:optargs` as a convenient way to add optional arguments to a function.
+* Add `std:dynamic:bind` to deeply bind dynamic bindings in values. This is
+  preferable to `std:dynamic:eval` as it leads to fewer mistakes when working
+  with dynamic bindings.
 
 #### Modifications
 * Removed the `std:by-content` function, as one shouldn't be reinterpreting
@@ -81,6 +84,8 @@
   argument to `top`.
 * Remove `std:Path:new` and `std:Path:with-output`.
 * Improve `std:import` to not evaluate values when binding keys.
+* Generalize `std:Function:recursive` to `std:recurse`, which allows creating
+  arbitrary recursive values. Use with caution!
 
 ### Migration
 * Remove the use of `std:by-content`. If it was being used to compare nested
@@ -121,6 +126,9 @@
 * Change `std:cache ^no-persist :value` to `std:once :value`.
 * Replace uses of `std:Path:new` and `std:Path:with-output` with
   `std:Path:for`, which will produce deterministic paths.
+* Change `std:Function:recursive <| fn :self ...` to `std:recurse <| :self -> fn
+  ...` and change any use of `self` in the function body to not pass `self` as
+  the first argument.
 
 ## 1.0.0-rc.3  -- 2021-12-14
 * No changes.
