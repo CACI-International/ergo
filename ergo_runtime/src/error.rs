@@ -634,8 +634,8 @@ macro_rules! error_info {
                 $crate::error::ErrorOrDiagnostic::Diagnostic(mut d) => {
                     $(d.severity = $crate::error::Severity::$severity;)?
                     $(d.message = { let $old_message = d.message; $message };)?
-                    $(d.labels = $crate::abi_stable::rvec![$($crate::error::Label::$labelfn ($($labelarg),*)),+];)?
-                    $(d.notes = $crate::abi_stable::rvec![$($note.to_string().into()),+];)?
+                    $(d.labels.extend($crate::abi_stable::rvec![$($crate::error::Label::$labelfn ($($labelarg),*)),+]);)?
+                    $(d.notes.extend($crate::abi_stable::rvec![$($note.to_string().into()),+]);)?
                     d.into()
                 }
             })
@@ -654,8 +654,8 @@ macro_rules! error_info {
                 $crate::error::ErrorOrDiagnostic::Diagnostic(mut d) => {
                     $(d.severity = $crate::error::Severity::$severity;)?
                     $(d.message = { let $old_message = d.message; $message };)?
-                    $(d.labels = $crate::abi_stable::rvec![$($crate::error::Label::$labelfn ($($labelarg),*)),+];)?
-                    $(d.notes = $crate::abi_stable::rvec![$($note.to_string().into()),+];)?
+                    $(d.labels.extend($crate::abi_stable::rvec![$($crate::error::Label::$labelfn ($($labelarg),*)),+]);)?
+                    $(d.notes.extend($crate::abi_stable::rvec![$($note.to_string().into()),+]);)?
                     d.into()
                 }
             })

@@ -74,11 +74,19 @@ ergo_traits_fn! {
                         let v = v.clone();
                         let tp = tp.clone();
                         async move {
-                            drop(crate::Context::eval(&mut arg).await);
-                            if arg.ergo_type().unwrap() != &tp {
-                                return traits::type_error_for_t(arg, &tp).into_error().into();
-                            }
-                            traits::bind(v, arg).await
+                            crate::error_info! {
+                                labels: [
+                                    secondary(source.with("while binding here"))
+                                ],
+                                async {
+                                    drop(crate::Context::eval(&mut arg).await);
+                                    if arg.ergo_type().unwrap() != &tp {
+                                        Err(traits::type_error_for_t(arg, &tp))
+                                    } else {
+                                        Ok(traits::bind(v, arg).await)
+                                    }
+                                }
+                            }.into()
                         }.boxed()
                     }, deps).into()
                 },
