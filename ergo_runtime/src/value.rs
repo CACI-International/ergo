@@ -609,6 +609,16 @@ impl Value {
         EvaluatedValue::from_value(self).await
     }
 
+    /// Get this value as the given type if evaluated to that type.
+    pub fn as_ref<T: ErgoType>(&self) -> Option<&T> {
+        match &self.data {
+            ValueData::Typed { tp, data } if tp.as_ref() == &T::ergo_type() => {
+                Some(unsafe { data.as_ref().as_ref::<T>() })
+            }
+            _ => None,
+        }
+    }
+
     /// Get this value as the given mutable type, if evaluated to that type and no other references
     /// exist.
     pub fn as_mut<T: ErgoType>(&mut self) -> Option<&mut T> {
