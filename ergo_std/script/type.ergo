@@ -7,10 +7,10 @@ pass = fn :target -> :x -> { $target = $x }
 
 ## Check whether a value has the given type.
 ##
-## Arguments: `(Type :type) :value`
+## Arguments: `:T :value`
 ##
-## Returns `value` (evaluated) if it is a `type`, otherwise returns an Error.
-check = fn (Type :T) :value -> { T :x = $value; $x }
+## Returns `value` (evaluated) if it is a `T`, otherwise returns an Error.
+check = fn :T :value -> { T :x = $value; $x }
 
 ## Match maps with specific keys and value types.
 ## 
