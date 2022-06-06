@@ -247,10 +247,16 @@ async fn r#match(format_string: types::String, ...) -> Value {
                             if let Some(0) = s.find(&string_literal) {
                                 s = &s[string_literal.len()..];
                             } else {
-                                return s_source
-                                    .with(format!("substring missing: {}", string_literal))
-                                    .into_error()
-                                    .into();
+                                return ergo_runtime::error! {
+                                    labels: [
+                                        primary(s_source.with(""))
+                                    ],
+                                    notes: [
+                                        format!("remaining string was '{}'", s)
+                                    ],
+                                    error: format!("substring missing: '{}'", string_literal)
+                                }
+                                .into();
                             };
                         }
                         FormatBind::Value(part, v) => match binds.next() {
