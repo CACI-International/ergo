@@ -230,12 +230,20 @@ pub async fn function(
             s.push('"');
         }
         let mut s = String::new();
-        s += "Child(pwd=";
+        s += "Child(";
+        string_lit(&mut s, command.get_program());
+        for a in command.get_args() {
+            s += " ";
+            string_lit(&mut s, a);
+        }
+
+        s += ", pwd=";
         match command.get_current_dir() {
             None => s += "<none>",
             Some(p) => s += &p.display().to_string(),
         }
-        s += ",env={";
+
+        s += ", env={";
         let mut first = true;
         for (k, v) in command.get_envs() {
             if !first {
@@ -248,12 +256,8 @@ pub async fn function(
             }
             first = false;
         }
-        s += "}) ";
-        string_lit(&mut s, command.get_program());
-        for a in command.get_args() {
-            s += " ";
-            string_lit(&mut s, a);
-        }
+        s += "})";
+
         s
     };
 
