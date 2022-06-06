@@ -192,6 +192,7 @@ impl<'a, 's: 'a, S: Clone + Into<Cow<'s, str>>> FormatTree<S> {
                     | SymbolicToken::Hash
                     | SymbolicToken::DoubleHash
                     | SymbolicToken::Tilde
+                    | SymbolicToken::Caret
                     | SymbolicToken::Dollar,
                 )) => {
                     should_skip_sep = true;
