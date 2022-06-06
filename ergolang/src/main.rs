@@ -109,7 +109,9 @@ fn main() {
         log::set_max_level(level);
         log::set_boxed_logger(simplelog::WriteLogger::new(
             level,
-            simplelog::Config::default(),
+            simplelog::ConfigBuilder::new()
+                .set_time_format_str("%H:%M:%S%.3f")
+                .build(),
             std::fs::File::create(log_file.clone()).expect("failed to open log file for writing"),
         ))
         .unwrap();

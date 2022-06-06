@@ -14,7 +14,7 @@ directories = "4.0"
 ergo_script = { path = "../ergo_script" }
 ergo_runtime = { path = "../ergo_runtime" }
 futures = "^0.3"
-log = "^0.4"
+log = { version = "^0.4", features = ["release_max_level_debug"] }
 pager = "0.16"
 pretty = { version = "0.11", features = ["termcolor"] }
 pulldown-cmark = "0.9"

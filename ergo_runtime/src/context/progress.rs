@@ -53,29 +53,48 @@ impl Progress {
         value: &mut Value,
     ) -> crate::Result<bool> {
         value.eval_once().await;
-        if value.is_evaluated() {
-            self.inner.made_progress.store(true, Ordering::Relaxed);
-            Ok(true)
-        } else if self.is_deadlocked() {
-            // Attempt to find an evaluation loop in `value`.
-            let mut sources = vec![Source::get(&value)];
-            let target = value.referential_id();
-            while sources.len() < DEADLOCK_BACKTRACE_LIMIT {
-                value.eval_once().await;
-                if value.referential_id() == target {
-                    break;
+        if self.is_deadlocked() {
+            // Generate a circular evaluation error if the value is unevaluated.
+            if !value.is_evaluated() {
+                // Attempt to find an evaluation loop in `value`.
+                let mut sources = vec![Source::get(&value)];
+                let target = value.referential_id();
+                while sources.len() < DEADLOCK_BACKTRACE_LIMIT {
+                    value.eval_once().await;
+                    if value.referential_id() == target {
+                        break;
+                    }
+                    sources.push(Source::get(&value));
                 }
-                sources.push(Source::get(&value));
+                use crate::error::{Diagnostic, DiagnosticInfo};
+                let mut d = Diagnostic::from("circular evaluation detected");
+                for (i, s) in sources.into_iter().enumerate() {
+                    (&mut d).add_primary_label(s.with(i + 1));
+                }
+                return Err(d.into());
             }
-            use crate::error::{Diagnostic, DiagnosticInfo};
-            let mut d = Diagnostic::from("circular evaluation detected");
-            for (i, s) in sources.into_iter().enumerate() {
-                (&mut d).add_primary_label(s.with(i + 1));
+
+            // Generate a deadlock error if the value is an aborted Error.
+            if value
+                .as_ref::<crate::types::Error>()
+                .map(|e| e.is_aborted())
+                .unwrap_or(false)
+            {
+                return Err(crate::error! {
+                    labels: [
+                        primary(Source::get(&value).with("while evaluating this value"))
+                    ],
+                    error: "deadlock detected"
+                });
             }
-            Err(d.into())
-        } else {
-            Ok(false)
         }
+
+        Ok(if value.is_evaluated() {
+            self.inner.made_progress.store(true, Ordering::Relaxed);
+            true
+        } else {
+            false
+        })
     }
 
     /// Get a token related to a progress attempt.

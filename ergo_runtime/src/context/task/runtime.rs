@@ -84,8 +84,12 @@ struct BlockingTask {
 }
 
 struct Priorities {
+    /// The current greatest priority (lowest numeric priority).
     current: RwLock<u32>,
+    /// The number of ready queued tasks at the current priority.
     queued: AtomicUsize,
+    /// The ready tasks of all lesser priorities (greater numeric priorities).
+    /// The tuple contains the number of tasks that are currently queued and the unqueued ready tasks.
     ready: Mutex<BTreeMap<u32, (usize, Vec<Arc<Task>>)>>,
 }
 
@@ -141,18 +145,28 @@ impl Default for Priorities {
 }
 
 impl Priorities {
+    /// Indicate that a task is ready, returning the task if it should be queued immediately.
     pub fn ready(&self, task: Arc<Task>) -> Option<Arc<Task>> {
         let mut current = self.current.upgradable_read();
         loop {
             if task.priority == *current {
+                // Task is the current priority level, increment the queued count
                 self.queued.fetch_add(1, Ordering::Relaxed);
                 break Some(task);
             } else if task.priority < *current {
+                // Task is a greater priority, change current/queued to reflect this, and make a
+                // `ready` entry for the old (lesser) priority.
                 let mut wcurrent = RwLockUpgradableReadGuard::upgrade(current);
                 if task.priority >= *wcurrent {
                     current = RwLockWriteGuard::downgrade_to_upgradable(wcurrent);
                     continue;
                 }
+                log::trace!(
+                    "task {}: changing highest priority to {} from {}",
+                    task.id,
+                    task.priority,
+                    *wcurrent
+                );
                 let prev_priority = std::mem::replace(&mut *wcurrent, task.priority);
                 let prev = self.queued.swap(1, Ordering::Relaxed);
                 if prev > 0 {
@@ -160,6 +174,7 @@ impl Priorities {
                 }
                 break Some(task);
             } else {
+                // Task is a lesser priority, push it into the ready tasks.
                 self.ready
                     .lock()
                     .entry(task.priority)
@@ -171,6 +186,7 @@ impl Priorities {
         }
     }
 
+    /// Verify that a task has the correct priority to be run right now.
     pub fn verify(&self, task: Arc<Task>) -> Option<Arc<Task>> {
         let current = self.current.read();
         if task.state.load(Ordering::Relaxed) == COMPLETE {
@@ -179,7 +195,13 @@ impl Priorities {
         if task.priority == *current {
             Some(task)
         } else {
-            debug_assert!(task.priority > *current);
+            debug_assert!(
+                task.priority > *current,
+                "task {}: priority ({}) was unexpectedly higher than current ({})",
+                task.id,
+                task.priority,
+                *current
+            );
             let mut guard = self.ready.lock();
             let e = guard.get_mut(&task.priority).unwrap();
             e.0 -= 1;
@@ -188,19 +210,35 @@ impl Priorities {
         }
     }
 
+    /// Indicate that a task with the given priority is not runnable (is pending), optionally
+    /// returning the ready tasks that should now be queued. Tasks will be returned when the task
+    /// was the last ready task with the given priority.
     pub fn pending(&self, priority: u32) -> Vec<Arc<Task>> {
         let current = self.current.upgradable_read();
         if priority == *current {
             if self.queued.fetch_sub(1, Ordering::Relaxed) == 1 {
                 let mut current = RwLockUpgradableReadGuard::upgrade(current);
+                // Once we have the write lock, verify that the state is still the same as prior to
+                // acquiring the lock and get the new current priority and tasks.
                 if priority == *current && self.queued.load(Ordering::Relaxed) == 0 {
                     let mut guard = self.ready.lock();
                     if let Some(new_current) = guard.iter().next().map(|(k, _)| *k) {
+                        log::trace!(
+                            "changing (downgrading) highest priority to {} from {}",
+                            new_current,
+                            *current
+                        );
                         *current = new_current;
                         let (c, v) = guard.remove(&new_current).unwrap();
+                        // Update the queued count.
                         self.queued.store(c + v.len(), Ordering::Relaxed);
+                        // Return the tasks to be queued.
                         return v;
                     } else {
+                        log::trace!(
+                            "changing (downgrading) highest priority to <NONE> from {}",
+                            *current
+                        );
                         *current = u32::MAX;
                     }
                 }
@@ -208,7 +246,12 @@ impl Priorities {
         } else {
             // This case can happen, but should happen infrequently (`verify` should catch things
             // earlier).
-            debug_assert!(priority > *current);
+            debug_assert!(
+                priority > *current,
+                "priority ({}) was unexpectedly higher than current ({})",
+                priority,
+                *current
+            );
             let mut guard = self.ready.lock();
             let e = guard.get_mut(&priority).unwrap();
             e.0 -= 1;
@@ -282,6 +325,7 @@ impl std::task::Wake for Task {
             .compare_exchange(PENDING, READY, Ordering::Relaxed, Ordering::Relaxed)
             .is_ok()
         {
+            log::trace!("task {}: PENDING -> READY (wake)", self.id);
             if let Some(pool) = self.pool.upgrade() {
                 pool.is_ready(self);
             }
@@ -292,7 +336,16 @@ impl std::task::Wake for Task {
 #[cfg(debug_assertions)]
 impl Drop for Task {
     fn drop(&mut self) {
-        debug_assert!(self.state.load(Ordering::Relaxed) != READY);
+        log::trace!(
+            "task {}: {} (dropping)",
+            self.id,
+            self.state.load(Ordering::Relaxed)
+        );
+        debug_assert!(
+            self.state.load(Ordering::Relaxed) != READY,
+            "task {} was READY when dropping",
+            self.id
+        );
     }
 }
 
@@ -668,6 +721,7 @@ impl TaskPool {
             pool: Arc::downgrade(self),
             state: AtomicU8::new(READY),
         });
+        log::trace!("task {}: READY (created)", id);
         if let Some(task) = self.priorities.ready(task) {
             self.push(task);
         }
@@ -738,10 +792,12 @@ impl TaskPool {
                 .compare_exchange(READY, TRANSITIONING, Ordering::Relaxed, Ordering::Relaxed)
                 .is_ok()
             {
+                log::trace!("task {}: READY -> TRANSITIONING", task.id);
                 for t in self.priorities.pending(task.priority) {
                     self.push_yield(t);
                 }
                 task.state.store(PENDING, Ordering::Relaxed);
+                log::trace!("task {}: PENDING", task.id);
                 self.made_progress.store(true, Ordering::Relaxed);
                 self.currently_polling.fetch_add(1, Ordering::Relaxed);
                 if task
@@ -749,9 +805,12 @@ impl TaskPool {
                     .poll(&mut Context::from_waker(&task.clone().into()))
                 {
                     if task.state.swap(COMPLETE, Ordering::Relaxed) == READY {
+                        log::trace!("task {}: READY -> COMPLETE", task.id);
                         for t in self.priorities.pending(task.priority) {
                             self.push_yield(t);
                         }
+                    } else {
+                        log::trace!("task {}: COMPLETE", task.id);
                     }
                 }
                 self.currently_polling.fetch_sub(1, Ordering::Relaxed);

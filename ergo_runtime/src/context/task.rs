@@ -305,6 +305,7 @@ impl TaskManager {
             runtime::Runtime::builder()
                 .pool_size(threads)
                 .on_inactivity(move || {
+                    log::warn!("indicating deadlock due to inactivity");
                     progress.indicate_deadlock();
                     for handle in abort_handles.lock().iter() {
                         handle.abort();
@@ -312,6 +313,7 @@ impl TaskManager {
                 })
                 .on_maintenance(move |rthandle| {
                     if progress2.check_for_deadlock(rthandle.has_blocking_tasks()) {
+                        log::warn!("deadlock detected; aborting tasks");
                         for handle in abort_handles2.lock().iter() {
                             handle.abort();
                         }
