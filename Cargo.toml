@@ -6,7 +6,13 @@ lto = true
 panic = 'abort'
 strip = true
 
+# The `perf` profile is like `release` but includes debug symbols/info.
 [profile.perf]
 inherits = "release"
 strip = false
 debug = 1
+
+# The `optimize` profile is like `dev` but enables optimizations.
+[profile.optimize]
+inherits = "dev"
+opt-level = 3

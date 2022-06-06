@@ -14,6 +14,8 @@ if [[ " $* "  == *\ --release\ * ]]; then
 	TYPE=release
 elif [[ " $* "  == *\ --profile\ perf\ * ]]; then
 	TYPE=perf
+elif [[ " $* "  == *\ --profile\ optimize\ * ]]; then
+	TYPE=optimize
 fi
 
 (cd $DIR; cargo build -p ergolang -p ergo_std "$@")
