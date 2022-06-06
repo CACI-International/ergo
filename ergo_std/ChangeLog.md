@@ -89,6 +89,8 @@
 * Generalize `std:Function:recursive` to `std:recurse`, which allows creating
   arbitrary recursive values. Use with caution!
 * Support merging `Args` in `std:merge`.
+* Improve `std:fs:copy` to allow non-existent `from` paths if making a symbolic
+  link.
 
 ### Migration
 * Remove the use of `std:by-content`. If it was being used to compare nested

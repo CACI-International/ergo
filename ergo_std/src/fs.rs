@@ -246,8 +246,14 @@ fn recursive_link<F: AsRef<Path>, T: AsRef<Path>>(
 ///
 /// If the destination is an existing directory, `from` is copied with the same basename into that
 /// directory.
+///
 /// All destination directories are automatically created.
+///
 /// If `from` is a directory, it is recursively copied.
+///
+/// If `shallow` is `symbolic` and `from` doesn't exist, it is assumed that `from` is a path
+/// relative to `to` and a symbolic file link will be created (relevant on windows, where symbolic
+/// file links and symbolic directory links differ).
 async fn copy(from: types::Path, to: types::Path, (shallow): [_], (follow_symlinks): [_]) -> Value {
     let log = Context::global().log.sublog("fs:copy");
 
@@ -285,13 +291,22 @@ async fn copy(from: types::Path, to: types::Path, (shallow): [_], (follow_symlin
         }
     };
 
-    recursive_link(
-        from.as_ref().as_ref(),
-        to.as_ref().as_ref(),
-        &link_mode,
-        follow_symlinks,
-    )
+    let from = from.as_ref().as_ref();
+    let to = to.as_ref().as_ref();
+
+    // Special handling for the case where you are creating a symlink with a path relative to the
+    // target, assuming it is a file rather than a directory (relevant on windows).
+    if link_mode == LinkMode::Symbolic && !from.exists() {
+        symlink_file(&from, &to).add_note(format_args!(
+            "while creating symbolic link pointing to {} at {}",
+            from.display(),
+            to.display()
+        ))
+    } else {
+        recursive_link(from, to, &link_mode, follow_symlinks)
+    }
     .add_primary_label(ARGS_SOURCE.with(""))?;
+
     types::Unit.into()
 }
 
