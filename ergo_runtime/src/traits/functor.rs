@@ -72,3 +72,20 @@ pub async fn map(mut v: Value, f: Value) -> crate::Result<Value> {
         }
     }
 }
+
+/// Evaluate a value and all inner values recursively, returning the value with inner values replaced.
+pub async fn deep_eval(v: Value) -> crate::Result<Value> {
+    use futures::future::{BoxFuture, FutureExt};
+    fn deep_eval_impl(v: Value) -> BoxFuture<'static, crate::Result<Value>> {
+        async move {
+            let deep = crate::types::Unbound::new_no_doc(
+                |v| async move { deep_eval_impl(v).await.into() },
+                crate::depends![const crate::nsid!(Functor::deep_eval)],
+            )
+            .into();
+            map(v, deep).await
+        }
+        .boxed()
+    }
+    deep_eval_impl(v).await
+}

@@ -13,8 +13,16 @@ pub struct MemCache {
 }
 
 impl MemCache {
-    async fn cache_value(&self, key: u128, value: Value) -> Result<Value> {
-        self.get_entry(key, value, |v| async move { Ok(v) }).await
+    async fn cache_value(
+        &self,
+        key: u128,
+        value: Value,
+        error_handling: super::ErrorHandling,
+    ) -> Result<Value> {
+        self.get_entry(key, value, move |v| {
+            super::eval_for_cache(v, error_handling)
+        })
+        .await
     }
 
     /// Get an entry by id, without separating keys from value identities.
@@ -89,8 +97,11 @@ impl super::CacheInterface for MemCache {
         &self,
         key: super::U128,
         value: Value,
-        _error_handling: super::ErrorHandling,
+        error_handling: super::ErrorHandling,
     ) -> super::BoxFuture<'_, super::RResult<Value>> {
-        super::BoxFuture::new(self.cache_value(key.into(), value).map(|r| r.into()))
+        super::BoxFuture::new(
+            self.cache_value(key.into(), value, error_handling)
+                .map(|r| r.into()),
+        )
     }
 }

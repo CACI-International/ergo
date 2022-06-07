@@ -38,6 +38,28 @@ impl ErrorHandling {
     }
 }
 
+/// Evaluate a value deeply for caching.
+pub async fn eval_for_cache(
+    mut v: Value,
+    error_handling: ErrorHandling,
+) -> ergo_runtime::Result<Value> {
+    if let Err(e) = Context::eval(&mut v).await {
+        if error_handling.top_level_should_error() {
+            return Err(e);
+        }
+    }
+    match traits::deep_eval(v).await {
+        Ok(v) => Ok(v),
+        Err(e) => {
+            if error_handling.child_should_error() {
+                Err(e)
+            } else {
+                Ok(e.into())
+            }
+        }
+    }
+}
+
 #[sabi_trait]
 trait CacheInterface: Send + Sync {
     #[sabi(last_prefix_field)]
@@ -65,6 +87,10 @@ pub fn r#type() -> Value {
 /// Create a new in-memory cache.
 ///
 /// Arguments: `()`
+///
+/// As a means of preventing the accidental creation of reference cycles, entries of an in-memory
+/// cache will be deeply evaluated (using `Functor`). Otherwise a reference cycle could be created
+/// by e.g. referencing the cache in a value that is inserted in the cache.
 async fn memory(_: types::Unit) -> Value {
     Value::with_id(Cache::new(memory::MemCache::default()), CALL_DEPENDS)
 }

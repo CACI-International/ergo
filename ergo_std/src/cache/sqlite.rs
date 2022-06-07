@@ -648,21 +648,16 @@ impl SqliteCache {
                     }
 
                     // Reading serialized data failed, write the value.
-                    //
-                    // Make a copy of the value that we will immediately evaluate, because no
-                    // matter what, from this point on it will be evaluated (either to serialize
-                    // the result, to return early on error, or in the worst case to return a
-                    // result when all else fails).
-                    let mut value = value.clone();
-                    // Copy the value before evaluating to retain the identity for write_value.
-                    let orig_value = value.clone();
-                    if let Err(e) = Context::eval(&mut value).await {
-                        if error_handling.top_level_should_error() {
-                            Err(e)?;
-                        }
-                    }
+
+                    // Deeply evaluate the value to make cache overlap between values more likely
+                    // (and it'll need to be deeply evaluated shortly anyway). This also avoids
+                    // possibly storing (in the in-memory caches) references to the cache itself
+                    // (which would make a reference loop).
+                    let value = super::eval_for_cache(value.clone(), error_handling).await?;
+                    // Wrap the value with a dynamic value that has the original identity so write_value uses the correct id.
+                    let to_write = { let value = value.clone(); Value::dynamic_impure(move || async move { value }, id) };
                     let writer = SqliteCacheWriter::new(self, error_handling);
-                    if let Err(e) = writer.write_value(orig_value).await {
+                    if let Err(e) = writer.write_value(to_write).await {
                         self.db.log.warn(format!("failed to cache value for {:032x}: {}", id, e));
                         break value;
                     }
@@ -678,18 +673,7 @@ impl SqliteCache {
                     };
                     self.db.pending_writes.lock().await.append(writes);
 
-                    // Read the stored value to ensure the returned value has a consistent identity
-                    // whether we have a cache hit or miss.
-                    break match self.read_value(id).await {
-                        Ok(val) => val,
-                        Err(err) => {
-                            self.db.log.warn(format!(
-                                "failed to read just-written value for {:032x}: {}; falling back to original value",
-                                id, err
-                            ));
-                            value
-                        }
-                    };
+                    break value;
                 };
                 stored_value.copy_metadata(&value);
 
