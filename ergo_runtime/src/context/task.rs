@@ -268,6 +268,8 @@ pub struct TaskManager {
     abort_handles: RArc<RMutex<RVec<AbortHandleInterface_TO<'static, RBox<()>>>>>,
     threads: usize,
     aggregate_errors: bool,
+    // XXX temporary until task cancellation is improved
+    basic_task_cancellation: bool,
 }
 
 impl std::fmt::Debug for TaskManager {
@@ -278,6 +280,7 @@ impl std::fmt::Debug for TaskManager {
             .field("abort_handles", &self.abort_handles.lock())
             .field("threads", &self.threads)
             .field("aggregate_errors", &self.aggregate_errors)
+            .field("basic_task_cancellation", &self.basic_task_cancellation)
             .finish()
     }
 }
@@ -321,6 +324,8 @@ impl TaskManager {
                 })
                 .build()?
         };
+        // XXX temporary until task cancellation is improved
+        let basic_task_cancellation = std::env::var_os("ERGO_DEADLOCK_WORKAROUND").is_some();
 
         Ok(TaskManager {
             pool: ThreadPoolInterface_TO::from_value(
@@ -331,6 +336,7 @@ impl TaskManager {
             abort_handles,
             threads,
             aggregate_errors,
+            basic_task_cancellation,
         })
     }
 
@@ -345,9 +351,13 @@ impl TaskManager {
         T: Send + 'static,
     {
         let (future, abort_handle) = abortable(f);
-        self.abort_handles
-            .lock()
-            .push(AbortHandleInterface_TO::from_value(abort_handle, TD_Opaque));
+        {
+            let mut handles = self.abort_handles.lock();
+            if self.basic_task_cancellation {
+                handles.clear();
+            }
+            handles.push(AbortHandleInterface_TO::from_value(abort_handle, TD_Opaque));
+        }
         let (future, handle) = future.remote_handle();
         self.pool.spawn_ok(priority, BoxFuture::new(future));
         handle
