@@ -328,6 +328,11 @@ dynamic-bind = fn :bindings :value -> {
     bind $apply $value
 }
 
+## A process-wide working directory path.
+##
+## The path is owned and will be removed when the process completes.
+process-dir = plugin:Path:owned <| plugin:Path:join plugin:env:temp-dir "ergo-process-dir-$(plugin:env:process-id)"
+
 ##mdoc:module
 ## The ergo standard library.
 ##
@@ -427,7 +432,7 @@ dynamic-bind = fn :bindings :value -> {
 
     ##mdoc:module
     ## Get values related to the program's runtime environment.
-    env = plugin:env
+    env = { ^plugin:env, process-dir }
 
     ##mdoc:module
     ## Interact with the local filesystem.

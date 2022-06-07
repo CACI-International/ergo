@@ -31,6 +31,9 @@
 * Add `std:fs:lock` to get advisory locks on files.
 * Add `std:env:concurrent-tasks` to provide the runtime task concurrency.
 * Add `std:env:project-dir` to get the project working directory.
+* Add `std:env:temp-dir` to get the system temporary directory.
+* Add `std:env:process-id` to get the ergo process id.
+* Add `std:env:process-dir` to get the process working directory.
 * Add `std:Cache` to create caches (both in-memory and persisted to disk).
   * Caches now use sqlite to store values.
 * Add `std:once` to add values to an in-memory cache.

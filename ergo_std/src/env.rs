@@ -9,6 +9,7 @@ pub fn module() -> Value {
         "home" = home(),
         "path-search" = path_search(),
         "current-dir" = current_dir(),
+        "temp-dir" = temp_dir(),
         "project-dir" = project_work(),
         "user-dir" = user_work(),
         "system-dir" = system_work(),
@@ -16,7 +17,8 @@ pub fn module() -> Value {
         "os" = os(),
         "arch" = arch(),
         "vars" = vars(),
-        "concurrent-tasks" = concurrent_tasks()
+        "concurrent-tasks" = concurrent_tasks(),
+        "process-id" = process_id()
     }
 }
 
@@ -36,6 +38,12 @@ fn vars() -> Value {
     v
 }
 
+fn process_id() -> Value {
+    let mut v = types::Number::from(std::process::id()).into();
+    Doc::set_string(&mut v, "The ergo process id, as a Number.");
+    v
+}
+
 fn current_dir() -> Value {
     let mut v = match std::env::current_dir().ok() {
         Some(path) => types::Path::from(path).into(),
@@ -48,6 +56,12 @@ fn current_dir() -> Value {
         &mut v,
         "The current working directory of the process, as a path.",
     );
+    v
+}
+
+fn temp_dir() -> Value {
+    let mut v = types::Path::from(std::env::temp_dir()).into();
+    Doc::set_string(&mut v, "The system temporary directory path.");
     v
 }
 
