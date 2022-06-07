@@ -179,6 +179,7 @@ struct Scopes {
     inner: BTreeMap<ScopeKey, Scope>,
 }
 
+#[derive(Debug)]
 struct ScopeCloser(ScopeKey);
 
 impl Scopes {

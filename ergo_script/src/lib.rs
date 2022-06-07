@@ -338,6 +338,14 @@ mod test {
     }
 
     #[test]
+    fn block_set_nested() -> Result<(), String> {
+        script_eval_to(
+            "a = 123, f = fn :a -> :b -> { $a = $b, () }, { f :$a = xyz }",
+            SRMap(&[("123", SRString("xyz"))]),
+        )
+    }
+
+    #[test]
     fn block_indirect_get() -> Result<(), String> {
         script_parse_fail(":a = name, :$a = b, $$a")
     }

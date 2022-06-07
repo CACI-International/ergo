@@ -664,6 +664,14 @@ impl<K, V> ScopeMap<K, V> {
     pub fn scope_key(&self) -> ScopeKey {
         ScopeKey(self.scopes.len() - 1)
     }
+
+    pub fn implicit_scope_key(&self) -> Option<ScopeKey> {
+        if self.scopes.get(self.implicit_set_scope.0).is_none() {
+            None
+        } else {
+            Some(self.implicit_set_scope)
+        }
+    }
 }
 
 impl<K: Eq + std::hash::Hash, V> ScopeMap<K, V> {
@@ -1091,7 +1099,11 @@ impl<'a> ExpressionCompiler<'a> {
                     self.unused_binding(src.with(key));
                     v.capture_key = Some(key);
                 } else {
-                    v.scope_key = self.capture_mapping.scope_key();
+                    if let Some(scope_key) = self.capture_mapping.implicit_scope_key() {
+                        v.scope_key = scope_key;
+                    } else {
+                        self.errors.push(src.with("no active scope in which to bind").into_error());
+                    }
                     do_captures!(subexpr v);
                 }
             },
@@ -1439,6 +1451,53 @@ mod test {
                 .set_captures(vec![a_key]))),
             ]),
             vec![],
+        )
+    }
+
+    #[test]
+    fn nested_set() {
+        let mut ctx = keyset::Context::default();
+        let f_key = ctx.key();
+        let a_key = ctx.key();
+        assert_captures(
+            "f :a = 1",
+            top(vec![BI::Bind(
+                src(E::command(
+                    src(E::get_with_capture(s("f"), f_key)),
+                    vec![BI::Expr(src(E::set_with_capture(s("a"), a_key, 1)))],
+                )
+                .set_captures(vec![f_key])),
+                s("1"),
+            )])
+            .set_captures(vec![f_key]),
+            vec![(f_key, E::string("f".into()))],
+        )
+    }
+
+    #[test]
+    fn nested_indirect_set() {
+        let mut ctx = keyset::Context::default();
+        let f_key = ctx.key();
+        let a_key = ctx.key();
+        assert_captures(
+            "f :$a = 1",
+            top(vec![BI::Bind(
+                src(E::command(
+                    src(E::get_with_capture(s("f"), f_key)),
+                    vec![BI::Expr(src(E::set_with_scope_key(
+                        src(E::get_with_capture(s("a"), a_key)),
+                        1,
+                    )
+                    .set_captures(vec![a_key])))],
+                )
+                .set_captures(vec![f_key, a_key])),
+                s("1"),
+            )])
+            .set_captures(vec![f_key, a_key]),
+            vec![
+                (a_key, E::string("a".into())),
+                (f_key, E::string("f".into())),
+            ],
         )
     }
 
