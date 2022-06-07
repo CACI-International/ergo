@@ -17,9 +17,24 @@ pub struct Format {
     pub files: Vec<PathBuf>,
 }
 
-#[derive(Debug)]
-pub struct Formatter {
+impl Default for FormatOptions {
+    fn default() -> Self {
+        FormatOptions {
+            line_width: 100,
+            indent: 4,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct FormatOptions {
     pub line_width: usize,
+    pub indent: u8,
+}
+
+pub struct Formatter<'a> {
+    pub options: FormatOptions,
+    arena: pretty::Arena<'a>,
 }
 
 enum FormatTree<S> {
@@ -50,15 +65,94 @@ impl<S> FormatTree<S> {
     }
 }
 
-impl<'a, 's: 'a, S: Clone + Into<Cow<'s, str>>> FormatTree<S> {
-    pub fn to_doc(
+#[derive(Clone, Debug)]
+pub enum Error<E> {
+    Error(E),
+    Format(std::fmt::Error),
+}
+
+impl<E: std::fmt::Display> std::fmt::Display for Error<E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Error::Error(e) => e.fmt(f),
+            Error::Format(e) => e.fmt(f),
+        }
+    }
+}
+
+impl<E: std::error::Error + 'static> std::error::Error for Error<E> {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Error::Error(e) => Some(e),
+            Error::Format(e) => Some(e),
+        }
+    }
+}
+
+impl FormatOptions {
+    pub fn format<
+        'a,
+        S: Clone + Into<Cow<'a, str>>,
+        E,
+        I: IntoIterator<Item = Result<Token<S>, E>>,
+    >(
         &self,
-        arena: &'a pretty::Arena<'a>,
+        iter: I,
+    ) -> Result<String, Error<E>> {
+        let trees = FormatTree::from_tokens(&mut iter.into_iter()).map_err(Error::Error)?;
+        let formatter = Formatter {
+            options: *self,
+            arena: pretty::Arena::new(),
+        };
+        let doc = formatter.children(&trees, formatter.arena.hardline()); // At the top-level, always use a line to separate children.
+        let mut s = String::new();
+        doc.render_fmt(self.line_width, &mut s)
+            .map_err(Error::Format)?;
+        Ok(s)
+    }
+
+    pub fn format_io<R, W, FR, FW, Name>(
+        &self,
+        read: FR,
+        write: FW,
+        name: Name,
+    ) -> Result<(), String>
+    where
+        R: Read,
+        W: Write,
+        FR: FnOnce() -> std::io::Result<R>,
+        FW: FnOnce() -> std::io::Result<W>,
+        Name: std::fmt::Display,
+    {
+        let mut s = String::new();
+        if let Err(e) = read().and_then(|mut r| r.read_to_string(&mut s)) {
+            return Err(format!("failed to read {}: {}", name, e));
+        }
+        match self.format(
+            Tokens::from(Source::new(0).with(s.as_str()))
+                .map(|r| r.map(|s| s.unwrap()).map_err(|e| e.unwrap())),
+        ) {
+            Err(e) => Err(format!("failed to format {}: {}", name, e)),
+            Ok(s) => {
+                if let Err(e) = write().and_then(|mut w| write!(w, "{}", s)) {
+                    Err(format!("failed to write {}: {}", name, e))
+                } else {
+                    Ok(())
+                }
+            }
+        }
+    }
+}
+
+impl<'a> Formatter<'a> {
+    fn to_doc<'s: 'a, S: Clone + Into<Cow<'s, str>>>(
+        &'a self,
+        tree: &FormatTree<S>,
         in_quoted_string: bool,
     ) -> pretty::DocBuilder<'a, pretty::Arena<'a>> {
         use PairedToken::*;
 
-        match self {
+        match tree {
             FormatTree::Token(t) => {
                 use Token::*;
                 match t {
@@ -71,51 +165,52 @@ impl<'a, 's: 'a, S: Clone + Into<Cow<'s, str>>> FormatTree<S> {
                                     s.pop();
                                 }
                             }
-                            arena.text(s).append(arena.hardline())
+                            self.arena.text(s).append(self.arena.hardline())
                         } else if s == "$" && in_quoted_string {
-                            arena.text("$$")
+                            self.arena.text("$$")
                         } else {
-                            arena.text(s)
+                            self.arena.text(s)
                         }
                     }
-                    Symbol(s) => arena.as_string(s),
-                    Leader(s) => arena.as_string(s).append(arena.space()),
+                    Symbol(s) => self.arena.as_string(s),
+                    Leader(s) => self.arena.as_string(s).append(self.arena.space()),
                     _ => panic!("unexpected token"),
                 }
             }
             FormatTree::Nested { token, contents } => match token {
-                Paren => Self::enclose_group(
-                    arena,
-                    "(",
-                    ")",
-                    Self::group(contents, arena, arena.softline()),
-                ),
-                Curly => Self::enclose_group(
-                    arena,
+                Paren => self.enclose_group("(", ")", self.group(contents, self.arena.softline())),
+                Curly => self.enclose_group(
                     "{",
                     "}",
-                    Self::children(contents, arena, arena.hardline().flat_alt(arena.text(", "))),
+                    self.children(
+                        contents,
+                        self.arena.hardline().flat_alt(self.arena.text(", ")),
+                    ),
                 ),
-                Bracket => Self::enclose_group(
-                    arena,
+                Bracket => self.enclose_group(
                     "[",
                     "]",
-                    Self::children(contents, arena, arena.hardline().flat_alt(arena.text(", "))),
+                    self.children(
+                        contents,
+                        self.arena.hardline().flat_alt(self.arena.text(", ")),
+                    ),
                 ),
-                Quote => arena
-                    .concat(contents.iter().map(|c| c.to_doc(arena, true)))
+                Quote => self
+                    .arena
+                    .concat(contents.iter().map(|c| self.to_doc(c, true)))
                     .double_quotes(),
-                Apostrophe | Hash | DoubleHash => arena
+                Apostrophe | Hash | DoubleHash => self
+                    .arena
                     .text(match token {
                         Apostrophe => "'",
                         Hash => "#",
                         DoubleHash => "##",
                         _ => panic!("unexpected paired token"),
                     })
-                    .append(arena.space())
-                    .append(arena.concat(contents.iter().map(|c| {
-                        c.to_doc(
-                            arena,
+                    .append(self.arena.space())
+                    .append(self.arena.concat(contents.iter().map(|c| {
+                        self.to_doc(
+                            c,
                             match token {
                                 Apostrophe | DoubleHash => true,
                                 _ => false,
@@ -126,9 +221,9 @@ impl<'a, 's: 'a, S: Clone + Into<Cow<'s, str>>> FormatTree<S> {
         }
     }
 
-    pub fn children(
+    fn children<'s: 'a, S: Clone + Into<Cow<'s, str>>>(
+        &'a self,
         trees: &[FormatTree<S>],
-        arena: &'a pretty::Arena<'a>,
         sep: pretty::DocBuilder<'a, pretty::Arena<'a>>,
     ) -> pretty::DocBuilder<'a, pretty::Arena<'a>> {
         let mut groups = trees.split(|t| match t {
@@ -136,7 +231,7 @@ impl<'a, 's: 'a, S: Clone + Into<Cow<'s, str>>> FormatTree<S> {
             _ => false,
         });
 
-        let mut doc = arena.nil();
+        let mut doc = self.arena.nil();
         let mut empty_lines = 0;
         let mut skip_sep = true;
         let mut first = true;
@@ -148,11 +243,11 @@ impl<'a, 's: 'a, S: Clone + Into<Cow<'s, str>>> FormatTree<S> {
                     doc += sep.clone();
                 }
                 if !first {
-                    doc += arena.concat(
-                        std::iter::repeat(arena.line_()).take(std::cmp::min(empty_lines, 2)),
+                    doc += self.arena.concat(
+                        std::iter::repeat(self.arena.line_()).take(std::cmp::min(empty_lines, 2)),
                     );
                 }
-                doc += Self::group(line, arena, arena.space());
+                doc += self.group(line, self.arena.space());
                 empty_lines = 0;
                 first = false;
                 skip_sep = match line.first() {
@@ -168,13 +263,14 @@ impl<'a, 's: 'a, S: Clone + Into<Cow<'s, str>>> FormatTree<S> {
         doc
     }
 
-    fn group(
+    fn group<'s: 'a, S: Clone + Into<Cow<'s, str>>>(
+        &'a self,
         trees: &[FormatTree<S>],
-        arena: &'a pretty::Arena<'a>,
         sep: pretty::DocBuilder<'a, pretty::Arena<'a>>,
     ) -> pretty::DocBuilder<'a, pretty::Arena<'a>> {
+        //let indent = trees.len() > 1;
         let mut trees = trees.iter();
-        let mut doc = arena.nil();
+        let mut doc = self.arena.nil();
         let mut skip_sep = true;
         while let Some(tree) = trees.next() {
             let mut should_skip_sep = false;
@@ -203,125 +299,49 @@ impl<'a, 's: 'a, S: Clone + Into<Cow<'s, str>>> FormatTree<S> {
                 doc = doc.append(sep.clone());
             }
             skip_sep = should_skip_sep;
-            doc = doc.append(tree.to_doc(arena, false));
+            doc = doc.append(self.to_doc(tree, false));
         }
+        /*
+        doc.nest(if indent {
+            self.options.indent as isize
+        } else {
+            0
+        })
+        */
         doc
     }
 
     fn enclose_group(
-        arena: &'a pretty::Arena<'a>,
+        &'a self,
         start: &'static str,
         end: &'static str,
         inner: pretty::DocBuilder<'a, pretty::Arena<'a>>,
     ) -> pretty::DocBuilder<'a, pretty::Arena<'a>> {
-        arena
+        self.arena
             .text(start)
-            .append(arena.line_().append(inner).nest(4))
-            .append(arena.line_())
-            .append(arena.text(end))
+            .append(self.arena.line_().append(inner).nest(4))
+            .append(self.arena.line_())
+            .append(self.arena.text(end))
             .group()
-    }
-}
-
-#[derive(Clone, Debug)]
-pub enum Error<E> {
-    Error(E),
-    Format(std::fmt::Error),
-}
-
-impl<E: std::fmt::Display> std::fmt::Display for Error<E> {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            Error::Error(e) => e.fmt(f),
-            Error::Format(e) => e.fmt(f),
-        }
-    }
-}
-
-impl<E: std::error::Error + 'static> std::error::Error for Error<E> {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Error::Error(e) => Some(e),
-            Error::Format(e) => Some(e),
-        }
-    }
-}
-
-impl Formatter {
-    pub fn format<
-        'a,
-        S: Clone + Into<Cow<'a, str>>,
-        E,
-        I: IntoIterator<Item = Result<Token<S>, E>>,
-    >(
-        &self,
-        iter: I,
-    ) -> Result<String, Error<E>> {
-        let trees = FormatTree::from_tokens(&mut iter.into_iter()).map_err(Error::Error)?;
-        let arena = pretty::Arena::new();
-        let doc = FormatTree::children(&trees, &arena, arena.hardline()); // At the top-level, always use a line to separate children.
-        let mut s = String::new();
-        doc.render_fmt(self.line_width, &mut s)
-            .map_err(Error::Format)?;
-        Ok(s)
-    }
-}
-
-fn format_io<R, W, FR, FW, Name>(
-    formatter: &Formatter,
-    read: FR,
-    write: FW,
-    name: Name,
-) -> Result<(), String>
-where
-    R: Read,
-    W: Write,
-    FR: FnOnce() -> std::io::Result<R>,
-    FW: FnOnce() -> std::io::Result<W>,
-    Name: std::fmt::Display,
-{
-    let mut s = String::new();
-    if let Err(e) = read().and_then(|mut r| r.read_to_string(&mut s)) {
-        return Err(format!("failed to read {}: {}", name, e));
-    }
-    match formatter.format(
-        Tokens::from(Source::new(0).with(s.as_str()))
-            .map(|r| r.map(|s| s.unwrap()).map_err(|e| e.unwrap())),
-    ) {
-        Err(e) => Err(format!("failed to format {}: {}", name, e)),
-        Ok(s) => {
-            if let Err(e) = write().and_then(|mut w| write!(w, "{}", s)) {
-                Err(format!("failed to write {}: {}", name, e))
-            } else {
-                Ok(())
-            }
-        }
     }
 }
 
 impl super::Command for Format {
     fn run(self) -> Result<(), String> {
-        let formatter = Formatter { line_width: 100 };
+        let options = FormatOptions::default();
 
         if self.files.is_empty() {
-            format_io(
-                &formatter,
-                || Ok(std::io::stdin()),
-                || Ok(std::io::stdout()),
-                "<stdin>",
-            )
+            options.format_io(|| Ok(std::io::stdin()), || Ok(std::io::stdout()), "<stdin>")
         } else {
             for f in self.files {
                 if self.in_place {
-                    format_io(
-                        &formatter,
+                    options.format_io(
                         || std::fs::File::open(&f),
                         || std::fs::File::create(&f),
                         f.display(),
                     )?;
                 } else {
-                    format_io(
-                        &formatter,
+                    options.format_io(
                         || std::fs::File::open(&f),
                         || Ok(std::io::stdout()),
                         f.display(),

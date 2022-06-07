@@ -1,4 +1,4 @@
-use super::format::Formatter;
+use super::format::FormatOptions;
 use ergo_runtime::async_executor;
 use ergo_runtime::source::{Location, Source};
 use ergo_script::ast::tokenize;
@@ -356,9 +356,9 @@ impl LanguageServer for Service {
     async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
         let source = self.files.content(&params.text_document.uri).await;
 
-        let formatter = Formatter { line_width: 100 };
+        let format_options = FormatOptions::default();
 
-        match formatter.format(
+        match format_options.format(
             tokenize::Tokens::from(Source::new(0).with(RopeSlice(source.slice(..))))
                 .map(|r| r.map(Source::unwrap).map_err(Source::unwrap)),
         ) {
