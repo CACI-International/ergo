@@ -1,6 +1,6 @@
 //! The Bind ergo trait for setting values.
 
-use super::{type_name, type_name_for};
+use super::type_name;
 use crate as ergo_runtime;
 use crate::abi_stable::{
     bst::BstMap,
@@ -262,44 +262,40 @@ ergo_traits_fn! {
         extern "C" fn id_eq_f<'a>(
             _trait_data: &'a Erased,
             v: &'a Value,
-            tp: &'a Type,
+            _tp: &'a Type,
             _data: &'a Erased,
             mut arg: Value) ->
             crate::abi_stable::future::BoxFuture<'a, Value> {
             crate::abi_stable::future::BoxFuture::new(async move {
                 crate::try_result!(Context::eval(&mut arg).await);
                 if v.id().await != arg.id().await {
-                    let arg_source = Source::get(&arg);
-                    let v_source = Source::get(v);
-                    match_value! { arg,
+                    match_value! { arg.clone(),
                         types::Args {..} => {
-                            let name = type_name_for(tp);
-                            crate::error! {
-                                labels: [
-                                    primary(v_source.with("")),
-                                    secondary(arg_source.with("call site"))
-                                ],
-                                error: format!("cannot call value with type {}", name)
-                            }.into()
+                            crate::diagnostic! {
+                                message: "cannot call value"
+                            }
+                            .add_value_info("target", v).await
+                            .add_value_info("args", &arg).await
+                            .into_error()
+                            .into()
                         }
                         types::Index(_) => {
-                            let name = type_name_for(tp);
-                            crate::error! {
-                                labels: [
-                                    primary(v_source.with("")),
-                                    secondary(arg_source.with("index site"))
-                                ],
-                                error: format!("cannot index value with type {}", name)
-                            }.into()
+                            crate::diagnostic! {
+                                message: "cannot index value"
+                            }
+                            .add_value_info("target", v).await
+                            .add_value_info("index", &arg).await
+                            .into_error()
+                            .into()
                         }
                         _ => {
-                            crate::error! {
-                                labels: [
-                                    secondary(v_source.with("binding this value...")),
-                                    secondary(arg_source.with("... with this value"))
-                                ],
-                                error: "mismatched value in binding"
-                            }.into()
+                            crate::diagnostic! {
+                                message: "mismatched value in binding"
+                            }
+                            .add_value_info("target", v).await
+                            .add_value_info("bound", &arg).await
+                            .into_error()
+                            .into()
                         }
                     }
                 } else {
