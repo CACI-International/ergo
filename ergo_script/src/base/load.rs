@@ -291,7 +291,7 @@ impl LoadFunctions {
 
         let ld = load_data.clone();
         let load = types::ergo_fn_value! {
-            /// Load a script, with optional additional arguments with which to call the result.
+            /// Load a script or plugin, with optional additional arguments with which to call the result.
             ///
             /// Arguments: `(Into<Path> :to-load) ^:call-args`
             ///
@@ -315,6 +315,7 @@ impl LoadFunctions {
             /// If the directory-resolved script exists as a file, it is loaded. If additional arguments were
             /// provided, the resulting value is called with them.
             #[cloning(ld)]
+            #[eval_for_id]
             async fn load(mut path: _, ...) -> Value {
                 Context::eval(&mut path).await?;
                 let target_source = metadata::Source::get(&path);

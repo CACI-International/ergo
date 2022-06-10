@@ -51,6 +51,8 @@
   preferable to `std:dynamic:eval` as it leads to fewer mistakes when working
   with dynamic bindings.
 * Add `std:Unset:or` to return the first non-Unset value.
+* Add `std:ergo-lazy` to lazily load a file (causing the identity of the
+  expression to not rely on the loaded file value).
 
 #### Modifications
 * Removed the `std:by-content` function, as one shouldn't be reinterpreting

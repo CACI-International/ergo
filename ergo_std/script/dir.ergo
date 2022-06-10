@@ -1,4 +1,4 @@
-plugin = !id <| ergo plugin
+plugin = ergo plugin
 
 ## Create a value that will evaluate to the first argument which successfully binds.
 ## 
@@ -21,6 +21,11 @@ mtype = ergo type
 ##
 ## All arguments are forwarded to `std:net:http`.
 ergo-remote = fn ^:args -> ergo <| mcache:cache <| mnet:unarchive ~enter ^$args
+
+## Lazily load a script or plugin, rather than depending on the loaded content for identities.
+##
+## Arguments: see `ergo`.
+ergo-lazy = !no-id $ergo
 
 ## Return any bound value as-is.
 ##
@@ -275,7 +280,7 @@ getopt-fn = :patargs -> :args -> { $patargs = plugin:getopt args:positional }
 ## Arguments: `(Function :f) :value`
 ##
 ## If `value` is Unset, returns `value` (unset), otherwise returns `f` applied to `value`.
-unset-map = fn :f :v -> plugin:match $v [$unset -> $v, _ -> f $v]
+unset-map = fn :f :v -> plugin:match $v [$unset -> $v, :other -> f $other]
 
 ## Return the first non-Unset value.
 ##
@@ -525,6 +530,7 @@ process-dir = plugin:Path:owned <| plugin:Path:join plugin:env:temp-dir "ergo-pr
     import {:cache,:once} = $mcache
     default, optional, required, optargs
     ergo-remote
+    ergo-lazy
     exec = plugin:exec
     getopt = function-module plugin:getopt {fn = $getopt-fn}
     import
