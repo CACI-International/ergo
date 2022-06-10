@@ -203,7 +203,10 @@ async fn dynamic_binding_get(key: _) -> Value {
     )
 }
 
+// TODO make dynamic bindings a first-class citizen of Value
+
 #[types::ergo_fn]
+#[eval_for_id]
 /// Evaluate a value with the given dynamic bindings.
 ///
 /// Arguments: `(Map :bindings) :eval`
@@ -356,8 +359,11 @@ async fn index(indices: types::Map) -> Value {
             let indices = indices.clone();
             async move {
                 for (k, v) in &indices.as_ref().0 {
-                    let result =
-                        traits::bind(arg.clone(), types::Index(k.clone().into()).into()).await;
+                    let result = traits::bind(
+                        arg.clone(),
+                        Source::copy(&k, types::Index(k.clone().into()).into()),
+                    )
+                    .await;
                     try_result!(traits::bind_no_error(v.clone(), result).await);
                 }
                 types::Unit.into()
