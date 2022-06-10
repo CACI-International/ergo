@@ -198,7 +198,7 @@ impl Scopes {
     pub fn init(&self, scope_key: ScopeKey, cap: Option<CaptureKey>, key: EvaluatedValue) {
         self.inner
             .get(&scope_key)
-            .expect("scope disappeared")
+            .expect("scope disappeared at init")
             .init(cap, key)
     }
 
@@ -211,7 +211,7 @@ impl Scopes {
     ) -> bool {
         self.inner
             .get(&scope_key)
-            .expect("scope disappeared")
+            .expect("scope disappeared at insert")
             .add(cap, key, value)
     }
 
@@ -221,7 +221,7 @@ impl Scopes {
     ) -> Vec<(Option<CaptureKey>, EvaluatedValue, Value)> {
         self.inner
             .remove(&closer.0)
-            .expect("scope disappeared")
+            .expect("scope disappeared at close")
             .into_inner()
     }
 }
@@ -630,13 +630,57 @@ impl ExprEvaluator {
                         IdType::Expr(e) => {
                             let c = self.child(&e);
                             async move {
-                                let mut id = c.identity().await;
+                                // Shortcut Command expressions where the function is `should_eval`
+                                // and the captures are ready, because we know that we'll be
+                                // evaluating it anyway. This also allows things like `!id` to
+                                // prevent identities of arguments from being evaluated at all.
+                                let mut id = None;
+                                if c.captures_ready() {
+                                    if let Some(cmd) = c.expr.value().as_ref::<ast::Command>() {
+                                        let func = c.child(&cmd.function);
+                                        let mut function_id = func.identity().await;
+                                        if function_id.should_eval {
+                                            function_id = Context::fork(
+                                                |ctx| {
+                                                    ctx.error_scope =
+                                                        ergo_runtime::context::ErrorScope::new(
+                                                            |_| (),
+                                                        )
+                                                },
+                                                async move {
+                                                    let mut v = func.evaluate().await;
+                                                    v.eval_id().await
+                                                },
+                                            )
+                                            .await;
+                                            if function_id.should_eval {
+                                                id = Some(function_id);
+                                            }
+                                        }
+                                    }
+                                }
+                                let mut id = match id {
+                                    Some(id) => id,
+                                    None => c.identity().await,
+                                };
                                 // If the child can be evaluated, eagerly evaluate to potentially
                                 // end the should_eval inheritance (our identity should be based on
                                 // the evaulated identity as soon as it is available).
                                 if id.should_eval && c.captures_ready() {
-                                    let mut v = c.evaluate().await;
-                                    id = v.eval_id().await;
+                                    // When evaluating for identities, any errors should not go to
+                                    // the error scope (the identity of the error is still a valid
+                                    // identity to use).
+                                    id = Context::fork(
+                                        |ctx| {
+                                            ctx.error_scope =
+                                                ergo_runtime::context::ErrorScope::new(|_| ())
+                                        },
+                                        async move {
+                                            let mut v = c.evaluate().await;
+                                            v.eval_id().await
+                                        },
+                                    )
+                                    .await;
                                 }
                                 id
                             }
