@@ -115,7 +115,8 @@ impl LoadData {
 
                     ld.load_script(&path).await
                 },
-                ergo_runtime::value::EvalForId::set(depends![const nsid!(func::std)]),
+                ergo_runtime::value::IdInfo::new(depends![const nsid!(func::std)])
+                    .eval_for_id(true),
             );
             metadata::Doc::set_string(&mut std, "Get the value as if `ergo std` were run.");
             env.insert("std".into(), std);
@@ -179,7 +180,8 @@ impl LoadData {
 
                     ld.load_script(&path).await
                 },
-                ergo_runtime::value::EvalForId::set(depends![const nsid!(func::workspace)]),
+                ergo_runtime::value::IdInfo::new(depends![const nsid!(func::workspace)])
+                    .eval_for_id(true),
             );
             metadata::Doc::set_string(
                 &mut workspace,

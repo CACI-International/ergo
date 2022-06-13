@@ -26,70 +26,67 @@ pub async fn function(
     let bindings = bindings.to_owned().0;
     let allow_error = allow_error.is_some();
 
-    let result = Context::fork(
-        // Do not propagate errors while trying the bindings
-        |ctx| ctx.error_scope = ergo_runtime::context::ErrorScope::new(|_| ()),
-        async move {
-            let eval_result = Context::eval(&mut value).await;
-            if allow_error {
-                drop(eval_result)
-            } else {
-                eval_result?;
-            }
-            let mut err_labels = Vec::new();
-            for b in bindings {
-                let b_source = Source::get(&b);
-                let result = traits::bind(b, value.clone()).await;
-                match result.as_type::<types::Error>() {
-                    Ok(err) => {
-                        let diagnostics = ergo_runtime::error::Diagnostics::from(err.as_ref());
-                        'labelled: for d in &diagnostics {
-                            for l in &d.labels {
-                                if !l.secondary && b_source.contains(&l.label) {
-                                    err_labels.push(l.label.clone().with(
-                                        if l.label.value().is_empty() {
-                                            d.message.to_string()
-                                        } else {
-                                            format!("{}: {}", d.message, l.label.value())
-                                        },
-                                    ));
-                                    break 'labelled;
-                                }
-                            }
-                            if d.severity == ergo_runtime::error::Severity::Error {
-                                err_labels.push(b_source.with(d.message.to_string()));
+    // Do not propagate errors while trying the bindings
+    let result = Context::ignore_errors(async move {
+        let eval_result = Context::eval(&mut value).await;
+        if allow_error {
+            drop(eval_result)
+        } else {
+            eval_result?;
+        }
+        let mut err_labels = Vec::new();
+        for b in bindings {
+            let b_source = Source::get(&b);
+            let result = traits::bind(b, value.clone()).await;
+            match result.as_type::<types::Error>() {
+                Ok(err) => {
+                    let diagnostics = ergo_runtime::error::Diagnostics::from(err.as_ref());
+                    'labelled: for d in &diagnostics {
+                        for l in &d.labels {
+                            if !l.secondary && b_source.contains(&l.label) {
+                                err_labels.push(l.label.clone().with(
+                                    if l.label.value().is_empty() {
+                                        d.message.to_string()
+                                    } else {
+                                        format!("{}: {}", d.message, l.label.value())
+                                    },
+                                ));
                                 break 'labelled;
                             }
                         }
+                        if d.severity == ergo_runtime::error::Severity::Error {
+                            err_labels.push(b_source.with(d.message.to_string()));
+                            break 'labelled;
+                        }
                     }
-                    Err(v) => return Ok(v),
                 }
+                Err(v) => return Ok(v),
             }
+        }
 
-            // If a fallback is provided, bind it prior to inspecting the argument.
-            if let Some(fallback) = fallback {
-                return Ok(ergo_runtime::try_value!(
-                    traits::bind(fallback, value).await
-                ));
-            }
+        // If a fallback is provided, bind it prior to inspecting the argument.
+        if let Some(fallback) = fallback {
+            return Ok(ergo_runtime::try_value!(
+                traits::bind(fallback, value).await
+            ));
+        }
 
-            // If the value is an error and no bindings match, return it directly.
-            let err = match value.as_type::<types::Error>() {
-                Ok(e) => e.to_owned(),
-                Err(v) => {
-                    use ergo_runtime::error::{Diagnostic, DiagnosticInfo};
-                    let mut diag = Diagnostic::from("no bindings matched the value")
-                        .add_value_info("value", &v)
-                        .await;
-                    for e in err_labels {
-                        diag = diag.add_secondary_label(e);
-                    }
-                    diag.into()
+        // If the value is an error and no bindings match, return it directly.
+        let err = match value.as_type::<types::Error>() {
+            Ok(e) => e.to_owned(),
+            Err(v) => {
+                use ergo_runtime::error::{Diagnostic, DiagnosticInfo};
+                let mut diag = Diagnostic::from("no bindings matched the value")
+                    .add_value_info("value", &v)
+                    .await;
+                for e in err_labels {
+                    diag = diag.add_secondary_label(e);
                 }
-            };
-            Err(err)
-        },
-    )
+                diag.into()
+            }
+        };
+        Err(err)
+    })
     .await;
 
     match result {

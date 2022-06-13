@@ -54,6 +54,6 @@ pub async fn eval_for_id(mut v: _) -> Value {
 /// For example, `(!no-id $!id) abc` will effectively disable the properties of `!id` on `abc`.
 pub async fn no_eval_for_id(v: _) -> Value {
     let mut id = ergo_runtime::value::ValueId::immediate(ergo_runtime::depends![v]).await;
-    id.set_eval_id(false);
+    id.set_eval_for_id(false);
     Value::dynamic(move || async move { v }, id)
 }

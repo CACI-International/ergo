@@ -6,7 +6,7 @@ use ergo_runtime::{
     error::DiagnosticInfo,
     metadata::{self, Doc, DocValueKey},
     nsid, traits, try_result, types,
-    value::{match_value, EvalForId},
+    value::{match_value, IdInfo},
     Context, Source, Value,
 };
 use futures::future::FutureExt;
@@ -100,7 +100,7 @@ pub fn doc() -> Value {
             })
             .unwrap_or(types::Unset.into())
         },
-        EvalForId::set(depends![const nsid!(doc::value)]),
+        IdInfo::new(depends![const nsid!(doc::value)]).eval_for_id(true),
     );
     Doc::set_string(
         &mut value,
@@ -116,7 +116,7 @@ Evaluates to the value being documented, or Unset if no value is being documente
                 Some(p) => types::Path::from(p.current()).into(),
             }
         },
-        EvalForId::set(depends![const nsid!(doc::path)]),
+        IdInfo::new(depends![const nsid!(doc::path)]).eval_for_id(true),
     );
     Doc::set_string(&mut path,
         "The current documentation path, if any.

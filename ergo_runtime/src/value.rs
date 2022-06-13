@@ -29,95 +29,92 @@ pub struct Value {
     data: ValueData,
 }
 
-/// A value's identity information with accompanying evaluation marker.
+/// Metadata key types.
+///
+/// Keys generate the metadata id and have an associated output type.
+pub trait MetadataKey {
+    type Value: Eraseable;
+
+    /// Get the metadata identifier from this key.
+    fn id(&self) -> u128;
+}
+
+/// A value's identity information.
 #[derive(Debug, Clone, Copy, Eq, StableAbi)]
 #[repr(C)]
-pub struct EvalForId<T> {
+pub struct IdInfo<T> {
     pub id: T,
-    pub should_eval: bool,
+    pub eval_for_id: bool,
 }
 
-impl<T> EvalForId<T> {
-    pub fn set(id: T) -> Self {
-        EvalForId {
+impl<T> IdInfo<T> {
+    /// Create a new IdInfo with the given identity.
+    pub fn new(id: T) -> Self {
+        IdInfo {
             id,
-            should_eval: true,
+            eval_for_id: false,
         }
     }
 
-    pub fn clear(id: T) -> Self {
-        EvalForId {
-            id,
-            should_eval: false,
-        }
+    /// Set the eval_for_id flag.
+    pub fn eval_for_id(mut self, eval_for_id: bool) -> Self {
+        self.eval_for_id = eval_for_id;
+        self
     }
 
-    pub fn map<U, F: FnOnce(T) -> U>(self, f: F) -> EvalForId<U> {
-        EvalForId {
+    /// Map a function on the identity value.
+    pub fn map<U, F: FnOnce(T) -> U>(self, f: F) -> IdInfo<U> {
+        IdInfo {
             id: f(self.id),
-            should_eval: self.should_eval,
+            eval_for_id: self.eval_for_id,
         }
     }
 }
 
-impl<T> std::borrow::Borrow<T> for EvalForId<T> {
+impl<T> std::borrow::Borrow<T> for IdInfo<T> {
     fn borrow(&self) -> &T {
         &self.id
     }
 }
 
-impl<T: PartialEq> PartialEq for EvalForId<T> {
+impl<T: PartialEq> PartialEq for IdInfo<T> {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
     }
 }
 
-impl<T: Ord> Ord for EvalForId<T> {
+impl<T: Ord> Ord for IdInfo<T> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.id.cmp(&other.id)
     }
 }
 
-impl<T: PartialOrd> PartialOrd for EvalForId<T> {
+impl<T: PartialOrd> PartialOrd for IdInfo<T> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         self.id.partial_cmp(&other.id)
     }
 }
 
-impl<T: std::hash::Hash> std::hash::Hash for EvalForId<T> {
+impl<T: std::hash::Hash> std::hash::Hash for IdInfo<T> {
     fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
         self.id.hash(h);
     }
 }
 
-pub type Identity = EvalForId<u128>;
+pub type Identity = IdInfo<u128>;
 
-impl std::iter::Sum for Identity {
-    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+impl<T: std::borrow::Borrow<Self>> std::iter::Sum<T> for Identity {
+    fn sum<I: Iterator<Item = T>>(iter: I) -> Self {
         let mut h = HashFn::default();
-        let mut should_eval = false;
+        let mut eval_for_id = false;
         for i in iter {
-            std::hash::Hash::hash(&i.id, &mut h);
-            should_eval |= i.should_eval;
+            let r = i.borrow();
+            std::hash::Hash::hash(&r.id, &mut h);
+            eval_for_id |= r.eval_for_id;
         }
         Identity {
             id: h.finish_ext(),
-            should_eval,
-        }
-    }
-}
-
-impl<'a> std::iter::Sum<&'a Self> for Identity {
-    fn sum<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
-        let mut h = HashFn::default();
-        let mut should_eval = false;
-        for i in iter {
-            std::hash::Hash::hash(&i.id, &mut h);
-            should_eval |= i.should_eval;
-        }
-        Identity {
-            id: h.finish_ext(),
-            should_eval,
+            eval_for_id,
         }
     }
 }
@@ -130,15 +127,15 @@ mod value_id {
     #[sabi_trait]
     trait GetId: Send {
         #[sabi(last_prefix_field)]
-        fn get(self, v: &Value) -> future::BoxFuture<'static, EvalForId<U128>>;
+        fn get(&self) -> future::BoxFuture<'static, IdInfo<U128>>;
     }
 
     impl<F> GetId for F
     where
-        F: FnOnce(Value) -> future::BoxFuture<'static, EvalForId<U128>> + Send,
+        F: FnOnce() -> future::BoxFuture<'static, IdInfo<U128>> + Send + Clone,
     {
-        fn get(self, v: &Value) -> future::BoxFuture<'static, EvalForId<U128>> {
-            self(v.clone())
+        fn get(&self) -> future::BoxFuture<'static, IdInfo<U128>> {
+            (self.clone())()
         }
     }
 
@@ -150,38 +147,51 @@ mod value_id {
         id: U128,
     }
 
-    const ACCESSED: u8 = 1 << 0;
-    const ID_SET: u8 = 1 << 1;
-    const WAKERS_SET: u8 = 1 << 2;
-    const USING_WAKERS: u8 = 1 << 3;
-    const EVAL_ID: u8 = 1 << 4;
+    // First two bits communicate which field of `state` is valid.
+    const STATE_MASK: u8 = 1 << 0 | 1 << 1;
+    // const STATE_NONE: u8 = 0;
+    const STATE_DEPS: u8 = 1 << 0;
+    const STATE_WAKERS: u8 = 1 << 1;
+    const STATE_ID: u8 = 1 << 0 | 1 << 1;
 
-    const MASK_STATE: u8 = ACCESSED | ID_SET;
+    // Next two bits communicate the access history.
+    const ACCESS_MASK: u8 = 1 << 2 | 1 << 3;
+    const ACCESS_NOT_ACCESSED: u8 = 0;
+    const ACCESS_ACCESSED: u8 = 1 << 2;
+    const ACCESS_EVALUATED: u8 = 1 << 2 | 1 << 3; // Note this sets both bits, allowing `ACCESSED` to serve as a flag.
+
+    // Next bit designates whether the `wakers` are in use.
+    const USING_WAKERS: u8 = 1 << 4;
+
+    // Next two bits are flags related to the identity.
+    const EVAL_FOR_ID: u8 = 1 << 5;
 
     #[derive(StableAbi)]
     #[repr(C)]
     pub struct ValueId {
         state: std::cell::UnsafeCell<State>,
-        // Zeroth bit indicates whether the value has ever been accessed before.
-        // First bit indicates whether `state` has `wakers` (and implies the zeroth bit).
-        // Second bit indicates whether `state` has `id` (and implies the zeroth bit).
-        // Third bit indicates whether the value should be evaluated to get an identity.
         tag: AtomicU8,
     }
 
     impl std::fmt::Debug for ValueId {
         fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
             let v = self.tag.load(Ordering::Acquire);
-            match v & MASK_STATE {
-                0 => write!(f, "<unaccessed>"),
-                ACCESSED => write!(f, "<evaluating>"),
-                MASK_STATE => write!(f, "{:032x}", unsafe {
-                    self.state.get().as_ref().unwrap_unchecked().id.as_ref()
-                }),
+            match v & ACCESS_MASK {
+                ACCESS_NOT_ACCESSED => write!(f, "<unaccessed>"),
+                ACCESS_ACCESSED => write!(f, "<evaluating>"),
+                ACCESS_EVALUATED => {
+                    if (v & STATE_MASK) == STATE_ID {
+                        write!(f, "{:032x}", unsafe {
+                            self.state.get().as_ref().unwrap_unchecked().id.as_ref()
+                        })
+                    } else {
+                        write!(f, "<error>")
+                    }
+                }
                 _ => panic!("invalid value id state"),
             }?;
-            if v & EVAL_ID != 0 {
-                write!(f, " (should_eval)")?;
+            if v & EVAL_FOR_ID != 0 {
+                write!(f, " (eval_for_id)")?;
             }
             Ok(())
         }
@@ -192,66 +202,67 @@ mod value_id {
     impl ValueId {
         pub fn new<F, Fut>(id: F) -> Self
         where
-            F: FnOnce(Value) -> Fut + Send + 'static,
+            F: FnOnce() -> Fut + Send + Clone + 'static,
             Fut: std::future::Future<Output = Identity> + Send,
         {
             ValueId {
                 state: std::cell::UnsafeCell::new(State {
                     deps: std::mem::ManuallyDrop::new(GetId_TO::from_value(
-                        |v| future::BoxFuture::new(async move { id(v).await.map(|v| v.into()) }),
+                        || future::BoxFuture::new(async move { id().await.map(|v| v.into()) }),
                         TD_Opaque,
                     )),
                 }),
-                tag: AtomicU8::new(0),
+                tag: AtomicU8::new(ACCESS_NOT_ACCESSED | STATE_DEPS),
+            }
+        }
+
+        pub fn id(id: u128) -> Self {
+            ValueId {
+                state: std::cell::UnsafeCell::new(State { id: id.into() }),
+                tag: AtomicU8::new(ACCESS_EVALUATED | STATE_ID),
             }
         }
 
         pub fn from_value(mut v: Value) -> Self {
-            Self::new(move |_| async move { v.eval_id().await })
+            Self::new(move || async move { v.eval_id().await })
         }
 
         pub fn from_deps(deps: Dependencies) -> Self {
-            Self::new(move |_| async move { deps.id().await })
+            Self::new(move || async move { deps.id().await })
         }
 
         pub fn from_constant_deps(deps: DependenciesConstant) -> Self {
             let id = deps.id();
             let mut ret = Self::id(id.id);
-            ret.set_eval_id(id.should_eval);
+            ret.set_eval_for_id(id.eval_for_id);
             ret
         }
 
         pub async fn immediate(deps: Dependencies) -> Self {
             let id = deps.id().await;
             let mut ret = Self::id(id.id);
-            ret.set_eval_id(id.should_eval);
+            ret.set_eval_for_id(id.eval_for_id);
             ret
         }
 
-        pub fn id(id: u128) -> Self {
-            ValueId {
-                state: std::cell::UnsafeCell::new(State { id: id.into() }),
-                tag: AtomicU8::new(ACCESSED | ID_SET),
-            }
-        }
-
         pub fn try_get(&self) -> Option<&u128> {
-            (self.tag.load(Ordering::Acquire) & ID_SET != 0).then(|| {
-                // Safety: if the tag has ID_SET, the state _must_ be a U128
+            (self.tag.load(Ordering::Acquire) & STATE_MASK == STATE_ID).then(|| {
+                // Safety: if the tag has STATE_ID, the state _must_ be a U128 (and will not
+                // change)
                 unsafe { self.state.get().as_ref().unwrap_unchecked().id.as_ref() }
             })
         }
 
-        pub fn set_eval_id(&mut self, eval_id: bool) {
-            if eval_id {
-                *self.tag.get_mut() |= EVAL_ID;
+        pub fn set_eval_for_id(&mut self, eval_for_id: bool) {
+            if eval_for_id {
+                *self.tag.get_mut() |= EVAL_FOR_ID;
             } else {
-                *self.tag.get_mut() &= !EVAL_ID;
+                *self.tag.get_mut() &= !EVAL_FOR_ID;
             }
         }
 
-        fn eval_id(&self) -> bool {
-            self.tag.load(Ordering::Relaxed) & EVAL_ID != 0
+        fn eval_for_id(&self) -> bool {
+            self.tag.load(Ordering::Relaxed) & EVAL_FOR_ID != 0
         }
 
         /// Returns the identity.
@@ -270,7 +281,7 @@ mod value_id {
         pub struct Get<'a> {
             value_id: &'a ValueId,
             value: &'a Value,
-            to_poll: Option<future::BoxFuture<'static, EvalForId<U128>>>,
+            to_poll: Option<future::BoxFuture<'static, IdInfo<U128>>>,
         }
 
         impl<'a> Get<'a> {
@@ -292,98 +303,119 @@ mod value_id {
                 let proj = self.project();
                 let mut spins = 0;
                 loop {
-                    if let Some(fut) = proj.to_poll {
-                        match Pin::new(fut).poll(cx) {
-                            Poll::Pending => return Poll::Pending,
-                            Poll::Ready(id) => {
-                                proj.value_id.tag.fetch_and(!WAKERS_SET, Ordering::Acquire);
-                                // Wait for nothing to be accessing the wakers
-                                while proj.value_id.tag.load(Ordering::Acquire) & USING_WAKERS != 0
-                                {
-                                    // Should be a fairly short wait.
-                                    spins += 1;
-                                    if spins > MAX_SPINS {
-                                        std::thread::yield_now();
-                                    } else {
-                                        std::hint::spin_loop();
+                    match proj.to_poll {
+                        Some(fut) => {
+                            match Pin::new(fut).poll(cx) {
+                                Poll::Pending => break Poll::Pending,
+                                Poll::Ready(id) => {
+                                    // Set the state to STATE_NONE
+                                    proj.value_id.tag.fetch_and(!STATE_MASK, Ordering::Acquire);
+                                    // Wait for nothing to be accessing the wakers
+                                    while proj.value_id.tag.load(Ordering::Acquire) & USING_WAKERS
+                                        != 0
+                                    {
+                                        // Should be a fairly short wait.
+                                        spins += 1;
+                                        if spins > MAX_SPINS {
+                                            std::thread::yield_now();
+                                        } else {
+                                            std::hint::spin_loop();
+                                        }
+                                    }
+                                    // Safety: the state must be wakers, not accessed by anything else
+                                    let state = unsafe {
+                                        proj.value_id.state.get().as_mut().unwrap_unchecked()
+                                    };
+                                    let wakers =
+                                        unsafe { std::mem::ManuallyDrop::take(&mut state.wakers) };
+                                    state.id = id.id;
+                                    proj.value_id.tag.fetch_or(STATE_ID, Ordering::Relaxed);
+                                    if id.eval_for_id {
+                                        proj.value_id.tag.fetch_or(EVAL_FOR_ID, Ordering::Relaxed);
+                                    }
+                                    proj.value_id
+                                        .tag
+                                        .fetch_or(ACCESS_EVALUATED, Ordering::Release);
+                                    for waker in wakers {
+                                        waker.into_waker().wake();
                                     }
                                 }
-                                // Safety: the state must be wakers, not accessed by anything else
-                                let state = unsafe {
-                                    proj.value_id.state.get().as_mut().unwrap_unchecked()
-                                };
-                                let wakers =
-                                    unsafe { std::mem::ManuallyDrop::take(&mut state.wakers) };
-                                state.id = id.id;
-                                if id.should_eval {
-                                    proj.value_id.tag.fetch_or(EVAL_ID, Ordering::Relaxed);
-                                }
-                                proj.value_id.tag.fetch_or(ID_SET, Ordering::Release);
-                                for waker in wakers {
-                                    waker.into_waker().wake();
-                                }
-                                break;
                             }
                         }
+                        None => (),
                     }
-                    match proj.value_id.tag.fetch_or(ACCESSED, Ordering::Acquire) & MASK_STATE {
-                        0 => {
-                            // Safety: if the tag is 0b00, the state must be deps
+
+                    let access = proj
+                        .value_id
+                        .tag
+                        .fetch_or(ACCESS_ACCESSED, Ordering::Acquire)
+                        & ACCESS_MASK;
+                    if access == ACCESS_NOT_ACCESSED {
+                        // Safety: if unevaluated and unaccessed, the state must be deps
+                        debug_assert!(
+                            proj.value_id.tag.load(Ordering::Relaxed) & STATE_MASK == STATE_DEPS
+                        );
+                        let state =
+                            unsafe { proj.value_id.state.get().as_mut().unwrap_unchecked() };
+                        proj.value_id.tag.fetch_and(!STATE_MASK, Ordering::Release);
+                        let deps = unsafe { std::mem::ManuallyDrop::take(&mut state.deps) };
+                        state.wakers = std::mem::ManuallyDrop::new(RVec::new());
+                        proj.value_id.tag.fetch_or(STATE_WAKERS, Ordering::Release);
+                        let fut = deps.get();
+                        *proj.to_poll = Some(fut);
+                    } else if access == ACCESS_ACCESSED {
+                        if proj
+                            .value_id
+                            .tag
+                            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| {
+                                ((v & STATE_MASK == STATE_WAKERS) && (v & USING_WAKERS == 0))
+                                    .then(|| v | USING_WAKERS)
+                            })
+                            .is_ok()
+                        {
+                            let waker: RawWaker = cx.into();
+                            // Safety: the state must be wakers, and we must be the only one
+                            // accessing it (having set the USING_WAKERS flag).
                             let state =
                                 unsafe { proj.value_id.state.get().as_mut().unwrap_unchecked() };
-                            let deps = unsafe { std::mem::ManuallyDrop::take(&mut state.deps) };
-                            state.wakers = std::mem::ManuallyDrop::new(RVec::new());
-                            proj.value_id.tag.fetch_or(WAKERS_SET, Ordering::Release);
-                            *proj.to_poll = Some(deps.get(proj.value));
-                        }
-                        ACCESSED => {
-                            if proj
-                                .value_id
+                            unsafe { &mut state.wakers }.push(waker);
+                            proj.value_id
                                 .tag
-                                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| {
-                                    ((v & WAKERS_SET != 0) && (v & USING_WAKERS == 0))
-                                        .then(|| v | USING_WAKERS)
-                                })
-                                .is_ok()
-                            {
-                                let waker: RawWaker = cx.into();
-                                // Safety: the state must be wakers, and we must be the only one
-                                // accessing it (having set the USING_WAKERS flag).
-                                let state = unsafe {
-                                    proj.value_id.state.get().as_mut().unwrap_unchecked()
-                                };
-                                unsafe { &mut state.wakers }.push(waker);
-                                proj.value_id
-                                    .tag
-                                    .fetch_and(!USING_WAKERS, Ordering::Release);
-                                return Poll::Pending;
+                                .fetch_and(!USING_WAKERS, Ordering::Release);
+                            break Poll::Pending;
+                        } else {
+                            // There are three cases:
+                            // 1. deps -> wakers transition (WAKERS_SET unset), which is pretty
+                            //    quick (moving RBox, creating RVec).
+                            // 2. wakers -> id transition (WAKERS_SET unset), which is pretty
+                            //    quick (moving RVec, copying Identity).
+                            // 3. USING_WAKERS set, which will usually be fast though the
+                            //    vector growing may be slow.
+                            spins += 1;
+                            if spins > MAX_SPINS {
+                                std::thread::yield_now();
                             } else {
-                                // There are three cases:
-                                // 1. deps -> wakers transition (WAKERS_SET unset), which is pretty
-                                //    quick (moving RBox, creating RVec).
-                                // 2. wakers -> id transition (WAKERS_SET unset), which is pretty
-                                //    quick (moving RVec, copying Identity).
-                                // 3. USING_WAKERS set, which will usually be fast though the
-                                //    vector growing may be slow.
-                                spins += 1;
-                                if spins > MAX_SPINS {
-                                    std::thread::yield_now();
-                                } else {
-                                    std::hint::spin_loop();
-                                }
+                                std::hint::spin_loop();
                             }
                         }
-                        MASK_STATE => break,
-                        _ => panic!("invalid value id state"),
+                    } else if access == ACCESS_EVALUATED {
+                        let state = proj.value_id.tag.load(Ordering::Relaxed) & STATE_MASK;
+                        if state == STATE_ID {
+                            // Safety: the state must be `id`
+                            let id =
+                                unsafe { proj.value_id.state.get().as_ref().unwrap_unchecked().id }
+                                    .into();
+                            break Poll::Ready(Identity {
+                                id,
+                                eval_for_id: proj.value_id.eval_for_id(),
+                            });
+                        } else {
+                            panic!("invalid value id state");
+                        }
+                    } else {
+                        panic!("invalid value id access state");
                     }
                 }
-                debug_assert!(proj.value_id.tag.load(Ordering::Relaxed) & MASK_STATE == MASK_STATE);
-                // Safety: the tag must have ID_SET, so the state _must_ be a U128
-                let id = unsafe { proj.value_id.state.get().as_ref().unwrap_unchecked().id }.into();
-                Poll::Ready(Identity {
-                    id,
-                    should_eval: proj.value_id.eval_id(),
-                })
             }
         }
     }
@@ -392,11 +424,11 @@ mod value_id {
 
     impl Drop for ValueId {
         fn drop(&mut self) {
-            let tag = *self.tag.get_mut();
-            if tag & MASK_STATE == 0 {
-                // Safety: if the tag is 0b00, the state must be deps
+            let state = *self.tag.get_mut() & STATE_MASK;
+            if state == STATE_DEPS {
+                // Safety: the state must be deps
                 unsafe { std::mem::ManuallyDrop::drop(&mut self.state.get_mut().deps) };
-            } else if tag & WAKERS_SET != 0 {
+            } else if state == STATE_WAKERS {
                 // Safety: the state must be wakers
                 unsafe { std::mem::ManuallyDrop::drop(&mut self.state.get_mut().wakers) };
             }
@@ -427,10 +459,10 @@ mod value_id {
         }
     }
 
-    impl<T: Into<ValueId>> From<EvalForId<T>> for ValueId {
-        fn from(s: EvalForId<T>) -> Self {
+    impl<T: Into<ValueId>> From<IdInfo<T>> for ValueId {
+        fn from(s: IdInfo<T>) -> Self {
             let mut v = s.id.into();
-            v.set_eval_id(s.should_eval);
+            v.set_eval_for_id(s.eval_for_id);
             v
         }
     }
@@ -533,7 +565,11 @@ impl Value {
     pub async fn eval_id(&mut self) -> Identity {
         let ctx = Context::global();
         let _token = ctx.progress.attempt_progress();
-        while self.immediate_id().await.should_eval {
+        loop {
+            let id = self.immediate_id().await;
+            if !id.eval_for_id {
+                break;
+            }
             match ctx.progress.eval_once_checking_progress(self).await {
                 Ok(true) => break,
                 Ok(false) => continue,
@@ -816,20 +852,10 @@ impl<T> std::borrow::Borrow<Value> for TypedValue<T> {
     }
 }
 
-/// Metadata key types.
-///
-/// Keys generate the metadata id and have an associated output type.
-pub trait MetadataKey {
-    type Value: Eraseable;
-
-    /// Get the metadata identifier from this key.
-    fn id(&self) -> u128;
-}
-
 #[sabi_trait]
 trait DynamicNext: Clone + Send + Sync {
     #[sabi(last_prefix_field)]
-    fn next(self, id: EvalForId<U128>) -> future::BoxFuture<'static, Value>;
+    fn next(self, id: IdInfo<U128>) -> future::BoxFuture<'static, Value>;
 }
 
 struct DynamicCached<F> {
@@ -842,7 +868,7 @@ where
     F: FnOnce() -> Fut + Clone + Send + Sync + 'static,
     Fut: std::future::Future<Output = Value> + Send,
 {
-    fn next(self, id: EvalForId<U128>) -> future::BoxFuture<'static, Value> {
+    fn next(self, id: IdInfo<U128>) -> future::BoxFuture<'static, Value> {
         future::BoxFuture::new(async move {
             let mut guard = self.complete.cache_default(id.id.into()).lock().await;
             if let Some(v) = &*guard {
@@ -866,7 +892,7 @@ where
     F: FnOnce() -> Fut + Clone + Send + Sync + 'static,
     Fut: std::future::Future<Output = Value> + Send,
 {
-    fn next(self, _id: EvalForId<U128>) -> future::BoxFuture<'static, Value> {
+    fn next(self, _id: IdInfo<U128>) -> future::BoxFuture<'static, Value> {
         future::BoxFuture::new(async move { (self.func.clone())().await })
     }
 }

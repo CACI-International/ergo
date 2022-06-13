@@ -244,19 +244,19 @@ impl Parser for ErgoFnLike {
             Some(ds) => quote! { ergo_runtime::depends![dyn __ergo_fn_id, #ds] },
         };
 
-        let dep_tag = if eval_for_id {
-            quote! { ergo_runtime::value::EvalForId::set }
-        } else {
-            quote! { std::convert::identity }
-        };
-
         let fn_id = quote! {
             let __ergo_fn_id = ergo_runtime::nsid!(function, std::concat!(std::module_path!(),"::",std::stringify!(#id)).as_bytes());
         };
 
-        let deps = quote! {
+        let declare_deps = quote! {
             let __ergo_fn_deps = #deps;
             let __ergo_fn_deps_inner = __ergo_fn_deps.clone();
+        };
+
+        let deps = if eval_for_id {
+            quote! { ergo_runtime::value::IdInfo::new(__ergo_fn_deps).eval_for_id(true) }
+        } else {
+            quote! { __ergo_fn_deps }
         };
 
         let imp = quote! {
@@ -286,16 +286,16 @@ impl Parser for ErgoFnLike {
             parse_quote! {
                 {
                     #fn_id
-                    #deps
-                    ergo_runtime::types::Unbound::new_no_doc(#imp, #dep_tag(__ergo_fn_deps)).into()
+                    #declare_deps
+                    ergo_runtime::types::Unbound::new_no_doc(#imp, #deps).into()
                 }
             }
         } else {
             parse_quote! {
                 {
                     #fn_id
-                    #deps
-                    ergo_runtime::types::Unbound::new(#imp, #dep_tag(__ergo_fn_deps), #doc).into()
+                    #declare_deps
+                    ergo_runtime::types::Unbound::new(#imp, #deps, #doc).into()
                 }
             }
         });

@@ -127,7 +127,7 @@ impl Dependency {
     pub async fn id(&self) -> Identity {
         match self {
             Dependency::Value(v) => v.clone().eval_id().await,
-            Dependency::Constant(v) => Identity::clear(v.0.into()),
+            Dependency::Constant(v) => Identity::new(v.0.into()),
         }
     }
 }
@@ -205,11 +205,11 @@ impl DependenciesConstant {
     pub fn id(&self) -> Identity {
         let mut items = Vec::with_capacity(self.unordered.len() + self.ordered.len());
         for d in self.unordered.iter() {
-            items.push(Identity::clear(d.0.into()));
+            items.push(Identity::new(d.0.into()));
         }
         items.sort_unstable();
         for d in self.ordered.iter() {
-            items.push(Identity::clear(d.0.into()));
+            items.push(Identity::new(d.0.into()));
         }
         items.iter().sum()
     }

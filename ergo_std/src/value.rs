@@ -4,7 +4,7 @@ use ergo_runtime::{
     depends,
     metadata::{Runtime, Source},
     nsid, traits, try_result, types,
-    value::EvalForId,
+    value::IdInfo,
     Context, Value,
 };
 use futures::future::{BoxFuture, FutureExt};
@@ -199,7 +199,7 @@ async fn dynamic_binding_get(key: _) -> Value {
                 Some(r) => (*r).clone().into(),
             }
         },
-        EvalForId::set(CALL_DEPENDS),
+        IdInfo::new(CALL_DEPENDS).eval_for_id(true),
     )
 }
 

@@ -586,7 +586,7 @@ impl ExprEvaluator {
     /// The identity is determined by:
     /// * traversing the AST for subexpressions/constants
     /// * calculating the identity of subexpressions (recursively), and eagerly evaluating if
-    /// the captures are resolved and the identity has `should_eval` set, and
+    /// the captures are resolved and the identity has `eval_for_id` set, and
     /// * aggregating the returned identities
     ///
     /// As an optimization, we don't evaluate() all subexpressions and use eval_id(). That would be
@@ -630,7 +630,7 @@ impl ExprEvaluator {
                         IdType::Expr(e) => {
                             let c = self.child(&e);
                             async move {
-                                // Shortcut Command expressions where the function is `should_eval`
+                                // Shortcut Command expressions where the function is `eval_for_id`
                                 // and the captures are ready, because we know that we'll be
                                 // evaluating it anyway. This also allows things like `!id` to
                                 // prevent identities of arguments from being evaluated at all.
@@ -639,21 +639,13 @@ impl ExprEvaluator {
                                     if let Some(cmd) = c.expr.value().as_ref::<ast::Command>() {
                                         let func = c.child(&cmd.function);
                                         let mut function_id = func.identity().await;
-                                        if function_id.should_eval {
-                                            function_id = Context::fork(
-                                                |ctx| {
-                                                    ctx.error_scope =
-                                                        ergo_runtime::context::ErrorScope::new(
-                                                            |_| (),
-                                                        )
-                                                },
-                                                async move {
-                                                    let mut v = func.evaluate().await;
-                                                    v.eval_id().await
-                                                },
-                                            )
+                                        if function_id.eval_for_id {
+                                            function_id = Context::ignore_errors(async move {
+                                                let mut v = func.evaluate().await;
+                                                v.eval_id().await
+                                            })
                                             .await;
-                                            if function_id.should_eval {
+                                            if function_id.eval_for_id {
                                                 id = Some(function_id);
                                             }
                                         }
@@ -664,22 +656,16 @@ impl ExprEvaluator {
                                     None => c.identity().await,
                                 };
                                 // If the child can be evaluated, eagerly evaluate to potentially
-                                // end the should_eval inheritance (our identity should be based on
+                                // end the eval_for_id inheritance (our identity should be based on
                                 // the evaulated identity as soon as it is available).
-                                if id.should_eval && c.captures_ready() {
+                                if id.eval_for_id && c.captures_ready() {
                                     // When evaluating for identities, any errors should not go to
                                     // the error scope (the identity of the error is still a valid
                                     // identity to use).
-                                    id = Context::fork(
-                                        |ctx| {
-                                            ctx.error_scope =
-                                                ergo_runtime::context::ErrorScope::new(|_| ())
-                                        },
-                                        async move {
-                                            let mut v = c.evaluate().await;
-                                            v.eval_id().await
-                                        },
-                                    )
+                                    id = Context::ignore_errors(async move {
+                                        let mut v = c.evaluate().await;
+                                        v.eval_id().await
+                                    })
                                     .await;
                                 }
                                 id
@@ -687,7 +673,7 @@ impl ExprEvaluator {
                             .boxed()
                         }
                         IdType::Constant(v) => {
-                            let v = ergo_runtime::value::Identity::clear(v);
+                            let v = ergo_runtime::value::Identity::new(v);
                             async move { v }.boxed()
                         }
                     }
@@ -707,12 +693,12 @@ impl ExprEvaluator {
 
     fn value_id(&self) -> ValueId {
         let me = self.clone().no_scope().no_eval_cache();
-        ValueId::new(move |_| {
+        ValueId::new(move || {
             Context::spawn(EVAL_TASK_PRIORITY, |_| {}, async move {
                 Ok(me.identity().await)
             })
             // Error only occurs when aborting.
-            .map(|l| l.unwrap_or_else(|_| ergo_runtime::value::Identity::clear(0)))
+            .map(|l| l.unwrap_or_else(|_| ergo_runtime::value::Identity::new(0)))
         })
     }
 

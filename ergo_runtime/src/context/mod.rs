@@ -308,6 +308,14 @@ impl Context {
         ret
     }
 
+    /// Evaluate the given future with the context error scope set to a no-op function.
+    pub async fn ignore_errors<Fut, Ret>(fut: Fut) -> Ret
+    where
+        Fut: std::future::Future<Output = Ret> + Send,
+    {
+        Self::fork(|ctx| ctx.error_scope = ErrorScope::new(|_| ()), fut).await
+    }
+
     /// Spawn a new task.
     ///
     /// This necessarily forks the context.
