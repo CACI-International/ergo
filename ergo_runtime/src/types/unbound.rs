@@ -7,7 +7,7 @@ use crate::abi_stable::{
 use crate::metadata::Doc;
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
-use crate::value::{TypedValue, ValueId};
+use crate::value::{InnerValues, TypedValue, ValueId};
 use crate::Value;
 
 /// Script type for values that require a single value to produce a new value.
@@ -17,6 +17,12 @@ use crate::Value;
 #[derive(Clone, ErgoType, StableAbi)]
 #[repr(C)]
 pub struct Unbound(UnboundAbi_TO<'static, RBox<()>>);
+
+unsafe impl InnerValues for Unbound {
+    fn visit<'a, F: FnMut(&'a Value)>(&'a self, _f: F) {
+        // TODO expose inner values for late binding?
+    }
+}
 
 #[sabi_trait]
 trait UnboundAbi: Clone + Send + Sync {

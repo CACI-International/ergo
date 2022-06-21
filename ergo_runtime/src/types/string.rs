@@ -5,7 +5,7 @@ use crate::abi_stable::{std_types::RString, type_erase::Erased, StableAbi};
 use crate::metadata::Source;
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
-use crate::{depends, DependenciesConstant, GetDependenciesConstant, TypedValue};
+use crate::TypedValue;
 use bincode;
 
 /// Script string type.
@@ -56,12 +56,6 @@ impl std::ops::DerefMut for String {
 impl From<String> for TypedValue<String> {
     fn from(v: String) -> Self {
         Self::constant(v)
-    }
-}
-
-impl GetDependenciesConstant for String {
-    fn get_depends(&self) -> DependenciesConstant {
-        depends![String::ergo_type(), self]
     }
 }
 

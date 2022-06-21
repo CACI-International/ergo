@@ -6,10 +6,7 @@ use ergo_runtime::abi_stable::{
     StableAbi,
 };
 use ergo_runtime::context::{DynamicScopeKey, Log, LogTask, RecordingWork, TaskPermit, Work};
-use ergo_runtime::{
-    depends, error::DiagnosticInfo, metadata::Source, nsid, traits, types, Context, Value,
-};
-use futures::future::FutureExt;
+use ergo_runtime::{error::DiagnosticInfo, metadata::Source, nsid, traits, types, Context, Value};
 
 pub const SCRIPT_TASK_PRIORITY_OFFSET: u32 = 1000;
 
@@ -80,12 +77,13 @@ pub async fn function(
         None => value.id().await,
     };
 
-    let description = description.to_owned().0;
+    let description = description.into_owned().0;
 
     let log = Context::global().log.sublog("task");
     let work = RArc::new(RMutex::new(log.work(format!("{:x}", work_id))));
 
-    let fut = async move {
+    let do_task = ergo_runtime::lazy_value! {
+        #![contains(value)]
         let parent_task =
             ParentTask::new(description.clone(), count, log.clone(), work.clone()).await;
         let mut value = value;
@@ -111,32 +109,34 @@ pub async fn function(
                 Ok(value)
             },
         )
-        .await
-    }
-    .shared();
+        .await?
+    };
 
     let call_deps = CALL_DEPENDS.clone();
 
+    let mut value = ergo_runtime::lazy_value! {
+        #![contains(do_task)]
+        #![depends(nsid!(std::task::parent), ^CALL_DEPENDS)]
+        let mut do_task = do_task;
+        match Context::with(|ctx| ctx.dynamic_scope.get(&ParentTaskKey)) {
+            Some(p) => {
+                let p = p.clone();
+                ergo_runtime::lazy_value! {
+                    #![depends(nsid!(std::task::result), ^call_deps)]
+                    p.suspend(async move { Context::eval(&mut do_task).await?; ergo_runtime::Result::Ok(do_task) }).await?
+                }
+            }
+            None => ergo_runtime::lazy_value! {
+                #![depends(nsid!(std::task::result), ^call_deps)]
+                Context::eval(&mut do_task).await?;
+                do_task
+            },
+        }
+    };
     // Return an impure value, so that it will always be evaluated (without caching results). This
     // allows multiple tasks to properly suspend when relying on the same task.
-    Value::dynamic_impure(
-        || async move {
-            match Context::with(|ctx| ctx.dynamic_scope.get(&ParentTaskKey)) {
-                Some(p) => {
-                    let p = p.clone();
-                    Value::dynamic(
-                        || async move { ergo_runtime::try_result!(p.suspend(fut).await) },
-                        depends![nsid!(std::task::result), ^call_deps],
-                    )
-                }
-                None => Value::dynamic(
-                    || async move { ergo_runtime::try_result!(fut.await) },
-                    depends![nsid!(std::task::result), ^call_deps],
-                ),
-            }
-        },
-        depends![nsid!(std::task::parent), ^CALL_DEPENDS],
-    )
+    value.impure(true);
+    value
 }
 
 pub struct ParentTaskKey;

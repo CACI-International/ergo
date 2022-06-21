@@ -231,7 +231,7 @@ impl Context {
                 .clone()
                 .as_type::<crate::types::Error>()
                 .unwrap()
-                .to_owned();
+                .into_owned();
             Self::with(|ctx| ctx.error_scope.error(&error));
             return Err(error);
         }
@@ -264,11 +264,6 @@ impl Context {
                 diagnostic_sources::SourceName::Path(p) => Some(p.clone().into()),
                 _ => None,
             })
-    }
-
-    /// Evaluate a value once.
-    pub async fn eval_once(value: &mut Value) {
-        value.eval_once().await
     }
 
     /// Evaluate all values.

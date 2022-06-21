@@ -155,6 +155,19 @@ impl<D> Default for Dependencies<D> {
     }
 }
 
+impl From<DependenciesConstant> for Dependencies {
+    fn from(deps: DependenciesConstant) -> Self {
+        Dependencies {
+            unordered: deps
+                .unordered
+                .into_iter()
+                .map(Dependency::Constant)
+                .collect(),
+            ordered: deps.ordered.into_iter().map(Dependency::Constant).collect(),
+        }
+    }
+}
+
 /// Helper trait for implementations of Into<Dependencies> for references.
 pub trait GetDependencies {
     fn get_depends(&self) -> Dependencies;
@@ -166,15 +179,7 @@ pub trait GetDependenciesConstant {
 
 impl<T: GetDependenciesConstant> GetDependencies for T {
     fn get_depends(&self) -> Dependencies {
-        let deps = GetDependenciesConstant::get_depends(self);
-        Dependencies {
-            unordered: deps
-                .unordered
-                .into_iter()
-                .map(Dependency::Constant)
-                .collect(),
-            ordered: deps.ordered.into_iter().map(Dependency::Constant).collect(),
-        }
+        GetDependenciesConstant::get_depends(self).into()
     }
 }
 
@@ -197,6 +202,16 @@ impl<Dep> Dependencies<Dep> {
         Dependencies {
             unordered: Default::default(),
             ordered: RVec::from_iter(deps),
+        }
+    }
+
+    /// Map a function over each dependency.
+    pub fn map<F: FnMut(&mut Dep)>(&mut self, mut f: F) {
+        for d in &mut self.unordered {
+            f(d);
+        }
+        for d in &mut self.ordered {
+            f(d);
         }
     }
 }

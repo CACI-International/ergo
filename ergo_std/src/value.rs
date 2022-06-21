@@ -3,9 +3,7 @@
 use ergo_runtime::{
     depends,
     metadata::{Runtime, Source},
-    nsid, traits, try_result, types,
-    value::IdInfo,
-    Context, Value,
+    nsid, traits, try_result, types, Context, Value,
 };
 use futures::future::{BoxFuture, FutureExt};
 
@@ -19,6 +17,10 @@ pub fn module() -> Value {
         "equal" = equal(),
         "identity" = identity(),
         "index" = index(),
+        "late" = crate::make_string_map! {
+            "get" = late_binding_get(),
+            "bind" = late_binding_set()
+        },
         "merge" = merge(),
         "meta" = crate::make_string_map! {
             "eval" = meta_eval(),
@@ -44,9 +46,9 @@ pub fn module() -> Value {
 /// a fixed identity derived from nothing else.
 async fn variable(mut value: _, (depends): [_]) -> Value {
     if let Some(v) = depends {
-        value.set_dependencies(v);
+        value.set_identity(v);
     } else {
-        value.set_dependencies(0);
+        value.set_identity(0);
     };
 
     value
@@ -112,9 +114,7 @@ async fn identity(value: _) -> Value {
 /// evaluation if no matching metadata was found.
 async fn meta_eval(metadata_key: _, mut value: _) -> Value {
     let key = metadata_key.id().await;
-    while !value.is_evaluated() && value.get_metadata(&Runtime { key }).is_none() {
-        Context::eval_once(&mut value).await;
-    }
+    while value.get_metadata(&Runtime { key }).is_none() && value.eval_once().await {}
     crate::make_string_map! { source ARGS_SOURCE,
         "metadata-value" = value.get_metadata(&Runtime { key }).map(|v| v.as_ref().clone()).unwrap_or_else(|| types::Unset.into()),
         "result" = value
@@ -185,6 +185,34 @@ async fn source_copy(from: _, mut to: _) -> Value {
 
 #[types::ergo_fn]
 #[eval_for_id]
+/// Get a late binding.
+///
+/// Arguments: `:key`
+///
+/// Returns a value which can be late-bound with the given key.
+async fn late_binding_get(key: _) -> Value {
+    let key = key.id().await;
+    Value::late_bound(key.into())
+}
+
+#[types::ergo_fn]
+#[eval_for_id]
+/// Set late bindings in a value.
+///
+/// Arguments: `(Map :bindings) :value`
+///
+/// Returns the newly-bound value.
+async fn late_binding_set(bindings: types::Map, mut value: _) -> Value {
+    let mut scope = ergo_runtime::value::LateScope::default();
+    for (k, v) in &bindings.as_ref().0 {
+        scope.scope.insert((*k.id()).into(), v.clone());
+    }
+    value.late_bind(&scope);
+    value
+}
+
+#[types::ergo_fn]
+#[eval_for_id]
 /// Get a dynamic binding.
 ///
 /// Arguments: `:key`
@@ -192,15 +220,16 @@ async fn source_copy(from: _, mut to: _) -> Value {
 /// Returns the dynamic binding corresponding to `key`, or `Unset` if none exists.
 async fn dynamic_binding_get(key: _) -> Value {
     let key = key.as_identified().await;
-    Value::dynamic_impure(
-        || async move {
-            match Context::with(|ctx| ctx.dynamic_scope.get(&key)) {
-                None => types::Unset.into(),
-                Some(r) => (*r).clone().into(),
-            }
-        },
-        IdInfo::new(CALL_DEPENDS).eval_for_id(true),
-    )
+    let mut ret = ergo_runtime::lazy_value! {
+        #![id(CALL_DEPENDS)]
+        #![eval_for_id]
+        match Context::with(|ctx| ctx.dynamic_scope.get(&key)) {
+            None => types::Unset.into(),
+            Some(r) => (*r).clone().into(),
+        }
+    };
+    ret.impure(true);
+    ret
 }
 
 // TODO make dynamic bindings a first-class citizen of Value
@@ -213,7 +242,7 @@ async fn dynamic_binding_get(key: _) -> Value {
 ///
 /// Returns the result of evaluating `eval` with all `bindings` set in the dynamic scope.
 async fn dynamic_binding_set(bindings: types::Map, mut eval: _) -> Value {
-    let entries = bindings.to_owned().0;
+    let entries = bindings.into_owned().0;
     Context::fork(
         |ctx| {
             for (k, v) in entries {
@@ -265,17 +294,17 @@ async fn merge(a: _, b: _, (array_merge): [_]) -> Value {
                 if a.ergo_type().unwrap() == b.ergo_type().unwrap() {
                     ergo_runtime::value::match_value! { a,
                         types::Map(mut a) => {
-                            let types::Map(b) = b.as_type::<types::Map>().unwrap().to_owned();
+                            let types::Map(b) = b.as_type::<types::Map>().unwrap().into_owned();
                             self.merge_map(&mut a, b).await;
                             return types::Map(a).into();
                         },
                         types::Array(mut a) => {
-                            let types::Array(b) = b.as_type::<types::Array>().unwrap().to_owned();
+                            let types::Array(b) = b.as_type::<types::Array>().unwrap().into_owned();
                             self.merge_array(&mut a, b).await;
                             return types::Array(a).into();
                         },
                         types::Args { args: mut a } => {
-                            let types::Args { args: mut b } = b.as_type::<types::Args>().unwrap().to_owned();
+                            let types::Args { args: mut b } = b.as_type::<types::Args>().unwrap().into_owned();
                             self.merge_map(&mut a.keyed, b.keyed).await;
                             // Positional args are stored in reverse order for efficient mutation.
                             a.positional.reverse();
@@ -355,9 +384,10 @@ async fn equal(mut a: _, mut b: _, (exact): [_]) -> Value {
 async fn index(indices: types::Map) -> Value {
     let deps = depends![dyn nsid!(std::index), indices];
     types::Unbound::new_no_doc(
-        move |arg| {
+        move |mut arg| {
             let indices = indices.clone();
             async move {
+                try_result!(Context::eval(&mut arg).await);
                 for (k, v) in &indices.as_ref().0 {
                     let result = traits::bind(
                         arg.clone(),
@@ -393,6 +423,17 @@ mod test {
         fn dynamic_binding_multiple_scopes(t) {
             t.assert_eq("the-value = self:value:dynamic:get the-value
                 [self:value:dynamic:eval {the-value = 10} $the-value, self:value:dynamic:eval {the-value = hi} $the-value]", "[10,hi]");
+        }
+
+        fn late_binding(t) {
+            t.assert_eq("self:value:late:get hi", "$unset");
+            t.assert_eq("v = self:value:late:get something; self:value:late:bind { something = value } $v", "value");
+            t.assert_eq("f = fn :x -> <| self:value:late:get my_func |> $x
+                say_hello = fn :name -> \"hi, $name\"
+                self:value:late:bind { my_func = $say_hello } <| f dude", "\"hi, dude\"");
+            t.assert_eq("v = { x = self:value:late:get val }
+                [self:value:late:bind { val = 10 } $v, self:value:late:bind { val = hi } $v]",
+                "[{x = 10}, {x = hi}]");
         }
 
         fn meta(t) {

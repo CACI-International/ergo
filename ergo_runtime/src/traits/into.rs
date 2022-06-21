@@ -10,7 +10,6 @@ use crate::abi_stable::{
     StableAbi,
 };
 use crate::context::{Context, Traits};
-use crate::dependency::GetDependencies;
 use crate::depends;
 use crate::error::DiagnosticInfo;
 use crate::metadata::Source;
@@ -18,7 +17,7 @@ use crate::type_system::{
     ergo_trait, ergo_trait_impl, ergo_traits_fn, ErgoTrait, ErgoType, Ref, Trait, Type,
     TypeParameters,
 };
-use crate::value::{TypedValue, Value};
+use crate::value::{InnerValues, TypedValue, Value};
 
 /// An ergo trait for converting to different types.
 #[ergo_trait]
@@ -31,15 +30,15 @@ impl<T: ErgoType + StableAbi + Eraseable> IntoTyped<T> {
     pub fn add_impl<U>(traits: &Traits)
     where
         U: ErgoType + Eraseable + Clone,
-        T: From<U> + ErgoType + Eraseable + GetDependencies,
+        T: From<U> + Into<Value>,
     {
         traits.add_impl_for_type::<U, IntoTyped<T>>(ergo_trait_impl! {
             impl<T, U> IntoTyped<T> for U
-                where T: From<U> + ErgoType + Eraseable + GetDependencies,
+                where T: From<U> + Into<Value>,
                       U: ErgoType + Eraseable + Clone,
             {
                 async fn into_typed(self) -> Value {
-                    Value::evaluated(T::from(self.to_owned()))
+                    T::from(self.into_owned()).into()
                 }
             }
         });
@@ -50,16 +49,16 @@ impl<T: ErgoType + StableAbi + Eraseable> IntoTyped<T> {
     pub fn add_depending_impl<U>(traits: &Traits)
     where
         U: ErgoType + Eraseable + Clone,
-        T: From<U> + ErgoType + Eraseable,
+        T: From<U> + ErgoType + InnerValues + Eraseable + Clone,
     {
         traits.add_impl_for_type::<U, IntoTyped<T>>(ergo_trait_impl! {
             impl<T, U> IntoTyped<T> for U
-                where T: From<U> + ErgoType + Eraseable,
+                where T: From<U> + ErgoType + InnerValues + Eraseable + Clone,
                       U: ErgoType + Eraseable + Clone,
             {
                 async fn into_typed(self) -> Value {
-                    let deps: crate::Dependencies = depends![self];
-                    Value::with_id(T::from(self.to_owned()), deps)
+                    let deps: crate::Dependencies = depends![T::ergo_type(), self];
+                    Value::with_id(T::from(self.into_owned()), deps)
                 }
             }
         });
@@ -88,7 +87,7 @@ pub async fn into_for(tp: &Type, mut v: Value) -> crate::Result<Value> {
     let trt = into_trait(tp.clone());
     let t = match Context::global()
         .traits
-        .get_impl(v.ergo_type().unwrap(), &trt)
+        .get_impl(&v.ergo_type().unwrap(), &trt)
     {
         Some(t) => t,
         None => {
@@ -104,7 +103,7 @@ pub async fn into_for(tp: &Type, mut v: Value) -> crate::Result<Value> {
     let t = IntoTyped::<crate::types::Unit>::create(unsafe { Ref::new(t) });
     let mut v = t.into_typed(v).await;
     Context::eval(&mut v).await?;
-    if v.ergo_type().unwrap() != tp {
+    if &v.ergo_type().unwrap() != tp {
         let actual_t = type_name(&v);
         let to_t = type_name_for(tp);
         Err(crate::error! {

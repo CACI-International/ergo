@@ -38,11 +38,9 @@ impl From<types::Path> for CommandString {
     }
 }
 
-ergo_runtime::ConstantDependency!(CommandString);
-
-impl ergo_runtime::GetDependenciesConstant for CommandString {
-    fn get_depends(&self) -> ergo_runtime::DependenciesConstant {
-        depends![CommandString::ergo_type(), self]
+impl From<CommandString> for ergo_runtime::TypedValue<CommandString> {
+    fn from(s: CommandString) -> Self {
+        Self::constant(s)
     }
 }
 
@@ -55,6 +53,12 @@ pub struct Child {
     stdout: Value,
     stderr: Value,
     exit_status: Value,
+}
+
+// We know that `Child` contains constant values that both will be unaffected by late bindings and
+// aren't used in the identity of instances, so we don't visit any of them.
+unsafe impl ergo_runtime::value::InnerValues for Child {
+    fn visit<'a, F: FnMut(&'a Value)>(&self, _f: F) {}
 }
 
 const CHILD_SUCCESS_INDEX: &'static str = "success";
@@ -103,14 +107,6 @@ impl From<ExitStatus> for types::Number {
             ROption::RNone => -1,
             ROption::RSome(i) => i,
         })
-    }
-}
-
-ergo_runtime::ConstantDependency!(ExitStatus);
-
-impl ergo_runtime::GetDependenciesConstant for ExitStatus {
-    fn get_depends(&self) -> ergo_runtime::DependenciesConstant {
-        depends![ExitStatus::ergo_type(), self]
     }
 }
 
@@ -207,11 +203,11 @@ pub async fn function(
     command.args(args.map(|v| v.as_ref().0.as_ref()));
     command.env_clear();
     if let Some(v) = env {
-        let types::Map(env) = v.to_owned();
+        let types::Map(env) = v.into_owned();
         for (k, v) in env {
             let k = Context::eval_as::<types::String>(k.into())
                 .await?
-                .to_owned()
+                .into_owned()
                 .into_string();
             let v = traits::into::<CommandString>(v).await?;
             command.env(k, v.as_ref().0.as_ref());
@@ -343,10 +339,10 @@ pub async fn function(
         })
         .map(|r| r.and_then(|v| v))
         .shared();
-    let exit_status = Value::dynamic(
-        move || async move { ExitStatus::from(try_result!(exit_status.await)).into() },
-        depends![dyn ^CALL_DEPENDS.clone(), nsid!(exec::exit_status)],
-    );
+    let exit_status = ergo_runtime::lazy_value! {
+        #![depends(dyn nsid!(exec::exit_status), ^CALL_DEPENDS.clone())]
+        ExitStatus::from(exit_status.await?).into()
+    };
 
     Value::with_id(
         Child {
@@ -356,7 +352,7 @@ pub async fn function(
             stderr,
             exit_status,
         },
-        depends![dyn ^CALL_DEPENDS, nsid!(exec::child)],
+        depends![dyn nsid!(exec::child), ^CALL_DEPENDS],
     )
 }
 
@@ -416,7 +412,7 @@ ergo_runtime::type_system::ergo_traits_fn! {
     impl traits::Bind for Child {
         async fn bind(&self, arg: Value) -> Value {
             let src = Source::get(&arg);
-            let ind = try_result!(Context::eval_as::<types::Index>(arg.clone()).await).to_owned().0;
+            let ind = try_result!(Context::eval_as::<types::Index>(arg.clone()).await).into_owned().0;
             let ind = try_result!(Context::eval_as::<types::String>(ind).await);
             let s = ind.as_ref().as_str();
             match s {
@@ -429,28 +425,27 @@ ergo_runtime::type_system::ergo_traits_fn! {
                     let stdout = self.stdout.clone();
                     let stderr = self.stderr.clone();
                     let exit_status = self.exit_status.clone();
-                    Value::dynamic(move || async move {
-                            let exit_status = try_result!(Context::eval_as::<ExitStatus>(exit_status).await);
-                            if exit_status.as_ref().success() {
-                                types::Unit.into()
-                            } else {
-                                let stdout = try_result!(traits::into::<types::String>(stdout).await);
-                                let stderr = try_result!(traits::into::<types::String>(stderr).await);
+                    ergo_runtime::lazy_value! {
+                        #![depends(dyn SELF_VALUE, nsid!(exec::success))]
+                        let exit_status = Context::eval_as::<ExitStatus>(exit_status).await?;
+                        if exit_status.as_ref().success() {
+                            types::Unit.into()
+                        } else {
+                            let stdout = traits::into::<types::String>(stdout).await?;
+                            let stderr = traits::into::<types::String>(stderr).await?;
 
-                                ergo_runtime::error! {
-                                    labels: [primary(src.with(""))],
-                                    notes: [
-                                        format_args!("command was: {}", command_string),
-                                        format_args!("exit status was: {}", exit_status.as_ref()),
-                                        format_args!("stdout was: {}", stdout.as_ref()),
-                                        format_args!("stderr was: {}", stderr.as_ref())
-                                    ],
-                                    error: "command returned failure exit status"
-                                }.into()
-                            }
-                        },
-                        depends![dyn SELF_VALUE, nsid!(exec::success)]
-                    )
+                            ergo_runtime::error! {
+                                labels: [primary(src.with(""))],
+                                notes: [
+                                    format_args!("command was: {}", command_string),
+                                    format_args!("exit status was: {}", exit_status.as_ref()),
+                                    format_args!("stdout was: {}", stdout.as_ref()),
+                                    format_args!("stderr was: {}", stderr.as_ref())
+                                ],
+                                error: "command returned failure exit status"
+                            }.into()
+                        }
+                    }
                 }
                 _ => {
                     ergo_runtime::error! {

@@ -392,7 +392,7 @@ async fn archive(archive: types::Path, source: types::Path, (format): [types::St
     let archive_source = Source::get(&archive);
 
     let ext: ergo_runtime::Source<String> = match format {
-        Some(format) => Source::extract(format).map(|v| v.to_owned().0.into()),
+        Some(format) => Source::extract(format).map(|v| v.into_owned().0.into()),
         None => {
             let path = archive.as_ref().as_ref();
             if path.starts_with(source.as_ref().as_ref()) {
@@ -691,7 +691,7 @@ async fn sha1(file: types::Path, sum: types::String) -> Value {
 async fn track(file: _, (force_check): [_]) -> Value {
     let file = traits::into::<types::Path>(file)
         .await?
-        .to_owned()
+        .into_owned()
         .into_pathbuf();
     let force_check = force_check.is_some();
 
@@ -742,7 +742,7 @@ async fn track(file: _, (force_check): [_]) -> Value {
     };
 
     let mut v: Value = types::Path::from(file).into();
-    v.set_dependencies(depends![dyn v, hash]);
+    v.set_identity(depends![dyn v, hash]);
     v
 }
 

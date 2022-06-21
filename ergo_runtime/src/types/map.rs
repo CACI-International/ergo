@@ -5,7 +5,7 @@ use crate::abi_stable::{bst::BstMap, type_erase::Erased, StableAbi};
 use crate::metadata::Source;
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
-use crate::{depends, Dependencies, EvaluatedValue, GetDependencies, TypedValue, Value};
+use crate::{EvaluatedValue, TypedValue, Value};
 use bincode;
 use std::collections::BTreeMap;
 
@@ -14,10 +14,12 @@ use std::collections::BTreeMap;
 #[repr(C)]
 pub struct Map(pub BstMap<EvaluatedValue, Value>);
 
-impl GetDependencies for Map {
-    fn get_depends(&self) -> Dependencies {
-        // TODO should be unordered dependencies
-        depends![Map::ergo_type(), ^self.0.iter().map(|(k, v)| depends![k, v])]
+unsafe impl crate::value::InnerValues for Map {
+    fn visit_info<'a, F: FnMut(crate::value::VisitInfo<'a>)>(&'a self, mut f: F) {
+        for (k, v) in &self.0 {
+            f(crate::value::VisitInfo::Immutable(k));
+            f(crate::value::VisitInfo::Value(v));
+        }
     }
 }
 

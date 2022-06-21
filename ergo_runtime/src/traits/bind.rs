@@ -263,7 +263,6 @@ ergo_traits_fn! {
             _trait_data: &'a Erased,
             v: &'a Value,
             _tp: &'a Type,
-            _data: &'a Erased,
             mut arg: Value) ->
             crate::abi_stable::future::BoxFuture<'a, Value> {
             crate::abi_stable::future::BoxFuture::new(async move {

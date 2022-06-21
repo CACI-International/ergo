@@ -38,7 +38,7 @@ async fn bind(key: _, value: _) -> Value {
             let key = key.clone();
             let value = value.clone();
             async move {
-                let entry = try_result!(Context::eval_as::<types::MapEntry>(arg).await).to_owned();
+                let entry = try_result!(Context::eval_as::<types::MapEntry>(arg).await).into_owned();
                 try_result!(traits::bind_no_error(key, entry.key).await);
                 try_result!(traits::bind_no_error(value, entry.value).await);
                 types::Unit.into()

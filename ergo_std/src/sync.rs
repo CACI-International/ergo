@@ -1,7 +1,10 @@
 //! Synchronization functions.
 
 use ergo_runtime::abi_stable::{
-    external_types::RMutex, future::RawWaker, std_types::RVec, StableAbi,
+    external_types::RMutex,
+    future::RawWaker,
+    std_types::{RArc, RVec},
+    StableAbi,
 };
 use ergo_runtime::{
     error::DiagnosticInfo, metadata::Source, traits, type_system::ErgoType, types, Context, Value,
@@ -14,16 +17,26 @@ pub fn module() -> Value {
     }
 }
 
-#[derive(ErgoType, StableAbi)]
+#[derive(ErgoType, StableAbi, Clone)]
 #[repr(C)]
 struct SyncResource {
-    inner: RMutex<SyncResourceInner>,
-    max: usize,
+    inner: RArc<SyncResourceInner>,
+}
+
+unsafe impl ergo_runtime::value::InnerValues for SyncResource {
+    fn visit<'a, F: FnMut(&'a Value)>(&'a self, _f: F) {}
 }
 
 #[derive(StableAbi)]
 #[repr(C)]
 struct SyncResourceInner {
+    state: RMutex<SyncResourceState>,
+    max: usize,
+}
+
+#[derive(StableAbi)]
+#[repr(C)]
+struct SyncResourceState {
     count: usize,
     pending: RVec<RawWaker>,
 }
@@ -31,11 +44,13 @@ struct SyncResourceInner {
 impl SyncResource {
     pub fn new(count: usize) -> Self {
         SyncResource {
-            inner: RMutex::new(SyncResourceInner {
-                count,
-                pending: Default::default(),
+            inner: RArc::new(SyncResourceInner {
+                state: RMutex::new(SyncResourceState {
+                    count,
+                    pending: Default::default(),
+                }),
+                max: count,
             }),
-            max: count,
         }
     }
 }
@@ -51,7 +66,7 @@ impl<'a> std::future::Future for Acquire<'a> {
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context,
     ) -> std::task::Poll<Self::Output> {
-        let mut guard = self.0.inner.lock();
+        let mut guard = self.0.inner.state.lock();
         if guard.count >= self.1 {
             guard.count -= self.1;
             drop(guard);
@@ -65,7 +80,7 @@ impl<'a> std::future::Future for Acquire<'a> {
 
 impl<'a> Drop for AcquireGuard<'a> {
     fn drop(&mut self) {
-        let mut guard = self.0.inner.lock();
+        let mut guard = self.0.inner.state.lock();
         guard.count += self.1;
         let pending = std::mem::take(&mut guard.pending);
         drop(guard);
@@ -77,7 +92,7 @@ impl<'a> Drop for AcquireGuard<'a> {
 
 impl SyncResource {
     pub fn acquire(&self, count: usize) -> Acquire {
-        let count = std::cmp::min(count, self.max);
+        let count = std::cmp::min(count, self.inner.max);
         Acquire(self, count)
     }
 }

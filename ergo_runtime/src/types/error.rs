@@ -1,17 +1,11 @@
 //! The Error type.
 
 use crate as ergo_runtime;
-use crate::type_system::{ergo_traits_fn, ErgoType};
-use crate::{depends, traits, DependenciesConstant, GetDependenciesConstant, TypedValue};
+use crate::type_system::ergo_traits_fn;
+use crate::{traits, TypedValue};
 
 /// Script error type.
 pub use crate::Error;
-
-impl GetDependenciesConstant for Error {
-    fn get_depends(&self) -> DependenciesConstant {
-        depends![Error::ergo_type(), self.to_string()]
-    }
-}
 
 impl From<Error> for TypedValue<Error> {
     fn from(v: Error) -> Self {
@@ -54,7 +48,7 @@ macro_rules! return_if_error {
 macro_rules! try_value {
     ( $v:expr ) => {
         match $v.as_type::<$crate::types::Error>() {
-            Ok(v) => return Err(v.to_owned().into()),
+            Ok(v) => return Err(v.into_owned().into()),
             Err(v) => v,
         }
     };

@@ -40,7 +40,7 @@ async fn from(value: _) -> Value {
 /// An owned Path is identical to a normal Path, however it has a side effect of deleting the Path
 /// (whether a file or directory, if existing at all) when the value is no longer used.
 async fn owned(path: _) -> Value {
-    let path = traits::into::<types::Path>(path).await?.to_owned();
+    let path = traits::into::<types::Path>(path).await?.into_owned();
     path.into_owned().into()
 }
 
@@ -69,7 +69,7 @@ async fn join(...) -> Value {
 /// specific) component of the argument.
 async fn split(path: types::Path) -> Value {
     let mut vals: Vec<Value> = Vec::new();
-    for c in path.clone().to_owned().into_pathbuf().iter() {
+    for c in path.clone().into_owned().into_pathbuf().iter() {
         match c.to_str() {
             Some(s) => vals.push(Source::imbue(
                 ARGS_SOURCE

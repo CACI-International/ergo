@@ -156,6 +156,11 @@ impl<'a, SyncSend: SyncSendMarker> ErasedT<'a, SyncSend> {
         }
     }
 
+    /// Get a pointer to the stored value.
+    pub fn as_ptr(&self) -> *const () {
+        self.data.as_ptr()
+    }
+
     /// Get a &T reference.
     ///
     /// Unsafe because callers must ensure the data is a T.
@@ -383,6 +388,15 @@ impl ErasedTrivial {
     /// When retrieving the value later, one should use `as_str()`/`to_boxed_str()`.
     pub fn from_str(v: Box<str>) -> Self {
         Self::from_slice(<Box<[u8]>>::from(v))
+    }
+
+    /// Get a pointer to the stored value.
+    pub fn as_ptr(&self) -> *const () {
+        if self.is_box() {
+            unsafe { self.data.as_ref::<Boxed>().as_ref::<()>() as *const () }
+        } else {
+            unsafe { self.data.as_ref::<()>() as *const () }
+        }
     }
 
     /// Create an ErasedTrivial from the given type, assuming the size and alignment of the type will fit

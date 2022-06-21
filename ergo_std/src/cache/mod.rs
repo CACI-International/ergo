@@ -1,7 +1,12 @@
 //! Create a value cache from a Path.
 
 use ergo_runtime::abi_stable::{
-    future::BoxFuture, sabi_trait, sabi_trait::prelude::*, std_types::RBox, u128::U128, StableAbi,
+    future::BoxFuture,
+    sabi_trait,
+    sabi_trait::prelude::*,
+    std_types::{RArc, RBox},
+    u128::U128,
+    StableAbi,
 };
 use ergo_runtime::{
     error::DiagnosticInfo, traits, type_system::ErgoType, types, Context, RResult, Value,
@@ -10,13 +15,19 @@ use ergo_runtime::{
 mod memory;
 mod sqlite;
 
-#[derive(ErgoType, StableAbi)]
+#[derive(ErgoType, StableAbi, Clone)]
 #[repr(C)]
-pub struct Cache(CacheInterface_TO<'static, RBox<()>>);
+pub struct Cache(RArc<CacheInterface_TO<'static, RBox<()>>>);
+
+unsafe impl ergo_runtime::value::InnerValues for Cache {
+    fn visit<'a, F: FnMut(&'a Value)>(&'a self, _f: F) {}
+}
 
 impl Cache {
     fn new<T: CacheInterface + 'static>(interface: T) -> Self {
-        Cache(CacheInterface_TO::from_value(interface, TD_Opaque))
+        Cache(RArc::new(CacheInterface_TO::from_value(
+            interface, TD_Opaque,
+        )))
     }
 }
 

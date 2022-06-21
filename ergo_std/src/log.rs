@@ -15,7 +15,7 @@ fn logger(log: Log) -> Value {
             let log = log.clone();
             async move {
                 let ind = try_result!(Context::eval_as::<types::Index>(arg).await)
-                    .to_owned()
+                    .into_owned()
                     .0;
                 let ind = try_result!(Context::eval_as::<types::String>(ind).await);
 

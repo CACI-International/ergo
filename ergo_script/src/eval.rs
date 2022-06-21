@@ -13,7 +13,7 @@ use ergo_runtime::{
     error::{DiagnosticInfo, ErrorOrDiagnostic},
     metadata::{self, Source},
     nsid, traits, try_result, types,
-    value::{match_value, ValueId},
+    value::{match_value, Identity, LateBind, LateScope, LazyValueId},
     Context, EvaluatedValue, Value,
 };
 use futures::future::{BoxFuture, FutureExt};
@@ -105,6 +105,16 @@ impl Captures {
             self.resolve(k, r);
         }
         Ok(())
+    }
+}
+
+impl LateBind for Captures {
+    fn late_bind(&mut self, scope: &LateScope) {
+        for v in self.inner.values_mut() {
+            if let Capture::Evaluated(v) = v {
+                v.late_bind(scope);
+            }
+        }
     }
 }
 
@@ -347,6 +357,7 @@ struct ExprEvaluator {
     captures: Captures,
     scopes: Scopes,
     scope_key: ScopeKey,
+    late_scope: LateScope,
     cache: ExprEvaluatorCache,
 }
 
@@ -374,6 +385,7 @@ impl ExprEvaluator {
             captures,
             scopes: Scopes::new(),
             scope_key: ScopeKey::new(),
+            late_scope: Default::default(),
             cache: Default::default(),
         }
     }
@@ -415,6 +427,7 @@ impl ExprEvaluator {
                 .unwrap_or_default(),
             scopes: self.scopes.clone(),
             scope_key: self.scope_key.enter(child),
+            late_scope: self.late_scope.clone(),
             cache: self
                 .cache
                 .children
@@ -423,9 +436,18 @@ impl ExprEvaluator {
         }
     }
 
-    fn no_scope(mut self) -> Self {
+    fn no_lexical_scope(mut self) -> Self {
         self.scopes = Scopes::new();
         self
+    }
+
+    fn no_late_scope(mut self) -> Self {
+        self.late_scope = Default::default();
+        self
+    }
+
+    fn no_scopes(self) -> Self {
+        self.no_lexical_scope().no_late_scope()
     }
 
     /// Evaluate block items.
@@ -594,7 +616,7 @@ impl ExprEvaluator {
     /// should be doing the minimum necessary to get the identity.
     ///
     /// The identity is cached if all captures are resolved.
-    fn identity<'b>(&'b self) -> BoxFuture<'b, ergo_runtime::value::Identity> {
+    fn identity<'b>(&'b self) -> BoxFuture<'b, Identity> {
         let captures_ready = self.captures_ready();
         let compute = async move {
             if let Some(cap) = self
@@ -691,15 +713,8 @@ impl ExprEvaluator {
         }
     }
 
-    fn value_id(&self) -> ValueId {
-        let me = self.clone().no_scope().no_eval_cache();
-        ValueId::new(move || {
-            Context::spawn(EVAL_TASK_PRIORITY, |_| {}, async move {
-                Ok(me.identity().await)
-            })
-            // Error only occurs when aborting.
-            .map(|l| l.unwrap_or_else(|_| ergo_runtime::value::Identity::new(0)))
-        })
+    fn value_id(&self) -> Self {
+        self.clone().no_lexical_scope().no_eval_cache()
     }
 
     fn source(&self) -> ergo_runtime::Source<()> {
@@ -712,25 +727,27 @@ impl ExprEvaluator {
 
     async fn evaluate_impl(&self) -> Value {
         macro_rules! delayed {
-            ( $self:ident , $v:ident , $( $body:tt )* ) => {{
-                let id = self.value_id();
-                let $self = self.clone().no_eval_cache();
+            ( $self:ident $($(.$n:ident)+)? , $v:ident , $( $body:tt )* ) => {{
+                let $self = self.clone()$($(.$n())+)?;
                 let v_type = witness($v);
-                Value::dynamic(
-                    move || async move {
-                        Context::spawn(EVAL_TASK_PRIORITY, |_| {}, async move {
-                            let v: Value = async move {
-                                // Safety: v_type (from $v) must have been from a previous checked call
-                                let $v = unsafe { $self.expr_as(v_type) };
-                                $($body)*
-                            }.await;
-                            Ok(v)
-                        })
-                        .await
-                        .into()
-                    },
-                    id,
-                )
+                ergo_runtime::lazy_value! {
+                    #![contains($self)]
+                    #![id(self.value_id())]
+                    #![exclude_contains_from_id]
+                    Context::spawn(EVAL_TASK_PRIORITY, |_| {}, async move {
+                        let mut v: Value = async {
+                            // Safety: v_type (from $v) must have been from a previous checked call
+                            let $v = unsafe { $self.expr_as(v_type) };
+                            $($body)*
+                        }.await;
+                        if !$self.late_scope.scope.is_empty() {
+                            v.late_bind(&$self.late_scope);
+                        }
+                        Ok(v)
+                    })
+                    .await
+                    .into()
+                }
             }};
         }
 
@@ -792,7 +809,10 @@ impl ExprEvaluator {
                     types::Array(results.into()).into()
                 }
             },
-            Block(block) => delayed! { me, block,
+            // Blocks open a new scope; we don't want any set expressions (or expressions
+            // containing set expressions) within this scope to be cached, so we clone with
+            // no_eval_cache.
+            Block(block) => delayed! { me.no_eval_cache, block,
                 match me.evaluate_block_items(&block.items, BlockItemMode::Block).await {
                     Err(e) => e.into(),
                     Ok((mut vals, env)) => {
@@ -808,7 +828,7 @@ impl ExprEvaluator {
                 let id = self.value_id();
                 let bind = func.bind.clone();
                 let body = func.body.clone();
-                let me = self.clone().no_scope().cache_root();
+                let me = self.clone().no_scopes().cache_root();
                 types::Unbound::new_no_doc(move |v| {
                     let bind = bind.clone();
                     let body = body.clone();
@@ -898,17 +918,30 @@ impl ExprEvaluator {
                 // include the identity of the doc comment.
                 // In practice the identity of a doc comment won't matter much though.
                 //let id = self.value_id();
-                let me = self.clone().no_scope().no_eval_cache();
-                let mut doc = Value::dynamic(move || async move {
-                        Context::spawn(EVAL_TASK_PRIORITY, |_| {}, async move {
-                            ergo_runtime::error_info! {
-                                labels: [ primary(me.source().with("while evaluating this doc comment")) ],
-                                async {
-                                    me.evaluate_string_items(&items).await
-                                }
+                let captures = items.iter().fold(CaptureSet::default(), |mut caps, e| {
+                    match e {
+                        ast::StringItem::Expression(e) => match e.captures() {
+                            Some(c) => caps |= c,
+                            _ => ()
+                        },
+                        _ => ()
+                    }
+                    caps
+                });
+                let mut me = self.clone().no_scopes().no_eval_cache();
+                me.captures = me.captures.subset(&captures);
+                let mut doc = ergo_runtime::lazy_value! {
+                    #![contains(me)]
+                    #![exclude_contains_from_id]
+                    Context::spawn(EVAL_TASK_PRIORITY, |_| {}, async move {
+                        ergo_runtime::error_info! {
+                            labels: [ primary(me.source().with("while evaluating this doc comment")) ],
+                            async {
+                                me.evaluate_string_items(&items).await
                             }
-                        }).await.into()
-                    }, 0);
+                        }
+                    }).await.into()
+                };
                 Source::set(&mut doc, self.source());
                 metadata::Doc::set(&mut val, doc);
                 val
@@ -920,8 +953,48 @@ impl ExprEvaluator {
             },
         );
 
-        Source::update(&mut val, self.source());
+        match self.expr.expr_type() {
+            // Don't set sources as the doc comment/attribute source, it tends to produce confusing
+            // error messages.
+            ast::ExpressionType::DocComment | ast::ExpressionType::Attribute => (),
+            _ => Source::update(&mut val, self.source()),
+        }
         val
+    }
+}
+
+impl LateBind for ExprEvaluator {
+    fn late_bind(&mut self, scope: &LateScope) {
+        self.captures.late_bind(scope);
+        self.late_scope.scope.extend(scope.scope.clone());
+        // Remove any cached evaluation of this expression and all child expressions, as the late
+        // bindings may change them.
+        // TODO this could be more efficient by having syntax indicate late bindings, which would
+        // allow the expression evaluator to deeply replace the syntax in child
+        // expressions and clear only those caches.
+        self.cache = Default::default();
+    }
+}
+
+impl LazyValueId for ExprEvaluator {
+    fn id(&self) -> BoxFuture<Identity> {
+        let me = self.clone();
+        Context::spawn(EVAL_TASK_PRIORITY, |_| {}, async move {
+            Ok(me.identity().await)
+        })
+        // Error only occurs when aborting.
+        .map(|l| l.unwrap_or_else(|_| Identity::new(0)))
+        .boxed()
+    }
+}
+
+impl ergo_runtime::value::lazy::LazyCaptures for ExprEvaluator {
+    fn id(&self) -> BoxFuture<Identity> {
+        LazyValueId::id(self)
+    }
+
+    fn late_bind(&mut self, scope: &LateScope) {
+        LateBind::late_bind(self, scope);
     }
 }
 

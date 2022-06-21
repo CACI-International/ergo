@@ -88,7 +88,7 @@ async fn stringify(value: _, (pretty): [_]) -> Value {
                         entries.push(match (k,v) {
                             (Err(ke), Err(ve)) => Err(ergo_runtime::Error::aggregate(vec![ke,ve])),
                             (Err(e), _) | (_, Err(e)) => Err(e),
-                            (Ok(k), Ok(v)) => Ok((k.to_owned().0,v))
+                            (Ok(k), Ok(v)) => Ok((k.into_owned().0,v))
                         });
                     }
                     Ok(JsonValue::Object(entries.into_iter().collect::<Result<Vec<_>, _>>()?.into_iter().collect()))

@@ -23,7 +23,7 @@ pub async fn function(
     (fallback): [_],
     (allow_error): [_],
 ) -> Value {
-    let bindings = bindings.to_owned().0;
+    let bindings = bindings.into_owned().0;
     let allow_error = allow_error.is_some();
 
     // Do not propagate errors while trying the bindings
@@ -73,7 +73,7 @@ pub async fn function(
 
         // If the value is an error and no bindings match, return it directly.
         let err = match value.as_type::<types::Error>() {
-            Ok(e) => e.to_owned(),
+            Ok(e) => e.into_owned(),
             Err(v) => {
                 use ergo_runtime::error::{Diagnostic, DiagnosticInfo};
                 let mut diag = Diagnostic::from("no bindings matched the value")

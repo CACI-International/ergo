@@ -68,7 +68,7 @@ async fn new(id: types::String) -> Value {
             Context::eval(&mut value).await?;
             match Context::global()
                 .traits
-                .get_impl(value.ergo_type().unwrap(), &trt)
+                .get_impl(&value.ergo_type().unwrap(), &trt)
             {
                 None => types::Unset.into(),
                 Some(v) => unsafe { v.as_ref().as_ref::<Value>() }.clone(),
@@ -309,12 +309,12 @@ mod stored {
                                     args: types::args::Arguments::positional(vec![to_get]).unchecked()
                                 }.into()).await;
                                 Context::eval(&mut value).await?;
-                                if value.ergo_type().unwrap() != &trait_data.tp {
+                                if value.ergo_type().unwrap() != trait_data.tp {
                                     return Err(traits::type_error_for_t(value, &trait_data.tp).into_error().into());
                                 }
-                                let data = value.data().unwrap();
+                                let data = value.data_ptr().unwrap();
                                 // XXX this only works for script-created types!
-                                let data = unsafe { (*data).as_ref::<Value>() }.clone();
+                                let data = unsafe { (data as *const Value).as_ref().unwrap_unchecked() }.clone();
                                 ergo_runtime::Result::Ok(Erased::new::<Value>(data))
                             }
                         ).into()

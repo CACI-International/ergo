@@ -24,7 +24,7 @@ pub fn type_name_for(tp: &Type) -> String {
 /// Get a type name for the given value.
 pub fn type_name(value: &Value) -> String {
     match value.ergo_type() {
-        Some(tp) => type_name_for(tp),
+        Some(tp) => type_name_for(&tp),
         None => "<dynamic>".into(),
     }
 }
@@ -32,7 +32,7 @@ pub fn type_name(value: &Value) -> String {
 /// Create a type error with the value's type mentioned.
 pub fn type_error(v: Value, expected: &str) -> ErrorOrDiagnostic {
     let v = match v.as_type::<crate::types::Error>() {
-        Ok(e) => return ErrorOrDiagnostic::Error(e.to_owned()),
+        Ok(e) => return ErrorOrDiagnostic::Error(e.into_owned()),
         Err(v) => v,
     };
     let name = type_name(&v);

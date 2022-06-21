@@ -1,8 +1,6 @@
 //! Environment variable functions.
 
-use ergo_runtime::{
-    depends, metadata::Doc, nsid, traits, types, value::match_value, Context, Value,
-};
+use ergo_runtime::{metadata::Doc, traits, types, value::match_value, Context, Value};
 
 pub fn module() -> Value {
     crate::make_string_map! {
@@ -66,10 +64,7 @@ fn temp_dir() -> Value {
 }
 
 fn project_work() -> Value {
-    let mut v = Value::dynamic(
-        || async { types::Path::from(Context::global().env.project_directory()).into() },
-        depends![const nsid!(std::env::project_dir)],
-    );
+    let mut v = types::Path::from(Context::global().env.project_directory()).into();
     Doc::set_string(&mut v, "A project-wide working directory path.");
     v
 }

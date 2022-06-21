@@ -217,9 +217,7 @@ mod map {
         where
             K: Ord,
         {
-            for (k, v) in std::mem::take(other) {
-                self.insert(k, v);
-            }
+            self.extend(std::mem::take(other));
         }
 
         pub fn remove<Q>(&mut self, key: &Q) -> Option<V>
@@ -445,6 +443,15 @@ mod map {
         }
     }
 
+    impl<'a, K, V> IntoIterator for &'a mut BstMap<K, V> {
+        type IntoIter = IterMut<'a, K, V>;
+        type Item = (&'a K, &'a mut V);
+
+        fn into_iter(self) -> Self::IntoIter {
+            self.iter_mut()
+        }
+    }
+
     impl<K, V> std::iter::FromIterator<(K, V)> for BstMap<K, V>
     where
         K: Ord,
@@ -536,10 +543,14 @@ mod map {
     impl<'a, K, V> std::iter::FusedIterator for Iter<'a, K, V> {}
 
     impl<'a, K, V> Iterator for IterMut<'a, K, V> {
-        type Item = (&'a mut K, &'a mut V);
+        type Item = (&'a K, &'a mut V);
 
         fn next(&mut self) -> Option<Self::Item> {
-            self.inner.next().map(|v| unsafe { std::mem::transmute(v) })
+            self.inner.next().map(|(k, v)| {
+                (k, unsafe {
+                    (v as *const V as *mut V).as_mut().unwrap_unchecked()
+                })
+            })
         }
 
         fn size_hint(&self) -> (usize, Option<usize>) {
@@ -946,26 +957,6 @@ mod set {
     }
 
     impl<'a, T> std::iter::FusedIterator for Iter<'a, T> {}
-
-    impl<'a, T> Iterator for IterMut<'a, T> {
-        type Item = &'a mut T;
-
-        fn next(&mut self) -> Option<Self::Item> {
-            self.inner.next().map(|v| v.0)
-        }
-
-        fn size_hint(&self) -> (usize, Option<usize>) {
-            self.inner.size_hint()
-        }
-    }
-
-    impl<'a, T> ExactSizeIterator for IterMut<'a, T> {
-        fn len(&self) -> usize {
-            self.inner.len()
-        }
-    }
-
-    impl<'a, T> std::iter::FusedIterator for IterMut<'a, T> {}
 
     impl<T> Iterator for IntoIter<T> {
         type Item = T;

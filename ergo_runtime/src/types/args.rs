@@ -6,8 +6,8 @@ use crate::metadata::Source;
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
 use crate::{
-    depends, Context, Dependencies, Error, EvaluatedValue, GetDependencies, Source as Src,
-    TypedValue, Value,
+    value::{InnerValues, VisitInfo},
+    Context, Dependencies, Error, EvaluatedValue, Source as Src, TypedValue, Value,
 };
 use std::collections::BTreeMap;
 
@@ -18,9 +18,16 @@ pub struct Args {
     pub args: UncheckedArguments,
 }
 
-impl GetDependencies for Args {
-    fn get_depends(&self) -> Dependencies {
-        depends![Args::ergo_type(), ^&self.args]
+unsafe impl InnerValues for Args {
+    fn visit_info<'a, F: FnMut(VisitInfo<'a>)>(&'a self, mut f: F) {
+        for v in &self.args.positional {
+            f(VisitInfo::Value(v));
+        }
+        f(VisitInfo::Discriminant(0));
+        for (k, v) in &self.args.keyed {
+            f(VisitInfo::Immutable(k));
+            f(VisitInfo::Value(v));
+        }
     }
 }
 
@@ -355,7 +362,7 @@ ergo_traits_fn! {
 
     impl traits::IntoTyped<super::Array> for Args {
         async fn into_typed(self) -> crate::Value {
-            let mut args = self.to_owned().args;
+            let mut args = self.into_owned().args;
             crate::try_result!(args.unused_keyed());
             super::Array(args.collect()).into()
         }
@@ -363,7 +370,7 @@ ergo_traits_fn! {
 
     impl traits::IntoTyped<super::Map> for Args {
         async fn into_typed(self) -> crate::Value {
-            let mut args = self.to_owned().args;
+            let mut args = self.into_owned().args;
             crate::try_result!(args.unused_positional());
             super::Map(args.keyed).into()
         }

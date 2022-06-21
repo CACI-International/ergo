@@ -32,7 +32,7 @@ pub type RResult<T> = crate::abi_stable::std_types::RResult<T, Error>;
 ///
 /// The type does not implement `Error` itself (so that `From<T: Error>` can be implemented), but
 /// you can get such an error with the `Error::error()` function.
-#[derive(Clone, Debug, ErgoType, StableAbi, Serialize, Deserialize)]
+#[derive(Clone, Debug, ErgoType, StableAbi, Serialize, Deserialize, Hash)]
 #[repr(C)]
 pub struct Error {
     inner: InnerError,
@@ -670,7 +670,7 @@ impl std::fmt::Display for Error {
 }
 
 /// Ergo errors may be an abort or some set of diagnostics.
-#[derive(Clone, Debug, StableAbi, Serialize, Deserialize)]
+#[derive(Clone, Debug, StableAbi, Serialize, Deserialize, Hash)]
 #[repr(u8)]
 enum InnerError {
     Aborted,

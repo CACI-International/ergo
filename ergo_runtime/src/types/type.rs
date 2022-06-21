@@ -5,7 +5,7 @@ use crate::abi_stable::StableAbi;
 use crate::metadata::Source;
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
-use crate::{depends, Dependencies, GetDependencies, TypedValue, Value};
+use crate::{depends, TypedValue, Value};
 use futures::FutureExt;
 
 /// Script Type type.
@@ -18,16 +18,18 @@ pub struct Type {
     pub index: Value,
 }
 
-impl GetDependencies for Type {
-    fn get_depends(&self) -> Dependencies {
-        // Don't include the `index` value; we want to identify only with the type itself.
-        depends![Type::ergo_type(), self.tp]
+// TODO: include `index` in the identity? This will cause problems if trying to compare types for
+// equality.
+
+impl std::hash::Hash for Type {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        self.tp.hash(h);
     }
 }
 
 impl From<Type> for TypedValue<Type> {
     fn from(v: Type) -> Self {
-        Self::new(v)
+        Self::constant(v)
     }
 }
 
@@ -80,7 +82,7 @@ ergo_traits_fn! {
                                 ],
                                 async {
                                     drop(crate::Context::eval(&mut arg).await);
-                                    if arg.ergo_type().unwrap() != &tp {
+                                    if arg.ergo_type().unwrap() != tp {
                                         Err(traits::type_error_for_t(arg, &tp))
                                     } else {
                                         Ok(traits::bind(v, arg).await)

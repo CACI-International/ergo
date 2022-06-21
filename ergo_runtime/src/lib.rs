@@ -35,10 +35,13 @@ macro_rules! nsid {
     };
     ( $( $l:ident )::+, $( $e:expr ),+ ) => {
         {
-            let mut id = $crate::NAMESPACE_ERGO;
-            $( id = $crate::abi_stable::uuid::Uuid::new_v5(&id, stringify!($l).as_bytes()); )+
-            $( id = $crate::abi_stable::uuid::Uuid::new_v5(&id, $e); )+
-            id
+            static NSID_ONCE: std::sync::Once = std::sync::Once::new();
+            static mut NSID: $crate::abi_stable::uuid::Uuid = $crate::NAMESPACE_ERGO;
+            NSID_ONCE.call_once(|| unsafe {
+                $( NSID = $crate::abi_stable::uuid::Uuid::new_v5(&NSID, stringify!($l).as_bytes()); )+
+                $( NSID = $crate::abi_stable::uuid::Uuid::new_v5(&NSID, $e); )+
+            });
+            unsafe { NSID }
         }
     };
 }
@@ -59,7 +62,7 @@ pub use context::Context;
 pub use dependency::{
     Dependencies, DependenciesConstant, GetDependencies, GetDependenciesConstant,
 };
-pub use ergo_runtime_macro::plugin_entry;
+pub use ergo_runtime_macro::{lazy_value, plugin_entry};
 pub use error::{Error, RResult, Result};
 pub use source::Source;
 pub use value::{EvaluatedValue, IdentifiedValue, TypedValue, Value};

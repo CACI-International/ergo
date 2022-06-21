@@ -5,7 +5,7 @@ use crate::abi_stable::{type_erase::Erased, StableAbi};
 use crate::metadata::Source;
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
-use crate::{depends, Dependencies, GetDependencies, TypedValue, Value};
+use crate::{TypedValue, Value};
 use bincode;
 
 /// Type for an individual Map entry.
@@ -16,9 +16,10 @@ pub struct MapEntry {
     pub value: Value,
 }
 
-impl GetDependencies for MapEntry {
-    fn get_depends(&self) -> Dependencies {
-        depends![MapEntry::ergo_type(), self.key, self.value]
+unsafe impl crate::value::InnerValues for MapEntry {
+    fn visit<'a, F: FnMut(&'a Value)>(&'a self, mut f: F) {
+        f(&self.key);
+        f(&self.value);
     }
 }
 
@@ -83,7 +84,7 @@ ergo_traits_fn! {
 
     impl traits::Bind for MapEntry {
         async fn bind(&self, arg: Value) -> Value {
-            let ind = crate::try_result!(crate::Context::eval_as::<super::Index>(arg).await).to_owned().0;
+            let ind = crate::try_result!(crate::Context::eval_as::<super::Index>(arg).await).into_owned().0;
             let ind = crate::try_result!(crate::Context::eval_as::<super::String>(ind).await);
             let s = ind.as_ref().as_str();
             if s == "key" {

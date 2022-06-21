@@ -116,7 +116,7 @@ async fn new(func: _, ...) -> Value {
 /// * `next` - the remaining iterator
 async fn item(iter: _) -> Value {
     let deps = depends![dyn nsid!(std::iter::next), iter];
-    let mut iter = traits::into::<types::Iter>(iter).await?.to_owned();
+    let mut iter = traits::into::<types::Iter>(iter).await?.into_owned();
 
     match iter.next().await? {
         None => types::Unset.into(),
@@ -136,12 +136,12 @@ async fn item(iter: _) -> Value {
 async fn no_errors(iter: _) -> Value {
     let iter = traits::into::<types::Iter>(iter).await?;
 
-    let vals = iter.clone().to_owned().collect::<Vec<_>>().await?;
+    let vals = iter.clone().into_owned().collect::<Vec<_>>().await?;
 
     let mut errs = Vec::new();
     for v in vals {
         match v.as_type::<types::Error>() {
-            Ok(err) => errs.push(err.to_owned()),
+            Ok(err) => errs.push(err.into_owned()),
             _ => (),
         }
     }
@@ -149,7 +149,7 @@ async fn no_errors(iter: _) -> Value {
     if errs.is_empty() {
         let mut iter = iter;
         let deps = depends![dyn nsid!(std::iter::no_errors::result), iter];
-        iter.set_dependencies(deps);
+        iter.set_identity(deps);
         iter.into()
     } else {
         types::Error::aggregate(errs).into()
@@ -171,7 +171,7 @@ async fn fold(func: _, acc: _, iter: _) -> Value {
     // FIXME early exit on error?
 
     let mut acc = acc;
-    let vals = iter.to_owned().collect::<Vec<_>>().await?;
+    let vals = iter.into_owned().collect::<Vec<_>>().await?;
     for v in vals {
         acc = traits::bind(
             func.clone(),
@@ -202,7 +202,7 @@ async fn unique(iter: _) -> Value {
 
     let deps = depends![nsid!(std::iter::unique), iter];
 
-    let iter = iter.to_owned();
+    let iter = iter.into_owned();
 
     #[derive(Clone)]
     struct Unique {
@@ -241,7 +241,7 @@ async fn filter(func: _, iter: _) -> Value {
 
     let deps = depends![nsid!(std::iter::filter), func, iter];
 
-    let iter = iter.to_owned();
+    let iter = iter.into_owned();
 
     #[derive(Clone)]
     struct Filter {
@@ -338,7 +338,7 @@ async fn zip((all): [_], ...) -> Value {
         });
 
         types::Iter::from_generator(Zip {
-            iters: iters_typed.into_iter().map(|v| v.to_owned()).collect(),
+            iters: iters_typed.into_iter().map(|v| v.into_owned()).collect(),
             all,
             args_source: ARGS_SOURCE,
         })
@@ -369,7 +369,7 @@ async fn unzip(...) -> Value {
                 let arg = try_result!(Context::eval_as::<types::Iter>(arg).await);
                 let arg_source = Source::get(&arg);
                 let iter_id = arg.id().await;
-                let iter = arg.to_owned();
+                let iter = arg.into_owned();
 
                 let items: Vec<_> = try_result!(iter.collect().await);
                 let arrays = try_result!(
@@ -475,7 +475,7 @@ async fn skip_while(func: _, iter: _) -> Value {
         Ok(None)
     });
 
-    let iter = iter.to_owned();
+    let iter = iter.into_owned();
     types::Iter::new(
         SkipWhile {
             iter,
@@ -520,7 +520,7 @@ async fn skip(n: _, iter: _) -> Value {
         self.iter.next().await
     });
 
-    let iter = iter.to_owned();
+    let iter = iter.into_owned();
     types::Iter::new(Skip { iter, n }, deps).into()
 }
 
@@ -570,7 +570,7 @@ async fn take_while(func: _, iter: _) -> Value {
         }
     });
 
-    let iter = iter.to_owned();
+    let iter = iter.into_owned();
     types::Iter::new(
         TakeWhile {
             iter,
@@ -614,7 +614,7 @@ async fn take(n: _, iter: _) -> Value {
         }
     });
 
-    let iter = iter.to_owned();
+    let iter = iter.into_owned();
     types::Iter::new(Take { iter, n }, deps).into()
 }
 
@@ -661,7 +661,7 @@ async fn chunks(n: _, iter: _) -> Value {
         })
     });
 
-    let iter = iter.to_owned();
+    let iter = iter.into_owned();
     types::Iter::new(Chunks { iter, n }, deps).into()
 }
 
@@ -688,7 +688,7 @@ async fn flatten(iter: _) -> Value {
             match &mut self.current {
                 None => match self.iter.next().await? {
                     Some(v) => {
-                        self.current = Some(traits::into::<types::Iter>(v).await?.to_owned());
+                        self.current = Some(traits::into::<types::Iter>(v).await?.into_owned());
                     }
                     None => break Ok(None),
                 },
@@ -702,7 +702,7 @@ async fn flatten(iter: _) -> Value {
         }
     });
 
-    let iter = iter.to_owned();
+    let iter = iter.into_owned();
     types::Iter::new(
         Flatten {
             iter,
@@ -725,7 +725,7 @@ async fn flatten(iter: _) -> Value {
 async fn map(func: _, iter: _) -> Value {
     let iter = traits::into::<types::Iter>(iter).await?;
 
-    let vals: Vec<_> = iter.to_owned().collect().await?;
+    let vals: Vec<_> = iter.into_owned().collect().await?;
     let new_iter = Context::global()
         .task
         .join_all(vals.into_iter().map(|d| {
@@ -790,7 +790,7 @@ async fn map_lazy(func: _, iter: _) -> Value {
         }
     });
 
-    let iter = iter.to_owned();
+    let iter = iter.into_owned();
     types::Iter::new(
         Map {
             iter,
@@ -811,7 +811,7 @@ async fn map_lazy(func: _, iter: _) -> Value {
 async fn count(iter: _) -> Value {
     let iter = traits::into::<types::Iter>(iter).await?;
 
-    let vals: Vec<_> = iter.to_owned().collect().await?;
+    let vals: Vec<_> = iter.into_owned().collect().await?;
     types::Number::from_usize(vals.len()).into()
 }
 
@@ -836,7 +836,7 @@ async fn quicksort_compare(
 
     Context::eval_as::<super::order::Order>(result)
         .await
-        .map(|v| v.to_owned().into())
+        .map(|v| v.into_owned().into())
 }
 
 async fn quicksort_partition(
@@ -884,7 +884,7 @@ fn quicksort<'a>(
 async fn order(func: _, iter: _) -> Value {
     let iter = traits::into::<types::Iter>(iter).await?;
 
-    let mut vals: Vec<_> = iter.to_owned().collect().await?;
+    let mut vals: Vec<_> = iter.into_owned().collect().await?;
 
     quicksort(&mut vals, &ARGS_SOURCE.with(func)).await?;
 
@@ -904,7 +904,7 @@ async fn order(func: _, iter: _) -> Value {
 /// the items from `iter` for which `key` returned the associated key. The relative order of items
 /// from `iter` is retained.
 async fn partition(func: _, iter: _) -> Value {
-    let iter = traits::into::<types::Iter>(iter).await?.to_owned();
+    let iter = traits::into::<types::Iter>(iter).await?.into_owned();
 
     let vals: Vec<_> = iter.collect().await?;
     let keyed = Context::global()

@@ -7,11 +7,13 @@ use ergo_runtime::{
     abi_stable::{
         future::BoxFuture,
         std_types::{RArc, RIoError, RResult, RSlice, RSliceMut},
-        type_erase::ErasedTrivial,
+        type_erase::{Erased, ErasedTrivial},
         u128::U128,
     },
     error::DiagnosticInfo,
-    traits, types, Context, Result, Value,
+    traits,
+    type_system::Type,
+    types, Context, Result, Value,
 };
 use futures::{future::FutureExt, lock::Mutex};
 use std::mem::ManuallyDrop;
@@ -492,6 +494,46 @@ impl Db {
     }
 }
 
+#[derive(Clone)]
+struct DeserializedValueData {
+    id: u128,
+    tp: Type,
+    data: RArc<Erased>,
+}
+
+impl DeserializedValueData {
+    pub fn new(id: u128, tp: Type, data: Erased) -> Value {
+        Value::new(DeserializedValueData {
+            id,
+            tp,
+            data: RArc::new(data),
+        })
+    }
+}
+
+impl ergo_runtime::value::TypedValueData for DeserializedValueData {
+    fn ergo_type(&self) -> Type {
+        self.tp.clone()
+    }
+
+    fn data(&self) -> *const () {
+        self.data.as_ref().as_ptr()
+    }
+}
+
+impl ergo_runtime::value::ValueDataInterface for DeserializedValueData {
+    fn id(&self) -> BoxFuture<ergo_runtime::value::IdInfo<U128>> {
+        BoxFuture::new(async move { ergo_runtime::value::IdInfo::new(self.id.into()) })
+    }
+
+    // You can't late bind into deserialized values
+    fn late_bind(&mut self, _scope: &ergo_runtime::value::LateScope) {}
+
+    fn get(&self) -> ergo_runtime::value::ValueType {
+        ergo_runtime::value::ValueType::typed(self)
+    }
+}
+
 impl SqliteCache {
     pub fn open<P: AsRef<Path>>(path: P) -> sqlite::Result<Self> {
         let connection = Connection::open(path)?;
@@ -545,7 +587,7 @@ impl SqliteCache {
                             let mut get_data = traits::GetData::new(&mut reader);
                             let data = s.get(&mut get_data).await.into_result()?;
 
-                            let val = unsafe { Value::new(RArc::new(tp), RArc::new(data), id) };
+                            let val = DeserializedValueData::new(id, tp, data);
 
                             // Load Error diagnostic sources.
                             if val.is_type::<types::Error>() {
@@ -655,7 +697,13 @@ impl SqliteCache {
                     // (which would make a reference loop).
                     let value = super::eval_for_cache(value.clone(), error_handling).await?;
                     // Wrap the value with a dynamic value that has the original identity so write_value uses the correct id.
-                    let to_write = { let value = value.clone(); Value::dynamic_impure(move || async move { value }, id) };
+                    let to_write = {
+                        let value = value.clone();
+                        ergo_runtime::lazy_value! {
+                            #![id(id)]
+                            value
+                        }
+                    };
                     let writer = SqliteCacheWriter::new(self, error_handling);
                     if let Err(e) = writer.write_value(to_write).await {
                         self.db.log.warn(format!("failed to cache value for {:032x}: {}", id, e));

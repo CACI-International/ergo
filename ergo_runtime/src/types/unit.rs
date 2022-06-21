@@ -5,19 +5,13 @@ use crate::abi_stable::{type_erase::Erased, StableAbi};
 use crate::metadata::Source;
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
-use crate::{depends, DependenciesConstant, GetDependenciesConstant, TypedValue};
+use crate::TypedValue;
 use bincode;
 
 /// Script unit type.
 #[derive(Clone, Copy, Debug, ErgoType, PartialEq, Hash, Eq, StableAbi)]
 #[repr(C)]
 pub struct Unit;
-
-impl GetDependenciesConstant for Unit {
-    fn get_depends(&self) -> DependenciesConstant {
-        depends![Unit::ergo_type()]
-    }
-}
 
 impl From<Unit> for TypedValue<Unit> {
     fn from(v: Unit) -> Self {

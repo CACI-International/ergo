@@ -1044,13 +1044,11 @@ mod test {
         let mut v_c = c.clone();
 
         (
-            Value::dynamic(
-                move || async move {
-                    v_c.has_evaluated();
-                    ergo_runtime::types::Unit.into()
-                },
-                ergo_runtime::depends![const ergo_runtime::nsid!(test::musteval)],
-            ),
+            ergo_runtime::lazy_value! {
+                #![depends(const ergo_runtime::nsid!(test::musteval))]
+                v_c.has_evaluated();
+                ergo_runtime::types::Unit.into()
+            },
             c,
         )
     }
@@ -1147,7 +1145,7 @@ mod test {
                 SRArray(expected_arr) => match Context::eval_as::<types::Array>(v).await {
                     Err(e) => Err(e.to_string()),
                     Ok(arr) => {
-                        let arr = arr.to_owned().0;
+                        let arr = arr.into_owned().0;
                         if arr.len() != expected_arr.len() {
                             Err("array length mismatch".into())
                         } else {
@@ -1161,7 +1159,7 @@ mod test {
                 SRMap(entries) => match Context::eval_as::<types::Map>(v).await {
                     Err(e) => Err(e.to_string()),
                     Ok(map) => {
-                        let mut map = map.to_owned().0;
+                        let mut map = map.into_owned().0;
                         dbg!(&map);
                         if map.len() != entries.len() {
                             Err("map length mismatch".into())

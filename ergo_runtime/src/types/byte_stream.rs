@@ -30,6 +30,10 @@ pub struct ByteStream {
     stream_iter: SharedStreamIter<ByteStreamBlock>,
 }
 
+unsafe impl crate::value::InnerValues for ByteStream {
+    fn visit<'a, F: FnMut(&'a Value)>(&'a self, _f: F) {}
+}
+
 impl From<super::String> for ByteStream {
     fn from(s: super::String) -> Self {
         Self::from(s.0.into_bytes())

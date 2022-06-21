@@ -3,9 +3,8 @@
 use crate::constants::{DIR_NAME, EXTENSION, PLUGIN_ENTRY, WORKSPACE_NAME};
 use ergo_runtime::abi_stable::external_types::RMutex;
 use ergo_runtime::{
-    depends,
     error::{DiagnosticInfo, RResult},
-    metadata, nsid, traits, try_result,
+    metadata, nsid, traits,
     type_system::ErgoType,
     types, Context, Source, Value,
 };
@@ -95,29 +94,27 @@ impl LoadData {
         {
             let ld = self.clone();
             let working_dir = script_file.and_then(|p| p.parent()).map(|p| p.to_owned());
-            let mut std = Value::dynamic(
-                move || async move {
-                    let wd = working_dir.clone();
-                    let path = match ld.resolve_script_path(working_dir, "std".as_ref()) {
-                        Some(path) => path,
-                        None => {
-                            let mut e =
-                                ergo_runtime::error::Diagnostic::from("could not find std library");
-                            if let Some(p) = wd {
-                                (&mut e).add_note(format_args!(
-                                    "while trying to load from {}",
-                                    p.display()
-                                ));
-                            }
-                            return types::Error::from(e).into();
+            let mut std = ergo_runtime::lazy_value! {
+                #![depends(const nsid!(func::std))]
+                #![eval_for_id]
+                let wd = working_dir.clone();
+                let path = match ld.resolve_script_path(working_dir, "std".as_ref()) {
+                    Some(path) => path,
+                    None => {
+                        let mut e =
+                            ergo_runtime::error::Diagnostic::from("could not find std library");
+                        if let Some(p) = wd {
+                            (&mut e).add_note(format_args!(
+                                "while trying to load from {}",
+                                p.display()
+                            ));
                         }
-                    };
+                        return Err(e.into());
+                    }
+                };
 
-                    ld.load_script(&path).await
-                },
-                ergo_runtime::value::IdInfo::new(depends![const nsid!(func::std)])
-                    .eval_for_id(true),
-            );
+                ld.load_script(&path).await
+            };
             metadata::Doc::set_string(&mut std, "Get the value as if `ergo std` were run.");
             env.insert("std".into(), std);
         }
@@ -132,57 +129,55 @@ impl LoadData {
                     false,
                 ),
             };
-            let mut workspace = Value::dynamic(
-                move || async move {
-                    let resolved = Context::global()
-                        .shared_state
-                        .get(|| Ok(ResolvedWorkspaces::default()))
-                        .unwrap();
+            let mut workspace = ergo_runtime::lazy_value! {
+                #![depends(const nsid!(func::workspace))]
+                #![eval_for_id]
+                let resolved = Context::global()
+                    .shared_state
+                    .get(|| Ok(ResolvedWorkspaces::default()))
+                    .unwrap();
 
-                    let path = try_result!({
-                        let mut guard = resolved.map.lock();
-                        match guard.get(&path_basis) {
-                            Some(v) => v.clone(),
-                            None => {
-                                // Change path to directory containing parent workspace.ergo
-                                // component, if any.
-                                let path = if check_for_workspace {
-                                    let mut components = path_basis.components();
-                                    // Take parent directory of script, or parent directory of
-                                    // directory containing the workspace.
-                                    loop {
-                                        match components.next_back() {
-                                            Some(std::path::Component::Normal(c))
-                                                if c == WORKSPACE_NAME =>
-                                            {
-                                                break components.as_path();
-                                            }
-                                            Some(_) => continue,
-                                            None => break path_basis.as_path(),
+                let path = {
+                    let mut guard = resolved.map.lock();
+                    match guard.get(&path_basis) {
+                        Some(v) => v.clone(),
+                        None => {
+                            // Change path to directory containing parent workspace.ergo
+                            // component, if any.
+                            let path = if check_for_workspace {
+                                let mut components = path_basis.components();
+                                // Take parent directory of script, or parent directory of
+                                // directory containing the workspace.
+                                loop {
+                                    match components.next_back() {
+                                        Some(std::path::Component::Normal(c))
+                                            if c == WORKSPACE_NAME =>
+                                        {
+                                            break components.as_path();
                                         }
+                                        Some(_) => continue,
+                                        None => break path_basis.as_path(),
                                     }
-                                    .parent()
-                                } else {
-                                    Some(path_basis.as_path())
-                                };
+                                }
+                                .parent()
+                            } else {
+                                Some(path_basis.as_path())
+                            };
 
-                                let result = path.and_then(|p| {
-                                    p.ancestors()
-                                        .find_map(script_path_exists(WORKSPACE_NAME, false))
-                                });
-                                guard.insert(path_basis.clone(), result.clone());
-                                result
-                            }
+                            let result = path.and_then(|p| {
+                                p.ancestors()
+                                    .find_map(script_path_exists(WORKSPACE_NAME, false))
+                            });
+                            guard.insert(path_basis.clone(), result.clone());
+                            result
                         }
                     }
-                    .set_message("no ancestor workspace found")
-                    .add_note(format_args!("for path {}", path_basis.display())));
+                }
+                .set_message("no ancestor workspace found")
+                .add_note(format_args!("for path {}", path_basis.display()))?;
 
-                    ld.load_script(&path).await
-                },
-                ergo_runtime::value::IdInfo::new(depends![const nsid!(func::workspace)])
-                    .eval_for_id(true),
-            );
+                ld.load_script(&path).await
+            };
             metadata::Doc::set_string(
                 &mut workspace,
                 "Get the value as if `ergo path/to/ancestor/workspace.ergo` were run.",
@@ -206,72 +201,69 @@ impl LoadData {
             .entry(path.clone())
             .or_insert_with(|| {
                 let me = self.clone();
-                let deps: ergo_runtime::DependenciesConstant = depends![nsid!(load), path];
-                Value::dynamic(
-                    move || async move {
-                        let sources = Context::global().diagnostic_sources();
+                ergo_runtime::lazy_value! {
+                    #![depends(const nsid!(load), path)]
+                    let sources = Context::global().diagnostic_sources();
 
-                        if !is_plugin(&path) {
-                            let source = Source::new(try_result!(sources
-                                .add_file(path.clone())
-                                .map_err(|e| {
-                                    ergo_runtime::error! {
-                                        notes: [
-                                            format!("while trying to load {}", path.display())
-                                        ],
-                                        error: e
-                                    }
-                                })));
-                            let script_result = {
-                                let mut guard = me.ast_context.lock();
-                                // unwrap because the content must be available for a file source.
-                                let content = sources.content(source.source_id).unwrap();
-                                crate::Script::load(
-                                    source.with(content),
-                                    &mut *guard,
-                                    me.lint_level(),
-                                )
-                            };
-                            match script_result {
-                                Err(e) => Err(e),
-                                Ok(mut s) => {
-                                    s.top_level_env(me.script_top_level_env(Some(&path)));
-                                    if me.backtrace() {
-                                        s.enable_backtrace();
-                                    }
-                                    s.evaluate().await
+                    if !is_plugin(&path) {
+                        let source = Source::new(sources
+                            .add_file(path.clone())
+                            .map_err(|e| {
+                                ergo_runtime::error! {
+                                    notes: [
+                                        format!("while trying to load {}", path.display())
+                                    ],
+                                    error: e
                                 }
-                            }
-                        } else {
-                            let source = Source::new(sources.add_binary_file(path.clone()));
-                            ergo_runtime::error_info!(
-                                notes:
-                                    [format!("while trying to load plugin {}", path.display())],
-                                {
-                                    let lib = dl::Library::new(&path)?;
-
-                                    // Leak loaded libraries rather than storing them and dropping them in
-                                    // the context, as this can cause issues if the thread pool hasn't shut
-                                    // down.
-                                    let l: &'static dl::Library =
-                                        unsafe { std::mem::transmute(&lib) };
-                                    std::mem::forget(lib);
-
-                                    let f: dl::Symbol<
-                                        extern "C" fn(
-                                            ergo_runtime::plugin::Context,
-                                        )
-                                            -> RResult<Value>,
-                                    > = unsafe { l.get(PLUGIN_ENTRY.as_bytes()) }?;
-                                    f(ergo_runtime::plugin::Context::get(source)).into_result()
-                                }
+                            })?);
+                        let script_result = {
+                            let mut guard = me.ast_context.lock();
+                            // unwrap because the content must be available for a file source.
+                            let content = sources.content(source.source_id).unwrap();
+                            crate::Script::load(
+                                source.with(content),
+                                &mut *guard,
+                                me.lint_level(),
                             )
-                            .map(|v: Value| metadata::Source::imbue(source.with(v)))
+                        };
+                        match script_result {
+                            Err(e) => Err(e),
+                            Ok(mut s) => {
+                                s.top_level_env(me.script_top_level_env(Some(&path)));
+                                if me.backtrace() {
+                                    s.enable_backtrace();
+                                }
+                                s.evaluate().await
+                            }
                         }
-                        .into()
-                    },
-                    deps,
-                )
+                    } else {
+                        let source = Source::new(sources.add_binary_file(path.clone()));
+                        ergo_runtime::error_info!(
+                            notes:
+                                [format!("while trying to load plugin {}", path.display())],
+                            {
+                                let lib = dl::Library::new(&path)?;
+
+                                // Leak loaded libraries rather than storing them and dropping them in
+                                // the context, as this can cause issues if the thread pool hasn't shut
+                                // down.
+                                let l: &'static dl::Library =
+                                    unsafe { std::mem::transmute(&lib) };
+                                std::mem::forget(lib);
+
+                                let f: dl::Symbol<
+                                    extern "C" fn(
+                                        ergo_runtime::plugin::Context,
+                                    )
+                                        -> RResult<Value>,
+                                > = unsafe { l.get(PLUGIN_ENTRY.as_bytes()) }?;
+                                f(ergo_runtime::plugin::Context::get(source)).into_result()
+                            }
+                        )
+                        .map(|v: Value| metadata::Source::imbue(source.with(v)))
+                    }
+                    .into()
+                }
             })
             .clone();
 
@@ -321,7 +313,7 @@ impl LoadFunctions {
             async fn load(mut path: _, ...) -> Value {
                 Context::eval(&mut path).await?;
                 let target_source = metadata::Source::get(&path);
-                let target = traits::into::<types::Path>(path).await?.to_owned().into_pathbuf();
+                let target = traits::into::<types::Path>(path).await?.into_owned().into_pathbuf();
 
                 let working_dir = Context::source_path(&ARGS_SOURCE);
                 let working_dir = working_dir.as_ref().and_then(|p| p.parent());

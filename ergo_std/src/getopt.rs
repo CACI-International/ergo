@@ -23,7 +23,7 @@ use std::collections::BTreeMap;
 ///
 /// Returns an Args type with the positional and keyed arguments.
 pub async fn function(args: types::Array, (consecutive): [_]) -> Value {
-    let args = args.to_owned().0;
+    let args = args.into_owned().0;
     let consecutive = consecutive.is_some();
 
     let mut positional = Vec::new();

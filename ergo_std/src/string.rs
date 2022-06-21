@@ -34,7 +34,7 @@ pub fn r#type() -> Value {
 /// Returns an `Iter` where each item will be a `String` containing a single character.
 async fn chars(s: types::String) -> Value {
     let v = s
-        .to_owned()
+        .into_owned()
         .chars()
         .map(|c| {
             Source::imbue(
@@ -252,9 +252,9 @@ async fn r#match(format_string: types::String, ...) -> Value {
                                         primary(s_source.with(""))
                                     ],
                                     notes: [
-                                        format!("remaining string was '{}'", s)
+                                        format!("remaining string was {:?}", s)
                                     ],
-                                    error: format!("substring missing: '{}'", string_literal)
+                                    error: format!("substring missing: {:?}", string_literal)
                                 }
                                 .into();
                             };
@@ -270,7 +270,7 @@ async fn r#match(format_string: types::String, ...) -> Value {
                                     s = &s[n + string_literal.len()..];
                                 } else {
                                     return s_source
-                                        .with(format!("substring missing: {}", string_literal))
+                                        .with(format!("substring missing: {:?}", string_literal))
                                         .into_error()
                                         .into();
                                 }
@@ -291,7 +291,7 @@ async fn r#match(format_string: types::String, ...) -> Value {
                 if !s.is_empty() {
                     return s_source
                         .with(format!(
-                            "string had characters remaining after matching: {}",
+                            "string had characters remaining after matching: {:?}",
                             s
                         ))
                         .into_error()
@@ -363,7 +363,7 @@ async fn split(pattern: types::String, s: types::String) -> Value {
 async fn join(separator: types::String, iter: _) -> Value {
     let iter = traits::into::<types::Iter>(iter).await?;
 
-    let vals: Vec<_> = iter.to_owned().collect().await?;
+    let vals: Vec<_> = iter.into_owned().collect().await?;
     let strs = Context::global()
         .task
         .join_all(

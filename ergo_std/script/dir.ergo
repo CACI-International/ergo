@@ -22,6 +22,7 @@ mtype = ergo type
 ## All arguments are forwarded to `std:net:http`.
 ergo-remote = fn ^:args -> ergo <| mcache:cache <| mnet:unarchive ~enter ^$args
 
+##mdoc:function
 ## Lazily load a script or plugin, rather than depending on the loaded content for identities.
 ##
 ## Arguments: see `ergo`.
@@ -402,7 +403,7 @@ process-dir = plugin:Path:owned <| plugin:Path:join plugin:env:temp-dir "ergo-pr
     ##mdoc:module
     ## The Type of Types.
     Type = extend-type plugin:Type {
-        import {:check,:enum,:struct,:pass,:or} = $mtype
+        plugin:value:index {:check,:enum,:struct,:pass,:or} = $mtype
     }
 
     ##mdoc:module
@@ -458,6 +459,13 @@ process-dir = plugin:Path:owned <| plugin:Path:join plugin:env:temp-dir "ergo-pr
     ## * object <-> `Map`
     ## * array <-> `Array`
     json = plugin:json
+
+    ##mdoc:module
+    ## Interact with late bindings.
+    ##
+    ## Late bindings allow you to bind values into other values, as if those values were written as
+    ## a function of those bindings.
+    late = plugin:value:late
 
     ## The runtime logging interface.
     ##
@@ -526,8 +534,8 @@ process-dir = plugin:Path:owned <| plugin:Path:join plugin:env:temp-dir "ergo-pr
     }
 
     # Functions
-    import {:debug,:equal,:identity,:index,:merge,:variable} = plugin:value
-    import {:cache,:once} = $mcache
+    plugin:value:index {:debug,:equal,:identity,:index,:merge,:variable} = plugin:value
+    plugin:value:index {:cache,:once} = $mcache
     default, optional, required, optargs
     ergo-remote
     ergo-lazy

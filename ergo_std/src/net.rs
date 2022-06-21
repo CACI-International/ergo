@@ -6,7 +6,7 @@ use ergo_runtime::{
     error::{Diagnostic, DiagnosticInfo},
     io,
     metadata::Source,
-    nsid, traits, try_result,
+    nsid, traits,
     type_system::ErgoType,
     types, Context, Value,
 };
@@ -111,7 +111,7 @@ async fn http(
         let mut http_headers = HeaderMap::new();
         if let Some(headers) = headers {
             drop(traits::eval_nested(headers.clone().into()).await); // Eval in parallel
-            for (k, v) in headers.to_owned().0.into_iter() {
+            for (k, v) in headers.into_owned().0.into_iter() {
                 let k = Context::eval_as::<types::String>(k.into()).await?;
                 let v = Context::eval_as::<types::String>(v).await?;
 
@@ -128,7 +128,7 @@ async fn http(
     }
 
     if let Some(body) = body {
-        let body = traits::into::<types::ByteStream>(body).await?.to_owned();
+        let body = traits::into::<types::ByteStream>(body).await?.into_owned();
         let mut body_vec = vec![];
         // TODO support streaming body
         io::copy(&mut body.read(), &mut io::AllowStdIo::new(&mut body_vec)).await?;
@@ -177,19 +177,18 @@ async fn http(
     } else {
         let src = ARGS_SOURCE.clone();
         let body = body.clone();
-        // TODO should this just immediately be an Error type?
-        Value::dynamic(
-            move || async move {
-                src.with(format!(
-                    "{}: {}",
-                    err_status,
-                    try_result!(traits::to_string(body).await)
-                ))
-                .into_error()
-                .into()
-            },
-            depends![dyn ^CALL_DEPENDS.clone(), nsid!(net::http::complete)],
-        )
+        // TODO should this just immediately be an Error type? It's made lazy here to delay the
+        // reading of the (possibly large) body.
+        ergo_runtime::lazy_value! {
+            #![depends(dyn ^CALL_DEPENDS.clone(), nsid!(net::http::complete))]
+            src.with(format!(
+                "{}: {}",
+                err_status,
+                traits::to_string(body).await?
+            ))
+            .into_error()
+            .into()
+        }
     };
 
     crate::make_string_map! { source ARGS_SOURCE,

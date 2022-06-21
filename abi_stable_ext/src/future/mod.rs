@@ -258,7 +258,7 @@ pub struct LocalBoxFuture<'a, T> {
     inner: LocalFuture_TO<'a, RBox<()>, T>,
 }
 
-impl<'a, T: StableAbi> LocalBoxFuture<'a, T> {
+impl<'a, T> LocalBoxFuture<'a, T> {
     pub fn new<Fut: future::Future<Output = T> + 'a>(f: Fut) -> Self {
         LocalBoxFuture {
             inner: LocalFuture_TO::from_value(f, TD_Opaque),
@@ -297,7 +297,7 @@ pub struct BoxFuture<'a, T> {
     inner: Future_TO<'a, RBox<()>, T>,
 }
 
-impl<'a, T: StableAbi /* TODO + std::marker::Unpin*/> BoxFuture<'a, T> {
+impl<'a, T> BoxFuture<'a, T> {
     /// Create a new boxed future.
     pub fn new<Fut: future::Future<Output = T> + Send + 'a>(f: Fut) -> Self {
         BoxFuture {

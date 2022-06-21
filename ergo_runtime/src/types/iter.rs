@@ -110,9 +110,22 @@ impl GetDependencies for Next {
     }
 }
 
+unsafe impl crate::value::InnerValues for Next {
+    fn visit<'a, F: FnMut(&'a Value)>(&'a self, mut f: F) {
+        f(&self.value);
+        self.iter.visit(f);
+    }
+}
+
 impl From<Next> for TypedValue<Next> {
     fn from(n: Next) -> Self {
         Self::new(n)
+    }
+}
+
+unsafe impl crate::value::InnerValues for Iter {
+    fn visit<'a, F: FnMut(&'a Value)>(&'a self, mut f: F) {
+        f(&self.next);
     }
 }
 
@@ -161,20 +174,18 @@ impl Iter {
     /// Create an Iter from a generator.
     pub fn from_generator<G: Generator>(mut generator: G) -> Self {
         Iter {
-            next: Value::dynamic(
-                move || async move {
-                    match generator.next().await {
-                        Err(e) => e.into(),
-                        Ok(None) => super::Unset.into(),
-                        Ok(Some(value)) => Next {
-                            value,
-                            iter: ManuallyDrop::new(Iter::from_generator(generator)),
-                        }
-                        .into(),
+            next: crate::lazy_value! {
+                #![depends(const Next::ergo_type())]
+                match generator.next().await {
+                    Err(e) => e.into(),
+                    Ok(None) => super::Unset.into(),
+                    Ok(Some(value)) => Next {
+                        value,
+                        iter: ManuallyDrop::new(Iter::from_generator(generator)),
                     }
-                },
-                depends![const Next::ergo_type()],
-            ),
+                    .into(),
+                }
+            },
         }
     }
 
@@ -245,20 +256,20 @@ ergo_traits_fn! {
     impl traits::Functor for Iter {
         async fn map(self, f: Value) -> Value {
             let deps = depends![self, f];
-            let iter = self.to_owned();
+            let iter = self.into_owned();
             Iter::new(Map { iter, f, }, deps).into()
         }
     }
 
     impl traits::IntoTyped<super::Array> for Iter {
         async fn into_typed(self) -> Value {
-            super::Array(crate::try_result!(self.to_owned().collect().await)).into()
+            super::Array(crate::try_result!(self.into_owned().collect().await)).into()
         }
     }
 
     impl traits::IntoTyped<super::Map> for Iter {
         async fn into_typed(self) -> Value {
-            let mut vals: Vec<_> = crate::try_result!(self.to_owned().collect().await);
+            let mut vals: Vec<_> = crate::try_result!(self.into_owned().collect().await);
             let mut ret = BstMap::default();
             let mut errs = vec![];
             let mut_vals = vals.iter_mut().collect::<Vec<_>>();

@@ -5,7 +5,7 @@ use crate::abi_stable::{path::PathBuf, type_erase::Erased, StableAbi};
 use crate::metadata::Source;
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
-use crate::{depends, DependenciesConstant, GetDependenciesConstant, TypedValue};
+use crate::TypedValue;
 use bincode;
 
 /// Script string type.
@@ -125,12 +125,6 @@ impl std::ops::Deref for Path {
 impl std::ops::DerefMut for Path {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.path
-    }
-}
-
-impl GetDependenciesConstant for Path {
-    fn get_depends(&self) -> DependenciesConstant {
-        depends![Path::ergo_type(), self]
     }
 }
 

@@ -267,7 +267,7 @@ impl Parser for ErgoFnLike {
                     let __ergo_fn_args = ergo_runtime::try_result!(ergo_runtime::Context::eval_as::<#which>(__ergo_fn_arg).await);
                     let ARGS_SOURCE = ergo_runtime::metadata::Source::get(&__ergo_fn_args);
                     let CALL_DEPENDS: ergo_runtime::dependency::Dependencies = __ergo_fn_deps_inner + ergo_runtime::depends![dyn __ergo_fn_args];
-                    let mut __ergo_fn_args = __ergo_fn_args.to_owned().args;
+                    let mut __ergo_fn_args = __ergo_fn_args.into_owned().args;
                     #(#args)*
                     #rest_or_check
                     ergo_runtime::error_info!(

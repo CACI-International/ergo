@@ -236,7 +236,8 @@ impl Priorities {
                         return v;
                     } else {
                         log::trace!(
-                            "changing (downgrading) highest priority to <NONE> from {}",
+                            "changing (downgrading) highest priority to {} from {}",
+                            u32::MAX,
                             *current
                         );
                         *current = u32::MAX;

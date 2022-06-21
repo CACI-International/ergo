@@ -155,7 +155,7 @@ impl Traits {
     ///
     /// Always returns None if the value is not yet evaluated.
     pub fn get<Trt: ts::ErgoTrait>(&self, v: &Value) -> Option<ts::Ref<Trt::Impl>> {
-        v.ergo_type().and_then(|tp| self.get_type::<Trt>(tp))
+        v.ergo_type().and_then(|tp| self.get_type::<Trt>(&tp))
     }
 
     /// Get a trait for a Type, if it is implemented.

@@ -5,18 +5,12 @@ use crate::abi_stable::{type_erase::Erased, StableAbi};
 use crate::metadata::Source;
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
-use crate::{depends, DependenciesConstant, GetDependenciesConstant, TypedValue};
+use crate::TypedValue;
 
 /// The type indicating a value is unset.
-#[derive(Clone, Copy, Debug, ErgoType, PartialEq, Hash, Eq, StableAbi)]
+#[derive(Clone, Copy, Debug, Default, ErgoType, PartialEq, Hash, Eq, StableAbi)]
 #[repr(C)]
 pub struct Unset;
-
-impl GetDependenciesConstant for Unset {
-    fn get_depends(&self) -> DependenciesConstant {
-        depends![Unset::ergo_type()]
-    }
-}
 
 impl From<Unset> for TypedValue<Unset> {
     fn from(v: Unset) -> Self {

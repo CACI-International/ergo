@@ -6,7 +6,7 @@ use ergo_runtime::{
     error::DiagnosticInfo,
     metadata::{self, Doc, DocValueKey},
     nsid, traits, try_result, types,
-    value::{match_value, IdInfo},
+    value::{match_value},
     Context, Source, Value,
 };
 use futures::future::FutureExt;
@@ -91,17 +91,17 @@ fn write_doc(path: &std::path::Path, md: &str) -> Result<(), String> {
 
 /// The doc function, supporting a number of indexed functions as well.
 pub fn doc() -> Value {
-    let mut value = Value::dynamic_impure(
-        || async {
-            Context::with(|ctx| {
-                ctx.dynamic_scope
-                    .get(&DocValueKey)
-                    .map(|v| v.as_ref().clone().into())
-            })
-            .unwrap_or(types::Unset.into())
-        },
-        IdInfo::new(depends![const nsid!(doc::value)]).eval_for_id(true),
-    );
+    let mut value = ergo_runtime::lazy_value! {
+        #![depends(const nsid!(doc::value))]
+        #![eval_for_id]
+        Context::with(|ctx| {
+            ctx.dynamic_scope
+                .get(&DocValueKey)
+                .map(|v| v.as_ref().clone().into())
+        })
+        .unwrap_or(types::Unset.into())
+    };
+    value.impure(true);
     Doc::set_string(
         &mut value,
         "The value currently being documented, if any.
@@ -109,15 +109,15 @@ pub fn doc() -> Value {
 Evaluates to the value being documented, or Unset if no value is being documented.",
     );
 
-    let mut path = Value::dynamic_impure(
-        || async {
-            match DocPath::get() {
-                None => types::Unset.into(),
-                Some(p) => types::Path::from(p.current()).into(),
-            }
-        },
-        IdInfo::new(depends![const nsid!(doc::path)]).eval_for_id(true),
-    );
+    let mut path = ergo_runtime::lazy_value! {
+        #![depends(const nsid!(doc::path))]
+        #![eval_for_id]
+        match DocPath::get() {
+            None => types::Unset.into(),
+            Some(p) => types::Path::from(p.current()).into(),
+        }
+    };
+    path.impure(true);
     Doc::set_string(&mut path,
         "The current documentation path, if any.
 
@@ -162,7 +162,7 @@ Evaluates to the doc Path, or Unset if no Path is present (documentation is not 
         /// Returns the `Path` to the written documentation.
         async fn write(path: _, value: _) -> Value {
             let path_source = metadata::Source::get(&path);
-            let mut doc_path = traits::into::<types::Path>(path).await?.to_owned().into_pathbuf();
+            let mut doc_path = traits::into::<types::Path>(path).await?.into_owned().into_pathbuf();
 
             if let Some(parent) = doc_path.parent() {
                 std::fs::create_dir_all(&parent)
@@ -196,7 +196,7 @@ Evaluates to the doc Path, or Unset if no Path is present (documentation is not 
         /// * `content` - the doc content (prior to being written).
         async fn child(path: _, value: _) -> Value {
             let path_source = metadata::Source::get(&path);
-            let path = traits::into::<types::Path>(path).await?.to_owned().into_pathbuf();
+            let path = traits::into::<types::Path>(path).await?.into_owned().into_pathbuf();
 
             match DocPath::owned() {
                 None => types::Path::from(path).into(),

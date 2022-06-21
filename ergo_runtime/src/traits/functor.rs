@@ -24,7 +24,7 @@ impl Functor {
         traits.add_impl_for_type::<T, Functor>(ergo_trait_impl! {
             impl<T: NestedValues + ErgoType + Eraseable + Clone + Into<Value>> Functor for T {
                 async fn map(self, f: Value) -> Value {
-                    let mut me = self.to_owned();
+                    let mut me = self.into_owned();
                     try_result!(Context::global().task.join_all(
                         me.nested_values_mut().into_iter().map(|v| async {
                             *v = try_value!(bind(f.clone(), v.clone()).await);

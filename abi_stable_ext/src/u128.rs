@@ -9,7 +9,7 @@ pub struct U128([u64; 2]);
 
 impl U128 {
     /// Create a new U128.
-    pub fn new(v: u128) -> Self {
+    pub const fn new(v: u128) -> Self {
         U128(unsafe { std::mem::transmute(v) })
     }
 

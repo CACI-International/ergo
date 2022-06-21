@@ -4,18 +4,16 @@ use crate::abi_stable::{
     bst::{BstMap, BstSet},
     future, sabi_trait,
     sabi_trait::prelude::*,
-    std_types::{RArc, RBox},
+    sabi_types::{RRef, RSmallBox},
+    std_types::{RArc, ROption},
     type_erase::{Eraseable, Erased},
     u128::U128,
     StableAbi,
 };
-use crate::dependency::{
-    Dependencies, DependenciesConstant, GetDependencies, GetDependenciesConstant,
-};
+use crate::dependency::{Dependencies, DependenciesConstant, Dependency};
 use crate::hash::HashFn;
 use crate::type_system::{ErgoType, Type};
 use crate::Context;
-use cachemap::CacheMap;
 
 /// A shared runtime value.
 ///
@@ -24,9 +22,79 @@ use cachemap::CacheMap;
 #[derive(Clone, StableAbi)]
 #[repr(C)]
 pub struct Value {
-    id: RArc<ValueId>,
+    inner: RArc<Inner>,
     metadata: BstMap<U128, RArc<Erased>>,
+}
+
+#[derive(Clone, StableAbi)]
+#[repr(C)]
+struct Inner {
     data: ValueData,
+    id: Once<IdInfo<U128>>,
+    next: ROption<Once<Value>>,
+}
+
+impl Inner {
+    pub fn new(data: ValueData) -> Self {
+        let typed = data.ergo_type().is_some();
+        Inner {
+            data,
+            id: Default::default(),
+            next: if typed {
+                ROption::RNone
+            } else {
+                ROption::RSome(Default::default())
+            },
+        }
+    }
+
+    pub async fn id(&self) -> Identity {
+        self.id
+            .get(async { self.data.id().await })
+            .await
+            .clone()
+            .into()
+    }
+
+    pub async fn next(&self) -> Value {
+        match &self.next {
+            ROption::RNone => self.data.next().await,
+            ROption::RSome(c) => c.get(async { self.data.next().await }).await.clone(),
+        }
+    }
+
+    pub fn set_id<D>(&mut self, id: D)
+    where
+        D: Into<ValueId>,
+    {
+        let id = id.into();
+        let const_id = match &id {
+            ValueId::Id(id) => Some(id.clone()),
+            ValueId::Lazy(_) | ValueId::Override { .. } => None,
+        };
+        self.data = ValueData::new(IdValueData {
+            // TODO could avoid this clone with some null ValueData placeholder
+            value_data: self.data.clone(),
+            id,
+        });
+        if let Some(id) = const_id {
+            self.id.set(id.into());
+        } else {
+            self.id = Default::default();
+        }
+        self.next.as_mut().map(|v| *v = Default::default());
+    }
+
+    pub fn late_bind(&mut self, scope: &LateScope) {
+        self.data.late_bind(scope);
+        let typed = self.data.ergo_type().is_some();
+        self.id = Default::default();
+        self.next = if typed {
+            ROption::RNone
+        } else {
+            ROption::RSome(Default::default())
+        };
+    }
 }
 
 /// Metadata key types.
@@ -45,6 +113,151 @@ pub trait MetadataKey {
 pub struct IdInfo<T> {
     pub id: T,
     pub eval_for_id: bool,
+}
+
+/// Late-bound value scope.
+#[derive(Debug, Default, Clone, StableAbi)]
+#[repr(C)]
+pub struct LateScope {
+    pub scope: BstMap<U128, Value>,
+}
+
+impl LateScope {
+    /// Create a LateScope with a single entry.
+    pub fn with(key: U128, value: Value) -> Self {
+        LateScope {
+            scope: BstMap::from_iter([(key, value)]),
+        }
+    }
+}
+
+#[sabi_trait]
+pub trait TypedValueData: Send + Sync + 'static {
+    /// Get the type of the value.
+    fn ergo_type(&self) -> Type;
+
+    fn data(&self) -> *const ();
+}
+
+impl<T: ErgoType + Send + Sync + 'static> TypedValueData for T {
+    fn ergo_type(&self) -> Type {
+        T::ergo_type()
+    }
+
+    fn data(&self) -> *const () {
+        self as *const T as *const ()
+    }
+}
+
+#[sabi_trait]
+pub trait LazyValueData: Send + Sync + 'static {
+    /// Get the next value.
+    fn next<'a>(&'a self) -> future::BoxFuture<'a, Value>;
+}
+
+#[derive(StableAbi)]
+#[repr(C)]
+pub enum ValueType<'a> {
+    Typed(TypedValueData_TO<RRef<'a, ()>>),
+    Lazy(LazyValueData_TO<RRef<'a, ()>>),
+}
+
+impl<'a> ValueType<'a> {
+    pub fn typed<T: TypedValueData + 'static>(v: &'a T) -> Self {
+        ValueType::Typed(TypedValueData_TO::from_ptr(RRef::new(v), TD_Opaque))
+    }
+
+    pub fn lazy<T: LazyValueData + 'static>(v: &'a T) -> Self {
+        ValueType::Lazy(LazyValueData_TO::from_ptr(RRef::new(v), TD_Opaque))
+    }
+}
+
+#[sabi_trait]
+pub trait ValueDataInterface: Clone + Send + Sync + 'static {
+    /// Get the identity of a value.
+    fn id(&self) -> future::BoxFuture<IdInfo<U128>>;
+
+    /// Provide late bindings to a value.
+    fn late_bind(&mut self, scope: &LateScope);
+
+    /// Get the value data.
+    fn get(&self) -> ValueType;
+}
+
+#[derive(Clone, StableAbi)]
+#[repr(transparent)]
+struct ValueData(ValueDataInterface_TO<RSmallBox<(), [usize; 3]>>);
+
+impl ValueData {
+    pub fn new<T: ValueDataInterface + 'static>(interface: T) -> Self {
+        ValueData(ValueDataInterface_TO::from_ptr(
+            RSmallBox::new(interface),
+            TD_Opaque,
+        ))
+    }
+
+    pub async fn id(&self) -> IdInfo<U128> {
+        self.0.id().await
+    }
+
+    pub fn late_bind(&mut self, scope: &LateScope) {
+        self.0.late_bind(scope);
+    }
+
+    pub fn is_typed(&self) -> bool {
+        match self.0.get() {
+            ValueType::Typed(_) => true,
+            ValueType::Lazy(_) => false,
+        }
+    }
+
+    pub fn ergo_type(&self) -> Option<Type> {
+        match self.0.get() {
+            ValueType::Typed(t) => Some(t.ergo_type()),
+            ValueType::Lazy(_) => None,
+        }
+    }
+
+    pub async fn next(&self) -> Value {
+        match self.0.get() {
+            ValueType::Typed(_) => panic!("invalid `next` call"),
+            ValueType::Lazy(l) => l.next().await,
+        }
+    }
+
+    pub unsafe fn as_ptr(&self) -> *const () {
+        match self.0.get() {
+            ValueType::Typed(t) => t.data(),
+            ValueType::Lazy(_) => panic!("invalid `as_ref` call"),
+        }
+    }
+
+    pub unsafe fn as_ref<T>(&self) -> &T {
+        &*(self.as_ptr() as *const T)
+    }
+
+    pub unsafe fn as_mut<T>(&mut self) -> &mut T {
+        &mut *(self.as_ptr() as *const T as *mut T)
+    }
+
+    pub unsafe fn into_owned<T: Clone>(self) -> T {
+        // TODO possibly could make this work without clone (storing some destructure code)
+        self.as_ref::<T>().clone()
+    }
+}
+
+impl ValueDataInterface for ValueData {
+    fn id(&self) -> future::BoxFuture<IdInfo<U128>> {
+        self.0.id()
+    }
+
+    fn late_bind(&mut self, scope: &LateScope) {
+        self.0.late_bind(scope);
+    }
+
+    fn get(&self) -> ValueType {
+        self.0.get()
+    }
 }
 
 impl<T> IdInfo<T> {
@@ -103,171 +316,143 @@ impl<T: std::hash::Hash> std::hash::Hash for IdInfo<T> {
 
 pub type Identity = IdInfo<u128>;
 
+impl From<Identity> for IdInfo<U128> {
+    fn from(i: Identity) -> Self {
+        i.map(|i| i.into())
+    }
+}
+
+impl From<IdInfo<U128>> for Identity {
+    fn from(i: IdInfo<U128>) -> Self {
+        i.map(|i| i.into())
+    }
+}
+
 impl<T: std::borrow::Borrow<Self>> std::iter::Sum<T> for Identity {
     fn sum<I: Iterator<Item = T>>(iter: I) -> Self {
-        let mut h = HashFn::default();
-        let mut eval_for_id = false;
+        let mut combiner = IdentityCombiner::default();
         for i in iter {
-            let r = i.borrow();
-            std::hash::Hash::hash(&r.id, &mut h);
-            eval_for_id |= r.eval_for_id;
+            combiner.add(i.borrow());
         }
+        combiner.finish()
+    }
+}
+
+#[derive(Default)]
+pub struct IdentityCombiner {
+    h: HashFn,
+    eval_for_id: bool,
+}
+
+impl IdentityCombiner {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn add(&mut self, v: &Identity) {
+        std::hash::Hash::hash(&v.id, &mut self.h);
+        self.eval_for_id |= v.eval_for_id;
+    }
+
+    pub fn finish(self) -> Identity {
         Identity {
-            id: h.finish_ext(),
-            eval_for_id,
+            id: self.h.finish_ext(),
+            eval_for_id: self.eval_for_id,
         }
     }
 }
 
-mod value_id {
-    use super::*;
-    use crate::abi_stable::{future::RawWaker, std_types::RVec};
+mod once {
+    use crate::abi_stable::{future::RawWaker, std_types::RVec, StableAbi};
     use std::sync::atomic::{AtomicU8, Ordering};
 
-    #[sabi_trait]
-    trait GetId: Send {
-        #[sabi(last_prefix_field)]
-        fn get(&self) -> future::BoxFuture<'static, IdInfo<U128>>;
-    }
-
-    impl<F> GetId for F
-    where
-        F: FnOnce() -> future::BoxFuture<'static, IdInfo<U128>> + Send + Clone,
-    {
-        fn get(&self) -> future::BoxFuture<'static, IdInfo<U128>> {
-            (self.clone())()
-        }
-    }
-
     #[derive(StableAbi)]
     #[repr(C)]
-    union State {
-        deps: std::mem::ManuallyDrop<GetId_TO<'static, RBox<()>>>,
+    union State<T> {
         wakers: std::mem::ManuallyDrop<RVec<RawWaker>>,
-        id: U128,
+        value: std::mem::ManuallyDrop<T>,
     }
 
-    // First two bits communicate which field of `state` is valid.
-    const STATE_MASK: u8 = 1 << 0 | 1 << 1;
-    // const STATE_NONE: u8 = 0;
-    const STATE_DEPS: u8 = 1 << 0;
-    const STATE_WAKERS: u8 = 1 << 1;
-    const STATE_ID: u8 = 1 << 0 | 1 << 1;
-
-    // Next two bits communicate the access history.
-    const ACCESS_MASK: u8 = 1 << 2 | 1 << 3;
+    // First bit indicates whether the state has been accessed.
+    const ACCESS_MASK: u8 = 1 << 0;
     const ACCESS_NOT_ACCESSED: u8 = 0;
-    const ACCESS_ACCESSED: u8 = 1 << 2;
-    const ACCESS_EVALUATED: u8 = 1 << 2 | 1 << 3; // Note this sets both bits, allowing `ACCESSED` to serve as a flag.
+    const ACCESS_ACCESSED: u8 = 1 << 0;
+
+    // Next two bits communicate the `state`.
+    const STATE_MASK: u8 = 1 << 1 | 1 << 2;
+    const STATE_NONE: u8 = 0; // `state` is unset
+    const STATE_WAKERS: u8 = 1 << 1; // `state` is `wakers`
+    const STATE_VALUE: u8 = 1 << 2; // `state` is `value`
 
     // Next bit designates whether the `wakers` are in use.
-    const USING_WAKERS: u8 = 1 << 4;
-
-    // Next two bits are flags related to the identity.
-    const EVAL_FOR_ID: u8 = 1 << 5;
+    const USING_WAKERS: u8 = 1 << 3;
 
     #[derive(StableAbi)]
     #[repr(C)]
-    pub struct ValueId {
-        state: std::cell::UnsafeCell<State>,
+    pub struct Once<T> {
+        state: std::cell::UnsafeCell<State<T>>,
         tag: AtomicU8,
     }
 
-    impl std::fmt::Debug for ValueId {
-        fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-            let v = self.tag.load(Ordering::Acquire);
-            match v & ACCESS_MASK {
-                ACCESS_NOT_ACCESSED => write!(f, "<unaccessed>"),
-                ACCESS_ACCESSED => write!(f, "<evaluating>"),
-                ACCESS_EVALUATED => {
-                    if (v & STATE_MASK) == STATE_ID {
-                        write!(f, "{:032x}", unsafe {
-                            self.state.get().as_ref().unwrap_unchecked().id.as_ref()
-                        })
-                    } else {
-                        write!(f, "<error>")
-                    }
-                }
-                _ => panic!("invalid value id state"),
-            }?;
-            if v & EVAL_FOR_ID != 0 {
-                write!(f, " (eval_for_id)")?;
+    impl<T: Clone> Clone for Once<T> {
+        fn clone(&self) -> Self {
+            let mut ret = Self::default();
+            if let Some(v) = self.try_get() {
+                ret.set(v.clone());
             }
-            Ok(())
+            ret
         }
     }
 
-    unsafe impl Sync for ValueId {}
-
-    impl ValueId {
-        pub fn new<F, Fut>(id: F) -> Self
-        where
-            F: FnOnce() -> Fut + Send + Clone + 'static,
-            Fut: std::future::Future<Output = Identity> + Send,
-        {
-            ValueId {
-                state: std::cell::UnsafeCell::new(State {
-                    deps: std::mem::ManuallyDrop::new(GetId_TO::from_value(
-                        || future::BoxFuture::new(async move { id().await.map(|v| v.into()) }),
-                        TD_Opaque,
-                    )),
+    impl<T> Default for Once<T> {
+        fn default() -> Self {
+            Once {
+                state: std::cell::UnsafeCell::new(unsafe {
+                    std::mem::MaybeUninit::uninit().assume_init()
                 }),
-                tag: AtomicU8::new(ACCESS_NOT_ACCESSED | STATE_DEPS),
+                tag: Default::default(),
             }
         }
+    }
 
-        pub fn id(id: u128) -> Self {
-            ValueId {
-                state: std::cell::UnsafeCell::new(State { id: id.into() }),
-                tag: AtomicU8::new(ACCESS_EVALUATED | STATE_ID),
-            }
+    impl<T> Once<T> {
+        pub fn new() -> Self {
+            Default::default()
         }
 
-        pub fn from_value(mut v: Value) -> Self {
-            Self::new(move || async move { v.eval_id().await })
+        pub fn set(&mut self, value: T) {
+            let state = unsafe { self.state.get().as_mut().unwrap_unchecked() };
+            state.value = std::mem::ManuallyDrop::new(value);
+            self.tag = AtomicU8::new(ACCESS_ACCESSED | STATE_VALUE);
         }
 
-        pub fn from_deps(deps: Dependencies) -> Self {
-            Self::new(move || async move { deps.id().await })
-        }
-
-        pub fn from_constant_deps(deps: DependenciesConstant) -> Self {
-            let id = deps.id();
-            let mut ret = Self::id(id.id);
-            ret.set_eval_for_id(id.eval_for_id);
-            ret
-        }
-
-        pub async fn immediate(deps: Dependencies) -> Self {
-            let id = deps.id().await;
-            let mut ret = Self::id(id.id);
-            ret.set_eval_for_id(id.eval_for_id);
-            ret
-        }
-
-        pub fn try_get(&self) -> Option<&u128> {
-            (self.tag.load(Ordering::Acquire) & STATE_MASK == STATE_ID).then(|| {
-                // Safety: if the tag has STATE_ID, the state _must_ be a U128 (and will not
-                // change)
-                unsafe { self.state.get().as_ref().unwrap_unchecked().id.as_ref() }
-            })
-        }
-
-        pub fn set_eval_for_id(&mut self, eval_for_id: bool) {
-            if eval_for_id {
-                *self.tag.get_mut() |= EVAL_FOR_ID;
+        pub fn try_get(&self) -> Option<&T> {
+            if self.tag.load(Ordering::Relaxed) & STATE_MASK == STATE_VALUE {
+                // Safety: once the state is STATE_VALUE, it will never change and `value` is set
+                Some(unsafe { &*self.state.get().as_ref().unwrap_unchecked().value })
             } else {
-                *self.tag.get_mut() &= !EVAL_FOR_ID;
+                None
             }
         }
 
-        fn eval_for_id(&self) -> bool {
-            self.tag.load(Ordering::Relaxed) & EVAL_FOR_ID != 0
+        pub fn get<Fut>(&self, fut: Fut) -> Get<T, Fut> {
+            Get::new(self, fut)
         }
+    }
 
-        /// Returns the identity.
-        pub fn get<'a>(&'a self, value: &'a Value) -> Get<'a> {
-            Get::new(self, value)
+    unsafe impl<T: Sync> Sync for Once<T> {}
+    unsafe impl<T: Send> Send for Once<T> {}
+
+    impl<T> Drop for Once<T> {
+        fn drop(&mut self) {
+            let state = *self.tag.get_mut() & STATE_MASK;
+            if state == STATE_WAKERS {
+                // Safety: the state must be wakers
+                unsafe { std::mem::ManuallyDrop::drop(&mut self.state.get_mut().wakers) };
+            } else if state == STATE_VALUE {
+                // Safety: the state must be wakers
+                unsafe { std::mem::ManuallyDrop::drop(&mut self.state.get_mut().value) };
+            }
         }
     }
 
@@ -278,142 +463,113 @@ mod value_id {
         use std::task::{Context, Poll};
 
         #[pin_project::pin_project]
-        pub struct Get<'a> {
-            value_id: &'a ValueId,
-            value: &'a Value,
-            to_poll: Option<future::BoxFuture<'static, IdInfo<U128>>>,
+        pub struct Get<'a, T, Fut> {
+            once: &'a Once<T>,
+            #[pin]
+            to_poll: Fut,
+            should_poll: bool,
         }
 
-        impl<'a> Get<'a> {
-            pub fn new(value_id: &'a ValueId, value: &'a Value) -> Self {
+        impl<'a, T, Fut> Get<'a, T, Fut> {
+            pub fn new(once: &'a Once<T>, to_poll: Fut) -> Self {
                 Get {
-                    value_id,
-                    value,
-                    to_poll: None,
+                    once,
+                    to_poll,
+                    should_poll: false,
                 }
             }
         }
 
         const MAX_SPINS: usize = 20;
 
-        impl<'a> Future for Get<'a> {
-            type Output = Identity;
+        impl<'a, T, Fut> Future for Get<'a, T, Fut>
+        where
+            Fut: Future<Output = T> + Send,
+        {
+            type Output = &'a T;
 
             fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-                let proj = self.project();
+                let mut proj = self.project();
                 let mut spins = 0;
                 loop {
-                    match proj.to_poll {
-                        Some(fut) => {
-                            match Pin::new(fut).poll(cx) {
-                                Poll::Pending => break Poll::Pending,
-                                Poll::Ready(id) => {
-                                    // Set the state to STATE_NONE
-                                    proj.value_id.tag.fetch_and(!STATE_MASK, Ordering::Acquire);
-                                    // Wait for nothing to be accessing the wakers
-                                    while proj.value_id.tag.load(Ordering::Acquire) & USING_WAKERS
-                                        != 0
-                                    {
-                                        // Should be a fairly short wait.
-                                        spins += 1;
-                                        if spins > MAX_SPINS {
-                                            std::thread::yield_now();
-                                        } else {
-                                            std::hint::spin_loop();
-                                        }
+                    if *proj.should_poll {
+                        match proj.to_poll.as_mut().poll(cx) {
+                            Poll::Pending => break Poll::Pending,
+                            Poll::Ready(value) => {
+                                // Set the state to STATE_NONE
+                                proj.once.tag.fetch_and(!STATE_MASK, Ordering::Acquire);
+                                // Wait for nothing to be accessing the wakers
+                                while proj.once.tag.load(Ordering::Acquire) & USING_WAKERS != 0 {
+                                    // Should be a fairly short wait.
+                                    spins += 1;
+                                    if spins > MAX_SPINS {
+                                        std::thread::yield_now();
+                                    } else {
+                                        std::hint::spin_loop();
                                     }
-                                    // Safety: the state must be wakers, not accessed by anything else
-                                    let state = unsafe {
-                                        proj.value_id.state.get().as_mut().unwrap_unchecked()
-                                    };
-                                    let wakers =
-                                        unsafe { std::mem::ManuallyDrop::take(&mut state.wakers) };
-                                    state.id = id.id;
-                                    proj.value_id.tag.fetch_or(STATE_ID, Ordering::Relaxed);
-                                    if id.eval_for_id {
-                                        proj.value_id.tag.fetch_or(EVAL_FOR_ID, Ordering::Relaxed);
-                                    }
-                                    proj.value_id
-                                        .tag
-                                        .fetch_or(ACCESS_EVALUATED, Ordering::Release);
-                                    for waker in wakers {
-                                        waker.into_waker().wake();
-                                    }
+                                }
+                                // Safety: the state must be wakers, not accessed by anything else
+                                let state =
+                                    unsafe { proj.once.state.get().as_mut().unwrap_unchecked() };
+                                let wakers =
+                                    unsafe { std::mem::ManuallyDrop::take(&mut state.wakers) };
+                                state.value = std::mem::ManuallyDrop::new(value);
+                                proj.once.tag.fetch_or(STATE_VALUE, Ordering::Release);
+                                for waker in wakers {
+                                    waker.into_waker().wake();
                                 }
                             }
                         }
-                        None => (),
                     }
 
-                    let access = proj
-                        .value_id
-                        .tag
-                        .fetch_or(ACCESS_ACCESSED, Ordering::Acquire)
-                        & ACCESS_MASK;
-                    if access == ACCESS_NOT_ACCESSED {
-                        // Safety: if unevaluated and unaccessed, the state must be deps
+                    let state = proj.once.tag.fetch_or(ACCESS_ACCESSED, Ordering::Acquire);
+                    if state & ACCESS_MASK == ACCESS_NOT_ACCESSED {
+                        // Safety: if unevaluated and unaccessed, the state is empty
                         debug_assert!(
-                            proj.value_id.tag.load(Ordering::Relaxed) & STATE_MASK == STATE_DEPS
+                            proj.once.tag.load(Ordering::Relaxed) & STATE_MASK == STATE_NONE
                         );
-                        let state =
-                            unsafe { proj.value_id.state.get().as_mut().unwrap_unchecked() };
-                        proj.value_id.tag.fetch_and(!STATE_MASK, Ordering::Release);
-                        let deps = unsafe { std::mem::ManuallyDrop::take(&mut state.deps) };
+                        let state = unsafe { proj.once.state.get().as_mut().unwrap_unchecked() };
                         state.wakers = std::mem::ManuallyDrop::new(RVec::new());
-                        proj.value_id.tag.fetch_or(STATE_WAKERS, Ordering::Release);
-                        let fut = deps.get();
-                        *proj.to_poll = Some(fut);
-                    } else if access == ACCESS_ACCESSED {
-                        if proj
-                            .value_id
-                            .tag
-                            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| {
-                                ((v & STATE_MASK == STATE_WAKERS) && (v & USING_WAKERS == 0))
-                                    .then(|| v | USING_WAKERS)
-                            })
-                            .is_ok()
-                        {
-                            let waker: RawWaker = cx.into();
-                            // Safety: the state must be wakers, and we must be the only one
-                            // accessing it (having set the USING_WAKERS flag).
-                            let state =
-                                unsafe { proj.value_id.state.get().as_mut().unwrap_unchecked() };
-                            unsafe { &mut state.wakers }.push(waker);
-                            proj.value_id
-                                .tag
-                                .fetch_and(!USING_WAKERS, Ordering::Release);
-                            break Poll::Pending;
-                        } else {
-                            // There are three cases:
-                            // 1. deps -> wakers transition (WAKERS_SET unset), which is pretty
-                            //    quick (moving RBox, creating RVec).
-                            // 2. wakers -> id transition (WAKERS_SET unset), which is pretty
-                            //    quick (moving RVec, copying Identity).
-                            // 3. USING_WAKERS set, which will usually be fast though the
-                            //    vector growing may be slow.
-                            spins += 1;
-                            if spins > MAX_SPINS {
-                                std::thread::yield_now();
-                            } else {
-                                std::hint::spin_loop();
-                            }
-                        }
-                    } else if access == ACCESS_EVALUATED {
-                        let state = proj.value_id.tag.load(Ordering::Relaxed) & STATE_MASK;
-                        if state == STATE_ID {
-                            // Safety: the state must be `id`
-                            let id =
-                                unsafe { proj.value_id.state.get().as_ref().unwrap_unchecked().id }
-                                    .into();
-                            break Poll::Ready(Identity {
-                                id,
-                                eval_for_id: proj.value_id.eval_for_id(),
+                        proj.once.tag.fetch_or(STATE_WAKERS, Ordering::Release);
+                        *proj.should_poll = true;
+                    } else {
+                        debug_assert!(state & ACCESS_MASK == ACCESS_ACCESSED);
+                        if state & STATE_MASK == STATE_VALUE {
+                            // Safety: the state must be `value`
+                            break Poll::Ready(unsafe {
+                                &*proj.once.state.get().as_ref().unwrap_unchecked().value
                             });
                         } else {
-                            panic!("invalid value id state");
+                            if proj
+                                .once
+                                .tag
+                                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| {
+                                    ((v & STATE_MASK == STATE_WAKERS) && (v & USING_WAKERS == 0))
+                                        .then(|| v | USING_WAKERS)
+                                })
+                                .is_ok()
+                            {
+                                let waker: RawWaker = cx.into();
+                                // Safety: the state must be wakers, and we must be the only one
+                                // accessing it (having set the USING_WAKERS flag).
+                                let state =
+                                    unsafe { proj.once.state.get().as_mut().unwrap_unchecked() };
+                                unsafe { &mut state.wakers }.push(waker);
+                                proj.once.tag.fetch_and(!USING_WAKERS, Ordering::Release);
+                                break Poll::Pending;
+                            } else {
+                                // There are three cases:
+                                // 1. initial access, which is pretty quick (creating RVec for wakers).
+                                // 2. wakers -> value transition, which is pretty quick (moving RVec, moving value).
+                                // 3. USING_WAKERS set, which will usually be fast though the vector growing may be slow.
+                                spins += 1;
+                                if spins > MAX_SPINS {
+                                    std::thread::yield_now();
+                                } else {
+                                    std::hint::spin_loop();
+                                }
+                            }
                         }
-                    } else {
-                        panic!("invalid value id access state");
                     }
                 }
             }
@@ -421,143 +577,553 @@ mod value_id {
     }
 
     pub use get_impl::Get;
+}
 
-    impl Drop for ValueId {
-        fn drop(&mut self) {
-            let state = *self.tag.get_mut() & STATE_MASK;
-            if state == STATE_DEPS {
-                // Safety: the state must be deps
-                unsafe { std::mem::ManuallyDrop::drop(&mut self.state.get_mut().deps) };
-            } else if state == STATE_WAKERS {
-                // Safety: the state must be wakers
-                unsafe { std::mem::ManuallyDrop::drop(&mut self.state.get_mut().wakers) };
-            }
-        }
-    }
+pub use once::Once;
 
-    impl From<Value> for ValueId {
-        fn from(v: Value) -> Self {
-            Self::from_value(v)
-        }
-    }
+pub enum VisitInfo<'a> {
+    Value(&'a Value),
+    Immutable(&'a Value),
+    Discriminant(u8),
+}
 
-    impl From<u128> for ValueId {
-        fn from(id: u128) -> Self {
-            Self::id(id)
-        }
-    }
-
-    impl From<Dependencies> for ValueId {
-        fn from(deps: Dependencies) -> Self {
-            Self::from_deps(deps)
-        }
-    }
-
-    impl From<DependenciesConstant> for ValueId {
-        fn from(deps: DependenciesConstant) -> Self {
-            Self::from_constant_deps(deps)
-        }
-    }
-
-    impl<T: Into<ValueId>> From<IdInfo<T>> for ValueId {
-        fn from(s: IdInfo<T>) -> Self {
-            let mut v = s.id.into();
-            v.set_eval_for_id(s.eval_for_id);
-            v
+impl crate::dependency::AsDependency for VisitInfo<'_> {
+    fn as_dependency(&self) -> Dependency {
+        match self {
+            VisitInfo::Value(v) | VisitInfo::Immutable(v) => Dependency::Value((*v).clone()),
+            VisitInfo::Discriminant(c) => Dependency::Constant(c.into()),
         }
     }
 }
 
-pub use value_id::ValueId;
+/// A trait to apply a function over inner values of a type.
+///
+/// This trait is unsafe for two reasons:
+/// 1. The default implementation of `visit_mut`: it uses the implementation of `visit_info`, so
+///    the `VisitInfo::Value` values that `visit_info` provides must all be safe to be modified,
+///    and must all reside within the type (to maintain aliasing guarantees). So for instance, if
+///    the implementation of `visit_info` calls `f` on a `VisitInfo::Value` static Value reference
+///    (that is not within the type), or if it calls it on values that shouldn't be modified (such
+///    as keys in a map; this is what `VisitInfo::Immutable` is for), an alternate `visit_mut` must
+///    be provided.
+/// 2. The default implementations of `visit_info` and `visit`: they are mutually recursive (for
+///    implementation convenience), so at least one of `visit_info` or `visit` must be provided.
+pub unsafe trait InnerValues {
+    fn visit_info<'a, F: FnMut(VisitInfo<'a>)>(&'a self, mut f: F) {
+        self.visit(move |v| f(VisitInfo::Value(v)))
+    }
+
+    fn visit<'a, F: FnMut(&'a Value)>(&'a self, mut f: F) {
+        self.visit_info(move |v| match v {
+            VisitInfo::Value(v) | VisitInfo::Immutable(v) => f(v),
+            _ => (),
+        })
+    }
+
+    fn visit_mut<'a, F: FnMut(&'a mut Value)>(&'a mut self, mut f: F) {
+        self.visit_info(move |v| match v {
+            VisitInfo::Value(v) => f(unsafe {
+                (v as *const Value as *mut Value)
+                    .as_mut()
+                    .unwrap_unchecked()
+            }),
+            _ => (),
+        })
+    }
+}
+
+/// A trait to apply late bindings to a type.
+pub trait LateBind {
+    fn late_bind(&mut self, scope: &LateScope);
+}
+
+#[derive(Clone)]
+#[repr(transparent)]
+struct TypedValueImpl<T>(T);
+
+impl<T: ErgoType + InnerValues + Clone + Send + Sync + 'static> ValueDataInterface
+    for TypedValueImpl<T>
+{
+    fn id(&self) -> future::BoxFuture<IdInfo<U128>> {
+        future::BoxFuture::new(async move {
+            let mut info = Vec::new();
+            self.0.visit_info(|v| info.push(v));
+            crate::depends![dyn T::ergo_type(), ^@info]
+                .id()
+                .await
+                .into()
+        })
+    }
+
+    fn late_bind(&mut self, scope: &LateScope) {
+        self.0.visit_mut(|v| v.late_bind(scope));
+    }
+
+    fn get(&self) -> ValueType {
+        ValueType::typed(&self.0)
+    }
+}
+
+#[derive(Clone)]
+#[repr(transparent)]
+struct ConstantValueImpl<T>(T);
+
+impl<T: ErgoType + std::hash::Hash> ConstantValueImpl<T> {
+    pub fn id(&self) -> Identity {
+        use std::hash::Hash;
+        let mut hfn = HashFn::default();
+        T::ergo_type().hash(&mut hfn);
+        self.0.hash(&mut hfn);
+        Identity::new(hfn.finish_ext())
+    }
+}
+
+impl<T: ErgoType + std::hash::Hash + Clone + Send + Sync + 'static> ValueDataInterface
+    for ConstantValueImpl<T>
+{
+    fn id(&self) -> future::BoxFuture<IdInfo<U128>> {
+        future::BoxFuture::new(async move { self.id().into() })
+    }
+
+    fn late_bind(&mut self, _scope: &LateScope) {}
+
+    fn get(&self) -> ValueType {
+        ValueType::typed(&self.0)
+    }
+}
+
+#[derive(Clone)]
+enum LateBoundImpl<Fallback> {
+    Key(U128, Fallback),
+    Value(Value),
+}
+
+impl<Fallback: ValueDataInterface> ValueDataInterface for LateBoundImpl<Fallback> {
+    fn id(&self) -> future::BoxFuture<IdInfo<U128>> {
+        future::BoxFuture::new(async move {
+            match self {
+                Self::Key(_, fallback) => fallback.id().await,
+                Self::Value(v) => v.immediate_id().await.into(),
+            }
+        })
+    }
+
+    fn late_bind(&mut self, scope: &LateScope) {
+        match self {
+            Self::Key(i, fallback) => {
+                if let Some(v) = scope.scope.get(i) {
+                    // Should late binding continue recursively in the value?
+                    *self = Self::Value(v.clone());
+                } else {
+                    fallback.late_bind(scope);
+                }
+            }
+            Self::Value(v) => v.late_bind(scope),
+        }
+    }
+
+    fn get(&self) -> ValueType {
+        match self {
+            Self::Key(_, fallback) => fallback.get(),
+            // This could change to wrap `v` as a ValueType::lazy which yields the value as a
+            // slight optimization to not check the enum state.
+            Self::Value(v) => v.inner.data.get(),
+        }
+    }
+}
+
+#[repr(transparent)]
+pub struct BoxedLazyValueId(Box<dyn LazyValueId>);
+
+mod lazy_value_id_clone {
+    pub trait LazyValueIdClone {
+        fn do_clone(&self) -> super::BoxedLazyValueId;
+    }
+
+    impl<T: Clone + super::LazyValueId> LazyValueIdClone for T {
+        fn do_clone(&self) -> super::BoxedLazyValueId {
+            super::BoxedLazyValueId(Box::new(self.clone()))
+        }
+    }
+}
+
+impl Clone for BoxedLazyValueId {
+    fn clone(&self) -> Self {
+        self.0.do_clone()
+    }
+}
+
+#[derive(Clone)]
+pub enum ValueId {
+    Id(Identity),
+    Lazy(BoxedLazyValueId),
+    Override {
+        id: BoxedLazyValueId,
+        eval_for_id: bool,
+    },
+}
+
+pub trait LazyValueId:
+    LateBind + lazy_value_id_clone::LazyValueIdClone + Send + Sync + 'static
+{
+    fn id(&self) -> futures::future::BoxFuture<Identity>;
+}
+
+impl LateBind for Value {
+    fn late_bind(&mut self, scope: &LateScope) {
+        Value::late_bind(self, scope);
+    }
+}
+
+impl LazyValueId for Value {
+    fn id(&self) -> futures::future::BoxFuture<Identity> {
+        futures::FutureExt::boxed(async move { self.clone().eval_id().await })
+    }
+}
+
+impl LateBind for Dependencies {
+    fn late_bind(&mut self, scope: &LateScope) {
+        self.map(|d| match d {
+            Dependency::Value(v) => v.late_bind(scope),
+            Dependency::Constant(_) => (),
+        })
+    }
+}
+
+impl LazyValueId for Dependencies {
+    fn id(&self) -> futures::future::BoxFuture<Identity> {
+        futures::FutureExt::boxed(Self::id(self))
+    }
+}
+
+impl From<DependenciesConstant> for ValueId {
+    fn from(deps: DependenciesConstant) -> Self {
+        ValueId::Id(deps.id())
+    }
+}
+
+impl From<u128> for ValueId {
+    fn from(i: u128) -> Self {
+        ValueId::Id(Identity::new(i))
+    }
+}
+
+impl<T: Into<ValueId>> From<IdInfo<T>> for ValueId {
+    fn from(IdInfo { id, eval_for_id }: IdInfo<T>) -> Self {
+        let id = id.into();
+        match id {
+            ValueId::Id(mut id) => {
+                id.eval_for_id = eval_for_id;
+                ValueId::Id(id)
+            }
+            ValueId::Lazy(id) | ValueId::Override { id, .. } => {
+                ValueId::Override { id, eval_for_id }
+            }
+        }
+    }
+}
+
+impl<T: LazyValueId> From<T> for ValueId {
+    fn from(v: T) -> Self {
+        ValueId::Lazy(BoxedLazyValueId(Box::new(v)))
+    }
+}
+
+impl ValueId {
+    async fn id(&self) -> Identity {
+        match self {
+            ValueId::Id(id) => id.clone(),
+            ValueId::Lazy(l) => l.0.id().await,
+            ValueId::Override { id, eval_for_id } => {
+                let mut result = id.0.id().await;
+                result.eval_for_id = *eval_for_id;
+                result
+            }
+        }
+    }
+
+    fn late_bind(&mut self, scope: &LateScope) {
+        match self {
+            ValueId::Id(_) => (),
+            ValueId::Lazy(l) => l.0.late_bind(scope),
+            ValueId::Override { id, .. } => id.0.late_bind(scope),
+        }
+    }
+}
+
+#[derive(Clone)]
+#[repr(C)]
+struct IdValueData<T> {
+    value_data: T,
+    id: ValueId,
+}
+
+impl<T: ValueDataInterface> ValueDataInterface for IdValueData<T> {
+    fn id<'a>(&'a self) -> future::BoxFuture<'a, IdInfo<U128>> {
+        future::BoxFuture::new(async move { self.id.id().await.into() })
+    }
+
+    fn late_bind(&mut self, scope: &LateScope) {
+        self.value_data.late_bind(scope);
+        self.id.late_bind(scope);
+    }
+
+    fn get(&self) -> ValueType {
+        self.value_data.get()
+    }
+}
+
+/// Lazy value helpers.
+pub mod lazy {
+    use super::*;
+
+    pub struct CapturesWitness<T: ?Sized>(std::marker::PhantomData<T>);
+
+    impl<T> Default for CapturesWitness<T> {
+        #[inline]
+        fn default() -> Self {
+            CapturesWitness(Default::default())
+        }
+    }
+
+    impl<T> Clone for CapturesWitness<T> {
+        #[inline]
+        fn clone(&self) -> Self {
+            CapturesWitness(self.0.clone())
+        }
+    }
+
+    impl<T> Copy for CapturesWitness<T> {}
+
+    impl<T> CapturesWitness<T> {
+        #[inline]
+        pub fn witness(v: T) -> (T, Self) {
+            (v, Default::default())
+        }
+
+        #[inline]
+        pub fn check(self, v: T) -> T {
+            v
+        }
+    }
+
+    #[derive(Clone)]
+    pub struct LazyValueFn<Captures, F, const USE_CAPTURES_IN_ID: bool = true> {
+        id: ValueId,
+        captures: Captures,
+        f: F,
+    }
+
+    impl<const U: bool, Captures, F> LazyValueFn<Captures, F, U> {
+        pub fn new(id: impl Into<ValueId>, captures: Captures, f: F) -> Self {
+            LazyValueFn {
+                id: id.into(),
+                captures,
+                f,
+            }
+        }
+    }
+
+    pub trait LazyCaptures: Clone + Send + Sync + 'static {
+        /// Get the identity of the captures.
+        fn id(&self) -> futures::future::BoxFuture<Identity>;
+
+        /// Late-bind the scope into the captures.
+        fn late_bind(&mut self, scope: &LateScope);
+    }
+
+    impl LazyCaptures for () {
+        fn id(&self) -> futures::future::BoxFuture<Identity> {
+            futures::FutureExt::boxed(async move { Identity::new(0) })
+        }
+
+        fn late_bind(&mut self, _scope: &LateScope) {}
+    }
+
+    impl LazyCaptures for Value {
+        fn id(&self) -> futures::future::BoxFuture<Identity> {
+            futures::FutureExt::boxed(async move { self.clone().eval_id().await })
+        }
+
+        fn late_bind(&mut self, scope: &LateScope) {
+            Value::late_bind(self, scope);
+        }
+    }
+
+    impl<T: LazyCaptures> LazyCaptures for Vec<T> {
+        fn id(&self) -> futures::future::BoxFuture<Identity> {
+            futures::FutureExt::boxed(async move {
+                let mut combiner = IdentityCombiner::default();
+                for c in self {
+                    combiner.add(&c.id().await);
+                }
+                combiner.finish()
+            })
+        }
+
+        fn late_bind(&mut self, scope: &LateScope) {
+            for c in self {
+                c.late_bind(scope);
+            }
+        }
+    }
+
+    macro_rules! impl_tuple {
+        ( $( $name:ident )+ ) => {
+            impl<$($name: LazyCaptures),+> LazyCaptures for ($($name,)+) {
+                fn id(&self) -> futures::future::BoxFuture<Identity> {
+                    futures::FutureExt::boxed(async move {
+                        #[allow(non_snake_case)]
+                        let ($($name,)+) = self;
+                        let mut combiner = IdentityCombiner::default();
+                        $(combiner.add(&$name.id().await);)+
+                        combiner.finish()
+                    })
+                }
+
+                fn late_bind(&mut self, scope: &LateScope) {
+                    #[allow(non_snake_case)]
+                    let ($($name,)+) = self;
+                    $($name.late_bind(scope);)+
+                }
+            }
+        }
+    }
+
+    impl_tuple! { A }
+    impl_tuple! { A B }
+    impl_tuple! { A B C }
+    impl_tuple! { A B C D }
+    impl_tuple! { A B C D E }
+    impl_tuple! { A B C D E F }
+    impl_tuple! { A B C D E F G }
+    impl_tuple! { A B C D E F G H }
+    impl_tuple! { A B C D E F G H I }
+    impl_tuple! { A B C D E F G H I J }
+
+    // `FnOnce + Clone` is used rather than `Fn` because this is more convenient for callers when
+    // moving values into the returned Future.
+
+    impl<const B: bool, Captures, F, Fut> LazyValueData for LazyValueFn<Captures, F, B>
+    where
+        Self: Send + Sync + 'static,
+        Captures: Clone,
+        F: FnOnce(Captures) -> Fut + Clone,
+        Fut: std::future::Future<Output = Value> + Send + 'static,
+    {
+        fn next(&self) -> future::BoxFuture<Value> {
+            future::BoxFuture::new((self.f.clone())(self.captures.clone()))
+        }
+    }
+
+    impl<Captures, F> ValueDataInterface for LazyValueFn<Captures, F, true>
+    where
+        Captures: LazyCaptures,
+        Self: LazyValueData + Clone + 'static,
+    {
+        fn id<'a>(&'a self) -> future::BoxFuture<'a, IdInfo<U128>> {
+            future::BoxFuture::new(async move { self.id.id().await.into() })
+        }
+
+        fn late_bind(&mut self, scope: &LateScope) {
+            self.id.late_bind(scope);
+            self.captures.late_bind(scope);
+        }
+
+        fn get(&self) -> ValueType {
+            ValueType::lazy(self)
+        }
+    }
+
+    impl<Captures, F> ValueDataInterface for LazyValueFn<Captures, F, false>
+    where
+        Captures: LazyCaptures,
+        Self: LazyValueData + Clone + 'static,
+    {
+        fn id<'a>(&'a self) -> future::BoxFuture<'a, IdInfo<U128>> {
+            future::BoxFuture::new(async move {
+                let mut combiner = IdentityCombiner::default();
+                combiner.add(&self.id.id().await);
+                combiner.add(&self.captures.id().await);
+                combiner.finish().into()
+            })
+        }
+
+        fn late_bind(&mut self, scope: &LateScope) {
+            self.id.late_bind(scope);
+            self.captures.late_bind(scope);
+        }
+
+        fn get(&self) -> ValueType {
+            ValueType::lazy(self)
+        }
+    }
+}
 
 impl Value {
-    /// Create a new evaluated Value with the given identity.
-    ///
-    /// ### Safety
-    /// The caller must ensure the data corresponds to the type.
-    pub unsafe fn new<T>(tp: RArc<Type>, data: RArc<Erased>, id: T) -> Self
-    where
-        T: Into<ValueId>,
-    {
+    /// Create a new Value from anything implementing ValueDataInterface.
+    pub fn new<T: ValueDataInterface + 'static>(value_data: T) -> Self {
         Value {
-            id: RArc::new(id.into()),
+            inner: RArc::new(Inner::new(ValueData::new(value_data))),
             metadata: Default::default(),
-            data: ValueData::Typed { tp, data },
         }
     }
 
-    /// Create a typed, evaluated value.
-    pub fn evaluated<T: ErgoType + Eraseable + GetDependencies>(value: T) -> Self {
-        let deps = value.get_depends();
-        Self::with_id(value, deps)
-    }
-
-    /// Create a constant (typed, evaluated, identified) value.
-    pub fn constant<T: ErgoType + Eraseable + GetDependenciesConstant>(value: T) -> Self {
-        let deps = value.get_depends();
-        Self::with_id(value, deps)
-    }
-
-    /// Create a typed, evaluated value with the given identity.
-    pub fn with_id<T: ErgoType + Eraseable, D>(value: T, id: D) -> Self
-    where
-        D: Into<ValueId>,
-    {
-        unsafe { Self::new(RArc::new(T::ergo_type()), RArc::new(Erased::new(value)), id) }
-    }
-
-    /// Create a dynamically-typed (unevaluated) value with the given identity.
+    /// Create a typed value.
     ///
-    /// `FnOnce + Clone` is used rather than `Fn` because this is more convenient for callers when
-    /// moving values into the returned Future.
-    pub fn dynamic<F, Fut, D>(func: F, id: D) -> Self
-    where
-        F: FnOnce() -> Fut + Clone + Send + Sync + 'static,
-        Fut: std::future::Future<Output = Value> + Send,
-        D: Into<ValueId>,
-    {
-        let next = DynamicNext_TO::from_value(
-            std::sync::Arc::new(DynamicCached {
-                func,
-                complete: Default::default(),
-            }),
-            TD_Opaque,
-        );
+    /// This is intended for types which only contain other values (as the identity will only be
+    /// based on the type and the inner values).
+    pub fn typed<T: ErgoType + InnerValues + Clone + Eraseable>(value: T) -> Self {
+        Self::new(TypedValueImpl(value))
+    }
+
+    /// Create a constant (typed, identified) value.
+    ///
+    /// This is intended for types which do not contain any values.
+    pub fn constant<T: ErgoType + std::hash::Hash + Clone + Eraseable>(value: T) -> Self {
+        let value_data = ConstantValueImpl(value);
+        let id = value_data.id();
+        let mut inner = Inner::new(ValueData::new(value_data));
+        inner.id.set(id.into());
         Value {
-            id: RArc::new(id.into()),
+            inner: RArc::new(inner),
             metadata: Default::default(),
-            data: ValueData::Dynamic { next },
         }
     }
 
-    /// Create a dynamically-typed (unevaluated) value with the given identity which represents an
-    /// impure operation.
-    ///
-    /// This is just like `dynamic`, except the resulting value will not cache evaluated results
-    /// based on identity (i.e. `func` will _always_ be called when the value is evaluated).
-    pub fn dynamic_impure<F, Fut, D>(func: F, id: D) -> Self
+    /// Create a late-bound value with the given key.
+    pub fn late_bound(key: U128) -> Self {
+        let fallback = ConstantValueImpl(crate::types::Unset);
+        let id = fallback.id();
+        let mut inner = Inner::new(ValueData::new(LateBoundImpl::Key(key, fallback)));
+        inner.id.set(id.into());
+        Value {
+            inner: RArc::new(inner),
+            metadata: Default::default(),
+        }
+    }
+
+    /// Create a typed value with the given identity.
+    pub fn with_id<T: ErgoType + InnerValues + Clone + Eraseable, D>(value: T, id: D) -> Self
     where
-        F: FnOnce() -> Fut + Clone + Send + Sync + 'static,
-        Fut: std::future::Future<Output = Value> + Send,
         D: Into<ValueId>,
     {
-        let next =
-            DynamicNext_TO::from_value(std::sync::Arc::new(DynamicImpure { func }), TD_Opaque);
+        let mut inner = Inner::new(ValueData::new(TypedValueImpl(value)));
+        inner.set_id(id);
         Value {
-            id: RArc::new(id.into()),
+            inner: RArc::new(inner),
             metadata: Default::default(),
-            data: ValueData::Dynamic { next },
         }
     }
 
     /// Get the value's immediate identity.
     pub async fn immediate_id(&self) -> Identity {
-        self.id.get(self).await
+        self.inner.id().await
     }
 
     /// Try to get the value's immediate identity, if available.
     pub fn try_immediate_id(&self) -> Option<&u128> {
-        self.id.try_get()
+        self.inner.id.try_get().map(|i| i.id.as_ref())
     }
 
     /// Get the value's identity, evaluating the value as necessary to get a more accurate
@@ -595,44 +1161,34 @@ impl Value {
     /// Get the value's referential identity, which is unique to a particular Value instance in
     /// memory.
     pub fn referential_id(&self) -> usize {
-        self.id.as_ref() as *const ValueId as usize
+        self.inner.as_ref() as *const Inner as usize
     }
 
     /// Get the value's type, if evaluated.
-    pub fn ergo_type(&self) -> Option<&Type> {
-        match &self.data {
-            ValueData::Typed { tp, .. } => Some(tp.as_ref()),
-            _ => None,
-        }
+    pub fn ergo_type(&self) -> Option<Type> {
+        self.inner.data.ergo_type()
     }
 
-    /// Get the value's data, if evaluated.
-    pub fn data(&self) -> Option<&Erased> {
-        match &self.data {
-            ValueData::Typed { data, .. } => Some(data.as_ref()),
-            _ => None,
-        }
+    /// Return whether this value is evaluated (and has a type and data immediately available).
+    pub fn is_evaluated(&self) -> bool {
+        self.inner.data.is_typed()
     }
 
     /// Check whether this value has the given type.
     pub fn is_type<T: ErgoType>(&self) -> bool {
-        match &self.data {
-            ValueData::Typed { tp, .. } => tp.as_ref() == &T::ergo_type(),
+        match self.ergo_type() {
+            Some(tp) if tp == T::ergo_type() => true,
             _ => false,
         }
     }
 
     /// Get this value as the given type, if evaluated to that type.
     pub fn as_type<T: ErgoType>(self) -> Result<TypedValue<T>, Self> {
-        match &self.data {
-            ValueData::Typed { tp, .. } => {
-                if tp.as_ref() == &T::ergo_type() {
-                    return Ok(unsafe { TypedValue::from_value(self) });
-                }
-            }
-            _ => (),
+        if self.is_type::<T>() {
+            Ok(unsafe { TypedValue::from_value(self) })
+        } else {
+            Err(self)
         }
-        Err(self)
     }
 
     /// Get an IdentifiedValue from this value.
@@ -647,35 +1203,56 @@ impl Value {
 
     /// Get this value as the given type if evaluated to that type.
     pub fn as_ref<T: ErgoType>(&self) -> Option<&T> {
-        match &self.data {
-            ValueData::Typed { tp, data } if tp.as_ref() == &T::ergo_type() => {
-                Some(unsafe { data.as_ref().as_ref::<T>() })
-            }
-            _ => None,
+        if self.is_type::<T>() {
+            Some(unsafe { self.inner.data.as_ref::<T>() })
+        } else {
+            None
         }
     }
 
     /// Get this value as the given mutable type, if evaluated to that type and no other references
     /// exist.
     pub fn as_mut<T: ErgoType>(&mut self) -> Option<&mut T> {
-        match &mut self.data {
-            ValueData::Typed { tp, data } if tp.as_ref() == &T::ergo_type() => {
-                if let Some(data) = RArc::get_mut(data) {
-                    Some(unsafe { data.as_mut::<T>() })
-                } else {
-                    None
-                }
+        if self.is_type::<T>() {
+            if let Some(inner) = RArc::get_mut(&mut self.inner) {
+                return Some(unsafe { inner.data.as_mut::<T>() });
             }
-            _ => None,
+        }
+        None
+    }
+
+    /// Get a pointer to the data contained in this value (if typed).
+    pub fn data_ptr(&self) -> Option<*const ()> {
+        if self.is_evaluated() {
+            Some(unsafe { self.inner.data.as_ptr() })
+        } else {
+            None
         }
     }
 
-    /// Set the dependencies of this value.
-    pub fn set_dependencies<D>(&mut self, deps: D)
+    /// Set the identity of this value.
+    pub fn set_identity<D>(&mut self, id: D)
     where
         D: Into<ValueId>,
     {
-        self.id = RArc::new(deps.into());
+        RArc::make_mut(&mut self.inner).set_id(id);
+    }
+
+    /// Set the value as impure. This will prevent `next` values from being cached (calling `next`
+    /// every time a value is needed).
+    ///
+    /// Calling this (even with `impure` set to false) will clear any existing cached result.
+    pub fn impure(&mut self, impure: bool) {
+        RArc::make_mut(&mut self.inner).next = if impure {
+            ROption::RNone
+        } else {
+            ROption::RSome(Default::default())
+        };
+    }
+
+    /// Late-bind the given scope in this value.
+    pub fn late_bind(&mut self, scope: &LateScope) {
+        RArc::make_mut(&mut self.inner).late_bind(scope);
     }
 
     /// Set a metadata entry for this value.
@@ -702,26 +1279,16 @@ impl Value {
     }
 
     /// Evaluate the value once (if dynamic).
-    pub async fn eval_once(&mut self) {
-        if let ValueData::Dynamic { .. } = &self.data {
-            let id = self.immediate_id().await.map(|v| v.into());
-            match std::mem::replace(&mut self.data, ValueData::None) {
-                ValueData::Dynamic { next } => {
-                    let Value { id, metadata, data } = next.next(id).await;
-                    self.id = id;
-                    self.metadata.extend(metadata);
-                    self.data = data;
-                }
-                _ => panic!("unexpected value data state"),
-            }
-        }
-    }
-
-    /// Return whether this value is fully evaluated (and has a type and data immediately available).
-    pub fn is_evaluated(&self) -> bool {
-        match &self.data {
-            ValueData::Typed { .. } => true,
-            _ => false,
+    ///
+    /// Returns whether the value was evaluated (and changed).
+    pub async fn eval_once(&mut self) -> bool {
+        if !self.is_evaluated() {
+            let Value { inner, metadata } = self.inner.next().await;
+            self.inner = inner;
+            self.metadata.extend(metadata);
+            true
+        } else {
+            false
         }
     }
 }
@@ -774,39 +1341,36 @@ impl<T> TypedValue<T> {
     }
 }
 
-impl<T: ErgoType + Eraseable> TypedValue<T> {
+impl<T: ErgoType + Clone + Eraseable> TypedValue<T> {
     /// Create a typed value.
     pub fn new(data: T) -> Self
     where
-        T: GetDependencies,
+        T: InnerValues,
     {
-        unsafe { TypedValue::from_value(Value::evaluated(data)) }
+        unsafe { TypedValue::from_value(Value::typed(data)) }
     }
 
     /// Create a value with constant dependencies.
     pub fn constant(data: T) -> Self
     where
-        T: GetDependenciesConstant,
+        T: std::hash::Hash,
     {
         unsafe { TypedValue::from_value(Value::constant(data)) }
     }
 
     /// Create a value with the given identity.
-    pub fn with_id<D: Into<ValueId>>(data: T, id: D) -> Self {
+    pub fn with_id<D: Into<ValueId>>(data: T, id: D) -> Self
+    where
+        T: InnerValues,
+    {
         unsafe { TypedValue::from_value(Value::with_id(data, id)) }
     }
 
     /// Extract the Value's type as an owned value.
-    pub fn to_owned(self) -> T
-    where
-        T: Clone,
-    {
-        match self.inner.data {
-            ValueData::Typed { data, .. } => match RArc::try_unwrap(data) {
-                Ok(e) => unsafe { e.to_owned() },
-                Err(arc) => unsafe { arc.as_ref().as_ref::<T>() }.clone(),
-            },
-            _ => panic!("invalid TypedValue"),
+    pub fn into_owned(self) -> T {
+        match RArc::try_unwrap(self.inner.inner) {
+            Ok(inner) => unsafe { inner.data.into_owned() },
+            Err(arc) => unsafe { arc.data.as_ref::<T>() }.clone(),
         }
     }
 }
@@ -836,7 +1400,7 @@ impl<T> std::ops::DerefMut for TypedValue<T> {
 
 impl<T> AsRef<T> for TypedValue<T> {
     fn as_ref(&self) -> &T {
-        unsafe { self.inner.data().unwrap().as_ref::<T>() }
+        unsafe { self.inner.inner.data.as_ref::<T>() }
     }
 }
 
@@ -852,84 +1416,18 @@ impl<T> std::borrow::Borrow<Value> for TypedValue<T> {
     }
 }
 
-#[sabi_trait]
-trait DynamicNext: Clone + Send + Sync {
-    #[sabi(last_prefix_field)]
-    fn next(self, id: IdInfo<U128>) -> future::BoxFuture<'static, Value>;
-}
-
-struct DynamicCached<F> {
-    func: F,
-    complete: CacheMap<u128, futures::lock::Mutex<Option<Value>>>,
-}
-
-impl<F, Fut> DynamicNext for std::sync::Arc<DynamicCached<F>>
-where
-    F: FnOnce() -> Fut + Clone + Send + Sync + 'static,
-    Fut: std::future::Future<Output = Value> + Send,
-{
-    fn next(self, id: IdInfo<U128>) -> future::BoxFuture<'static, Value> {
-        future::BoxFuture::new(async move {
-            let mut guard = self.complete.cache_default(id.id.into()).lock().await;
-            if let Some(v) = &*guard {
-                v.clone()
-            } else {
-                let val = (self.func.clone())().await;
-                *guard = Some(val.clone());
-                drop(guard);
-                val
-            }
-        })
-    }
-}
-
-struct DynamicImpure<F> {
-    func: F,
-}
-
-impl<F, Fut> DynamicNext for std::sync::Arc<DynamicImpure<F>>
-where
-    F: FnOnce() -> Fut + Clone + Send + Sync + 'static,
-    Fut: std::future::Future<Output = Value> + Send,
-{
-    fn next(self, _id: IdInfo<U128>) -> future::BoxFuture<'static, Value> {
-        future::BoxFuture::new(async move { (self.func.clone())().await })
-    }
-}
-
-/// The data within a Value.
-#[derive(Clone, StableAbi)]
-#[repr(C)]
-enum ValueData {
-    Typed {
-        tp: RArc<Type>,
-        data: RArc<Erased>,
-    },
-    Dynamic {
-        next: DynamicNext_TO<'static, RBox<()>>,
-    },
-    None,
-}
-
-impl std::fmt::Debug for ValueData {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            ValueData::None => write!(f, "None"),
-            ValueData::Dynamic { .. } => write!(f, "Dynamic"),
-            ValueData::Typed { tp, .. } => write!(f, "Typed ({:?})", tp),
-        }
-    }
-}
-
 impl std::fmt::Debug for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         f.debug_struct("Value")
-            .field("data", &self.data)
             .field(
                 "metadata",
                 &self.metadata.iter().map(|(k, _)| k).collect::<BstSet<_>>(),
             )
-            .field("id", &self.id)
+            .field("id", &self.inner.id.try_get())
+            .field(
+                "next",
+                &self.inner.next.as_ref().map(|v| v.try_get().is_some()),
+            )
             .finish()
     }
 }
@@ -1135,7 +1633,7 @@ where
 
 impl<T> From<T> for IdentifiedValue
 where
-    T: GetDependenciesConstant + IntoValue,
+    T: std::hash::Hash + IntoValue,
 {
     fn from(v: T) -> IdentifiedValue {
         let val = v.into_value();
@@ -1146,7 +1644,7 @@ where
 
 impl<T> From<T> for EvaluatedValue
 where
-    T: GetDependenciesConstant + IntoValue,
+    T: std::hash::Hash + IntoValue,
 {
     fn from(v: T) -> EvaluatedValue {
         let val = v.into_value();

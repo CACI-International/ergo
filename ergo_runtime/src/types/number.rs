@@ -5,7 +5,7 @@ use crate::abi_stable::{std_types::RVec, type_erase::Erased, StableAbi};
 use crate::metadata::Source;
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
-use crate::{depends, DependenciesConstant, GetDependenciesConstant, TypedValue};
+use crate::TypedValue;
 use bincode;
 use num::{bigint::BigInt, rational::Ratio, BigRational, FromPrimitive, ToPrimitive};
 
@@ -200,12 +200,6 @@ impl std::str::FromStr for Number {
 impl From<Number> for TypedValue<Number> {
     fn from(v: Number) -> Self {
         Self::constant(v)
-    }
-}
-
-impl GetDependenciesConstant for Number {
-    fn get_depends(&self) -> DependenciesConstant {
-        depends![Number::ergo_type(), self]
     }
 }
 

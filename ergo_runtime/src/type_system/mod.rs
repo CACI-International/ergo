@@ -34,17 +34,19 @@ pub use ergo_runtime_macro::ergo_trait;
 ///
 /// ```
 /// # mod m {
-/// # use ergo_runtime::type_system::{ergo_trait, ergo_trait_impl};
+/// # use ergo_runtime::type_system::{ErgoType, ergo_trait, ergo_trait_impl};
 /// # #[ergo_trait]
 /// # pub trait Something {
 /// #     async fn my_something(&self) -> bool;
 /// # }
+/// #[derive(ErgoType)]
+/// struct MyType(bool);
 /// fn my_trait_impl() -> SomethingImpl {
 ///     ergo_trait_impl!{
-///         impl Something for bool {
+///         impl Something for MyType {
 ///             async fn my_something(&self) -> bool {
 ///                 ergo_runtime::Context::global().log.debug("hello");
-///                 *self
+///                 self.0
 ///             }
 ///         }
 ///     }
@@ -79,7 +81,7 @@ pub use ergo_runtime_macro::ergo_trait_impl;
 ///
 /// ergo_traits_fn!{
 ///     {
-///         extern "C" fn always_true<'a>(_data: &'a Erased, _val: &'a Value, _tp: &'a Type, _v: &'a Erased)
+///         extern "C" fn always_true<'a>(_data: &'a Erased, _val: &'a Value, _tp: &'a Type)
 ///             -> BoxFuture<'a, bool>
 ///         {
 ///             BoxFuture::new(async move { true })

@@ -1,7 +1,7 @@
 //! Type-related functions, including type creation.
 
 use ergo_runtime::abi_stable::{
-    std_types::{RArc, RString, RVec},
+    std_types::{RString, RVec},
     type_erase::Erased,
 };
 use ergo_runtime::{
@@ -24,6 +24,42 @@ pub fn r#type() -> Value {
         },
     }
     .into()
+}
+
+#[derive(Clone)]
+struct ScriptTypeValue {
+    tp: Type,
+    data: Value,
+}
+
+impl ergo_runtime::value::TypedValueData for ScriptTypeValue {
+    fn ergo_type(&self) -> Type {
+        self.tp.clone()
+    }
+
+    fn data(&self) -> *const () {
+        &self.data as *const Value as *const ()
+    }
+}
+
+impl ergo_runtime::value::ValueDataInterface for ScriptTypeValue {
+    fn id(
+        &self,
+    ) -> ergo_runtime::abi_stable::future::BoxFuture<
+        ergo_runtime::value::IdInfo<ergo_runtime::abi_stable::u128::U128>,
+    > {
+        ergo_runtime::abi_stable::future::BoxFuture::new(async move {
+            depends![dyn self.tp, self.data].id().await.into()
+        })
+    }
+
+    fn late_bind(&mut self, scope: &ergo_runtime::value::LateScope) {
+        self.data.late_bind(scope);
+    }
+
+    fn get(&self) -> ergo_runtime::value::ValueType {
+        ergo_runtime::value::ValueType::typed(self)
+    }
 }
 
 #[types::ergo_fn]
@@ -65,7 +101,7 @@ pub fn r#type() -> Value {
 /// ```
 async fn new(id: types::String) -> Value {
     let tp = Type::named(id.as_ref().as_str().as_bytes());
-    let id = id.to_owned().0;
+    let id = id.into_owned().0;
 
     // Implement TypeName, Nested, and Functor by default
     let traits = Context::global().traits.clone();
@@ -85,7 +121,7 @@ async fn new(id: types::String) -> Value {
         ergo_trait_impl! {
             impl traits::Nested for _ {
                 async fn nested(&self) -> RVec<Value> {
-                    let data = unsafe { self.as_ref::<Value>() };
+                    let data = unsafe { (self.data_ptr().unwrap() as *const Value).as_ref().unwrap_unchecked() };
                     vec![data.clone()].into()
                 }
             }
@@ -97,10 +133,9 @@ async fn new(id: types::String) -> Value {
             impl traits::Functor for _ {
                 async fn map(self, f: Value) -> Value {
                     let tp = self.ergo_type().unwrap().clone();
-                    let data = unsafe { self.data().unwrap().as_ref::<Value>() }.clone();
+                    let data = unsafe { (self.data_ptr().unwrap() as *const Value).as_ref().unwrap_unchecked() }.clone();
                     let result = ergo_runtime::try_result!(traits::map(data, f).await);
-                    let deps = depends![dyn tp, result];
-                    unsafe { Value::new(RArc::new(tp), RArc::new(Erased::new(result)), deps) }
+                    Value::new(ScriptTypeValue { tp, data: result })
                 }
             }
         },
@@ -112,11 +147,7 @@ async fn new(id: types::String) -> Value {
         types::Unbound::new(
             move |arg| {
                 let tp = tp.clone();
-                async move {
-                    let deps = depends![dyn tp, arg];
-                    unsafe { Value::new(RArc::new(tp), RArc::new(Erased::new(arg)), deps) }
-                }
-                .boxed()
+                async move { Value::new(ScriptTypeValue { tp, data: arg }) }.boxed()
             },
             deps,
             format!(
@@ -140,11 +171,10 @@ async fn new(id: types::String) -> Value {
                         let tp = tp.clone();
                         async move {
                             try_result!(Context::eval(&mut arg).await);
-                            if arg.ergo_type().unwrap() != &tp {
+                            if arg.ergo_type().unwrap() != tp {
                                 return traits::type_error_for_t(arg, &tp).into_error().into();
                             }
-                            let data = arg.data().unwrap();
-                            let data = unsafe { (*data).as_ref::<Value>() };
+                            let data = unsafe { (arg.data_ptr().unwrap() as *const Value).as_ref().unwrap_unchecked() };
                             traits::bind(to_bind, data.clone()).await
                         }.boxed()
                     }, deps).into()

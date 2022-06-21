@@ -122,7 +122,6 @@ fn ergo_trait_definition(trt: ItemTrait) -> TokenStream {
             ReceiverType::Reference(span) => {
                 fn_args.push(quote_spanned! { *span=> &'ergo_trait ergo_runtime::value::Value });
                 fn_args.push(quote_spanned! { *span=> &'ergo_trait ergo_runtime::type_system::Type });
-                fn_args.push(quote_spanned! { *span=> &'ergo_trait ergo_runtime::abi_stable::type_erase::Erased });
             }
             ReceiverType::Owned(span) => {
                 fn_args.push(quote_spanned! { *span=> ergo_runtime::value::Value });
@@ -266,7 +265,7 @@ fn ergo_trait_definition(trt: ItemTrait) -> TokenStream {
         let args = args.iter().map(|(name, ty)| quote! { #name: #ty });
         let call_v = match rcvr {
             ReceiverType::Reference(span) => {
-                quote_spanned! { *span=> &ergo_trait_self_value, ergo_trait_self_value.ergo_type().unwrap(), ergo_trait_self_value.data().unwrap(), }
+                quote_spanned! { *span=> &ergo_trait_self_value, &ergo_trait_self_value.ergo_type().unwrap(), }
             }
             ReceiverType::Owned(span) => {
                 quote_spanned! { *span=> ergo_trait_self_value, }
@@ -508,14 +507,10 @@ fn do_ergo_trait_impl(
                     1,
                     quote_spanned! { *span=> #[allow(non_snake_case,unused)] SELF_TYPE: &'ergo_trait ergo_runtime::type_system::Type }
                 );
-                fn_args.insert(
-                    2,
-                    quote_spanned! { *span=> ergo_trait_erased: &'ergo_trait ergo_runtime::abi_stable::type_erase::Erased },
-                );
                 self_bind = Some(if untyped {
-                    quote_spanned! { *span=> #[allow(unused)] let ergo_trait_self = ergo_trait_erased; }
+                    quote_spanned! { *span=> #[allow(unused)] let ergo_trait_self = SELF_VALUE; }
                 } else {
-                    quote_spanned! { *span=> #[allow(unused)] let ergo_trait_self = unsafe { ergo_trait_erased.as_ref::<#ty>() }; }
+                    quote_spanned! { *span=> #[allow(unused)] let ergo_trait_self = SELF_VALUE.as_ref::<#ty>().unwrap(); }
                 });
                 block_tokens = replace_self(block_tokens);
             }

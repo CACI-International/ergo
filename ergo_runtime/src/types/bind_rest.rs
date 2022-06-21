@@ -3,12 +3,12 @@
 use crate as ergo_runtime;
 use crate::abi_stable::StableAbi;
 use crate::type_system::{ergo_traits_fn, ErgoType};
-use crate::{dependency::*, depends, TypedValue, Value};
+use crate::{TypedValue, Value};
 
 /// A type used as a key in maps to indicate to what to bind any remaining values.
 ///
 /// This type is used when merging unbound values into maps.
-#[derive(Clone, ErgoType, StableAbi)]
+#[derive(Clone, Hash, ErgoType, StableAbi)]
 #[repr(C)]
 pub struct BindRestKey;
 
@@ -19,21 +19,15 @@ pub struct BindRestKey;
 #[repr(C)]
 pub struct BindRest(pub Value);
 
-impl GetDependenciesConstant for BindRestKey {
-    fn get_depends(&self) -> DependenciesConstant {
-        depends![BindRestKey::ergo_type()]
-    }
-}
-
 impl From<BindRestKey> for TypedValue<BindRestKey> {
     fn from(v: BindRestKey) -> Self {
         Self::constant(v)
     }
 }
 
-impl GetDependencies for BindRest {
-    fn get_depends(&self) -> Dependencies {
-        depends![BindRest::ergo_type(), self.0]
+unsafe impl crate::value::InnerValues for BindRest {
+    fn visit<'a, F: FnMut(&'a Value)>(&'a self, mut f: F) {
+        f(&self.0);
     }
 }
 

@@ -88,14 +88,14 @@ pub fn match_value(ts: TokenStream) -> TokenStream {
     let get_bind_val = if by_ref {
         quote! { as_ref }
     } else {
-        quote! { to_owned }
+        quote! { into_owned }
     };
 
     let type_cases = type_cases.into_iter().map(|(tp, bind, body)| {
         quote! {
             #tp => {
-                let ergo_match_value_typed = ergo_match_value_e.as_type::<#tp>().unwrap();
-                let #bind = ergo_match_value_typed.#get_bind_val();
+                let __ergo_match_value_typed = __ergo_match_value_e.as_type::<#tp>().unwrap();
+                let #bind = __ergo_match_value_typed.#get_bind_val();
                 #body
             }
         }
@@ -103,12 +103,12 @@ pub fn match_value(ts: TokenStream) -> TokenStream {
 
     TokenStream::from(quote_spanned! { span=>
         {
-            let ergo_match_value_e: ergo_runtime::value::Value = #e;
-            match ergo_match_value_e.ergo_type() {
-                None => match ergo_match_value_e { #else_case },
-                Some(ergo_match_value_tp) => ergo_runtime::match_type!(ergo_match_value_tp => {
+            let __ergo_match_value_e: ergo_runtime::value::Value = #e;
+            match __ergo_match_value_e.ergo_type() {
+                None => match __ergo_match_value_e { #else_case },
+                Some(__ergo_match_value_tp) => ergo_runtime::match_type!(__ergo_match_value_tp => {
                     #(#type_cases ,)*
-                    => match ergo_match_value_e { #else_case }
+                    => match __ergo_match_value_e { #else_case }
                 })
             }
         }

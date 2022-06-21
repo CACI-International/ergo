@@ -26,8 +26,8 @@ pub struct Type {
 macro_rules! match_type {
     ( $type:expr => { $( $t:ty => $e:expr $(,)? )+ => $else:expr } ) => {
         {
-            let ergo_match_type_tp: &$crate::type_system::Type = $type;
-            $( if ergo_match_type_tp == &<$t as $crate::type_system::ErgoType>::ergo_type() { $e } else )+ { $else }
+            let __ergo_match_type_tp: $crate::type_system::Type = $type;
+            $( if __ergo_match_type_tp == <$t as $crate::type_system::ErgoType>::ergo_type() { $e } else )+ { $else }
         }
     };
 }

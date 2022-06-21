@@ -5,7 +5,7 @@ use crate::abi_stable::{std_types::RVec, type_erase::Erased, StableAbi};
 use crate::metadata::Source;
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
-use crate::{depends, Dependencies, GetDependencies, TypedValue, Value};
+use crate::{TypedValue, Value};
 use bincode;
 
 /// Script array type.
@@ -13,9 +13,11 @@ use bincode;
 #[repr(C)]
 pub struct Array(pub RVec<Value>);
 
-impl GetDependencies for Array {
-    fn get_depends(&self) -> Dependencies {
-        depends![Array::ergo_type(), ^@self.0]
+unsafe impl crate::value::InnerValues for Array {
+    fn visit<'a, F: FnMut(&'a Value)>(&'a self, mut f: F) {
+        for v in &self.0 {
+            f(v);
+        }
     }
 }
 
