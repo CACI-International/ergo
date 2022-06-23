@@ -44,6 +44,7 @@ pub async fn eval_for_id(mut v: _) -> Value {
 }
 
 #[types::ergo_fn]
+#[eval_for_id]
 /// Mark the given value as not pertinent to the identity of the expression.
 ///
 /// Arguments: `:value`
