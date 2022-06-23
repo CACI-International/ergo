@@ -1016,7 +1016,7 @@ pub mod lazy {
         }
     }
 
-    impl<Captures, F> ValueDataInterface for LazyValueFn<Captures, F, true>
+    impl<Captures, F> ValueDataInterface for LazyValueFn<Captures, F, false>
     where
         Captures: LazyCaptures,
         Self: LazyValueData + Clone + 'static,
@@ -1035,7 +1035,7 @@ pub mod lazy {
         }
     }
 
-    impl<Captures, F> ValueDataInterface for LazyValueFn<Captures, F, false>
+    impl<Captures, F> ValueDataInterface for LazyValueFn<Captures, F, true>
     where
         Captures: LazyCaptures,
         Self: LazyValueData + Clone + 'static,

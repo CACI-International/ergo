@@ -732,8 +732,6 @@ impl ExprEvaluator {
                 let v_type = witness($v);
                 ergo_runtime::lazy_value! {
                     #![contains($self)]
-                    #![id(self.value_id())]
-                    #![exclude_contains_from_id]
                     Context::spawn(EVAL_TASK_PRIORITY, |_| {}, async move {
                         let mut v: Value = async {
                             // Safety: v_type (from $v) must have been from a previous checked call
@@ -978,7 +976,7 @@ impl LateBind for ExprEvaluator {
 
 impl LazyValueId for ExprEvaluator {
     fn id(&self) -> BoxFuture<Identity> {
-        let me = self.clone();
+        let me = self.value_id();
         Context::spawn(EVAL_TASK_PRIORITY, |_| {}, async move {
             Ok(me.identity().await)
         })

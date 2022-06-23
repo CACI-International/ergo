@@ -95,7 +95,7 @@ impl LoadData {
             let ld = self.clone();
             let working_dir = script_file.and_then(|p| p.parent()).map(|p| p.to_owned());
             let mut std = ergo_runtime::lazy_value! {
-                #![depends(const nsid!(func::std))]
+                #![depends(const nsid!(std))]
                 #![eval_for_id]
                 let wd = working_dir.clone();
                 let path = match ld.resolve_script_path(working_dir, "std".as_ref()) {
@@ -130,7 +130,7 @@ impl LoadData {
                 ),
             };
             let mut workspace = ergo_runtime::lazy_value! {
-                #![depends(const nsid!(func::workspace))]
+                #![depends(const nsid!(workspace))]
                 #![eval_for_id]
                 let resolved = Context::global()
                     .shared_state
