@@ -262,12 +262,12 @@ ergo_traits_fn! {
         extern "C" fn id_eq_f<'a>(
             _trait_data: &'a Erased,
             v: &'a Value,
-            _tp: &'a Type,
+            tp: &'a Type,
             mut arg: Value) ->
             crate::abi_stable::future::BoxFuture<'a, Value> {
             crate::abi_stable::future::BoxFuture::new(async move {
                 crate::try_result!(Context::eval(&mut arg).await);
-                if v.id().await != arg.id().await {
+                if tp != &arg.ergo_type().unwrap() || v.id().await != arg.id().await {
                     match_value! { arg.clone(),
                         types::Args {..} => {
                             crate::diagnostic! {
