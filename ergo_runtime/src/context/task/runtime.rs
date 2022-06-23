@@ -18,7 +18,10 @@ use std::sync::{Arc, Weak};
 
 const MIN_BLOCKING_POOL_SIZE: usize = 2;
 pub const MAINTENANCE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+#[cfg(not(debug_assertions))]
 const INACTIVITY_DURATION: std::time::Duration = std::time::Duration::from_secs(1);
+#[cfg(debug_assertions)]
+const INACTIVITY_DURATION: std::time::Duration = std::time::Duration::from_secs(10);
 const WORKER_QUEUE_SIZE: u16 = 128;
 
 const INACTIVITY_INTERVALS: usize =
@@ -152,6 +155,11 @@ impl Priorities {
             if task.priority == *current {
                 // Task is the current priority level, increment the queued count
                 self.queued.fetch_add(1, Ordering::Relaxed);
+                log::trace!(
+                    "task {}: queued + 1 == {}",
+                    task.id,
+                    self.queued.load(Ordering::Relaxed)
+                );
                 break Some(task);
             } else if task.priority < *current {
                 // Task is a greater priority, change current/queued to reflect this, and make a
@@ -169,6 +177,7 @@ impl Priorities {
                 );
                 let prev_priority = std::mem::replace(&mut *wcurrent, task.priority);
                 let prev = self.queued.swap(1, Ordering::Relaxed);
+                log::trace!("task {}: queued = 1", task.id);
                 if prev > 0 {
                     self.ready.lock().insert(prev_priority, (prev, vec![]));
                 }
@@ -189,9 +198,6 @@ impl Priorities {
     /// Verify that a task has the correct priority to be run right now.
     pub fn verify(&self, task: Arc<Task>) -> Option<Arc<Task>> {
         let current = self.current.read();
-        if task.state.load(Ordering::Relaxed) == COMPLETE {
-            return None;
-        }
         if task.priority == *current {
             Some(task)
         } else {
@@ -210,21 +216,24 @@ impl Priorities {
         }
     }
 
-    /// Indicate that a task with the given priority is not runnable (is pending), optionally
-    /// returning the ready tasks that should now be queued. Tasks will be returned when the task
-    /// was the last ready task with the given priority.
-    pub fn pending(&self, priority: u32) -> Vec<Arc<Task>> {
+    /// Indicate that a task is not runnable (is pending), optionally returning the ready tasks
+    /// that should now be queued. Tasks will be returned when the task was the last ready task
+    /// with the given priority.
+    pub fn pending(&self, task: &Task) -> Vec<Arc<Task>> {
         let current = self.current.upgradable_read();
-        if priority == *current {
+        if task.priority == *current {
             if self.queued.fetch_sub(1, Ordering::Relaxed) == 1 {
+                log::trace!("task {}: queued - 1 == 0", task.id);
                 let mut current = RwLockUpgradableReadGuard::upgrade(current);
                 // Once we have the write lock, verify that the state is still the same as prior to
                 // acquiring the lock and get the new current priority and tasks.
-                if priority == *current && self.queued.load(Ordering::Relaxed) == 0 {
+                if task.priority == *current && self.queued.load(Ordering::Relaxed) == 0 {
+                    log::trace!("task {}: queued - 1 still == 0", task.id);
                     let mut guard = self.ready.lock();
                     if let Some(new_current) = guard.iter().next().map(|(k, _)| *k) {
                         log::trace!(
-                            "changing (downgrading) highest priority to {} from {}",
+                            "task {}: changing (downgrading) highest priority to {} from {}",
+                            task.id,
                             new_current,
                             *current
                         );
@@ -236,25 +245,33 @@ impl Priorities {
                         return v;
                     } else {
                         log::trace!(
-                            "changing (downgrading) highest priority to {} from {}",
+                            "task {}: changing (downgrading) highest priority to {} from {}",
+                            task.id,
                             u32::MAX,
                             *current
                         );
                         *current = u32::MAX;
                     }
                 }
+            } else {
+                log::trace!(
+                    "task {}: queued - 1 == {}",
+                    task.id,
+                    self.queued.load(Ordering::Relaxed)
+                );
             }
         } else {
             // This case can happen, but should happen infrequently (`verify` should catch things
             // earlier).
             debug_assert!(
-                priority > *current,
-                "priority ({}) was unexpectedly higher than current ({})",
-                priority,
+                task.priority > *current,
+                "task {}: priority ({}) was unexpectedly higher than current ({})",
+                task.id,
+                task.priority,
                 *current
             );
             let mut guard = self.ready.lock();
-            let e = guard.get_mut(&priority).unwrap();
+            let e = guard.get_mut(&task.priority).unwrap();
             e.0 -= 1;
         }
         vec![]
@@ -788,33 +805,45 @@ impl TaskPool {
     pub fn try_run_task(&self, inner: &Inner) {
         if let Some(task) = self.next_ready_task(inner) {
             use std::task::Context;
-            if task
-                .state
-                .compare_exchange(READY, TRANSITIONING, Ordering::Relaxed, Ordering::Relaxed)
-                .is_ok()
-            {
-                log::trace!("task {}: READY -> TRANSITIONING", task.id);
-                for t in self.priorities.pending(task.priority) {
-                    self.push_yield(t);
-                }
-                task.state.store(PENDING, Ordering::Relaxed);
-                log::trace!("task {}: PENDING", task.id);
-                self.made_progress.store(true, Ordering::Relaxed);
-                self.currently_polling.fetch_add(1, Ordering::Relaxed);
-                if task
-                    .future
-                    .poll(&mut Context::from_waker(&task.clone().into()))
-                {
-                    if task.state.swap(COMPLETE, Ordering::Relaxed) == READY {
-                        log::trace!("task {}: READY -> COMPLETE", task.id);
-                        for t in self.priorities.pending(task.priority) {
-                            self.push_yield(t);
-                        }
-                    } else {
-                        log::trace!("task {}: COMPLETE", task.id);
+            match task.state.compare_exchange(
+                READY,
+                TRANSITIONING,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => {
+                    log::trace!("task {}: READY -> TRANSITIONING", task.id);
+                    for t in self.priorities.pending(&task) {
+                        self.push_yield(t);
                     }
+                    task.state.store(PENDING, Ordering::Relaxed);
+                    log::trace!("task {}: PENDING", task.id);
+                    self.made_progress.store(true, Ordering::Relaxed);
+                    self.currently_polling.fetch_add(1, Ordering::Relaxed);
+                    if task
+                        .future
+                        .poll(&mut Context::from_waker(&task.clone().into()))
+                    {
+                        if task.state.swap(COMPLETE, Ordering::Relaxed) != READY {
+                            log::trace!("task {}: COMPLETE", task.id);
+                        }
+                        // Otherwise next_ready_task will filter out the task when it comes up again.
+                    }
+                    self.currently_polling.fetch_sub(1, Ordering::Relaxed);
                 }
-                self.currently_polling.fetch_sub(1, Ordering::Relaxed);
+                Err(other) if other == COMPLETE => {
+                    // This can only happen if the task had been READY when made COMPLETE, which
+                    // means we must indicate it as pending now to remove it's representation in
+                    // the shared state. It's difficult to do this exactly when we transition to
+                    // COMPLETE because there are no guarantees that the READY task is actually
+                    // queued yet (thus no guarantees that it is represented in the shared state),
+                    // whereas at this point it must have been queued.
+                    for t in self.priorities.pending(&task) {
+                        self.push_yield(t);
+                    }
+                    log::trace!("task {}: COMPLETE", task.id);
+                }
+                _ => (),
             }
         }
     }

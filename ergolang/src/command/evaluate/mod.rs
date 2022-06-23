@@ -433,10 +433,11 @@ impl Evaluate {
             drop(signal_handler_task);
 
             let sources = runtime.ctx.global.diagnostic_sources();
+            let progress = runtime.ctx.global.progress.clone();
             drop(runtime);
 
             drop(complete_send.send(()));
-            (result, sources)
+            (result, sources, progress)
         });
 
         loop {
@@ -452,7 +453,7 @@ impl Evaluate {
             }
         }
 
-        let (result, sources) = exec_thread.join().unwrap();
+        let (result, sources, progress) = exec_thread.join().unwrap();
 
         // Drop the logger prior to the context dropping, so that any stored state (like errors) can
         // free with the plugins still loaded.
@@ -461,7 +462,12 @@ impl Evaluate {
         let errors = loop {
             match std::sync::Arc::try_unwrap(logger.take().unwrap()) {
                 Ok(mut l) => {
-                    break l.get_mut().unwrap().take_errors();
+                    let deadlock_errors = progress.deadlock_errors();
+                    break if deadlock_errors.len() > 0 {
+                        deadlock_errors
+                    } else {
+                        l.get_mut().unwrap().take_errors()
+                    };
                 }
                 Err(l) => {
                     logger = Some(l);

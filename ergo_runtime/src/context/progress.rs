@@ -1,11 +1,18 @@
 //! Progress state, used for detecting deadlock.
 
-use crate::abi_stable::{std_types::RArc, StableAbi};
+use crate::abi_stable::{
+    external_types::RMutex,
+    std_types::{RArc, RVec},
+    StableAbi,
+};
 use crate::metadata::Source;
 use crate::Value;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+#[cfg(not(debug_assertions))]
 const DEADLOCK_DURATION: std::time::Duration = std::time::Duration::from_secs(1);
+#[cfg(debug_assertions)]
+const DEADLOCK_DURATION: std::time::Duration = std::time::Duration::from_secs(10);
 const DEADLOCK_BACKTRACE_LIMIT: usize = 100;
 
 const DEADLOCK_INTERVALS: usize = (DEADLOCK_DURATION.as_millis()
@@ -18,6 +25,34 @@ pub struct Progress {
     inner: RArc<Inner>,
 }
 
+#[derive(StableAbi)]
+#[repr(C)]
+struct DeadlockErrors(RMutex<RVec<crate::Error>>);
+
+impl std::fmt::Debug for DeadlockErrors {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.debug_struct("DeadlockErrors")
+            .field("0", &*self.0.lock())
+            .finish()
+    }
+}
+
+impl Default for DeadlockErrors {
+    fn default() -> Self {
+        DeadlockErrors(RMutex::new(Default::default()))
+    }
+}
+
+impl DeadlockErrors {
+    pub fn push(&self, e: crate::Error) {
+        self.0.lock().push(e);
+    }
+
+    pub fn take(&self) -> RVec<crate::Error> {
+        std::mem::take(&mut *self.0.lock())
+    }
+}
+
 #[derive(Debug, Default, StableAbi)]
 #[repr(C)]
 struct Inner {
@@ -26,6 +61,7 @@ struct Inner {
     attempting_progress: AtomicUsize,
     deadlock_detected: AtomicBool,
     intervals: AtomicUsize,
+    deadlock_errors: DeadlockErrors,
 }
 
 pub struct AttemptToken<'a> {
@@ -71,7 +107,10 @@ impl Progress {
                 for (i, s) in sources.into_iter().enumerate() {
                     (&mut d).add_primary_label(s.with(i + 1));
                 }
-                return Err(d.into());
+
+                let e: crate::Error = d.into();
+                self.inner.deadlock_errors.push(e.clone());
+                return Err(e);
             }
 
             // Generate a deadlock error if the value is an aborted Error.
@@ -80,12 +119,14 @@ impl Progress {
                 .map(|e| e.is_aborted())
                 .unwrap_or(false)
             {
-                return Err(crate::error! {
+                let e = crate::error! {
                     labels: [
                         primary(Source::get(&value).with("while evaluating this value"))
                     ],
                     error: "deadlock detected"
-                });
+                };
+                self.inner.deadlock_errors.push(e.clone());
+                return Err(e);
             }
         }
 
@@ -150,5 +191,14 @@ impl Progress {
     /// Return whether progress has been made in the most recent maintenance cycle.
     pub fn made_progress(&self) -> bool {
         self.inner.made_progress_last.load(Ordering::Relaxed)
+    }
+
+    /// Get any deadlock errors that have occurred since the last call.
+    pub fn deadlock_errors(&self) -> crate::error::Diagnostics {
+        let mut ret = crate::error::Diagnostics::default();
+        for e in self.inner.deadlock_errors.take() {
+            ret.insert(&e);
+        }
+        ret
     }
 }
