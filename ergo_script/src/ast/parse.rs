@@ -99,6 +99,8 @@ pub enum Error<TreeError> {
     BadAttribute,
     /// A comment was in an invalid position.
     BadComment,
+    /// A late binding key was not a string.
+    BadLateKey,
 }
 
 impl<E: fmt::Display> fmt::Display for Error<E> {
@@ -114,6 +116,7 @@ impl<E: fmt::Display> fmt::Display for Error<E> {
                 "attributes and doc comments can only be within blocks or brackets preceding an expression or binding, or directly preceding a single expression"
             ),
             Error::BadComment => write!(f, "comments are not valid in this context"),
+            Error::BadLateKey => write!(f, "late binding keys must always be string literals"),
         }
     }
 }
@@ -421,7 +424,25 @@ fn to_expression<E>(
                 Err(vec![source.with(Error::BadDollar)])
             }
         }
+        Tree::DollarQuestion(t) => {
+            // DollarQuestion may only be followed by a string.
+            let inner = to_expression(ctx, *t)?;
+            if inner.expr_type() == ExpressionType::String {
+                Ok(source.with(Expression::late_get(inner)))
+            } else {
+                Err(vec![source.with(Error::BadLateKey)])
+            }
+        }
         Tree::ColonPrefix(t) => Ok(source.with(Expression::set(to_expression(ctx, *t)?))),
+        Tree::ColonQuestion(t) => {
+            // ColonQuestion may only be followed by a string.
+            let inner = to_expression(ctx, *t)?;
+            if inner.expr_type() == ExpressionType::String {
+                Ok(source.with(Expression::late_set(inner)))
+            } else {
+                Err(vec![source.with(Error::BadLateKey)])
+            }
+        }
         Tree::Equal(_, _) => Err(vec![source.with(Error::BadEqual)]),
         Tree::Arrow(a, b) => Ok(source.with(Expression::function(
             to_expression(ctx, *a)?,

@@ -185,12 +185,18 @@ impl Script {
         ctx: &mut ast::Context,
         lint_level: LintLevel,
     ) -> Result<Self, Error> {
-        ast::load(src, ctx, lint_level).map(|(ast, captures, lint_messages)| Script {
-            ast,
-            captures: captures.into_iter().collect(),
-            top_level_env: Default::default(),
-            lint_messages,
-            backtrace: false,
+        ast::load(src, ctx, lint_level).map(|(ast, captures, lint_messages)| {
+            let mut script = Script {
+                ast,
+                captures: captures.into_iter().collect(),
+                top_level_env: Default::default(),
+                lint_messages,
+                backtrace: false,
+            };
+            script
+                .captures
+                .late(ctx.late_bindings.values().cloned().collect());
+            script
         })
     }
 

@@ -17,10 +17,6 @@ pub fn module() -> Value {
         "equal" = equal(),
         "identity" = identity(),
         "index" = index(),
-        "late" = crate::make_string_map! {
-            "get" = late_binding_get(),
-            "bind" = late_binding_set()
-        },
         "merge" = merge(),
         "meta" = crate::make_string_map! {
             "eval" = meta_eval(),
@@ -181,34 +177,6 @@ async fn source_copy(from: _, mut to: _) -> Value {
         to.clear_metadata(&Source);
     }
     to
-}
-
-#[types::ergo_fn]
-#[eval_for_id]
-/// Get a late binding.
-///
-/// Arguments: `:key`
-///
-/// Returns a value which can be late-bound with the given key.
-async fn late_binding_get(key: _) -> Value {
-    let key = key.id().await;
-    Value::late_bound(key.into())
-}
-
-#[types::ergo_fn]
-#[eval_for_id]
-/// Set late bindings in a value.
-///
-/// Arguments: `(Map :bindings) :value`
-///
-/// Returns the newly-bound value.
-async fn late_binding_set(bindings: types::Map, mut value: _) -> Value {
-    let mut scope = ergo_runtime::value::LateScope::default();
-    for (k, v) in &bindings.as_ref().0 {
-        scope.scope.insert((*k.id()).into(), v.clone());
-    }
-    value.late_bind(&scope);
-    value
 }
 
 #[types::ergo_fn]
@@ -423,17 +391,6 @@ mod test {
         fn dynamic_binding_multiple_scopes(t) {
             t.assert_eq("the-value = self:value:dynamic:get the-value
                 [self:value:dynamic:eval {the-value = 10} $the-value, self:value:dynamic:eval {the-value = hi} $the-value]", "[10,hi]");
-        }
-
-        fn late_binding(t) {
-            t.assert_eq("self:value:late:get hi", "$unset");
-            t.assert_eq("v = self:value:late:get something; self:value:late:bind { something = value } $v", "value");
-            t.assert_eq("f = fn :x -> <| self:value:late:get my_func |> $x
-                say_hello = fn :name -> \"hi, $name\"
-                self:value:late:bind { my_func = $say_hello } <| f dude", "\"hi, dude\"");
-            t.assert_eq("v = { x = self:value:late:get val }
-                [self:value:late:bind { val = 10 } $v, self:value:late:bind { val = hi } $v]",
-                "[{x = 10}, {x = hi}]");
         }
 
         fn meta(t) {

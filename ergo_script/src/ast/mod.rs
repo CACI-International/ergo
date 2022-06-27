@@ -362,6 +362,16 @@ expression_types! {
         value
     }
 
+    pub struct LateGet {
+        (pub capture_key: Option<CaptureKey>),
+        value
+    }
+
+    pub struct LateSet {
+        (pub capture_key: Option<CaptureKey>),
+        value
+    }
+
     pub struct Index { value, index }
 
     pub struct Command { function, [args: CommandItem] }
@@ -386,6 +396,8 @@ pub enum ExpressionType {
     Function,
     Get,
     Set,
+    LateGet,
+    LateSet,
     Index,
     Command,
     DocComment,
@@ -439,6 +451,8 @@ macro_rules! match_all {
             Function($e) => $body,
             Get($e) => $body,
             Set($e) => $body,
+            LateGet($e) => $body,
+            LateSet($e) => $body,
             Index($e) => $body,
             Command($e) => $body,
             DocComment($e) => $body,
@@ -456,6 +470,8 @@ macro_rules! match_all {
             Function($e) => { type $t = Function; $body },
             Get($e) => { type $t = Get; $body },
             Set($e) => { type $t = Set; $body },
+            LateGet($e) => { type $t = LateGet; $body },
+            LateSet($e) => { type $t = LateSet; $body },
             Index($e) => { type $t = Index; $body },
             Command($e) => { type $t = Command; $body },
             DocComment($e) => { type $t = DocComment; $body },
@@ -473,6 +489,8 @@ macro_rules! match_all {
             Function($e) => $body,
             Get($e) => $body,
             Set($e) => $body,
+            LateGet($e) => $body,
+            LateSet($e) => $body,
             Index($e) => $body,
             Command($e) => $body,
             DocComment($e) => $body,
@@ -568,6 +586,22 @@ impl Expression {
         Self::create(Set {
             capture_key: None,
             scope_key: ScopeKey::UNSET,
+            value,
+            captures: Default::default(),
+        })
+    }
+
+    pub fn late_get(value: Expr) -> Self {
+        Self::create(LateGet {
+            capture_key: None,
+            value,
+            captures: Default::default(),
+        })
+    }
+
+    pub fn late_set(value: Expr) -> Self {
+        Self::create(LateSet {
+            capture_key: None,
             value,
             captures: Default::default(),
         })
@@ -738,6 +772,8 @@ impl Expression {
             Function(v) => Some(&v.captures),
             Get(v) => Some(&v.captures),
             Set(v) => Some(&v.captures),
+            LateGet(v) => Some(&v.captures),
+            LateSet(v) => Some(&v.captures),
             Index(v) => Some(&v.captures),
             Command(v) => Some(&v.captures),
             DocComment(v) => Some(&v.captures),
@@ -810,6 +846,8 @@ impl Expression {
             Function(v) => v.captures = captures,
             Get(v) => v.captures = captures,
             Set(v) => v.captures = captures,
+            LateGet(v) => v.captures = captures,
+            LateSet(v) => v.captures = captures,
             Index(v) => v.captures = captures,
             Command(v) => v.captures = captures,
             DocComment(v) => v.captures = captures,
@@ -866,7 +904,11 @@ pub fn load(
 }
 
 /// Global context for compilation.
-pub type Context = keyset::Context;
+#[derive(Default)]
+pub struct Context {
+    captures: keyset::Context,
+    pub late_bindings: HashMap<Expression, CaptureKey>,
+}
 
 #[derive(Debug, PartialEq, PartialOrd, Eq, Ord, Clone, Copy)]
 /// The lint level.
@@ -919,6 +961,19 @@ struct ExpressionCompiler<'a> {
     capture_mapping: ScopeMap<Expression, CaptureKey>,
     lint: Option<Lint>,
     errors: Vec<Error>,
+}
+
+impl Context {
+    fn key(&mut self) -> CaptureKey {
+        self.captures.key()
+    }
+
+    fn late(&mut self, e: Expression) -> CaptureKey {
+        self.late_bindings
+            .entry(e)
+            .or_insert_with(|| self.captures.key())
+            .clone()
+    }
 }
 
 impl<'a> ExpressionCompiler<'a> {
@@ -1106,6 +1161,21 @@ impl<'a> ExpressionCompiler<'a> {
                     }
                     do_captures!(subexpr v);
                 }
+            },
+            LateGet(v) => {
+                // Late gets may only be of a string, and will always result in a capture key.
+                debug_assert!(v.value.expr_type() == ExpressionType::String);
+                do_captures!(v, |e_caps| {
+                    let key = self.capture_context.late(v.value.clone().unwrap());
+                    v.capture_key = Some(key);
+                    e_caps.insert(key);
+                });
+            },
+            LateSet(v) => {
+                // Late sets may only be of a string, and will always result in a capture key.
+                debug_assert!(v.value.expr_type() == ExpressionType::String);
+                let key = self.capture_context.late(v.value.clone().unwrap());
+                v.capture_key = Some(key);
             },
             Index(v) => do_captures!(v, |e_caps| {
                 self.compile_captures(&mut v.value, e_caps);

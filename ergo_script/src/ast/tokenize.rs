@@ -33,7 +33,9 @@ pub enum SymbolicToken {
     Caret,
     Colon,
     ColonPrefix,
+    ColonQuestion,
     Dollar,
+    DollarQuestion,
     Tilde,
     TildeEqual,
     Arrow,
@@ -107,8 +109,16 @@ impl<T> Token<T> {
         Token::Symbol(SymbolicToken::ColonPrefix)
     }
 
+    pub fn colon_question() -> Self {
+        Token::Symbol(SymbolicToken::ColonQuestion)
+    }
+
     pub fn dollar() -> Self {
         Token::Symbol(SymbolicToken::Dollar)
+    }
+
+    pub fn dollar_question() -> Self {
+        Token::Symbol(SymbolicToken::DollarQuestion)
     }
 
     pub fn tilde() -> Self {
@@ -210,7 +220,9 @@ impl fmt::Display for SymbolicToken {
             Equal | TildeEqual => write!(f, "="),
             Caret => write!(f, "^"),
             Colon | ColonPrefix => write!(f, ":"),
+            ColonQuestion => write!(f, ":?"),
             Dollar => write!(f, "$"),
+            DollarQuestion => write!(f, "$?"),
             Tilde => write!(f, "~"),
             Arrow => write!(f, "->"),
             Pipe => write!(f, "|"),
@@ -629,10 +641,13 @@ impl<'tok, T: FinishAt + 'tok, S: StringSlice<'tok>> NextToken<'tok, S> for Norm
                 '=' => Token::equal(),
                 '^' => Token::caret(),
                 ':' => {
+                    let question = position.match_skip("?");
                     let next_is_boundary =
                         position.peek().map(|c| c.is_whitespace()).unwrap_or(true);
                     if next_is_boundary {
                         return TokenElseString::Err(Error::InvalidColon);
+                    } else if question {
+                        Token::colon_question()
                     } else if previous_was_boundary {
                         Token::colon_prefix()
                     } else {
@@ -640,10 +655,13 @@ impl<'tok, T: FinishAt + 'tok, S: StringSlice<'tok>> NextToken<'tok, S> for Norm
                     }
                 }
                 '$' => {
+                    let question = position.match_skip("?");
                     let next_is_boundary =
                         position.peek().map(|c| c.is_whitespace()).unwrap_or(true);
                     if next_is_boundary {
                         return TokenElseString::Err(Error::InvalidDollar);
+                    } else if question {
+                        Token::dollar_question()
                     } else {
                         Token::dollar()
                     }
@@ -1323,12 +1341,14 @@ mod test {
     #[test]
     fn symbols() {
         assert_tokens(
-            "=^:$->|<||>#a##a",
+            "=^::?$$?->|<||>#a##a",
             &[
                 Token::equal(),
                 Token::caret(),
                 Token::colon(),
+                Token::colon_question(),
                 Token::dollar(),
+                Token::dollar_question(),
                 Token::arrow(),
                 Token::pipe(),
                 Token::pipe_left(),
@@ -1372,11 +1392,27 @@ mod test {
     }
 
     #[test]
+    fn colon_question() {
+        assert_tokens(":?a", &[Token::colon_question(), Token::string("a")]);
+        assert_tokens(" :?a", &[Token::colon_question(), Token::string("a")]);
+        assert_err(":?", Error::InvalidColon);
+        assert_err(":? ", Error::InvalidColon);
+    }
+
+    #[test]
     fn dollar() {
         assert_tokens("$a", &[Token::dollar(), Token::string("a")]);
         assert_tokens(" $a", &[Token::dollar(), Token::string("a")]);
         assert_err("$", Error::InvalidDollar);
         assert_err("$ ", Error::InvalidDollar);
+    }
+
+    #[test]
+    fn dollar_question() {
+        assert_tokens("$?a", &[Token::dollar_question(), Token::string("a")]);
+        assert_tokens(" $?a", &[Token::dollar_question(), Token::string("a")]);
+        assert_err("$?", Error::InvalidDollar);
+        assert_err("$? ", Error::InvalidDollar);
     }
 
     #[test]
@@ -1477,7 +1513,7 @@ mod test {
     #[test]
     fn string_ends() {
         assert_tokens(
-            "a[b]c{d}e(f)g:h,i;j^k=l\nm n|o<|p|>q->r\"s\"t$u~v=w",
+            "a[b]c{d}e(f)g:h,i;j^k=l\nm n|o<|p|>q->r\"s\"t$u~v=w:?x$?y",
             &[
                 Token::string("a"),
                 Token::bracket(),
@@ -1523,6 +1559,10 @@ mod test {
                 Token::string("v"),
                 Token::tilde_equal(),
                 Token::string("w"),
+                Token::colon_question(),
+                Token::string("x"),
+                Token::dollar_question(),
+                Token::string("y"),
             ],
         );
     }

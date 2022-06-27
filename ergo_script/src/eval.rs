@@ -35,6 +35,7 @@ pub enum Capture {
 #[derive(Clone, Debug, Default)]
 pub struct Captures {
     inner: HashMap<CaptureKey, Capture>,
+    late: CaptureSet,
 }
 
 impl std::iter::FromIterator<(CaptureKey, Expr)> for Captures {
@@ -47,6 +48,7 @@ impl std::iter::FromIterator<(CaptureKey, Expr)> for Captures {
                 .into_iter()
                 .map(|(k, e)| (k, Capture::Expr(e)))
                 .collect(),
+            late: Default::default(),
         }
     }
 }
@@ -72,11 +74,19 @@ impl Captures {
                     }
                 })
                 .collect(),
+            late: self.late.clone(),
         }
     }
 
     pub fn ready(&self, subset: &CaptureSet) -> bool {
         subset.iter().all(|k| self.get(k).is_some())
+    }
+
+    pub fn late(&mut self, late: CaptureSet) {
+        self.late = late;
+        for k in self.late.clone().iter() {
+            self.resolve_late(k, ergo_runtime::types::Unset.into());
+        }
     }
 
     pub fn resolve(&mut self, key: CaptureKey, value: Value) {
@@ -85,6 +95,10 @@ impl Captures {
                 panic!("capture resolved more than once");
             }
         }
+    }
+
+    pub fn resolve_late(&mut self, key: CaptureKey, value: Value) {
+        self.inner.insert(key, Capture::Evaluated(value));
     }
 
     pub fn resolve_string_gets(&mut self, with: &HashMap<String, Value>) -> Result<()> {
@@ -115,6 +129,16 @@ impl LateBind for Captures {
                 v.late_bind(scope);
             }
         }
+    }
+
+    fn late_bound(&self) -> ergo_runtime::value::LateBound {
+        let mut lb = ergo_runtime::value::LateBound::default();
+        for v in self.inner.values() {
+            if let Capture::Evaluated(v) = v {
+                lb.extend(v.late_bound());
+            }
+        }
+        lb
     }
 }
 
@@ -173,6 +197,10 @@ impl Scope {
         self.inner.lock().insert(ScopeEntryKey { cap, key }, None);
     }
 
+    pub fn take(&mut self) -> Self {
+        std::mem::replace(self, Self::new())
+    }
+
     pub fn into_inner(self) -> Vec<(Option<CaptureKey>, EvaluatedValue, Value)> {
         match std::sync::Arc::try_unwrap(self.inner) {
             Err(a) => std::mem::take(&mut *a.lock()),
@@ -187,6 +215,7 @@ impl Scope {
 #[derive(Clone)]
 struct Scopes {
     inner: BTreeMap<ScopeKey, Scope>,
+    pub late: Scope,
 }
 
 #[derive(Debug)]
@@ -196,6 +225,7 @@ impl Scopes {
     pub fn new() -> Self {
         Scopes {
             inner: Default::default(),
+            late: Scope::new(),
         }
     }
 
@@ -357,7 +387,6 @@ struct ExprEvaluator {
     captures: Captures,
     scopes: Scopes,
     scope_key: ScopeKey,
-    late_scope: LateScope,
     cache: ExprEvaluatorCache,
 }
 
@@ -385,7 +414,6 @@ impl ExprEvaluator {
             captures,
             scopes: Scopes::new(),
             scope_key: ScopeKey::new(),
-            late_scope: Default::default(),
             cache: Default::default(),
         }
     }
@@ -427,7 +455,6 @@ impl ExprEvaluator {
                 .unwrap_or_default(),
             scopes: self.scopes.clone(),
             scope_key: self.scope_key.enter(child),
-            late_scope: self.late_scope.clone(),
             cache: self
                 .cache
                 .children
@@ -441,13 +468,8 @@ impl ExprEvaluator {
         self
     }
 
-    fn no_late_scope(mut self) -> Self {
-        self.late_scope = Default::default();
-        self
-    }
-
     fn no_scopes(self) -> Self {
-        self.no_lexical_scope().no_late_scope()
+        self.no_lexical_scope()
     }
 
     /// Evaluate block items.
@@ -556,6 +578,7 @@ impl ExprEvaluator {
                 }
             }
 
+            // Process any new bindings
             let new_scope = me.scopes.close(close_scope);
 
             for (cap, k, v) in new_scope {
@@ -567,6 +590,17 @@ impl ExprEvaluator {
                 if let Some(cap) = cap {
                     me.captures.resolve(cap, v);
                 }
+            }
+
+            // Process any new late bindings.
+            let late_scope = me.scopes.late.take().into_inner();
+            if !late_scope.is_empty() {
+                let mut scope = LateScope::default();
+                for (cap, _, v) in late_scope {
+                    let key = cap.expect("late scope bindings must have a capture key").0 as u128;
+                    scope.scope.insert(key.into(), v);
+                }
+                me.late_bind(&scope);
             }
         }
 
@@ -603,6 +637,17 @@ impl ExprEvaluator {
             .unwrap_or(true)
     }
 
+    fn late_captures(&self) -> CaptureSet {
+        self.expr
+            .captures()
+            .map(|c| {
+                let mut ret = self.captures.late.clone();
+                ret.intersect_with(c);
+                ret
+            })
+            .unwrap_or_default()
+    }
+
     /// Get the identity of the expression.
     ///
     /// The identity is determined by:
@@ -619,12 +664,17 @@ impl ExprEvaluator {
     fn identity<'b>(&'b self) -> BoxFuture<'b, Identity> {
         let captures_ready = self.captures_ready();
         let compute = async move {
-            if let Some(cap) = self
-                .expr
-                .value()
-                .as_ref::<ast::Get>()
-                .map(|g| g.capture_key.expect("gets must always have a capture key"))
-            {
+            if let Some(cap) = {
+                let e = self.expr.value();
+                e.as_ref::<ast::Get>()
+                    .map(|g| g.capture_key.expect("gets must always have a capture key"))
+                    .or_else(|| {
+                        e.as_ref::<ast::LateGet>().map(|g| {
+                            g.capture_key
+                                .expect("late gets must always have a capture key")
+                        })
+                    })
+            } {
                 if let Some(v) = self.captures.get(cap) {
                     return v.clone().eval_id().await;
                 }
@@ -733,14 +783,11 @@ impl ExprEvaluator {
                 ergo_runtime::lazy_value! {
                     #![contains($self)]
                     Context::spawn(EVAL_TASK_PRIORITY, |_| {}, async move {
-                        let mut v: Value = async {
+                        let v: Value = async {
                             // Safety: v_type (from $v) must have been from a previous checked call
                             let $v = unsafe { $self.expr_as(v_type) };
                             $($body)*
                         }.await;
-                        if !$self.late_scope.scope.is_empty() {
-                            v.late_bind(&$self.late_scope);
-                        }
                         Ok(v)
                     })
                     .await
@@ -880,6 +927,28 @@ impl ExprEvaluator {
                     }.boxed()
                 }, id).into()
             },
+            LateGet(get) => {
+                let cap = get.capture_key.expect("late gets must always have a capture key");
+                match self.captures.get(cap) {
+                    Some(v) => v.clone(),
+                    None => types::Unset.into(),
+                }
+            },
+            LateSet(set) => {
+                let me = self.clone().no_eval_cache();
+                let id = self.value_id();
+                let k = me.child(&set.value).evaluate().await.as_evaluated().await;
+                me.scopes.late.init(set.capture_key.clone(), k.clone());
+                types::Unbound::new_no_doc(move |v| {
+                    let me = me.clone();
+                    let k = k.clone();
+                    async move {
+                        let set = unsafe { me.expr.as_ref_unchecked::<ast::LateSet>() };
+                        me.scopes.late.add(set.capture_key.clone(), k, v.clone());
+                        types::Unit.into()
+                    }.boxed()
+                }, id).into()
+            },
             Index(ind) => delayed! { me, ind,
                 let mut value = me.child(&ind.value).evaluate().await;
                 let index = me.child(&ind.index).evaluate().await;
@@ -964,13 +1033,24 @@ impl ExprEvaluator {
 impl LateBind for ExprEvaluator {
     fn late_bind(&mut self, scope: &LateScope) {
         self.captures.late_bind(scope);
-        self.late_scope.scope.extend(scope.scope.clone());
+        for k in self.late_captures().iter() {
+            if let Some(v) = scope.scope.get(&(k.0 as u128)) {
+                self.captures.resolve_late(k, v.clone());
+            }
+        }
         // Remove any cached evaluation of this expression and all child expressions, as the late
         // bindings may change them.
-        // TODO this could be more efficient by having syntax indicate late bindings, which would
-        // allow the expression evaluator to deeply replace the syntax in child
-        // expressions and clear only those caches.
+        // TODO this could be more efficient by using the expression tree to deeply clear only the
+        // cached child expressions which use the late bindings.
         self.cache = Default::default();
+    }
+
+    fn late_bound(&self) -> ergo_runtime::value::LateBound {
+        let mut ret = self.captures.late_bound();
+        for k in self.late_captures().iter() {
+            ret.insert((k.0 as u128).into());
+        }
+        ret
     }
 }
 
@@ -993,6 +1073,10 @@ impl ergo_runtime::value::lazy::LazyCaptures for ExprEvaluator {
 
     fn late_bind(&mut self, scope: &LateScope) {
         LateBind::late_bind(self, scope);
+    }
+
+    fn late_bound(&self) -> ergo_runtime::value::LateBound {
+        LateBind::late_bound(self)
     }
 }
 

@@ -16,7 +16,9 @@ pub enum Tree {
     String(String),
     Caret(Box<Source<Tree>>),
     ColonPrefix(Box<Source<Tree>>),
+    ColonQuestion(Box<Source<Tree>>),
     Dollar(Box<Source<Tree>>),
+    DollarQuestion(Box<Source<Tree>>),
     Hash(Box<Source<Tree>>),
     DoubleHash(Box<Source<Tree>>),
     Equal(Box<Source<Tree>>, Box<Source<Tree>>),
@@ -206,9 +208,8 @@ impl Tree {
 
         match self {
             String(_) => Single::None,
-            Caret(t) | Dollar(t) | Hash(t) | DoubleHash(t) | Tilde(t) => {
-                t.single_colon_string_impl()
-            }
+            Caret(t) | ColonQuestion(t) | Dollar(t) | DollarQuestion(t) | Hash(t)
+            | DoubleHash(t) | Tilde(t) => t.single_colon_string_impl(),
             ColonPrefix(t) => t.string().into(),
             Equal(a, b) | TildeEqual(a, b) | Arrow(a, b) | Colon(a, b) => {
                 a.single_colon_string_impl() + b.single_colon_string_impl()
@@ -468,8 +469,8 @@ where
 
         // Resolve operators
         // Precedence (descending):
-        //   Dollar Prefix
-        //   Colon Prefix
+        //   Dollar/DollarQuestion Prefix
+        //   Colon/ColonQuestion Prefix
         //   Colon (Left assoc)
         //   TildeEqual (Left assoc)
         //   Tilde Prefix
@@ -678,18 +679,36 @@ where
         fn dollar<E>(toks: &mut Toks) -> TResult<E> {
             prefix_op(
                 toks,
-                |v| v.is_symbol(&SymbolicToken::Dollar),
+                |v| {
+                    v.is_symbol(&SymbolicToken::Dollar)
+                        | v.is_symbol(&SymbolicToken::DollarQuestion)
+                },
                 to_treedeque,
-                |_, t| Tree::Dollar(t.into()),
+                |s, t| match s {
+                    TreeOrSymbol::Symbol(SymbolicToken::Dollar) => Tree::Dollar(t.into()),
+                    TreeOrSymbol::Symbol(SymbolicToken::DollarQuestion) => {
+                        Tree::DollarQuestion(t.into())
+                    }
+                    _ => panic!("unexpected symbol"),
+                },
             )
         }
 
         fn colon_prefix<E>(toks: &mut Toks) -> TResult<E> {
             prefix_op(
                 toks,
-                |v| v.is_symbol(&SymbolicToken::ColonPrefix),
+                |v| {
+                    v.is_symbol(&SymbolicToken::ColonPrefix)
+                        | v.is_symbol(&SymbolicToken::ColonQuestion)
+                },
                 dollar,
-                |_, t| Tree::ColonPrefix(t.into()),
+                |s, t| match s {
+                    TreeOrSymbol::Symbol(SymbolicToken::ColonPrefix) => Tree::ColonPrefix(t.into()),
+                    TreeOrSymbol::Symbol(SymbolicToken::ColonQuestion) => {
+                        Tree::ColonQuestion(t.into())
+                    }
+                    _ => panic!("unexpected symbol"),
+                },
             )
         }
 

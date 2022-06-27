@@ -528,6 +528,9 @@ impl ergo_runtime::value::ValueDataInterface for DeserializedValueData {
 
     // You can't late bind into deserialized values
     fn late_bind(&mut self, _scope: &ergo_runtime::value::LateScope) {}
+    fn late_bound(&self) -> ergo_runtime::value::LateBound {
+        Default::default()
+    }
 
     fn get(&self) -> ergo_runtime::value::ValueType {
         ergo_runtime::value::ValueType::typed(self)

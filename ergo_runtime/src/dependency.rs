@@ -206,7 +206,17 @@ impl<Dep> Dependencies<Dep> {
     }
 
     /// Map a function over each dependency.
-    pub fn map<F: FnMut(&mut Dep)>(&mut self, mut f: F) {
+    pub fn map<F: FnMut(&Dep)>(&self, mut f: F) {
+        for d in &self.unordered {
+            f(d);
+        }
+        for d in &self.ordered {
+            f(d);
+        }
+    }
+
+    /// Map a function over each dependency.
+    pub fn map_mut<F: FnMut(&mut Dep)>(&mut self, mut f: F) {
         for d in &mut self.unordered {
             f(d);
         }

@@ -31,6 +31,7 @@ pub struct Value {
 struct Inner {
     data: ValueData,
     id: Once<IdInfo<U128>>,
+    late_bound: Once<LateBound>,
     next: ROption<Once<Value>>,
 }
 
@@ -40,6 +41,7 @@ impl Inner {
         Inner {
             data,
             id: Default::default(),
+            late_bound: Default::default(),
             next: if typed {
                 ROption::RNone
             } else {
@@ -83,17 +85,23 @@ impl Inner {
             self.id = Default::default();
         }
         self.next.as_mut().map(|v| *v = Default::default());
+        self.late_bound = Default::default();
     }
 
     pub fn late_bind(&mut self, scope: &LateScope) {
         self.data.late_bind(scope);
         let typed = self.data.ergo_type().is_some();
         self.id = Default::default();
+        self.late_bound = Default::default();
         self.next = if typed {
             ROption::RNone
         } else {
             ROption::RSome(Default::default())
         };
+    }
+
+    pub fn late_bound(&self) -> &LateBound {
+        self.late_bound.get_sync(|| self.data.late_bound())
     }
 }
 
@@ -113,6 +121,31 @@ pub trait MetadataKey {
 pub struct IdInfo<T> {
     pub id: T,
     pub eval_for_id: bool,
+}
+
+/// Late-bound keys.
+#[derive(Clone, Default, StableAbi)]
+#[repr(C)]
+pub struct LateBound {
+    keys: BstSet<U128>,
+}
+
+impl LateBound {
+    pub fn new() -> Self {
+        Default::default()
+    }
+
+    pub fn extend(&mut self, other: Self) {
+        self.keys.extend(other.keys)
+    }
+
+    pub fn insert(&mut self, key: U128) {
+        self.keys.insert(key);
+    }
+
+    pub fn bound_by(&self, scope: &LateScope) -> bool {
+        self.keys.iter().any(|k| scope.scope.contains_key(k))
+    }
 }
 
 /// Late-bound value scope.
@@ -179,6 +212,9 @@ pub trait ValueDataInterface: Clone + Send + Sync + 'static {
 
     /// Provide late bindings to a value.
     fn late_bind(&mut self, scope: &LateScope);
+
+    /// Get the set of late bindings in a value.
+    fn late_bound(&self) -> LateBound;
 
     /// Get the value data.
     fn get(&self) -> ValueType;
@@ -253,6 +289,10 @@ impl ValueDataInterface for ValueData {
 
     fn late_bind(&mut self, scope: &LateScope) {
         self.0.late_bind(scope);
+    }
+
+    fn late_bound(&self) -> LateBound {
+        self.0.late_bound()
     }
 
     fn get(&self) -> ValueType {
@@ -435,8 +475,37 @@ mod once {
             }
         }
 
+        // Typically only one of `get` or `get_sync` should be called on a particular instance,
+        // though they are safe to call concurrently.
+
         pub fn get<Fut>(&self, fut: Fut) -> Get<T, Fut> {
             Get::new(self, fut)
+        }
+
+        pub fn get_sync<F>(&self, f: F) -> &T
+        where
+            F: FnOnce() -> T,
+        {
+            match self.try_get() {
+                Some(v) => v,
+                None => {
+                    let value = f();
+                    let state = self.tag.fetch_or(ACCESS_ACCESSED, Ordering::Acquire);
+                    if state & ACCESS_MASK == ACCESS_NOT_ACCESSED {
+                        let state = unsafe { self.state.get().as_mut().unwrap_unchecked() };
+                        state.value = std::mem::ManuallyDrop::new(value);
+                        self.tag.fetch_or(STATE_VALUE, Ordering::Release);
+                    } else {
+                        // Should be a very short duration, just a move.
+                        while self.tag.load(Ordering::Relaxed) & STATE_MASK != STATE_VALUE {
+                            std::hint::spin_loop();
+                        }
+                    }
+                    debug_assert!(self.tag.load(Ordering::Relaxed) & STATE_MASK == STATE_VALUE);
+                    // Safety: once the state is STATE_VALUE, it will never change and `value` is set
+                    unsafe { &*self.state.get().as_ref().unwrap_unchecked().value }
+                }
+            }
         }
     }
 
@@ -635,6 +704,7 @@ pub unsafe trait InnerValues {
 /// A trait to apply late bindings to a type.
 pub trait LateBind {
     fn late_bind(&mut self, scope: &LateScope);
+    fn late_bound(&self) -> LateBound;
 }
 
 #[derive(Clone)]
@@ -657,6 +727,12 @@ impl<T: ErgoType + InnerValues + Clone + Send + Sync + 'static> ValueDataInterfa
 
     fn late_bind(&mut self, scope: &LateScope) {
         self.0.visit_mut(|v| v.late_bind(scope));
+    }
+
+    fn late_bound(&self) -> LateBound {
+        let mut ret = LateBound::new();
+        self.0.visit(|v| ret.extend(v.late_bound()));
+        ret
     }
 
     fn get(&self) -> ValueType {
@@ -686,6 +762,10 @@ impl<T: ErgoType + std::hash::Hash + Clone + Send + Sync + 'static> ValueDataInt
     }
 
     fn late_bind(&mut self, _scope: &LateScope) {}
+
+    fn late_bound(&self) -> LateBound {
+        Default::default()
+    }
 
     fn get(&self) -> ValueType {
         ValueType::typed(&self.0)
@@ -720,6 +800,14 @@ impl<Fallback: ValueDataInterface> ValueDataInterface for LateBoundImpl<Fallback
             }
             Self::Value(v) => v.late_bind(scope),
         }
+    }
+
+    fn late_bound(&self) -> LateBound {
+        let mut s = LateBound::default();
+        if let Self::Key(k, _) = self {
+            s.insert(*k);
+        }
+        s
     }
 
     fn get(&self) -> ValueType {
@@ -773,6 +861,10 @@ impl LateBind for Value {
     fn late_bind(&mut self, scope: &LateScope) {
         Value::late_bind(self, scope);
     }
+
+    fn late_bound(&self) -> LateBound {
+        self.inner.late_bound().clone()
+    }
 }
 
 impl LazyValueId for Value {
@@ -783,10 +875,19 @@ impl LazyValueId for Value {
 
 impl LateBind for Dependencies {
     fn late_bind(&mut self, scope: &LateScope) {
-        self.map(|d| match d {
+        self.map_mut(|d| match d {
             Dependency::Value(v) => v.late_bind(scope),
             Dependency::Constant(_) => (),
         })
+    }
+
+    fn late_bound(&self) -> LateBound {
+        let mut s = LateBound::default();
+        self.map(|d| match d {
+            Dependency::Value(v) => s.extend(v.late_bound()),
+            Dependency::Constant(_) => (),
+        });
+        s
     }
 }
 
@@ -849,6 +950,14 @@ impl ValueId {
             ValueId::Override { id, .. } => id.0.late_bind(scope),
         }
     }
+
+    fn late_bound(&self) -> LateBound {
+        match self {
+            ValueId::Id(_) => Default::default(),
+            ValueId::Lazy(l) => l.0.late_bound(),
+            ValueId::Override { id, .. } => id.0.late_bound(),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -866,6 +975,12 @@ impl<T: ValueDataInterface> ValueDataInterface for IdValueData<T> {
     fn late_bind(&mut self, scope: &LateScope) {
         self.value_data.late_bind(scope);
         self.id.late_bind(scope);
+    }
+
+    fn late_bound(&self) -> LateBound {
+        let mut s = self.value_data.late_bound();
+        s.extend(self.id.late_bound());
+        s
     }
 
     fn get(&self) -> ValueType {
@@ -930,6 +1045,9 @@ pub mod lazy {
 
         /// Late-bind the scope into the captures.
         fn late_bind(&mut self, scope: &LateScope);
+
+        /// Late-bound keys in the captures.
+        fn late_bound(&self) -> LateBound;
     }
 
     impl LazyCaptures for () {
@@ -938,6 +1056,10 @@ pub mod lazy {
         }
 
         fn late_bind(&mut self, _scope: &LateScope) {}
+
+        fn late_bound(&self) -> LateBound {
+            Default::default()
+        }
     }
 
     impl LazyCaptures for Value {
@@ -947,6 +1069,10 @@ pub mod lazy {
 
         fn late_bind(&mut self, scope: &LateScope) {
             Value::late_bind(self, scope);
+        }
+
+        fn late_bound(&self) -> LateBound {
+            self.inner.late_bound().clone()
         }
     }
 
@@ -965,6 +1091,14 @@ pub mod lazy {
             for c in self {
                 c.late_bind(scope);
             }
+        }
+
+        fn late_bound(&self) -> LateBound {
+            let mut s = LateBound::default();
+            for c in self {
+                s.extend(c.late_bound());
+            }
+            s
         }
     }
 
@@ -985,6 +1119,14 @@ pub mod lazy {
                     #[allow(non_snake_case)]
                     let ($($name,)+) = self;
                     $($name.late_bind(scope);)+
+                }
+
+                fn late_bound(&self) -> LateBound {
+                    #[allow(non_snake_case)]
+                    let ($($name,)+) = self;
+                    let mut s = LateBound::default();
+                    $(s.extend($name.late_bound());)+
+                    s
                 }
             }
         }
@@ -1030,6 +1172,12 @@ pub mod lazy {
             self.captures.late_bind(scope);
         }
 
+        fn late_bound(&self) -> LateBound {
+            let mut s = self.id.late_bound();
+            s.extend(self.captures.late_bound());
+            s
+        }
+
         fn get(&self) -> ValueType {
             ValueType::lazy(self)
         }
@@ -1052,6 +1200,12 @@ pub mod lazy {
         fn late_bind(&mut self, scope: &LateScope) {
             self.id.late_bind(scope);
             self.captures.late_bind(scope);
+        }
+
+        fn late_bound(&self) -> LateBound {
+            let mut s = self.id.late_bound();
+            s.extend(self.captures.late_bound());
+            s
         }
 
         fn get(&self) -> ValueType {
@@ -1252,7 +1406,9 @@ impl Value {
 
     /// Late-bind the given scope in this value.
     pub fn late_bind(&mut self, scope: &LateScope) {
-        RArc::make_mut(&mut self.inner).late_bind(scope);
+        if self.inner.late_bound().bound_by(scope) {
+            RArc::make_mut(&mut self.inner).late_bind(scope);
+        }
     }
 
     /// Set a metadata entry for this value.
@@ -1421,7 +1577,7 @@ impl std::fmt::Debug for Value {
         f.debug_struct("Value")
             .field(
                 "metadata",
-                &self.metadata.iter().map(|(k, _)| k).collect::<BstSet<_>>(),
+                &self.metadata.iter().map(|(k, _)| k).collect::<Vec<_>>(),
             )
             .field("id", &self.inner.id.try_get())
             .field(

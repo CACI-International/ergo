@@ -57,6 +57,10 @@ impl ergo_runtime::value::ValueDataInterface for ScriptTypeValue {
         self.data.late_bind(scope);
     }
 
+    fn late_bound(&self) -> ergo_runtime::value::LateBound {
+        ergo_runtime::value::LateBind::late_bound(&self.data)
+    }
+
     fn get(&self) -> ergo_runtime::value::ValueType {
         ergo_runtime::value::ValueType::typed(self)
     }

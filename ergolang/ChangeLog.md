@@ -66,6 +66,8 @@
 * Add `doc:raw` to get the raw documentation metadata.
 * Change `doc:value` and `doc:path` to be values rather than functions.
 * Add a `Functor` trait for mapping a function over inner values.
+* Refactor Values to accomodate the concept of late binding (which is far less
+  error-prone than dynamic binding).
 
 ### Breaking Changes
 * Any use of `!` should be replaced with equivalent code.
