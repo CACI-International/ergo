@@ -897,9 +897,9 @@ impl ExprEvaluator {
                     None => types::Unset.into(),
                 }
             },
-            LateGet(get) => {
+            LateGet(get) => delayed! { me, get,
                 let cap = get.capture_key.expect("late gets must always have a capture key");
-                match self.captures.get(cap) {
+                match me.captures.get(cap) {
                     Some(v) => v.clone(),
                     None => types::Unset.into(),
                 }

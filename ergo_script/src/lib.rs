@@ -816,13 +816,13 @@ mod test {
 
         #[test]
         fn late_bind() -> Result<(), String> {
-            script_eval_to("late-bind {key = 123} { $?key }", SRString("123"))?;
+            script_eval_to("late-bind {key = 123} $?key", SRString("123"))?;
             script_eval_to(
-                "a = { $?key }, [late-bind {key=123} $a, late-bind {key=456} $a]",
+                "a = $?key, [late-bind {key=123} $a, late-bind {key=456} $a]",
                 SRArray(&[SRString("123"), SRString("456")]),
             )?;
             script_eval_to(
-                "late-bind { key = 0 } { x = $?key, y = late-bind { key = [$?key,1] } { $?key } }",
+                "late-bind { key = 0 } { x = $?key, y = late-bind { key = [$?key,1] } $?key }",
                 SRMap(&[
                     ("x", SRString("0")),
                     ("y", SRArray(&[SRString("0"), SRString("1")])),
