@@ -434,15 +434,6 @@ fn to_expression<E>(
             }
         }
         Tree::ColonPrefix(t) => Ok(source.with(Expression::set(to_expression(ctx, *t)?))),
-        Tree::ColonQuestion(t) => {
-            // ColonQuestion may only be followed by a string.
-            let inner = to_expression(ctx, *t)?;
-            if inner.expr_type() == ExpressionType::String {
-                Ok(source.with(Expression::late_set(inner)))
-            } else {
-                Err(vec![source.with(Error::BadLateKey)])
-            }
-        }
         Tree::Equal(_, _) => Err(vec![source.with(Error::BadEqual)]),
         Tree::Arrow(a, b) => Ok(source.with(Expression::function(
             to_expression(ctx, *a)?,

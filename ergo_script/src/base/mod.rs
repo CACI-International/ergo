@@ -26,6 +26,22 @@ pub async fn bind(to: _, from: _) -> Value {
     traits::bind(to, from).await
 }
 
+#[types::ergo_fn]
+#[eval_for_id]
+/// Set late bindings of a value.
+///
+/// Arguments: `(Map :bindings) :value`
+///
+/// Returns the value with late bindings applied.
+pub async fn late_bind(bindings: types::Map, mut v: _) -> Value {
+    let mut scope = ergo_runtime::value::LateScope::default();
+    for (k, v) in &bindings.as_ref().0 {
+        scope.scope.insert((*k.id()).into(), v.clone());
+    }
+    v.late_bind(&scope);
+    v
+}
+
 /// An `Unset` value.
 pub fn unset() -> Value {
     types::Unset.into()

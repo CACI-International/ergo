@@ -252,7 +252,7 @@ iter-true = fn :iter -> plugin:Iter:filter (fn :a -> $a) $iter
 ## Arguments: `(Into Bool |> :condition) :if_true [else if :cond2 :if_true2]... [else :if_false]`
 ##
 ## If `condition` evaluates to true, `if_true` is returned. Otherwise each following `cond2` is
-## subsequently tested (returning `if_true2` if one evaulates to true), and `if_false` is returned
+## subsequently tested (returning `if_true2` if one evaluates to true), and `if_false` is returned
 ## if no conditions evaluate to true. If the else condition is omitted, `unset` will be returned.
 if = fn :cond :if_true ^:rest -> {
     do-condition = recurse <| :self -> fn :cond :if_true :rest -> {
@@ -459,13 +459,6 @@ process-dir = plugin:Path:owned <| plugin:Path:join plugin:env:temp-dir "ergo-pr
     ## * object <-> `Map`
     ## * array <-> `Array`
     json = plugin:json
-
-    ##mdoc:module
-    ## Interact with late bindings.
-    ##
-    ## Late bindings allow you to bind values into other values, as if those values were written as
-    ## a function of those bindings.
-    late = plugin:value:late
 
     ## The runtime logging interface.
     ##

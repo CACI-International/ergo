@@ -68,6 +68,8 @@
 * Add a `Functor` trait for mapping a function over inner values.
 * Refactor Values to accomodate the concept of late binding (which is far less
   error-prone than dynamic binding).
+  * This includes syntax for late binding (`$?BINDING`) and the built-in
+    `late-bind` function.
 
 ### Breaking Changes
 * Any use of `!` should be replaced with equivalent code.

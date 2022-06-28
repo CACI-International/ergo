@@ -45,6 +45,7 @@ impl Runtime {
             ("index", base::index()),
             ("doc", base::doc()),
             ("bind", base::bind()),
+            ("late-bind", base::late_bind()),
             ("unset", base::unset()),
             ("!id", base::eval_for_id()),
             ("!no-id", base::no_eval_for_id()),
@@ -195,7 +196,12 @@ impl Script {
             };
             script
                 .captures
-                .late(ctx.late_bindings.values().cloned().collect());
+                .late(ctx.late_bindings.iter().map(|(e, key)| {
+                    match e.value().as_ref::<ast::String>() {
+                        Some(s) => (*key, s.0.clone()),
+                        None => panic!("late binding captures must be strings"),
+                    }
+                }));
             script
         })
     }
@@ -806,6 +812,23 @@ mod test {
             script_fail(
                 "store = fn :a in :b -> () -> { $b = $a }; store :x in :y = (); $y = 1; $y = 2",
             )
+        }
+
+        #[test]
+        fn late_bind() -> Result<(), String> {
+            script_eval_to("late-bind {key = 123} { $?key }", SRString("123"))?;
+            script_eval_to(
+                "a = { $?key }, [late-bind {key=123} $a, late-bind {key=456} $a]",
+                SRArray(&[SRString("123"), SRString("456")]),
+            )?;
+            script_eval_to(
+                "late-bind { key = 0 } { x = $?key, y = late-bind { key = [$?key,1] } { $?key } }",
+                SRMap(&[
+                    ("x", SRString("0")),
+                    ("y", SRArray(&[SRString("0"), SRString("1")])),
+                ]),
+            )?;
+            Ok(())
         }
     }
 
