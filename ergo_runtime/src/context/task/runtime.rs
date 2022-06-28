@@ -18,10 +18,8 @@ use std::sync::{Arc, Weak};
 
 const MIN_BLOCKING_POOL_SIZE: usize = 2;
 pub const MAINTENANCE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
-#[cfg(not(debug_assertions))]
-const INACTIVITY_DURATION: std::time::Duration = std::time::Duration::from_secs(1);
-#[cfg(debug_assertions)]
-const INACTIVITY_DURATION: std::time::Duration = std::time::Duration::from_secs(10);
+const INACTIVITY_DURATION: std::time::Duration =
+    std::time::Duration::from_secs(if cfg!(debug_assertions) { 10 } else { 1 });
 const WORKER_QUEUE_SIZE: u16 = 128;
 
 const INACTIVITY_INTERVALS: usize =
@@ -59,7 +57,12 @@ struct Inner {
 
 #[derive(Default)]
 struct ConditionFlag {
-    lock: Mutex<usize>,
+    // The bool is used to indicate that the condition was signalled at least once, both as a
+    // fast-path for `wait` and as a means of preventing an edge case deadlock when the condition
+    // and notification occurred after the condition is checked but before a wait() is called.
+    // In other words, `notify_one()` will always allow at least one `wait()` to proceed, whether
+    // it's called before or after `notify_one()`.
+    lock: Mutex<bool>,
     condition: Condvar,
 }
 
@@ -121,7 +124,10 @@ struct TaskFuture(Mutex<Option<BoxFuture<'static, ()>>>);
 
 impl ConditionFlag {
     pub fn wait(&self) {
-        self.condition.wait(&mut self.lock.lock());
+        let mut guard = self.lock.lock();
+        if !std::mem::take(&mut *guard) {
+            self.condition.wait(&mut guard);
+        }
     }
 
     pub fn wait_for(&self, duration: std::time::Duration) {
@@ -129,6 +135,8 @@ impl ConditionFlag {
     }
 
     pub fn notify_one(&self) -> bool {
+        let mut guard = self.lock.lock();
+        *guard = true;
         self.condition.notify_one()
     }
 

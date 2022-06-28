@@ -9,10 +9,8 @@ use crate::metadata::Source;
 use crate::Value;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-#[cfg(not(debug_assertions))]
-const DEADLOCK_DURATION: std::time::Duration = std::time::Duration::from_secs(1);
-#[cfg(debug_assertions)]
-const DEADLOCK_DURATION: std::time::Duration = std::time::Duration::from_secs(10);
+const DEADLOCK_DURATION: std::time::Duration =
+    std::time::Duration::from_secs(if cfg!(debug_assertions) { 10 } else { 1 });
 const DEADLOCK_BACKTRACE_LIMIT: usize = 100;
 
 const DEADLOCK_INTERVALS: usize = (DEADLOCK_DURATION.as_millis()
