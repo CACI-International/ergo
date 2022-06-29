@@ -99,3 +99,5 @@ not work correctly with this flag, so the default is `less`. You can:
     data tree (where Unbounds need input to produce the value).
   * A bit of work would be needed to still allow Unbound to inherit eval_for_id
     in a logical way.
+* Possibly figure out a way for late bindings to propagate through certain
+  function calls (e.g. `ergo abc` should "just work" if late bound).
