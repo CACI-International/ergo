@@ -436,6 +436,7 @@ impl LanguageServer for Service {
                                 "index",
                                 "doc",
                                 "bind",
+                                "late-bind",
                                 "unset",
                                 "!id",
                                 "!no-id",
@@ -456,7 +457,7 @@ impl LanguageServer for Service {
                     Token::Symbol(Equal | Arrow | Colon | ColonPrefix) => {
                         results.push(tok.location, TokenType::OPERATOR, Default::default())
                     }
-                    Token::Symbol(Dollar) => {
+                    Token::Symbol(Dollar | DollarQuestion) => {
                         results.push(tok.location, TokenType::VARIABLE, Default::default());
                         last_dollar = true;
                     }

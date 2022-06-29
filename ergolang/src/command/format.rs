@@ -289,7 +289,8 @@ impl<'a> Formatter<'a> {
                     | SymbolicToken::DoubleHash
                     | SymbolicToken::Tilde
                     | SymbolicToken::Caret
-                    | SymbolicToken::Dollar,
+                    | SymbolicToken::Dollar
+                    | SymbolicToken::DollarQuestion,
                 )) => {
                     should_skip_sep = true;
                 }
