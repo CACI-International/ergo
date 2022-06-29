@@ -131,7 +131,9 @@ async fn relative(base: types::Path, child: types::Path) -> Value {
         child
             .as_ref()
             .as_ref()
-            .strip_prefix(base.as_ref().as_ref())?,
+            .strip_prefix(base.as_ref().as_ref())
+            .add_note(format_args!("base path was {}", base.as_ref().display()))
+            .add_note(format_args!("child path was {}", child.as_ref().display()))?,
     )
     .into()
 }
