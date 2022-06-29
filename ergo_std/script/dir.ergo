@@ -163,6 +163,8 @@ optargs = fn ^:target -> fn ^:args -> {
 ##
 ## Note that if any indexed values produce `Unset` or an `Error`, an `Error` will occur.
 ##
+## The initial value bound is always evaluated, but inner (indexed) values will not be evaluated.
+##
 ## ### Example Usage
 ## ```ergo
 ## # Basic import (no different than normal binding)
@@ -176,22 +178,26 @@ optargs = fn ^:target -> fn ^:args -> {
 ## import {path = :stdpath} = $$std
 ## stdpath:from my/path
 ## ```
-import = recurse <| :self -> fn :descr -> :v -> {
-    plugin:match $descr [
-        plugin:Map :m -> {
-            plugin:Iter:map (fn (plugin:MapEntry:@ :key :value) -> { 
-                plugin:value:index { :$key = :result } = $v
-                plugin:match (plugin:value:equal ~exact $result $unset) [
-                    plugin:Bool:true -> plugin:Error:new (source=$key) "missing index"
-                    _ -> ()
-                ]
-                self $value = $result
+import = fn :descr -> (plugin:Type:any :v) -> {
+    impl = recurse <| :self -> fn :descr -> :v -> {
+        plugin:match $descr [
+            plugin:Map :m -> {
+                plugin:Iter:map (fn (plugin:MapEntry:@ :key :value) -> { 
+                    plugin:value:index { :$key = :result } = $v
+                    plugin:match (plugin:value:equal ~exact $result $unset) [
+                        plugin:Bool:true -> plugin:Error:new (source=$key) "missing index"
+                        _ -> ()
+                    ]
+                    self $value = $result
+                    ()
+                }) $m
                 ()
-            }) $m
-            ()
-        }
-        :other -> { $other = $v; () }
-    ]
+            }
+            :other -> { $other = $v; () }
+        ]
+    }
+    impl $descr = $v
+    ()
 }
 
 ## Check whether a path exists.
@@ -403,7 +409,7 @@ process-dir = plugin:Path:owned <| plugin:Path:join plugin:env:temp-dir "ergo-pr
     ##mdoc:module
     ## The Type of Types.
     Type = extend-type plugin:Type {
-        plugin:value:index {:check,:enum,:struct,:pass,:or} = $mtype
+        plugin:value:index {:basic,:check,:enum,:struct,:pass,:or} = $mtype
     }
 
     ##mdoc:module

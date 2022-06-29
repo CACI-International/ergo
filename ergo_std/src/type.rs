@@ -245,11 +245,7 @@ async fn get(mut value: _, (no_eval): [_], (allow_error): [_]) -> Value {
     }
 
     match value.ergo_type() {
-        Some(t) => types::Type {
-            tp: t.clone(),
-            index: types::Map(Default::default()).into(),
-        }
-        .into(),
+        Some(t) => types::Type::basic(t.clone()).into(),
         None => types::Unset.into(),
     }
 }

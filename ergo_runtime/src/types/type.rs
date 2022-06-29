@@ -1,7 +1,7 @@
 //! The Type type.
 
 use crate as ergo_runtime;
-use crate::abi_stable::StableAbi;
+use crate::abi_stable::{future, u128::U128, StableAbi};
 use crate::metadata::Source;
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
@@ -17,18 +17,36 @@ pub struct Type {
     pub index: Value,
 }
 
-// TODO: include `index` in the identity? This will cause problems if trying to compare types for
-// equality.
+impl crate::value::ValueDataInterface for Type {
+    /// Get the identity of a value.
+    fn id(&self) -> future::BoxFuture<crate::value::IdInfo<U128>> {
+        future::BoxFuture::new(async move {
+            crate::depends![dyn Type::ergo_type(), self.tp, self.index]
+                .id()
+                .await
+                .into()
+        })
+    }
 
-impl std::hash::Hash for Type {
-    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
-        self.tp.hash(h);
+    /// Provide late bindings to a value.
+    fn late_bind(&mut self, scope: &crate::value::LateScope) {
+        self.index.late_bind(scope);
+    }
+
+    /// Get the set of late bindings in a value.
+    fn late_bound(&self) -> crate::value::LateBound {
+        ergo_runtime::value::LateBind::late_bound(&self.index)
+    }
+
+    /// Get the value data.
+    fn get(&self) -> crate::value::ValueType {
+        crate::value::ValueType::typed(self)
     }
 }
 
 impl From<Type> for TypedValue<Type> {
     fn from(v: Type) -> Self {
-        Self::constant(v)
+        Value::new(v).as_type::<Type>().unwrap()
     }
 }
 
@@ -38,6 +56,15 @@ impl traits::NestedValues for Type {
     }
     fn nested_values_mut(&mut self) -> Vec<&mut Value> {
         vec![&mut self.index]
+    }
+}
+
+impl Type {
+    pub fn basic(tp: crate::type_system::Type) -> Self {
+        Type {
+            tp,
+            index: crate::types::Map(Default::default()).into(),
+        }
     }
 }
 

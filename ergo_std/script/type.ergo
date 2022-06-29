@@ -5,6 +5,13 @@
 ## Arguments: `:target`
 pass = fn :target -> :x -> { $target = $x }
 
+## Modify a type to make it appropriate for comparison.
+##
+## Arguments: `(Type :type)`
+##
+## This will simply clear the type's associated index. This will match types returned by e.g. `get`.
+basic = fn :type -> Type:modify $type {}
+
 ## Check whether a value has the given type.
 ##
 ## Arguments: `:T :value`
@@ -117,4 +124,4 @@ struct = fn (String :name) (Map :fields) -> {
     }
 }
 
-{pass,check,map-values,map-of,array-values,array-of,or,enum,struct}
+{pass,basic,check,map-values,map-of,array-values,array-of,or,enum,struct}

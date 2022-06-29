@@ -22,10 +22,12 @@
   `new`.
 * Add the `std:Type:or` function (which was already in the last release but was
   mistakenly not exported).
+* Add `std:Type:name` to get the name of a type.
+* Add `std:Type:get` to get the Type of arbitrary values.
+* Add `std:Type:basic` to get a basic version of a type suitable for comparison.
 * Extend `std:doc:module` to handle `Type`s too.
 * Add `std:Iter:unzip` to handle what used to be done with `std:zip` in pattern
   expressions.
-* Add `std:Type:name` to get the name of a type.
 * Add `std:fs:file-size` to get the size of a file in bytes.
 * Add `std:fs:rename` to rename files and directories.
 * Add `std:fs:lock` to get advisory locks on files.
