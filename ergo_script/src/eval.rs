@@ -143,7 +143,7 @@ impl LateBind for Captures {
         let mut lb = ergo_runtime::value::LateBound::default();
         for v in self.inner.values() {
             if let Capture::Evaluated(v) = v {
-                lb.extend(v.late_bound());
+                lb.extend(v.late_bound().clone());
             }
         }
         lb

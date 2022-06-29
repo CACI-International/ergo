@@ -731,7 +731,7 @@ impl<T: ErgoType + InnerValues + Clone + Send + Sync + 'static> ValueDataInterfa
 
     fn late_bound(&self) -> LateBound {
         let mut ret = LateBound::new();
-        self.0.visit(|v| ret.extend(v.late_bound()));
+        self.0.visit(|v| ret.extend(v.late_bound().clone()));
         ret
     }
 
@@ -769,54 +769,6 @@ impl<T: ErgoType + std::hash::Hash + Clone + Send + Sync + 'static> ValueDataInt
 
     fn get(&self) -> ValueType {
         ValueType::typed(&self.0)
-    }
-}
-
-#[derive(Clone)]
-enum LateBoundImpl<Fallback> {
-    Key(U128, Fallback),
-    Value(Value),
-}
-
-impl<Fallback: ValueDataInterface> ValueDataInterface for LateBoundImpl<Fallback> {
-    fn id(&self) -> future::BoxFuture<IdInfo<U128>> {
-        future::BoxFuture::new(async move {
-            match self {
-                Self::Key(_, fallback) => fallback.id().await,
-                Self::Value(v) => v.immediate_id().await.into(),
-            }
-        })
-    }
-
-    fn late_bind(&mut self, scope: &LateScope) {
-        match self {
-            Self::Key(i, fallback) => {
-                if let Some(v) = scope.scope.get(i) {
-                    // Should late binding continue recursively in the value?
-                    *self = Self::Value(v.clone());
-                } else {
-                    fallback.late_bind(scope);
-                }
-            }
-            Self::Value(v) => v.late_bind(scope),
-        }
-    }
-
-    fn late_bound(&self) -> LateBound {
-        let mut s = LateBound::default();
-        if let Self::Key(k, _) = self {
-            s.insert(*k);
-        }
-        s
-    }
-
-    fn get(&self) -> ValueType {
-        match self {
-            Self::Key(_, fallback) => fallback.get(),
-            // This could change to wrap `v` as a ValueType::lazy which yields the value as a
-            // slight optimization to not check the enum state.
-            Self::Value(v) => v.inner.data.get(),
-        }
     }
 }
 
@@ -884,7 +836,7 @@ impl LateBind for Dependencies {
     fn late_bound(&self) -> LateBound {
         let mut s = LateBound::default();
         self.map(|d| match d {
-            Dependency::Value(v) => s.extend(v.late_bound()),
+            Dependency::Value(v) => s.extend(v.late_bound().clone()),
             Dependency::Constant(_) => (),
         });
         s
@@ -1238,18 +1190,6 @@ impl Value {
         }
     }
 
-    /// Create a late-bound value with the given key.
-    pub fn late_bound(key: U128) -> Self {
-        let fallback = ConstantValueImpl(crate::types::Unset);
-        let id = fallback.id();
-        let mut inner = Inner::new(ValueData::new(LateBoundImpl::Key(key, fallback)));
-        inner.id.set(id.into());
-        Value {
-            inner: RArc::new(inner),
-            metadata: Default::default(),
-        }
-    }
-
     /// Create a typed value with the given identity.
     pub fn with_id<T: ErgoType + InnerValues + Clone + Eraseable, D>(value: T, id: D) -> Self
     where
@@ -1399,9 +1339,14 @@ impl Value {
 
     /// Late-bind the given scope in this value.
     pub fn late_bind(&mut self, scope: &LateScope) {
-        if self.inner.late_bound().bound_by(scope) {
+        if self.late_bound().bound_by(scope) {
             RArc::make_mut(&mut self.inner).late_bind(scope);
         }
+    }
+
+    /// Get the late bindings for this value.
+    pub fn late_bound(&self) -> &LateBound {
+        self.inner.late_bound()
     }
 
     /// Set a metadata entry for this value.

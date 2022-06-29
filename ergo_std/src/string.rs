@@ -207,7 +207,7 @@ async fn r#match(format_string: types::String, ...) -> Value {
 
         fn late_bound(&self) -> ergo_runtime::value::LateBound {
             if let Self::Value(_, v) = self {
-                v.late_bound()
+                v.late_bound().clone()
             } else {
                 Default::default()
             }

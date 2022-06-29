@@ -31,6 +31,14 @@ pub struct Sources {
     source_line_starts: CacheMap<SourceId, RVec<usize>>,
 }
 
+impl std::fmt::Debug for Sources {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.debug_struct("Sources")
+            .field("file_ids", &*self.file_ids.lock())
+            .finish()
+    }
+}
+
 pub enum SourceName<'a> {
     String(&'a str),
     Path(&'a PathBuf),

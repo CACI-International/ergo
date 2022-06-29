@@ -28,6 +28,7 @@ check = fn :T :value -> { T :x = $value; $x }
 ## Returns a value that will match a Map with the given key/value types.
 map-values = fn (Map :fields) -> fn :target -> Map :m -> {
     $target = Map:from <| Iter:map (fn (MapEntry:@ :k :v) -> { fields:$k :v = $v; MapEntry:new $k $v }) $m
+    ()
 }
 
 ## Match maps where all keys match a specific type and all values match a specific type.
@@ -37,6 +38,7 @@ map-values = fn (Map :fields) -> fn :target -> Map :m -> {
 ## Returns a value that will match a Map binding with the given types.
 map-of = fn :Keys :Values -> fn :target -> Map :m -> {
     $target = Map:from <| Iter:map (fn (MapEntry:@ (Keys :k) (Values :v)) -> MapEntry:new $k $v) $m
+    ()
 }
 
 ## Match arrays with specific value types.
@@ -48,6 +50,7 @@ map-of = fn :Keys :Values -> fn :target -> Map :m -> {
 ## Returns a value that will match an Array with the given value types.
 array-values = fn (Array :tps) -> fn :target -> Array :a -> {
     $target = Array:from <| Iter:map (fn [:T,:v] -> { T :v = $v; $v } ) <| Iter:zip $tps $a
+    ()
 }
 
 ## Match arrays where all values match a specific type.
@@ -57,6 +60,7 @@ array-values = fn (Array :tps) -> fn :target -> Array :a -> {
 ## Returns a value that will match an Array with the given type.
 array-of = fn :T -> fn :target -> Array :a -> {
     $target = Array:from <| Iter:map (fn (T :v) -> $v) $a
+    ()
 }
 
 ## Match one of a number of types.
