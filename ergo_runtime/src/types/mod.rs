@@ -18,11 +18,11 @@ mod path;
 mod string;
 #[path = "type.rs"]
 mod type_;
-mod unbound;
+pub mod unbound;
 mod unit;
 mod unset;
 
-pub use ergo_runtime_macro::{ergo_fn, ergo_fn_value};
+pub use ergo_runtime_macro::{ergo_fn, ergo_fn_value, unbound_value};
 
 pub use self::bool::Bool;
 pub use args::Args;

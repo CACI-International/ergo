@@ -4,11 +4,10 @@ use ergo_runtime::{
     dependency::{AsDependency, Dependency},
     depends,
     metadata::Source,
-    nsid, traits, try_result,
+    nsid, traits,
     type_system::ErgoType,
     types, Context, Value,
 };
-use futures::future::FutureExt;
 
 pub fn r#type() -> Value {
     types::Type {
@@ -195,6 +194,26 @@ async fn r#match(format_string: types::String, ...) -> Value {
         }
     }
 
+    impl ergo_runtime::value::lazy::LazyCaptures for FormatBind {
+        fn id(&self) -> futures::future::BoxFuture<ergo_runtime::value::Identity> {
+            futures::FutureExt::boxed(async move { depends![dyn self].id().await })
+        }
+
+        fn late_bind(&mut self, scope: &ergo_runtime::value::LateScope) {
+            if let Self::Value(_, v) = self {
+                v.late_bind(scope);
+            }
+        }
+
+        fn late_bound(&self) -> ergo_runtime::value::LateBound {
+            if let Self::Value(_, v) = self {
+                v.late_bound()
+            } else {
+                Default::default()
+            }
+        }
+    }
+
     let mut binds = Vec::new();
     let mut last_was_bind = false;
     for part in parts {
@@ -227,107 +246,96 @@ async fn r#match(format_string: types::String, ...) -> Value {
         }
     }
 
-    let deps = depends![dyn nsid!(std::string::match), ^@binds];
+    types::unbound_value! {
+        #![depends(const nsid!(std::string::match))]
+        #![contains(binds)]
+        let s = Context::eval_as::<types::String>(ARG).await?;
+        let s_source = Source::get(&s);
 
-    types::Unbound::new_no_doc(
-        move |arg| {
-            let binds = binds.clone();
-            async move {
-                let s = try_result!(Context::eval_as::<types::String>(arg).await);
-                let s_source = Source::get(&s);
+        let mut bind_strings: std::collections::HashMap<FormatPart, (Value, Vec<String>)> =
+            Default::default();
 
-                let mut bind_strings: std::collections::HashMap<FormatPart, (Value, Vec<String>)> =
-                    Default::default();
-
-                let mut s = s.as_ref().as_str();
-                let mut binds = binds.into_iter();
-                while let Some(b) = binds.next() {
-                    match b {
-                        FormatBind::String(string_literal) => {
-                            if let Some(0) = s.find(&string_literal) {
-                                s = &s[string_literal.len()..];
-                            } else {
-                                return ergo_runtime::error! {
-                                    labels: [
-                                        primary(s_source.with(""))
-                                    ],
-                                    notes: [
-                                        format!("remaining string was {:?}", s)
-                                    ],
-                                    error: format!("substring missing: {:?}", string_literal)
-                                }
-                                .into();
-                            };
-                        }
-                        FormatBind::Value(part, v) => match binds.next() {
-                            Some(FormatBind::String(string_literal)) => {
-                                if let Some(n) = s.find(&string_literal) {
-                                    bind_strings
-                                        .entry(part)
-                                        .or_insert_with(|| (v, vec![]))
-                                        .1
-                                        .push(s[..n].to_owned());
-                                    s = &s[n + string_literal.len()..];
-                                } else {
-                                    return s_source
-                                        .with(format!("substring missing: {:?}", string_literal))
-                                        .into_error()
-                                        .into();
-                                }
-                            }
-                            Some(FormatBind::Value(..)) => panic!("invalid format bind state"),
-                            None => {
-                                bind_strings
-                                    .entry(part)
-                                    .or_insert_with(|| (v, vec![]))
-                                    .1
-                                    .push(s.to_owned());
-                                s = &s[s.len()..];
-                            }
-                        },
-                    }
-                }
-
-                if !s.is_empty() {
-                    return s_source
-                        .with(format!(
-                            "string had characters remaining after matching: {:?}",
-                            s
-                        ))
-                        .into_error()
-                        .into();
-                }
-
-                for (k, v) in bind_strings.into_values() {
-                    if v.len() == 1 {
-                        let v = crate::make_string_src(
-                            s_source.clone().with(&v.into_iter().next().unwrap()),
-                        );
-                        try_result!(traits::bind_no_error(k, v.into()).await);
+        let mut s = s.as_ref().as_str();
+        let mut binds = binds.into_iter();
+        while let Some(b) = binds.next() {
+            match b {
+                FormatBind::String(string_literal) => {
+                    if let Some(0) = s.find(&string_literal) {
+                        s = &s[string_literal.len()..];
                     } else {
-                        let v = Source::imbue(
-                            s_source.clone().with(
-                                types::Array(
-                                    v.into_iter()
-                                        .map(|s| {
-                                            crate::make_string_src(s_source.clone().with(&s)).into()
-                                        })
-                                        .collect(),
-                                )
-                                .into(),
-                            ),
-                        );
-                        try_result!(traits::bind_no_error(k, v).await);
-                    }
+                        return Err(ergo_runtime::error! {
+                            labels: [
+                                primary(s_source.with(""))
+                            ],
+                            notes: [
+                                format!("remaining string was {:?}", s)
+                            ],
+                            error: format!("substring missing: {:?}", string_literal)
+                        });
+                    };
                 }
-
-                types::Unit.into()
+                FormatBind::Value(part, v) => match binds.next() {
+                    Some(FormatBind::String(string_literal)) => {
+                        if let Some(n) = s.find(&string_literal) {
+                            bind_strings
+                                .entry(part)
+                                .or_insert_with(|| (v, vec![]))
+                                .1
+                                .push(s[..n].to_owned());
+                            s = &s[n + string_literal.len()..];
+                        } else {
+                            return Err(s_source
+                                .with(format!("substring missing: {:?}", string_literal))
+                                .into_error());
+                        }
+                    }
+                    Some(FormatBind::Value(..)) => panic!("invalid format bind state"),
+                    None => {
+                        bind_strings
+                            .entry(part)
+                            .or_insert_with(|| (v, vec![]))
+                            .1
+                            .push(s.to_owned());
+                        s = &s[s.len()..];
+                    }
+                },
             }
-            .boxed()
-        },
-        deps,
-    )
-    .into()
+        }
+
+        if !s.is_empty() {
+            return Err(s_source
+                .with(format!(
+                    "string had characters remaining after matching: {:?}",
+                    s
+                ))
+                .into_error());
+        }
+
+        for (k, v) in bind_strings.into_values() {
+            if v.len() == 1 {
+                let v = crate::make_string_src(
+                    s_source.clone().with(&v.into_iter().next().unwrap()),
+                );
+                traits::bind_no_error(k, v.into()).await?;
+            } else {
+                let v = Source::imbue(
+                    s_source.clone().with(
+                        types::Array(
+                            v.into_iter()
+                                .map(|s| {
+                                    crate::make_string_src(s_source.clone().with(&s)).into()
+                                })
+                                .collect(),
+                        )
+                        .into(),
+                    ),
+                );
+                traits::bind_no_error(k, v).await?;
+            }
+        }
+
+        types::Unit.into()
+    }
 }
 
 #[types::ergo_fn]

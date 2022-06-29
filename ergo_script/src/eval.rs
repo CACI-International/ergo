@@ -9,10 +9,9 @@ use cachemap::CacheMap;
 use ergo_runtime::abi_stable::external_types::RMutex;
 use ergo_runtime::Result;
 use ergo_runtime::{
-    depends,
     error::{DiagnosticInfo, ErrorOrDiagnostic},
     metadata::{self, Source},
-    nsid, traits, try_result, types,
+    nsid, traits, types,
     value::{match_value, Identity, LateBind, LateScope, LazyValueId},
     Context, EvaluatedValue, Value,
 };
@@ -791,11 +790,10 @@ impl ExprEvaluator {
 
         let mut val = crate::match_expression!(self.expr.value(),
             Unit(_) => types::Unit.into(),
-            BindAny(_) => types::Unbound::new_no_doc(
-                            |_| async { types::Unit.into() }.boxed(),
-                            depends![const nsid!(expr::any)],
-                        )
-                        .into(),
+            BindAny(_) => types::unbound_value! {
+                #![depends(const nsid!(expr::any))]
+                types::Unit.into()
+            },
             String(s) => types::String::from(s.0.clone()).into(),
             CompoundString(s) => delayed! { me, s,
                 match me.evaluate_string_items(&s.items).await {
@@ -863,32 +861,26 @@ impl ExprEvaluator {
                 }
             },
             Function(func) => {
-                let id = self.value_id();
                 let bind = func.bind.clone();
                 let body = func.body.clone();
                 let me = self.clone().no_scopes().cache_root();
-                types::Unbound::new_no_doc(move |v| {
-                    let bind = bind.clone();
-                    let body = body.clone();
-                    // We should have a separate child cache to not reuse unbound
-                    // identities/values.
+                types::unbound_value! {
+                    #![contains(me)]
                     let mut me = me.clone().cache_root();
-                    async move {
-                        let close_scope = me.scopes.open(me.scope_key);
-                        let bind = me.child(&bind).evaluate().await;
-                        try_result!(traits::bind_no_error(bind, v).await);
+                    let close_scope = me.scopes.open(me.scope_key);
+                    let bind = me.child(&bind).evaluate().await;
+                    traits::bind_no_error(bind, ARG).await?;
 
-                        let new_captures: Vec<_> = me.scopes.close(close_scope)
-                            .into_iter()
-                            .map(|(cap, _, v)| cap.map(|c| (c, v.clone())))
-                            .collect();
-                        for (cap, v) in new_captures.into_iter().filter_map(|o| o) {
-                            me.captures.resolve(cap, v);
-                        }
+                    let new_captures: Vec<_> = me.scopes.close(close_scope)
+                        .into_iter()
+                        .map(|(cap, _, v)| cap.map(|c| (c, v.clone())))
+                        .collect();
+                    for (cap, v) in new_captures.into_iter().filter_map(|o| o) {
+                        me.captures.resolve(cap, v);
+                    }
 
-                        me.child(&body).evaluate().await
-                    }.boxed()
-                }, id).into()
+                    me.child(&body).evaluate().await
+                }
             },
             Get(get) => {
                 let cap = get.capture_key.expect("gets must always have a capture key");
@@ -906,26 +898,22 @@ impl ExprEvaluator {
             },
             Set(set) => {
                 let me = self.clone().no_eval_cache();
-                let id = self.value_id();
                 let k = me.child(&set.value).evaluate().await.as_evaluated().await;
                 me.scopes.init(set.scope_key, set.capture_key.clone(), k.clone());
-                types::Unbound::new_no_doc(move |v| {
-                    let me = me.clone();
-                    let k = k.clone();
-                    async move {
-                        let set = unsafe { me.expr.as_ref_unchecked::<ast::Set>() };
+                types::unbound_value! {
+                    #![contains(me)]
+                    let set = unsafe { me.expr.as_ref_unchecked::<ast::Set>() };
 
-                        if me.scopes.insert(set.scope_key, set.capture_key.clone(), k, v.clone()) {
-                            return ergo_runtime::diagnostic! {
-                                labels: [
-                                    primary(me.source().with(""))
-                                ],
-                                message: "cannot bind a setter more than once"
-                            }.add_value_info("value being bound", &v).await.into_error().into();
-                        }
-                        types::Unit.into()
-                    }.boxed()
-                }, id).into()
+                    if me.scopes.insert(set.scope_key, set.capture_key.clone(), k, ARG.clone()) {
+                        return Err(ergo_runtime::diagnostic! {
+                            labels: [
+                                primary(me.source().with(""))
+                            ],
+                            message: "cannot bind a setter more than once"
+                        }.add_value_info("value being bound", &ARG).await.into_error().into())
+                    }
+                    types::Unit.into()
+                }
             },
             Index(ind) => delayed! { me, ind,
                 let mut value = me.child(&ind.value).evaluate().await;

@@ -124,7 +124,7 @@ pub struct IdInfo<T> {
 }
 
 /// Late-bound keys.
-#[derive(Clone, Default, StableAbi)]
+#[derive(Clone, Debug, Default, StableAbi)]
 #[repr(C)]
 pub struct LateBound {
     keys: BstSet<U128>,
@@ -931,7 +931,7 @@ impl<T: LazyValueId> From<T> for ValueId {
 }
 
 impl ValueId {
-    async fn id(&self) -> Identity {
+    pub async fn id(&self) -> Identity {
         match self {
             ValueId::Id(id) => id.clone(),
             ValueId::Lazy(l) => l.0.id().await,
@@ -943,7 +943,7 @@ impl ValueId {
         }
     }
 
-    fn late_bind(&mut self, scope: &LateScope) {
+    pub fn late_bind(&mut self, scope: &LateScope) {
         match self {
             ValueId::Id(_) => (),
             ValueId::Lazy(l) => l.0.late_bind(scope),
@@ -951,7 +951,7 @@ impl ValueId {
         }
     }
 
-    fn late_bound(&self) -> LateBound {
+    pub fn late_bound(&self) -> LateBound {
         match self {
             ValueId::Id(_) => Default::default(),
             ValueId::Lazy(l) => l.0.late_bound(),
@@ -1076,6 +1076,20 @@ pub mod lazy {
         }
     }
 
+    impl<T: Send + Sync + 'static> LazyCaptures for TypedValue<T> {
+        fn id(&self) -> futures::future::BoxFuture<Identity> {
+            LazyCaptures::id(&self.inner)
+        }
+
+        fn late_bind(&mut self, scope: &LateScope) {
+            LazyCaptures::late_bind(&mut self.inner, scope);
+        }
+
+        fn late_bound(&self) -> LateBound {
+            LazyCaptures::late_bound(&self.inner)
+        }
+    }
+
     impl<T: LazyCaptures> LazyCaptures for Vec<T> {
         fn id(&self) -> futures::future::BoxFuture<Identity> {
             futures::FutureExt::boxed(async move {
@@ -1158,42 +1172,21 @@ pub mod lazy {
         }
     }
 
-    impl<Captures, F> ValueDataInterface for LazyValueFn<Captures, F, false>
-    where
-        Captures: LazyCaptures,
-        Self: LazyValueData + Clone + 'static,
-    {
-        fn id<'a>(&'a self) -> future::BoxFuture<'a, IdInfo<U128>> {
-            future::BoxFuture::new(async move { self.id.id().await.into() })
-        }
-
-        fn late_bind(&mut self, scope: &LateScope) {
-            self.id.late_bind(scope);
-            self.captures.late_bind(scope);
-        }
-
-        fn late_bound(&self) -> LateBound {
-            let mut s = self.id.late_bound();
-            s.extend(self.captures.late_bound());
-            s
-        }
-
-        fn get(&self) -> ValueType {
-            ValueType::lazy(self)
-        }
-    }
-
-    impl<Captures, F> ValueDataInterface for LazyValueFn<Captures, F, true>
+    impl<const USE_CAPS: bool, Captures, F> ValueDataInterface for LazyValueFn<Captures, F, USE_CAPS>
     where
         Captures: LazyCaptures,
         Self: LazyValueData + Clone + 'static,
     {
         fn id<'a>(&'a self) -> future::BoxFuture<'a, IdInfo<U128>> {
             future::BoxFuture::new(async move {
-                let mut combiner = IdentityCombiner::default();
-                combiner.add(&self.id.id().await);
-                combiner.add(&self.captures.id().await);
-                combiner.finish().into()
+                if USE_CAPS {
+                    let mut combiner = IdentityCombiner::default();
+                    combiner.add(&self.id.id().await);
+                    combiner.add(&self.captures.id().await);
+                    combiner.finish().into()
+                } else {
+                    self.id.id().await.into()
+                }
             })
         }
 

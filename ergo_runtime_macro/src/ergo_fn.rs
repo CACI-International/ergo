@@ -1,7 +1,7 @@
 //! Convenience function attributes to create Unbound values from rust functions.
 
 use proc_macro::TokenStream;
-use quote::{quote, quote_spanned, ToTokens};
+use quote::{quote, ToTokens};
 use syn::{parse::Parser, parse_macro_input, parse_quote, spanned::Spanned, Error, ItemFn};
 
 pub fn ergo_fn(item: TokenStream) -> TokenStream {
@@ -72,27 +72,6 @@ impl Parser for ErgoFnLike {
                 }
                 None => false,
             }
-        };
-
-        let clones = {
-            let ind = f.attrs.iter().position(|a| match a.parse_meta() {
-                Ok(syn::Meta::List(l)) => l.path.is_ident("cloning"),
-                _ => false,
-            });
-            ind.map(|i| {
-                if let Ok(syn::Meta::List(l)) = f.attrs.swap_remove(i).parse_meta() {
-                    l.nested
-                        .into_iter()
-                        .filter_map(|nm| match nm {
-                            syn::NestedMeta::Meta(syn::Meta::Path(p)) => Some(p),
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>()
-                } else {
-                    panic!("`position` incorrect");
-                }
-            })
-            .unwrap_or_default()
         };
 
         let depends = {
@@ -194,7 +173,7 @@ impl Parser for ErgoFnLike {
             let v_as_type = match ty {
                 None => quote! { v },
                 Some(ref ty) => quote! {
-                    ergo_runtime::try_result!(ergo_runtime::Context::eval_as::<#ty>(v).await)
+                    ergo_runtime::Context::eval_as::<#ty>(v).await?
                 },
             };
             let typed_val = if optional {
@@ -208,10 +187,10 @@ impl Parser for ErgoFnLike {
                 quote! {
                     match #get_arg {
                         Some(v) => #v_as_type,
-                        None => ergo_runtime::try_result!(Err(ergo_runtime::error!{
+                        None => return Err(ergo_runtime::error!{
                             labels: [ primary(ARGS_SOURCE.with("in this function call")) ],
                             error: std::concat!("missing argument: ", std::stringify!(#bind))
-                        }))
+                        })
                     }
                 }
             };
@@ -226,16 +205,10 @@ impl Parser for ErgoFnLike {
             }
         } else {
             quote! {
-                ergo_runtime::try_result!(__ergo_fn_args.unused_arguments());
+                __ergo_fn_args.unused_arguments()?;
                 drop(__ergo_fn_args);
             }
         };
-
-        let clones = clones.into_iter().map(|c| {
-            quote_spanned! { c.span()=>
-                let #c = #c.clone();
-            }
-        });
 
         let which = self.0;
 
@@ -260,43 +233,31 @@ impl Parser for ErgoFnLike {
         };
 
         let imp = quote! {
-            move |__ergo_fn_arg| {
-                #(#clones)*
-                let __ergo_fn_deps_inner = __ergo_fn_deps_inner.clone();
-                ergo_runtime::future::FutureExt::boxed(async move {
-                    let __ergo_fn_args = ergo_runtime::try_result!(ergo_runtime::Context::eval_as::<#which>(__ergo_fn_arg).await);
-                    let ARGS_SOURCE = ergo_runtime::metadata::Source::get(&__ergo_fn_args);
-                    let CALL_DEPENDS: ergo_runtime::dependency::Dependencies = __ergo_fn_deps_inner + ergo_runtime::depends![dyn __ergo_fn_args];
-                    let mut __ergo_fn_args = __ergo_fn_args.into_owned().args;
-                    #(#args)*
-                    #rest_or_check
-                    ergo_runtime::error_info!(
-                        labels: [
-                            secondary(ARGS_SOURCE.with("in this call"))
-                        ],
-                        async {
-                            ergo_runtime::Result::<Value>::Ok(#inner_block)
-                        }
-                    ).into()
-                })
+            ergo_runtime::types::unbound_value! {
+                #![doc = #doc]
+                #![id(#deps)]
+                let __ergo_fn_args = ergo_runtime::Context::eval_as::<#which>(ARG).await?;
+                let ARGS_SOURCE = ergo_runtime::metadata::Source::get(&__ergo_fn_args);
+                let CALL_DEPENDS: ergo_runtime::dependency::Dependencies = __ergo_fn_deps_inner + ergo_runtime::depends![dyn __ergo_fn_args];
+                let mut __ergo_fn_args = __ergo_fn_args.into_owned().args;
+                #(#args)*
+                #rest_or_check
+                return ergo_runtime::error_info!(
+                    labels: [
+                        secondary(ARGS_SOURCE.with("in this call"))
+                    ],
+                    async {
+                        ergo_runtime::Result::<ergo_runtime::Value>::Ok(#inner_block)
+                    }
+                );
             }
         };
 
-        f.block = Box::new(if doc.is_empty() {
-            parse_quote! {
-                {
-                    #fn_id
-                    #declare_deps
-                    ergo_runtime::types::Unbound::new_no_doc(#imp, #deps).into()
-                }
-            }
-        } else {
-            parse_quote! {
-                {
-                    #fn_id
-                    #declare_deps
-                    ergo_runtime::types::Unbound::new(#imp, #deps, #doc).into()
-                }
+        f.block = Box::new(parse_quote! {
+            {
+                #fn_id
+                #declare_deps
+                #imp
             }
         });
 

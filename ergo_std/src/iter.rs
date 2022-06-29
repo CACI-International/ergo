@@ -1,8 +1,8 @@
 //! Iterator functions.
 
 use ergo_runtime::{
-    depends, error::DiagnosticInfo, metadata::Source, nsid, traits, try_result,
-    type_system::ErgoType, types, Context, Value,
+    depends, error::DiagnosticInfo, metadata::Source, nsid, traits, type_system::ErgoType, types,
+    Context, Value,
 };
 use futures::{
     future::{ready, FutureExt},
@@ -360,70 +360,60 @@ async fn unzip(...) -> Value {
     let iter_outs = REST.by_ref().collect::<Vec<_>>();
     REST.unused_arguments()?;
 
-    let deps = depends![dyn nsid!(std::iter::zip::pattern), ^@iter_outs];
+    types::unbound_value! {
+        #![depends(const nsid!(std::iter::zip::pattern))]
+        #![contains(iter_outs)]
+        let arg = Context::eval_as::<types::Iter>(ARG).await?;
+        let arg_source = Source::get(&arg);
+        let iter_id = arg.id().await;
+        let iter = arg.into_owned();
 
-    types::Unbound::new_no_doc(
-        move |arg| {
-            let iter_outs = iter_outs.clone();
-            async move {
-                let arg = try_result!(Context::eval_as::<types::Iter>(arg).await);
-                let arg_source = Source::get(&arg);
-                let iter_id = arg.id().await;
-                let iter = arg.into_owned();
+        let items: Vec<_> = iter.collect().await?;
+        let arrays = Context::global()
+                .task
+                .join_all(
+                    items
+                        .into_iter()
+                        .map(|v| Context::eval_as::<types::Array>(v))
+                )
+                .await?;
 
-                let items: Vec<_> = try_result!(iter.collect().await);
-                let arrays = try_result!(
-                    Context::global()
-                        .task
-                        .join_all(
-                            items
-                                .into_iter()
-                                .map(|v| Context::eval_as::<types::Array>(v))
-                        )
-                        .await
-                );
-
-                let shared_arrays =
-                    ergo_runtime::abi_stable::stream::shared_async_stream::SharedAsyncStream::new(
-                        futures::stream::iter(arrays.into_iter()),
-                    );
-                let mut errs = Vec::new();
-                for (i, out) in iter_outs.into_iter().enumerate() {
-                    let arrays = shared_arrays.clone();
-                    let filtered = arrays.filter_map(move |arr| {
-                        ready(match arr.as_ref().0.get(i) {
-                            None => None,
-                            Some(v) => {
-                                if v.is_type::<types::Unset>() {
-                                    // XXX this won't work for delayed Unset values
-                                    None
-                                } else {
-                                    Some(v.clone())
-                                }
-                            }
-                        })
-                    });
-                    let deps = depends![nsid!(std::iter::zip::pattern_result), iter_id, i];
-                    let to_bind = Source::imbue(
-                        arg_source
-                            .clone()
-                            .with(types::Iter::new_stream(filtered, deps).into()),
-                    );
-                    if let Err(e) = traits::bind_no_error(out, to_bind).await {
-                        errs.push(e);
+        let shared_arrays =
+            ergo_runtime::abi_stable::stream::shared_async_stream::SharedAsyncStream::new(
+                futures::stream::iter(arrays.into_iter()),
+            );
+        let mut errs = Vec::new();
+        for (i, out) in iter_outs.into_iter().enumerate() {
+            let arrays = shared_arrays.clone();
+            let filtered = arrays.filter_map(move |arr| {
+                ready(match arr.as_ref().0.get(i) {
+                    None => None,
+                    Some(v) => {
+                        if v.is_type::<types::Unset>() {
+                            // XXX this won't work for delayed Unset values
+                            None
+                        } else {
+                            Some(v.clone())
+                        }
                     }
-                }
-                if errs.is_empty() {
-                    types::Unit.into()
-                } else {
-                    types::Error::aggregate(errs).into()
-                }
+                })
+            });
+            let deps = depends![nsid!(std::iter::zip::pattern_result), iter_id, i];
+            let to_bind = Source::imbue(
+                arg_source
+                    .clone()
+                    .with(types::Iter::new_stream(filtered, deps).into()),
+            );
+            if let Err(e) = traits::bind_no_error(out, to_bind).await {
+                errs.push(e);
             }
-            .boxed()
-        },
-        deps,
-    )
-    .into()
+        }
+        if errs.is_empty() {
+            types::Unit.into()
+        } else {
+            types::Error::aggregate(errs).into()
+        }
+    }
 }
 
 #[types::ergo_fn]

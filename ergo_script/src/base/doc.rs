@@ -2,14 +2,12 @@
 
 use ergo_runtime::{
     context::{DynamicScopeKey, DynamicScopeRef},
-    depends,
     error::DiagnosticInfo,
     metadata::{self, Doc, DocValueKey},
-    nsid, traits, try_result, types,
-    value::{match_value},
+    nsid, traits, types,
+    value::match_value,
     Context, Source, Value,
 };
-use futures::future::FutureExt;
 use std::path::PathBuf;
 
 struct DocPathKey;
@@ -243,59 +241,48 @@ Evaluates to the doc Path, or Unset if no Path is present (documentation is not 
         }
     };
 
-    types::Unbound::new(
-        move |v| {
-            let value = value.clone();
-            let path = path.clone();
-            let write = write.clone();
-            let child = child.clone();
-            let raw = raw.clone();
-            let source = metadata::Source::get(&v);
-            async move {
-                match_value! {v,
-                    types::Args { mut args } => {
-                        let to_doc = try_result!(args.next_or_error("value to document", source));
-                        try_result!(args.unused_arguments());
+    types::unbound_value! {
+        //! Get the documentation for a value.
+        //!
+        //! Arguments: `:value`
+        //!
+        //! Returns the documentation string.
+        //!
+        //! ## Values
+        //! * `path` - The documentation output path, if any.
+        //! * `value` - The value being documented, if any.
+        //!
+        //! ## Functions
+        //! * `child` - Write documentation to a relative path.
+        //! * `raw` - Get the raw documentation metadata for a value.
+        //! * `write` - Write documentation to the given output path.
+        #![depends(const nsid!(ergo::doc))]
+        let source = metadata::Source::get(&ARG);
+        match_value! {ARG,
+            types::Args { mut args } => {
+                let to_doc = args.next_or_error("value to document", source)?;
+                args.unused_arguments()?;
 
-                        types::String::from(try_result!(Doc::get(&to_doc).await)).into()
-                    },
-                    types::Index(ind) => {
-                        let ind = try_result!(Context::eval_as::<types::String>(ind).await);
-                        let s = ind.as_ref().as_str();
-                        if s == "value" {
-                            value
-                        } else if s == "path" {
-                            path
-                        } else if s == "child" {
-                            child
-                        } else if s == "write" {
-                            write
-                        } else if s == "raw" {
-                            raw
-                        } else {
-                            metadata::Source::get(&ind).with("unknown index").into_error().into()
-                        }
-                    },
-                    v => traits::type_error(v, "function call or index").into_error().into()
+                types::String::from(Doc::get(&to_doc).await?).into()
+            },
+            types::Index(ind) => {
+                let ind = Context::eval_as::<types::String>(ind).await?;
+                let s = ind.as_ref().as_str();
+                if s == "value" {
+                    value
+                } else if s == "path" {
+                    path
+                } else if s == "child" {
+                    child
+                } else if s == "write" {
+                    write
+                } else if s == "raw" {
+                    raw
+                } else {
+                    metadata::Source::get(&ind).with("unknown index").into_error().into()
                 }
-            }
-            .boxed()
-        },
-        depends![const nsid!(ergo::doc)],
-        "Get the documentation for a value.
-
-Arguments: `:value`
-
-Returns the documentation string.
-
-## Values
-* `path` - The documentation output path, if any.
-* `value` - The value being documented, if any.
-
-## Functions
-* `child` - Write documentation to a relative path.
-* `raw` - Get the raw documentation metadata for a value.
-* `write` - Write documentation to the given output path.",
-    )
-    .into()
+            },
+            other => traits::type_error(other, "function call or index").into_error().into()
+        }
+    }
 }

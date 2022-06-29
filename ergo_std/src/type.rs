@@ -5,11 +5,10 @@ use ergo_runtime::abi_stable::{
     type_erase::Erased,
 };
 use ergo_runtime::{
-    depends, nsid, traits, try_result,
+    depends, nsid, traits,
     type_system::{ergo_trait_impl, ErgoType, Type},
     types, Context, Value,
 };
-use futures::FutureExt;
 
 pub fn r#type() -> Value {
     types::Type {
@@ -147,46 +146,41 @@ async fn new(id: types::String) -> Value {
 
     let new: Value = {
         let tp = tp.clone();
-        let deps = depends![const tp, nsid!(new)];
-        types::Unbound::new(
-            move |arg| {
-                let tp = tp.clone();
-                async move { Value::new(ScriptTypeValue { tp, data: arg }) }.boxed()
-            },
-            deps,
+        let mut v = types::unbound_value! {
+            #![depends(const tp, nsid!(new))]
+            Value::new(ScriptTypeValue { tp, data: ARG })
+        };
+        ergo_runtime::metadata::Doc::set_string(
+            &mut v,
             format!(
                 "Create a new instance of {}.\n\nAny arguments are stored in the instance.",
                 &id
             ),
-        )
-        .into()
+        );
+        v
     };
 
     let bind: Value = {
         let tp = tp.clone();
-        let deps = depends![const tp, nsid!(bind)];
-        types::Unbound::new(move |arg| {
-                let tp = tp.clone();
-                async move {
-                    let to_bind = arg;
-                    let deps = depends![dyn tp, nsid!(bind), to_bind];
-                    types::Unbound::new_no_doc(move |mut arg| {
-                        let to_bind = to_bind.clone();
-                        let tp = tp.clone();
-                        async move {
-                            try_result!(Context::eval(&mut arg).await);
-                            if arg.ergo_type().unwrap() != tp {
-                                return traits::type_error_for_t(arg, &tp).into_error().into();
-                            }
-                            let data = unsafe { (arg.data_ptr().unwrap() as *const Value).as_ref().unwrap_unchecked() };
-                            traits::bind(to_bind, data.clone()).await
-                        }.boxed()
-                    }, deps).into()
-                }.boxed()
-            },
-            deps,
+        let mut v = types::unbound_value! {
+            #![depends(const tp, nsid!(bind))]
+            let to_bind = ARG;
+            types::unbound_value! {
+                #![depends(const tp, nsid!(bind))]
+                #![contains(to_bind)]
+                Context::eval(&mut ARG).await?;
+                if ARG.ergo_type().unwrap() != tp {
+                    return Err(traits::type_error_for_t(ARG, &tp).into_error().into());
+                }
+                let data = unsafe { (ARG.data_ptr().unwrap() as *const Value).as_ref().unwrap_unchecked() };
+                traits::bind(to_bind, data.clone()).await
+            }
+        };
+        ergo_runtime::metadata::Doc::set_string(
+            &mut v,
             format!("Bind to an instance of {}.\n\nAny arguments stored in the instance are bound to the arguments of this function.", &id),
-        ).into()
+        );
+        v
     };
 
     types::Type {
@@ -269,23 +263,16 @@ async fn get(mut value: _, (no_eval): [_], (allow_error): [_]) -> Value {
 /// * `allow-error` - If present, allow errors to be evaluated without propagating.
 async fn any(target: _, (allow_error): [_]) -> Value {
     let allow_error = allow_error.is_some();
-    let deps = depends![dyn nsid!(std::Type::any), allow_error, target];
 
-    types::Unbound::new_no_doc(
-        move |mut arg| {
-            let target = target.clone();
-            async move {
-                let r = Context::eval(&mut arg).await;
-                if !allow_error {
-                    try_result!(r);
-                }
-                traits::bind(target, arg).await
-            }
-            .boxed()
-        },
-        deps,
-    )
-    .into()
+    types::unbound_value! {
+        #![depends(const nsid!(std::Type::any), allow_error)]
+        #![contains(target)]
+        let r = Context::eval(&mut ARG).await;
+        if !allow_error {
+            r?;
+        }
+        traits::bind(target, ARG).await
+    }
 }
 
 #[cfg(test)]

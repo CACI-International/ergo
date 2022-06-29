@@ -94,7 +94,8 @@ impl LoadData {
         {
             let ld = self.clone();
             let working_dir = script_file.and_then(|p| p.parent()).map(|p| p.to_owned());
-            let mut std = ergo_runtime::lazy_value! {
+            let std = ergo_runtime::lazy_value! {
+                //! Get the value as if `ergo std` were run.
                 #![depends(const nsid!(std))]
                 #![eval_for_id]
                 let wd = working_dir.clone();
@@ -115,7 +116,6 @@ impl LoadData {
 
                 ld.load_script(&path).await
             };
-            metadata::Doc::set_string(&mut std, "Get the value as if `ergo std` were run.");
             env.insert("std".into(), std);
         }
 
@@ -129,7 +129,8 @@ impl LoadData {
                     false,
                 ),
             };
-            let mut workspace = ergo_runtime::lazy_value! {
+            let workspace = ergo_runtime::lazy_value! {
+                //! Get the value as if `ergo path/to/ancestor/workspace.ergo` were run.
                 #![depends(const nsid!(workspace))]
                 #![eval_for_id]
                 let resolved = Context::global()
@@ -178,10 +179,6 @@ impl LoadData {
 
                 ld.load_script(&path).await
             };
-            metadata::Doc::set_string(
-                &mut workspace,
-                "Get the value as if `ergo path/to/ancestor/workspace.ergo` were run.",
-            );
             env.insert("workspace".into(), workspace);
         }
 

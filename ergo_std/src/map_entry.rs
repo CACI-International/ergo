@@ -1,9 +1,6 @@
 //! MapEntry functions.
 
-use ergo_runtime::{
-    depends, nsid, traits, try_result, type_system::ErgoType, types, Context, Value,
-};
-use futures::FutureExt;
+use ergo_runtime::{nsid, traits, type_system::ErgoType, types, Context, Value};
 
 pub fn r#type() -> Value {
     types::Type {
@@ -31,23 +28,14 @@ async fn new(key: _, value: _) -> Value {
 ///
 /// Binds `key` to the MapEntry key and `value` to the MapEntry value.
 async fn bind(key: _, value: _) -> Value {
-    let deps = depends![dyn nsid!(std::MapEntry::bind), key, value];
-
-    types::Unbound::new_no_doc(
-        move |arg| {
-            let key = key.clone();
-            let value = value.clone();
-            async move {
-                let entry = try_result!(Context::eval_as::<types::MapEntry>(arg).await).into_owned();
-                try_result!(traits::bind_no_error(key, entry.key).await);
-                try_result!(traits::bind_no_error(value, entry.value).await);
-                types::Unit.into()
-            }
-            .boxed()
-        },
-        deps,
-    )
-    .into()
+    types::unbound_value! {
+        #![depends(const nsid!(std::MapEntry::bind))]
+        #![contains(key,value)]
+        let entry = Context::eval_as::<types::MapEntry>(ARG).await?.into_owned();
+        traits::bind_no_error(key, entry.key).await?;
+        traits::bind_no_error(value, entry.value).await?;
+        types::Unit.into()
+    }
 }
 
 #[cfg(test)]

@@ -1,10 +1,10 @@
-//! Convenience macro to create lazy values.
+//! Create unbound values.
 
 use crate::lazy_block::LazyBlock;
 use proc_macro::TokenStream;
 use quote::quote;
 
-pub fn lazy_value(ts: TokenStream) -> TokenStream {
+pub fn unbound_value(ts: TokenStream) -> TokenStream {
     let LazyBlock {
         id,
         use_captures,
@@ -20,9 +20,9 @@ pub fn lazy_value(ts: TokenStream) -> TokenStream {
     };
     quote! {
         {
-            let __lazy_value_id = #id;
+            let __unbound_value_id = #id;
             #create_capture
-            let __lazy_value_f = move |#capture| async move {
+            let __unbound_value_f = move |#capture, mut ARG: Value| async move {
                 ergo_runtime::Value::from(async move {
                     #bind_capture
                     let r = {#body};
@@ -31,7 +31,9 @@ pub fn lazy_value(ts: TokenStream) -> TokenStream {
                     ergo_runtime::Result::<ergo_runtime::Value>::Ok(r)
                 }.await)
             };
-            let mut v = ergo_runtime::Value::new(ergo_runtime::value::lazy::LazyValueFn::<_, _, #use_captures>::new(__lazy_value_id, #capture, __lazy_value_f));
+            let mut v = ergo_runtime::Value::new(ergo_runtime::types::Unbound::new(
+                ergo_runtime::types::unbound::UnboundFn::<_, _, #use_captures>::new(__unbound_value_id, #capture, __unbound_value_f)
+            ));
             #doc
             v
         }

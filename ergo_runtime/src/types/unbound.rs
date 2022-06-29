@@ -2,12 +2,11 @@
 
 use crate as ergo_runtime;
 use crate::abi_stable::{
-    future::BoxFuture, sabi_trait, sabi_trait::prelude::*, std_types::RBox, StableAbi,
+    future::BoxFuture, sabi_trait, sabi_trait::prelude::*, std_types::RBox, u128::U128, StableAbi,
 };
-use crate::metadata::Doc;
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
-use crate::value::{InnerValues, TypedValue, ValueId};
+use crate::value::{lazy::LazyCaptures, IdInfo, LateBound, LateScope, ValueId};
 use crate::Value;
 
 /// Script type for values that require a single value to produce a new value.
@@ -16,53 +15,95 @@ use crate::Value;
 /// value.
 #[derive(Clone, ErgoType, StableAbi)]
 #[repr(C)]
-pub struct Unbound(UnboundAbi_TO<'static, RBox<()>>);
+pub struct Unbound(UnboundInterface_TO<RBox<()>>);
 
-unsafe impl InnerValues for Unbound {
-    fn visit<'a, F: FnMut(&'a Value)>(&'a self, _f: F) {
-        // TODO expose inner values for late binding?
+#[sabi_trait]
+pub trait UnboundInterface: Clone + Send + Sync + 'static {
+    fn id(&self) -> BoxFuture<IdInfo<U128>>;
+
+    fn late_bind(&mut self, scope: &LateScope);
+
+    fn late_bound(&self) -> LateBound;
+
+    #[sabi(last_prefix_field)]
+    fn bind(&self, arg: Value) -> BoxFuture<Value>;
+}
+
+impl crate::value::ValueDataInterface for Unbound {
+    fn id(&self) -> BoxFuture<IdInfo<U128>> {
+        self.0.id()
+    }
+
+    fn late_bind(&mut self, scope: &LateScope) {
+        self.0.late_bind(scope);
+    }
+
+    fn late_bound(&self) -> LateBound {
+        self.0.late_bound()
+    }
+
+    fn get(&self) -> crate::value::ValueType {
+        crate::value::ValueType::typed(self)
     }
 }
 
-#[sabi_trait]
-trait UnboundAbi: Clone + Send + Sync {
-    #[sabi(last_prefix_field)]
-    fn bind<'a>(&'a self, arg: Value) -> BoxFuture<'a, Value>;
+#[derive(Clone)]
+pub struct UnboundFn<Captures, F, const USE_CAPTURES_IN_ID: bool = true> {
+    id: ValueId,
+    captures: Captures,
+    f: F,
 }
 
-impl<F, Fut> UnboundAbi for F
+impl<const U: bool, Captures, F> UnboundFn<Captures, F, U> {
+    pub fn new(id: impl Into<ValueId>, captures: Captures, f: F) -> Self {
+        UnboundFn {
+            id: id.into(),
+            captures,
+            f,
+        }
+    }
+}
+
+impl<const USE_CAPS: bool, Captures, F, Fut> UnboundInterface for UnboundFn<Captures, F, USE_CAPS>
 where
-    F: Fn(Value) -> Fut + Clone + Send + Sync + 'static,
-    Fut: std::future::Future<Output = Value> + Send,
+    Self: Clone + Send + Sync + 'static,
+    Captures: LazyCaptures,
+    F: FnOnce(Captures, Value) -> Fut + Clone,
+    Fut: std::future::Future<Output = Value> + Send + 'static,
 {
-    fn bind<'a>(&'a self, arg: Value) -> BoxFuture<'a, Value> {
-        BoxFuture::new(async move { self(arg).await.into() })
+    fn id(&self) -> BoxFuture<IdInfo<U128>> {
+        BoxFuture::new(async move {
+            if USE_CAPS {
+                let mut combiner = crate::value::IdentityCombiner::default();
+                combiner.add(&self.id.id().await);
+                combiner.add(&self.captures.id().await);
+                combiner.finish().into()
+            } else {
+                self.id.id().await.into()
+            }
+        })
+    }
+
+    fn late_bind(&mut self, scope: &LateScope) {
+        self.id.late_bind(scope);
+        self.captures.late_bind(scope);
+    }
+
+    fn late_bound(&self) -> LateBound {
+        let mut s = self.id.late_bound();
+        s.extend(self.captures.late_bound());
+        s
+    }
+
+    fn bind(&self, arg: Value) -> BoxFuture<Value> {
+        BoxFuture::new((self.f.clone())(self.captures.clone(), arg))
     }
 }
 
 impl Unbound {
-    /// Create a new unbound value with the given implementation and documentation.
-    pub fn new<F, Fut, D: Into<ValueId>, S: Into<String>>(
-        bind: F,
-        id: D,
-        doc: S,
-    ) -> TypedValue<Self>
-    where
-        F: Fn(Value) -> Fut + Clone + Send + Sync + 'static,
-        Fut: std::future::Future<Output = Value> + Send,
-    {
-        let mut v = Self::new_no_doc(bind, id);
-        Doc::set_string(&mut v, doc.into());
-        v
-    }
-
-    /// Create a new unbound value with the given implementation.
-    pub fn new_no_doc<F, Fut, D: Into<ValueId>>(bind: F, id: D) -> TypedValue<Self>
-    where
-        F: Fn(Value) -> Fut + Clone + Send + Sync + 'static,
-        Fut: std::future::Future<Output = Value> + Send,
-    {
-        TypedValue::with_id(Unbound(UnboundAbi_TO::from_value(bind, TD_Opaque)), id)
+    /// Create a new unbound value with the given interface.
+    pub fn new<T: UnboundInterface + 'static>(interface: T) -> Self {
+        Unbound(UnboundInterface_TO::from_value(interface, TD_Opaque))
     }
 
     /// Bind the value.

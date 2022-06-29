@@ -1,9 +1,8 @@
 //! Value-related intrinsics.
 
 use ergo_runtime::{
-    depends,
     metadata::{Runtime, Source},
-    nsid, traits, try_result, types, Context, Value,
+    nsid, traits, types, Context, Value,
 };
 use futures::future::{BoxFuture, FutureExt};
 
@@ -350,27 +349,20 @@ async fn equal(mut a: _, mut b: _, (exact): [_]) -> Value {
 /// Indexes `value` with each key of `indices`, and binds the result to each corresponding value of
 /// `indices`.
 async fn index(indices: types::Map) -> Value {
-    let deps = depends![dyn nsid!(std::index), indices];
-    types::Unbound::new_no_doc(
-        move |mut arg| {
-            let indices = indices.clone();
-            async move {
-                try_result!(Context::eval(&mut arg).await);
-                for (k, v) in &indices.as_ref().0 {
-                    let result = traits::bind(
-                        arg.clone(),
-                        Source::copy(&k, types::Index(k.clone().into()).into()),
-                    )
-                    .await;
-                    try_result!(traits::bind_no_error(v.clone(), result).await);
-                }
-                types::Unit.into()
-            }
-            .boxed()
-        },
-        deps,
-    )
-    .into()
+    types::unbound_value! {
+        #![depends(const nsid!(std::index))]
+        #![contains(indices)]
+        Context::eval(&mut ARG).await?;
+        for (k, v) in &indices.as_ref().0 {
+            let result = traits::bind(
+                ARG.clone(),
+                Source::copy(&k, types::Index(k.clone().into()).into()),
+            )
+            .await;
+            traits::bind_no_error(v.clone(), result).await?;
+        }
+        types::Unit.into()
+    }
 }
 
 #[cfg(test)]

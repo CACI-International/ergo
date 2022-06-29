@@ -7,8 +7,10 @@ use syn::{parse_macro_input, ItemFn};
 mod derive_ergo_type;
 mod ergo_fn;
 mod ergo_trait;
+mod lazy_block;
 mod lazy_value;
 mod match_value;
+mod unbound_value;
 
 /// Derive the ErgoType trait.
 #[proc_macro_derive(ErgoType)]
@@ -52,11 +54,22 @@ pub fn match_value(ts: TokenStream) -> TokenStream {
 /// * `#![exclude_contains_from_id]` - if specified, the value's identity will only be derived
 /// from `depends`/`id`, rather than being derived from that and `contains`.
 ///
+/// In addition, any inner documentation will be applied to the resulting value.
+///
 /// The body return type is ergo_runtime::Result<Value> (so you can use `?`), however the
 /// function body block should evaluate to a Value.
 #[proc_macro]
 pub fn lazy_value(ts: TokenStream) -> TokenStream {
     lazy_value::lazy_value(ts)
+}
+
+/// Create an Unbound Value.
+///
+/// This macro works exactly like `lazy_value` does, with the additional feature that you may refer
+/// to `ARG` in the body (which will be the argument being bound).
+#[proc_macro]
+pub fn unbound_value(ts: TokenStream) -> TokenStream {
+    unbound_value::unbound_value(ts)
 }
 
 /// Create an ergo Unbound for Args from a rust function declaration.
@@ -76,8 +89,6 @@ pub fn ergo_fn(_args: TokenStream, item: TokenStream) -> TokenStream {
 /// The function declaration must be `async`. Visibility is preserved. The function may have the
 /// following special attributes:
 /// * `#[eval_for_id]` - indicate that the function should have the `eval_for_id` bit set.
-/// * `#[cloning(a,b,c)]` - a list of identifiers to clone into the resulting value (captured from
-/// the outer scope).
 /// * `#[depends(a,b,c)]` - arguments to pass to the `depends!` macro to create the function
 /// identity. The identity will always include a generate identifier from the function name and
 /// module scope.

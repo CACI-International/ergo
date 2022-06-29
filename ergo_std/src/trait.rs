@@ -335,11 +335,9 @@ mod stored {
 mod into {
     use ergo_runtime::{
         abi_stable::{closure::FnPtr, future::BoxFuture, type_erase::Erased},
-        depends,
         metadata::Source,
         traits, types, Context, Value,
     };
-    use futures::FutureExt;
 
     pub fn module() -> Value {
         crate::make_string_map! {
@@ -409,22 +407,12 @@ mod into {
             #[depends(into_type)]
             #[cloning(into_type)]
             async fn into(target: _) -> Value {
-                let deps = CALL_DEPENDS + depends![dyn target];
-                types::Unbound::new_no_doc(
-                    move |arg| {
-                        let target = target.clone();
-                        let into_type = into_type.clone();
-                        async move {
-                            let v = ergo_runtime::try_result!(
-                                traits::into_for(&into_type, arg).await
-                            );
-                            traits::bind(target, v).await
-                        }
-                        .boxed()
-                    },
-                    deps,
-                )
-                .into()
+                types::unbound_value! {
+                    #![depends(dyn ^CALL_DEPENDS)]
+                    #![contains(target)]
+                    let v = traits::into_for(&into_type, ARG).await?;
+                    traits::bind(target, v).await
+                }
             }
         }
     }

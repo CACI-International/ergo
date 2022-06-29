@@ -5,8 +5,7 @@ use crate::abi_stable::StableAbi;
 use crate::metadata::Source;
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
-use crate::{depends, TypedValue, Value};
-use futures::FutureExt;
+use crate::{TypedValue, Value};
 
 /// Script Type type.
 ///
@@ -70,27 +69,23 @@ ergo_traits_fn! {
                 super::Args { mut args } => {
                     let v = crate::try_result!(args.next_or_error("binding", source));
                     crate::try_result!(args.unused_arguments());
-                    let deps = depends![dyn v];
                     let tp = self.tp.clone();
-                    super::Unbound::new_no_doc(move |mut arg| {
-                        let v = v.clone();
-                        let tp = tp.clone();
-                        async move {
-                            crate::error_info! {
-                                labels: [
-                                    secondary(source.with("while binding here"))
-                                ],
-                                async {
-                                    drop(crate::Context::eval(&mut arg).await);
-                                    if arg.ergo_type().unwrap() != tp {
-                                        Err(traits::type_error_for_t(arg, &tp))
-                                    } else {
-                                        Ok(traits::bind(v, arg).await)
-                                    }
+                    crate::types::unbound_value! {
+                        #![contains(v)]
+                        return crate::error_info! {
+                            labels: [
+                                secondary(source.with("while binding here"))
+                            ],
+                            async {
+                                drop(crate::Context::eval(&mut ARG).await);
+                                if ARG.ergo_type().unwrap() != tp {
+                                    Err(traits::type_error_for_t(ARG, &tp))
+                                } else {
+                                    Ok(traits::bind(v, ARG).await)
                                 }
-                            }.into()
-                        }.boxed()
-                    }, deps).into()
+                            }
+                        };
+                    }
                 },
                 Type { tp, .. } => {
                     if &self.tp == &tp {
