@@ -13,6 +13,6 @@
   - [Runtime](details/runtime/intro.md)
     - [Values](details/runtime/values.md)
     - [Type System](details/runtime/type_system.md)
-    - [Builtin Functions](details/runtime/builtin_functions.md)
+    - [Builtins](details/runtime/builtins.md)
 - [Standard Library](std.md)
 - [Quick Reference](quick_ref.md)

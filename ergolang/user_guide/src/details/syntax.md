@@ -13,7 +13,7 @@ used to build a syntax tree. The resulting stream of tokens contains no
 whitespace. It occurs according to the following rules:
 
 Within a normal context (e.g. not a string):
-* Symbolic tokens are always read as such (`-> : = ^ | |> <| ~ $`).
+* Symbolic tokens are always read as such (`-> : = ^ | |> <| ~ $ $?`).
 * Paired tokens (`{ } [ ] ( )`) are read and verified to be correctly paired. 
 * Sequences of non-newline whitespace are read as a single whitespace token
   (additional whitespace does not matter to parsing).
@@ -53,7 +53,7 @@ Tree parsing ingests the tokens from the previous step and builds a parsed tree
 of items, where the pipe operators (`|`, `|>`, and `<|`) are desugared. It also
 disambiguates infix operators using rules of precedence, where the precedence of
 operators is as follows (descending):
-* `$` (prefix)
+* `$`/`$?` (prefix)
 * `:` (prefix)
 * `:` (left associative)
 * `~` [.. `=`] (prefix)
@@ -281,6 +281,14 @@ $a
 To get a value from the enclosing lexical binding scope, you precede the key
 with `$`. A get expression captures the bound value, or an error occurs (at
 parse time) if no such binding exists.
+
+### Late Get
+```ergo
+$?a
+```
+To create a late-bindable value, you precede a string with `$?`. A late get
+expression is lazily evaluated and can be later bound with the `late-bind`
+builtin. If not bound, evaluated to an `Unset` value.
 
 ### Set
 ```ergo

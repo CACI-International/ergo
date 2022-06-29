@@ -16,7 +16,7 @@
 
 			body {
 				padding: 0.4in;
-				column-gap: 0.25in;
+				column-gap: 0.15in;
 				column-fill: auto;
 				max-width: 800px;
 			}
@@ -32,7 +32,7 @@
 					width: 8.5in;
 					height: 11in;
 					box-sizing: border-box;
-					font-size: 6.3pt;
+					font-size: 6.1pt;
 					max-width: none;
 					color-adjust: exact;
 				}
@@ -43,7 +43,7 @@
 						column-count: 3;
 						width: 11in;
 						height: 8.5in;
-						font-size: 7.1pt;
+						font-size: 6.7pt;
 					}
 				}
 			}
@@ -184,6 +184,10 @@
 				<div>get</div>
 			</div>
 			<div class="row">
+				<div><em>$?</em>a</div>
+				<div>late get</div>
+			</div>
+			<div class="row">
 				<div>a<em>:</em>b</div>
 				<div>index</div>
 			</div>
@@ -283,6 +287,10 @@
 				<div>bind operation (as a function)</div>
 			</div>
 			<div class="row">
+				<div><em>late-bind</em> {a=123} $v</div>
+				<div>provide late bindings to a value</div>
+			</div>
+			<div class="row">
 				<div>$<em>unset</em></div>
 				<div>an unset value</div>
 			</div>
@@ -370,16 +378,12 @@
 				<div>document the ergo function</div>
 			</div>
 			<div class="row">
-				<div><em>ergo -de $fn</em></div>
-				<div>document the fn function</div>
-			</div>
-			<div class="row">
 				<div><em>ergo -de doc:child</em></div>
 				<div>document the doc child function</div>
 			</div>
 			<p>
 				Use the <code>--doc-write</code> flag (which implies
-				<code>--doc</code>) to write a full tree of html documentation.
+				<code>--doc</code>) to write a hierarchy of html documentation.
 			</p>
 		</section>
 		<section>
@@ -417,6 +421,13 @@
 				content. This identity is what e.g. <code>std:cache</code> uses
 				as a cache key without evaluating the value at all.
 			</p>
+			<p>
+				Late bindings can be provided at any time in the future, and
+				can be provided multiple times for a single expression. You can
+				think of them as acting like templates or mutable variables.
+				In reality they are not exposing mutability, but rather allow
+				providing values that haven't evaluated yet (since the language
+				is lazy).
 			<p>
 				Values which use dynamic bindings (<code>std:dynamic</code>)
 				should be used carefully. Because of the use of dynamic

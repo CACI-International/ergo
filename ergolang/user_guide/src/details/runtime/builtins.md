@@ -1,4 +1,4 @@
-# Builtin Functions
+# Builtins
 
 * [ergo](#ergo) - Load a script.
 * [std](#std) - Access the standard library.
@@ -6,6 +6,7 @@
 * [fn](#fn) - Match `Args` Values
 * [index](#index) - Match `Index` values.
 * [bind](#bind) - Manually bind a value
+* [late-bind](#late-bind) - Late-bind a value
 * [unset](#unset) - An `Unset`-typed value
 * [doc](#doc) - Document values.
   * [doc:write](#doc-write) - Write documentation for a value to the filesystem.
@@ -92,6 +93,19 @@ example, `bind $a $b` is the same as `$a = $b`.
 ```ergo
 bind-single-array-value = fn :a -> [:v] -> { bind $a $v; () }
 bind-single-array-value :x = [1] # `x` is set to `1`
+```
+
+</div>
+
+<div class="function">
+
+## `late-bind`
+The `late-bind` function is used to late-bind a value. This returns the value
+with the given late bindings applied.
+
+```ergo
+val = [a,b,$?foo]
+late-bind { foo = 123 } $val # evaluates to `[a,b,123]`
 ```
 
 </div>
