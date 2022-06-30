@@ -770,7 +770,12 @@ impl ExprEvaluator {
     async fn evaluate_impl(&self) -> Value {
         macro_rules! delayed {
             ( $self:ident $($(.$n:ident)+)? , $v:ident , $( $body:tt )* ) => {{
-                let $self = self.clone()$($(.$n())+)?;
+                // TODO the `no_eval_cache` here is purely for the purpose of breaking reference
+                // loops using a blunt instrument. This will basically not use the cache for most
+                // of evaluation (losing potential performance, which has been measured to be
+                // considerable). Using a GC or weak references (particularly in loaded scripts)
+                // could allow us to use this cache.
+                let $self = self.clone().no_eval_cache()$($(.$n())+)?;
                 let v_type = witness($v);
                 ergo_runtime::lazy_value! {
                     #![contains($self)]
