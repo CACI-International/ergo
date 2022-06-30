@@ -29,6 +29,28 @@ type = {
         std:Type:pass _ = std:Error:@ a
         std:Bool:true
     }
+
+    get = {
+        check = fn ~:allow-error :T :v -> {
+            std:Bool:true = std:equal (std:Type:basic $T) (std:Type:get ^{allow-error} $v)
+            ()
+        }
+        check std:String str
+        check std:Array [a,b]
+        check std:Unit ()
+        check std:Unset $unset
+        std:Error _ = std:Type:get <| std:Error:new err
+        check ~allow-error std:Error <| std:Error:new err
+        $unset = std:Type:get ~no-eval {[a,b]}
+
+        std:Type :MyType = std:Type:new my_type
+        i = MyType:new a b c
+        std:match (std:Type:get $i) [$MyType -> ()]
+        m = { :(std:Type:basic $MyType) = () }
+        std:Type :t = std:Type:get $i
+        () = m:$t
+        std:Bool:true
+    }
 }
 
 required = {

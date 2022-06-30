@@ -311,25 +311,6 @@ mod test {
             );
         }
 
-        fn get(t) {
-            t.assert_eq("self:Type:get str", "self:String");
-            t.assert_eq("self:Type:get [a,b]", "self:Array");
-            t.assert_eq("self:Type:get {a=1}", "self:Map");
-            t.assert_eq("self:Type:get ()", "self:Unit");
-            t.assert_eq("self:Type:get $unset", "self:Unset");
-            t.assert_fail("self:Type:get <| self:Error:new err");
-            t.assert_eq("self:Type:get ~allow-error <| self:Error:new err", "self:Error");
-            t.assert_eq("self:Type:get ~no-eval {[a,b]}", "$unset");
-            t.assert_eq("self:Type :MyType = self:Type:new my_type
-            i = MyType:new a b c
-            self:match (self:Type:get $i) [$MyType -> ()]
-            m = { :$MyType = () }
-            self:Type :t = self:Type:get $i
-            m:$t",
-                "()"
-            );
-        }
-
         fn any(t) {
             t.assert_success("self:Type:any _ = hello");
             t.assert_fail("self:Type:any _ = self:Error:new err");

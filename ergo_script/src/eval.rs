@@ -656,17 +656,11 @@ impl ExprEvaluator {
     fn identity<'b>(&'b self) -> BoxFuture<'b, Identity> {
         let captures_ready = self.captures_ready();
         let compute = async move {
-            if let Some(cap) = {
-                let e = self.expr.value();
-                e.as_ref::<ast::Get>()
-                    .map(|g| g.capture_key.expect("gets must always have a capture key"))
-                    .or_else(|| {
-                        e.as_ref::<ast::LateGet>().map(|g| {
-                            g.capture_key
-                                .expect("late gets must always have a capture key")
-                        })
-                    })
-            } {
+            if let Some(cap) = crate::match_expression!(self.expr.value(),
+                Get(g) => g.capture_key,
+                LateGet(g) => g.capture_key,
+                _ => None
+            ) {
                 if let Some(v) = self.captures.get(cap) {
                     return v.clone().eval_id().await;
                 }
@@ -773,8 +767,9 @@ impl ExprEvaluator {
                 // TODO the `no_eval_cache` here is purely for the purpose of breaking reference
                 // loops using a blunt instrument. This will basically not use the cache for most
                 // of evaluation (losing potential performance, which has been measured to be
-                // considerable). Using a GC or weak references (particularly in loaded scripts)
-                // could allow us to use this cache.
+                // considerable). Using a GC, weak references (particularly in loaded scripts), or
+                // simply not relying on value lifetimes for certain things (std:cache, owned
+                // paths) could allow us to use this cache.
                 let $self = self.clone().no_eval_cache()$($(.$n())+)?;
                 let v_type = witness($v);
                 ergo_runtime::lazy_value! {
@@ -853,6 +848,7 @@ impl ExprEvaluator {
             // Blocks open a new scope; we don't want any set expressions (or expressions
             // containing set expressions) within this scope to be cached, so we clone with
             // no_eval_cache.
+            // XXX Not entirely sure this logic holds up anymore; it may be unnecessary.
             Block(block) => delayed! { me.no_eval_cache, block,
                 match me.evaluate_block_items(&block.items, BlockItemMode::Block).await {
                     Err(e) => e.into(),
