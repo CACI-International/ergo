@@ -108,6 +108,7 @@ mod schema {
     load!(init);
     load!(read_entry);
     load!(read_value);
+    load!(read_used_paths);
     load!(read_diagnostic_sources);
     load!(write_entry);
     load!(write_reference);
@@ -458,7 +459,7 @@ impl Db {
     pub async fn cleanup(&self) -> Result<()> {
         let conn = self.connection.lock().await;
 
-        let mut paths = Vec::new();
+        let mut paths = std::collections::HashSet::new();
         ergo_runtime::error_info! {{
             let transaction = sqlite::Transaction::new(&conn)?;
             loop {
@@ -467,11 +468,19 @@ impl Db {
                     break;
                 }
             }
+
             let mut stmt = conn.prepare(schema::delete_unused_paths)?;
             while let sqlite::State::Row = stmt.next()? {
                 let path: String = stmt.read(0)?;
-                paths.push(std::path::PathBuf::from(path));
+                paths.insert(std::path::PathBuf::from(path));
             }
+            // Retain any paths still referenced by a value.
+            let mut stmt = conn.prepare(schema::read_used_paths)?;
+            while let sqlite::State::Row = stmt.next()? {
+                let path: String = stmt.read(0)?;
+                paths.remove(path.as_ref() as &Path);
+            }
+
             conn.execute(schema::delete_unused_diagnostic_sources)?;
             transaction.commit()
         }}?;
