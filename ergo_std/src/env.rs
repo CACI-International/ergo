@@ -37,9 +37,13 @@ fn vars() -> Value {
 }
 
 fn process_id() -> Value {
-    let mut v = types::Number::from(std::process::id()).into();
+    // Set `eval_for_id` since this identity changes across runs.
+    let v: ergo_runtime::value::IdentifiedValue = types::Number::from(std::process::id()).into();
+    let id = ergo_runtime::value::IdInfo::new(*v.id()).eval_for_id(true);
+    let mut v: Value = v.into();
+    v.set_identity(id);
     Doc::set_string(&mut v, "The ergo process id, as a Number.");
-    v
+    v.into()
 }
 
 fn current_dir() -> Value {
