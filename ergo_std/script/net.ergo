@@ -92,17 +92,18 @@ download = fn (plugin:String :url) (plugin:Path :target) ^:rest -> {
 ## The url can resolve to any content that `fs:unarchive` accepts.
 ##
 ## Returns the unpacked remote archive directory.
-unarchive = fn (enter=:enter) ^:args -> path:for <| fn :unpacked-dir -> {
-    result = http ^$args
-    result:complete
-    plugin:fs:unarchive $unpacked-dir result:body
+unarchive = fn ~:enter ^:args -> {
+    unpacked-dir = path:for <| fn :unpacked-dir -> {
+        result = http ^args
+        result:complete
+        plugin:fs:unarchive $unpacked-dir result:body
+    }
     plugin:match $enter [
         $unset -> $unpacked-dir
         _ -> plugin:match (plugin:fs:glob <| plugin:Path:join $unpacked-dir *) [
             [:inner] -> $inner
-            _ -> $unpacked-dir
+            :other -> $unpacked-dir
         ]
-
     ]
 }
 

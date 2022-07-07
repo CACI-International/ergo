@@ -303,7 +303,12 @@ async fn copy(from: types::Path, to: types::Path, (shallow): [_], (follow_symlin
             to.display()
         ))
     } else {
-        recursive_link(from, to, &link_mode, follow_symlinks)
+        let from: std::path::PathBuf = from.into();
+        let to: std::path::PathBuf = to.into();
+        Context::global()
+            .task
+            .spawn_blocking(move || recursive_link(from, to, &link_mode, follow_symlinks))
+            .await?
     }
     .add_primary_label(ARGS_SOURCE.with(""))?;
 
@@ -442,12 +447,21 @@ async fn archive(archive: types::Path, source: types::Path, (format): [types::St
     }
 
     let result = match ext.as_str() {
-        "dir" => recursive_link(
-            source.as_ref().as_ref(),
-            archive.as_ref().as_ref(),
-            &LinkMode::Copy,
-            false,
-        ),
+        "dir" => {
+            let source = source.clone();
+            let archive = archive.clone();
+            Context::global()
+                .task
+                .spawn_blocking(move || {
+                    recursive_link(
+                        source.as_ref().as_ref(),
+                        archive.as_ref().as_ref(),
+                        &LinkMode::Copy,
+                        false,
+                    )
+                })
+                .await?
+        }
         "zip" => {
             fn add_dir_entries<W: std::io::Write + std::io::Seek>(
                 dir: &Path,
@@ -627,14 +641,20 @@ async fn unarchive(destination: types::Path, mut archive: _) -> Value {
         p@types::Path { .. } => {
             let path = p.as_ref();
             if path.is_dir() {
-                recursive_link(&path, &to_path, &LinkMode::Copy, false)
+                let path_c: std::path::PathBuf = path.clone().into();
+                let to_path_c: std::path::PathBuf = to_path.clone().into();
+                Context::global().task.spawn_blocking(move ||
+                    recursive_link(path_c, to_path_c, &LinkMode::Copy, false)
+                ).await?
                     .add_primary_label(ARGS_SOURCE.with("while copying directory"))
                     .add_note(format_args!("source path was {}", path.display()))
                     .add_note(format_args!("target path was {}", to_path.display()))?;
             } else if path.is_file() {
-                extract_to(std::fs::File::open(&path)
+                let f = std::fs::File::open(&path)
                             .add_note(format_args!("archive path was {}", path.display()))
-                            .add_primary_label(archive_source.with("while opening this archive"))?, &to_path)
+                            .add_primary_label(archive_source.with("while opening this archive"))?;
+                let to_path_c: std::path::PathBuf = to_path.clone().into();
+                Context::global().task.spawn_blocking(move || extract_to(f, to_path_c)).await?
                     .add_note(format_args!("archive path was {}", path.display()))
                     .add_note(format_args!("target path was {}", to_path.display()))
                     .add_primary_label(archive_source.with("while extracting this archive"))?;
@@ -649,7 +669,8 @@ async fn unarchive(destination: types::Path, mut archive: _) -> Value {
             use futures::io::AsyncReadExt;
             bs.read().read_to_end(&mut data).await
                 .add_primary_label(archive_source.with("while reading this byte stream"))?;
-            extract_to(std::io::Cursor::new(data), &to_path)
+            let to_path_c: std::path::PathBuf = to_path.clone().into();
+            Context::global().task.spawn_blocking(move || extract_to(std::io::Cursor::new(data), to_path_c)).await?
                 .add_note(format_args!("target path was {}", to_path.display()))
                 .add_primary_label(archive_source.with("while extracting this archive"))?;
         }

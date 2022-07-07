@@ -291,8 +291,6 @@ impl TaskManager {
     /// The number of threads, if None, will be the number of cpus of the system.
     /// Aggregate errors determines whether joins will fail as soon as an error occurs (false) or
     /// whether it will wait for all results/errors (true).
-    /// The on_error callback will be called once for each error that is created while futures are
-    /// running in tasks.
     pub fn new(
         num_threads: Option<usize>,
         aggregate_errors: bool,

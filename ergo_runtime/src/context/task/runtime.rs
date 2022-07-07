@@ -71,6 +71,8 @@ struct BlockingTaskPool {
     tasks: Mutex<VecDeque<BlockingTask>>,
     waiting: Condvar,
     size: Mutex<BlockingPoolSize>,
+    made_progress: AtomicBool,
+    made_progress_last: AtomicBool,
     currently_running: AtomicUsize,
     bored: AtomicUsize,
 }
@@ -626,7 +628,17 @@ impl RuntimeHandle {
             .currently_running
             .load(Ordering::Relaxed)
             > 0;
-        blocking_tasks_ready || blocking_tasks_running
+        let made_progress = self
+            .inner
+            .blocking_tasks
+            .made_progress_last
+            .load(Ordering::Relaxed);
+        blocking_tasks_ready || blocking_tasks_running || made_progress
+    }
+
+    /// Returns whether there are any tasks currently polling.
+    pub fn has_polling_tasks(&self) -> bool {
+        self.inner.tasks.currently_polling.load(Ordering::Relaxed) > 0
     }
 
     fn new_blocking_pool_thread(&self) -> std::io::Result<()> {
@@ -707,14 +719,25 @@ impl RuntimeHandle {
             }
             // Inactivity logic
             if let Some(cb) = &self.inner.on_inactivity {
-                let made_progress = self
+                let tasks_made_progress = self
                     .inner
                     .tasks
                     .made_progress
                     .swap(false, Ordering::Relaxed);
-                let tasks_polling = self.inner.tasks.currently_polling.load(Ordering::Relaxed) > 0;
+                {
+                    let blocking_tasks_made_progress = self
+                        .inner
+                        .blocking_tasks
+                        .made_progress
+                        .swap(false, Ordering::Relaxed);
+                    self.inner
+                        .blocking_tasks
+                        .made_progress_last
+                        .store(blocking_tasks_made_progress, Ordering::Relaxed);
+                }
+                let tasks_polling = self.has_polling_tasks();
                 let has_blocking_tasks = self.has_blocking_tasks();
-                if made_progress || tasks_polling || has_blocking_tasks {
+                if tasks_made_progress || tasks_polling || has_blocking_tasks {
                     inactive_intervals = 0;
                 } else {
                     inactive_intervals += 1;
@@ -889,6 +912,7 @@ impl BlockingTaskPool {
 
     pub fn try_run_task(&self) {
         if let Some(BlockingTask { f, .. }) = self.next_task() {
+            self.made_progress.store(true, Ordering::Relaxed);
             self.currently_running.fetch_add(1, Ordering::Relaxed);
             f.call();
             self.currently_running.fetch_sub(1, Ordering::Relaxed);
