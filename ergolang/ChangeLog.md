@@ -1,6 +1,8 @@
 # ergo changelog
 
 ## Unreleased
+
+## 1.0.0-rc.4  -- 2022-07-07
 * Remove the force operator (`!`) and change evaluation semantics.
   * Value identities are no longer eagerly computed, but instead are delayed.
     * Changing to non-eager identities removes a lot of pitfalls with forced
