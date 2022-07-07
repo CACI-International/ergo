@@ -5,4 +5,5 @@ INSERT OR REPLACE INTO cache_entries (
 	value_u8, value_l8,
 	creation_time,
 	expiration_time
-) VALUES (?,?,?,?,unixepoch(),?);
+) VALUES (?,?,?,?,strftime('%s'),?);
+-- In sqlite 3.38.0, we can use `unixepoch()` rather than `strftime`

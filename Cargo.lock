@@ -908,6 +908,7 @@ dependencies = [
  "serde",
  "sha",
  "sqlite",
+ "sqlite3-src",
  "tar",
  "xz",
  "zip",

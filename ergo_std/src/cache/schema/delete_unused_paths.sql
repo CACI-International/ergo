@@ -1,3 +1,4 @@
 -- Clean up unused paths.
--- () -> (path)
-DELETE FROM associated_paths WHERE value_u8 IS NULL RETURNING path;
+-- () -> ()
+-- In sqlite 3.35, we can use `DELETE FROM ... RETURNING path`.
+DELETE FROM associated_paths WHERE value_u8 IS NULL;

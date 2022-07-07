@@ -109,6 +109,7 @@ mod schema {
     load!(read_entry);
     load!(read_value);
     load!(read_used_paths);
+    load!(read_unused_paths);
     load!(read_diagnostic_sources);
     load!(write_entry);
     load!(write_reference);
@@ -469,11 +470,12 @@ impl Db {
                 }
             }
 
-            let mut stmt = conn.prepare(schema::delete_unused_paths)?;
+            let mut stmt = conn.prepare(schema::read_unused_paths)?;
             while let sqlite::State::Row = stmt.next()? {
                 let path: String = stmt.read(0)?;
                 paths.insert(std::path::PathBuf::from(path));
             }
+            conn.execute(schema::delete_unused_paths)?;
             // Retain any paths still referenced by a value.
             let mut stmt = conn.prepare(schema::read_used_paths)?;
             while let sqlite::State::Row = stmt.next()? {
