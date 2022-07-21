@@ -184,8 +184,8 @@ import = fn :descr -> (plugin:Type:any :v) -> {
             plugin:Map :m -> {
                 plugin:Iter:map (fn (plugin:MapEntry:@ :key :value) -> { 
                     plugin:value:index { :$key = :result } = $v
-                    plugin:match (plugin:value:equal ~exact $result $unset) [
-                        plugin:Bool:true -> plugin:Error:new (source=$key) "missing index"
+                    plugin:match (plugin:Type:get ~no-eval $result) [
+                        plugin:Unset -> plugin:Error:new (source=$key) "missing index"
                         _ -> ()
                     ]
                     self $value = $result
