@@ -101,3 +101,14 @@ not work correctly with this flag, so the default is `less`. You can:
     in a logical way.
 * Possibly figure out a way for late bindings to propagate through certain
   function calls (e.g. `ergo abc` should "just work" if late bound).
+* Merge `Unset`.
+* `std:Unset:index` for deep indexing.
+* Fix rendering bug for paragraphs under a bulleted list:
+  ```
+  ## * foo
+  ## 
+  ##   Hello world
+  ## * bar
+  ```
+  Does not render as expected.
+* `std:match` errors need more detail (include original source).

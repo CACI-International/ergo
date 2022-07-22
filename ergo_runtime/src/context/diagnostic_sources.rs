@@ -97,6 +97,7 @@ impl Sources {
                 let id = file_id(path.as_ref())?;
                 let content = std::fs::read_to_string(path.as_ref())?.into();
                 guard.insert(path.clone(), id);
+                log::debug!("created source from path `{}` as id {}", path.display(), id);
                 self.source_ids.cache(id, || {
                     ROption::RSome(Source::File {
                         path: path.clone(),
@@ -126,6 +127,11 @@ impl Sources {
             } else {
                 let id = binary_file_id(path.as_ref());
                 guard.insert(path.clone(), id);
+                log::debug!(
+                    "created binary source from path `{}` as id {}",
+                    path.display(),
+                    id
+                );
                 self.source_ids.cache(id, || {
                     ROption::RSome(Source::BinaryFile { path: path.clone() })
                 });
