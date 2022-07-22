@@ -260,14 +260,14 @@ iter-true = fn :iter -> plugin:Iter:filter (fn :a -> $a) $iter
 ## If `condition` evaluates to true, `if_true` is returned. Otherwise each following `cond2` is
 ## subsequently tested (returning `if_true2` if one evaluates to true), and `if_false` is returned
 ## if no conditions evaluate to true. If the else condition is omitted, `unset` will be returned.
-if = fn :cond :if_true ^:rest -> {
+if = fn ~:__callsite :cond :if_true ^:rest -> {
     do-condition = recurse <| :self -> fn :cond :if_true :rest -> {
         plugin:match (plugin:Bool:from $cond) [
             plugin:Bool:true -> $if_true
             plugin:Bool:false -> plugin:match $rest [
                 [else,if,:cond2,:if_true2,^:rest] -> self $cond2 $if_true2 $rest
                 [else,:if_false] -> $if_false
-                [] -> $unset
+                [] -> plugin:value:source-copy $__callsite $unset
                 [:other,^_] -> plugin:Error:new (source=$other) "expected `else` or `else if`"
             ]
         ]
