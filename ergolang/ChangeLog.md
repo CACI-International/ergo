@@ -72,6 +72,8 @@
   error-prone than dynamic binding).
   * This includes syntax for late binding (`$?BINDING`) and the built-in
     `late-bind` function.
+* Allow merging `Unset` values in Commands/Blocks/Arrays (as a no-op). This is
+  convenient for conditionally merging values.
 
 ### Breaking Changes
 * Any use of `!` should be replaced with equivalent code.

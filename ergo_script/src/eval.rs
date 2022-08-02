@@ -614,6 +614,9 @@ impl ExprEvaluator {
                                     errs.push(val_source.with("cannot merge value with type Args").into_error());
                                 }
                             }
+                            types::Unset => {
+                                // Do nothing
+                            }
                             e@types::Error {..} => {
                                 has_errors = true;
                                 errs.push(e);
@@ -881,6 +884,9 @@ impl ExprEvaluator {
                                 types::Array(arr) => results.extend(arr),
                                 types::Unbound {..} => {
                                     results.push(Source::imbue(val_source.clone().with(types::BindRest(val).into())));
+                                }
+                                types::Unset => {
+                                    // Do nothing
                                 }
                                 e@types::Error {..} => {
                                     has_errors = true;

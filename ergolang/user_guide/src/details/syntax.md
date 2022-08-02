@@ -369,6 +369,9 @@ as expressions in the block.
 In commands, any position following the function to call may merge a map (for
 keyed arguments), array (for positional arguments), or Args.
 
+In any case you can also merge Unset, which has no effect. This is useful in
+combination with, e.g., `std:if`.
+
 ### Doc Comments
 ```ergo
 ## Provide a friendly greeting.

@@ -637,6 +637,17 @@ mod test {
         fn command_missing_args() -> Result<(), String> {
             script_fail("f = fn :a :b :c -> [$a,$b,$c]; f 1")
         }
+
+        #[test]
+        fn unset() -> Result<(), String> {
+            script_eval_to("[a,^$unset,b]", SRArray(&[SRString("a"), SRString("b")]))?;
+            script_eval_to("{ a = 1, ^$unset }", SRMap(&[("a", SRString("1"))]))?;
+            script_eval_to(
+                ":to-array = fn ^:args -> args:positional\nto-array a ^$unset b",
+                SRArray(&[SRString("a"), SRString("b")]),
+            )?;
+            Ok(())
+        }
     }
 
     mod binding {

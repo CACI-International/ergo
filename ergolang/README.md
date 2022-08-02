@@ -101,4 +101,3 @@ not work correctly with this flag, so the default is `less`. You can:
     in a logical way.
 * Possibly figure out a way for late bindings to propagate through certain
   function calls (e.g. `ergo abc` should "just work" if late bound).
-* Merge `Unset`.
