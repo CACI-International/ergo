@@ -111,4 +111,3 @@ not work correctly with this flag, so the default is `less`. You can:
   ## * bar
   ```
   Does not render as expected.
-* `std:match` errors need more detail (include original source).

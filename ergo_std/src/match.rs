@@ -34,29 +34,58 @@ pub async fn function(
         } else {
             eval_result?;
         }
+        let value_source = Source::get(&value);
         let mut err_labels = Vec::new();
-        for b in bindings {
+        for (i, b) in bindings.into_iter().enumerate() {
             let b_source = Source::get(&b);
             let result = traits::bind(b, value.clone()).await;
             match result.as_type::<types::Error>() {
                 Ok(err) => {
                     let diagnostics = ergo_runtime::error::Diagnostics::from(err.as_ref());
-                    'labelled: for d in &diagnostics {
+                    let mut has_primary = false;
+                    for d in &diagnostics {
                         for l in &d.labels {
-                            if !l.secondary && b_source.contains(&l.label) {
-                                err_labels.push(l.label.clone().with(
-                                    if l.label.value().is_empty() {
-                                        d.message.to_string()
-                                    } else {
-                                        format!("{}: {}", d.message, l.label.value())
-                                    },
-                                ));
-                                break 'labelled;
+                            // Disregard labels on the main value, they will stack up quickly.
+                            if ergo_runtime::source::Source::total_eq(
+                                &l.label.source(),
+                                &value_source,
+                            ) {
+                                continue;
+                            }
+                            if !has_primary && !l.secondary && b_source.contains(&l.label) {
+                                err_labels.push(ergo_runtime::error::Label {
+                                    label: l.label.clone().with(
+                                        if l.label.value().is_empty() {
+                                            format!("({}) {}", i + 1, d.message)
+                                        } else {
+                                            format!(
+                                                "({}) {}: {}",
+                                                i + 1,
+                                                d.message,
+                                                l.label.value()
+                                            )
+                                        }
+                                        .into(),
+                                    ),
+                                    secondary: false,
+                                });
+                                has_primary = true;
+                            } else {
+                                err_labels.push(ergo_runtime::error::Label {
+                                    label: l
+                                        .label
+                                        .as_ref()
+                                        .map(|s| format!("({}) {}", i + 1, s).into()),
+                                    secondary: true,
+                                });
                             }
                         }
-                        if d.severity == ergo_runtime::error::Severity::Error {
-                            err_labels.push(b_source.with(d.message.to_string()));
-                            break 'labelled;
+                        if !has_primary && d.severity == ergo_runtime::error::Severity::Error {
+                            err_labels.push(ergo_runtime::error::Label {
+                                label: b_source.with(format!("({}) {}", i + 1, d.message).into()),
+                                secondary: false,
+                            });
+                            has_primary = true;
                         }
                     }
                 }
@@ -79,8 +108,8 @@ pub async fn function(
                 let mut diag = Diagnostic::from("no bindings matched the value")
                     .add_value_info("value", &v)
                     .await;
-                for e in err_labels {
-                    diag = diag.add_secondary_label(e);
+                for l in err_labels {
+                    diag.labels.push(l);
                 }
                 diag.into()
             }
