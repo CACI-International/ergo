@@ -175,14 +175,55 @@ impl std::hash::Hash for ScopeEntryKey {
     }
 }
 
+#[derive(Debug)]
+enum ScopeValue {
+    Unset,
+    Set(Value),
+    AlreadySet,
+}
+
+impl ScopeValue {
+    pub fn is_set(&self) -> bool {
+        match self {
+            Self::Unset => false,
+            _ => true,
+        }
+    }
+}
+
 #[derive(Clone)]
 struct Scope {
-    inner: std::sync::Arc<RMutex<HashMap<ScopeEntryKey, Option<Value>>>>,
+    inner: std::sync::Arc<RMutex<HashMap<ScopeEntryKey, ScopeValue>>>,
 }
 
 impl std::fmt::Debug for Scope {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "{:?}", self.inner.lock())
+    }
+}
+
+#[derive(Debug)]
+struct ActiveScope(ScopeKey);
+
+impl ergo_runtime::context::DynamicScopeKey for ActiveScope {
+    type Value = Scope;
+
+    fn id(&self) -> u128 {
+        ergo_runtime::depends![const nsid!(eval::active_scope), self.0]
+            .id()
+            .id
+    }
+}
+
+impl ActiveScope {
+    pub fn with<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(Option<&Scope>) -> R,
+    {
+        Context::with(|ctx| match ctx.dynamic_scope.get(self) {
+            None => f(None),
+            Some(v) => f(Some(v.as_ref())),
+        })
     }
 }
 
@@ -193,78 +234,68 @@ impl Scope {
         }
     }
 
+    pub async fn eval<F>(
+        &self,
+        key: ScopeKey,
+        fut: F,
+    ) -> Result<Vec<(Option<CaptureKey>, EvaluatedValue, Value)>>
+    where
+        F: std::future::Future<Output = Result<()>> + Send,
+    {
+        let key = ActiveScope(key);
+        debug_assert!(key.with(|v| v.is_none()), "scope unexpectedly present");
+        let scope = self.clone();
+        Context::fork(
+            move |ctx| {
+                ctx.dynamic_scope
+                    .set(&ergo_runtime::source::Source::missing(key), scope)
+            },
+            fut,
+        )
+        .await?;
+        Ok(self.set_values())
+    }
+
     pub fn add(&self, cap: Option<CaptureKey>, key: EvaluatedValue, value: Value) -> bool {
         self.inner
             .lock()
-            .insert(ScopeEntryKey { cap, key }, Some(value))
-            .map(|v| v.is_some())
+            .insert(ScopeEntryKey { cap, key }, ScopeValue::Set(value))
+            .map(|v| v.is_set())
             .unwrap_or(false)
     }
 
-    pub fn init(&self, cap: Option<CaptureKey>, key: EvaluatedValue) {
-        self.inner.lock().insert(ScopeEntryKey { cap, key }, None);
+    pub fn unset(&self, cap: Option<CaptureKey>, key: EvaluatedValue) {
+        self.inner
+            .lock()
+            .insert(ScopeEntryKey { cap, key }, ScopeValue::Unset);
     }
 
-    pub fn into_inner(self) -> Vec<(Option<CaptureKey>, EvaluatedValue, Value)> {
-        match std::sync::Arc::try_unwrap(self.inner) {
-            Err(a) => std::mem::take(&mut *a.lock()),
-            Ok(v) => v.into_inner(),
+    fn set_values(&self) -> Vec<(Option<CaptureKey>, EvaluatedValue, Value)> {
+        let mut ret = Vec::new();
+        let mut to_remove = Vec::new();
+        let mut scope = self.inner.lock();
+        for (k, v) in scope.iter_mut() {
+            match std::mem::replace(v, ScopeValue::AlreadySet) {
+                ScopeValue::Unset => {
+                    ret.push((k.cap, k.key.clone(), types::Unset.into()));
+                }
+                ScopeValue::Set(value) => {
+                    ret.push((k.cap, k.key.clone(), value));
+                }
+                ScopeValue::AlreadySet => (),
+            }
+            // If there is a capture key, this value can be directly referenced from a `get`, which
+            // means we must ensure it can only be set once (no mutability). Otherwise, it is an
+            // indirect set, and so the value can be overwritten (it won't be able to be referenced
+            // until the enclosing scope is closed).
+            if k.cap.is_none() {
+                to_remove.push(k.clone());
+            }
         }
-        .into_iter()
-        .map(|(k, v)| (k.cap, k.key, v.unwrap_or(types::Unset.into())))
-        .collect()
-    }
-}
-
-#[derive(Clone)]
-struct Scopes {
-    inner: BTreeMap<ScopeKey, Scope>,
-}
-
-#[derive(Debug)]
-struct ScopeCloser(ScopeKey);
-
-impl Scopes {
-    pub fn new() -> Self {
-        Scopes {
-            inner: Default::default(),
+        for k in to_remove {
+            scope.remove(&k);
         }
-    }
-
-    pub fn open(&mut self, key: ScopeKey) -> ScopeCloser {
-        let no_value = self.inner.insert(key, Scope::new()).is_none();
-        debug_assert!(no_value, "unexpected scope present");
-        ScopeCloser(key)
-    }
-
-    pub fn init(&self, scope_key: ScopeKey, cap: Option<CaptureKey>, key: EvaluatedValue) {
-        self.inner
-            .get(&scope_key)
-            .expect("scope disappeared at init")
-            .init(cap, key)
-    }
-
-    pub fn insert(
-        &self,
-        scope_key: ScopeKey,
-        cap: Option<CaptureKey>,
-        key: EvaluatedValue,
-        value: Value,
-    ) -> bool {
-        self.inner
-            .get(&scope_key)
-            .expect("scope disappeared at insert")
-            .add(cap, key, value)
-    }
-
-    pub fn close(
-        &mut self,
-        closer: ScopeCloser,
-    ) -> Vec<(Option<CaptureKey>, EvaluatedValue, Value)> {
-        self.inner
-            .remove(&closer.0)
-            .expect("scope disappeared at close")
-            .into_inner()
+        ret
     }
 }
 
@@ -387,8 +418,6 @@ struct ExprEvaluator {
     expr: Expr,
     evaluator: Evaluator,
     captures: Captures,
-    scopes: Scopes,
-    scope_key: ScopeKey,
     cache: ExprEvaluatorCache,
 }
 
@@ -414,8 +443,6 @@ impl ExprEvaluator {
             expr,
             evaluator,
             captures,
-            scopes: Scopes::new(),
-            scope_key: ScopeKey::new(),
             cache: Default::default(),
         }
     }
@@ -455,8 +482,6 @@ impl ExprEvaluator {
                 .captures()
                 .map(|c| self.captures.subset(c))
                 .unwrap_or_default(),
-            scopes: self.scopes.clone(),
-            scope_key: self.scope_key.enter(child),
             cache: self
                 .cache
                 .children
@@ -465,13 +490,42 @@ impl ExprEvaluator {
         }
     }
 
-    fn no_lexical_scope(mut self) -> Self {
-        self.scopes = Scopes::new();
+    fn no_lexical_scope(self) -> Self {
+        // Deprecated
         self
     }
 
     fn no_scopes(self) -> Self {
         self.no_lexical_scope()
+    }
+
+    fn scope_key(&self) -> ScopeKey {
+        ScopeKey::for_expr(&self.expr)
+    }
+
+    // Initialize any setters with the given scope key to `unset`.
+    fn init_scope(&self, key: ScopeKey) -> BoxFuture<()> {
+        async move {
+            if let Some(set) = self.expr.value().as_ref::<ast::Set>() {
+                if set.scope_key == key {
+                    let v = self.child(&set.value).evaluate().await.as_evaluated().await;
+                    ActiveScope(key).with(|f| f.unwrap().unset(set.capture_key, v));
+                }
+            } else {
+                let mut children = Vec::new();
+                self.expr.subexpressions(|e| {
+                    if let ast::SubExpr::SubExpr(e) = e {
+                        children.push(self.child(e));
+                    }
+                });
+                Context::global()
+                    .task
+                    .join_all(children.iter().map(|c| c.init_scope(key).map(Ok)))
+                    .await
+                    .unwrap();
+            }
+        }
+        .boxed()
     }
 
     /// Evaluate block items.
@@ -506,83 +560,85 @@ impl ExprEvaluator {
         }
 
         let mut items = items.into_iter().peekable();
+        let scope = Scope::new();
 
         while let Some(i) = items.next() {
             let last_item = items.peek().is_none();
 
-            let close_scope = me.scopes.open(me.scope_key);
-
-            match i {
-                ast::BlockItem::Expr(e) => {
-                    push_result(mode, &mut results, me.child(e).evaluate().await, last_item)
-                        .await?;
-                }
-                ast::BlockItem::Merge(e) => {
-                    let mut val = me.child(e).evaluate().await;
-                    let val_source = Source::get(&val);
-                    drop(Context::eval(&mut val).await);
-                    match_value! { val.clone(),
-                        types::Array(arr) => {
-                            // TODO should this implicitly evaluate to a unit type when the array is
-                            // empty?
-                            let mut arr = arr.into_iter().peekable();
-                            while let Some(v) = arr.next() {
-                                let last_arr = arr.peek().is_none();
-                                push_result(mode, &mut results, v, last_item && last_arr).await?;
-                            }
-                        }
-                        types::Map(map) => {
-                            env.extend(map);
-                        }
-                        types::Unbound {..} => {
-                            if mode.command() {
-                                results.push(Source::imbue(val_source.with(types::BindRest(val).into())));
-                            } else {
-                                if had_unbound {
-                                    has_errors = true;
-                                    errs.push(val_source.with("cannot have multiple unbound merges").into_error());
-                                } else {
-                                    let mut key: EvaluatedValue = types::BindRestKey.into();
-                                    // Safety: adding metadata does not change the identity of the
-                                    // value.
-                                    Source::set(unsafe { key.value_mut() }, val_source.clone());
-                                    env.insert(key, val);
-                                    had_unbound = true;
+            let new_scope = scope.eval(me.scope_key(), async {
+                match i {
+                    ast::BlockItem::Expr(e) => {
+                        push_result(mode, &mut results, me.child(e).evaluate().await, last_item)
+                            .await
+                    }
+                    ast::BlockItem::Merge(e) => {
+                        let mut val = me.child(e).evaluate().await;
+                        let val_source = Source::get(&val);
+                        drop(Context::eval(&mut val).await);
+                        match_value! { val.clone(),
+                            types::Array(arr) => {
+                                // TODO should this implicitly evaluate to a unit type when the array is
+                                // empty?
+                                let mut arr = arr.into_iter().peekable();
+                                while let Some(v) = arr.next() {
+                                    let last_arr = arr.peek().is_none();
+                                    push_result(mode, &mut results, v, last_item && last_arr).await?;
                                 }
                             }
-                        }
-                        types::Args { mut args } => {
-                            if mode.command() {
-                                results.extend(&mut args);
-                                env.extend(args.keyed);
-                            } else {
+                            types::Map(map) => {
+                                env.extend(map);
+                            }
+                            types::Unbound {..} => {
+                                if mode.command() {
+                                    results.push(Source::imbue(val_source.with(types::BindRest(val).into())));
+                                } else {
+                                    if had_unbound {
+                                        has_errors = true;
+                                        errs.push(val_source.with("cannot have multiple unbound merges").into_error());
+                                    } else {
+                                        let mut key: EvaluatedValue = types::BindRestKey.into();
+                                        // Safety: adding metadata does not change the identity of the
+                                        // value.
+                                        Source::set(unsafe { key.value_mut() }, val_source.clone());
+                                        env.insert(key, val);
+                                        had_unbound = true;
+                                    }
+                                }
+                            }
+                            types::Args { mut args } => {
+                                if mode.command() {
+                                    results.extend(&mut args);
+                                    env.extend(args.keyed);
+                                } else {
+                                    has_errors = true;
+                                    errs.push(val_source.with("cannot merge value with type Args").into_error());
+                                }
+                            }
+                            e@types::Error {..} => {
                                 has_errors = true;
-                                errs.push(val_source.with("cannot merge value with type Args").into_error());
+                                errs.push(e);
+                            }
+                            v => {
+                                has_errors = true;
+                                let name = traits::type_name(&v);
+                                errs.push(val_source.with(format!("cannot merge value with type {}", name)).into_error());
                             }
                         }
-                        e@types::Error {..} => {
-                            has_errors = true;
-                            errs.push(e);
-                        }
-                        v => {
-                            has_errors = true;
-                            let name = traits::type_name(&v);
-                            errs.push(val_source.with(format!("cannot merge value with type {}", name)).into_error());
-                        }
+                        Ok(())
+                    }
+                    ast::BlockItem::Bind(target, value) => {
+                        let value = me.child(value).evaluate().await;
+                        let target = me.child(target);
+                        target.init_scope(me.scope_key()).await;
+                        let target = target.evaluate().await;
+
+                        // Immediately eval and check for bind error
+                        traits::bind_no_error(target, value).await
                     }
                 }
-                ast::BlockItem::Bind(key, value) => {
-                    let value = me.child(value).evaluate().await;
-                    let key = me.child(key).evaluate().await;
-
-                    // Immediately eval and check for bind error
-                    traits::bind_no_error(key, value).await?;
-                }
-            }
+            }).await?;
 
             // Process any new bindings
-            let new_scope = me.scopes.close(close_scope);
-
             for (cap, k, v) in new_scope {
                 if !v.is_type::<types::Unset>() {
                     env.insert(k, v.clone());
@@ -763,14 +819,14 @@ impl ExprEvaluator {
 
     async fn evaluate_impl(&self) -> Value {
         macro_rules! delayed {
-            ( $self:ident $($(.$n:ident)+)? , $v:ident , $( $body:tt )* ) => {{
+            ( $self:ident , $v:ident , $( $body:tt )* ) => {{
                 // TODO the `no_eval_cache` here is purely for the purpose of breaking reference
                 // loops using a blunt instrument. This will basically not use the cache for most
                 // of evaluation (losing potential performance, which has been measured to be
                 // considerable). Using a GC, weak references (particularly in loaded scripts), or
                 // simply not relying on value lifetimes for certain things (std:cache, owned
                 // paths) could allow us to use this cache.
-                let $self = self.clone().no_eval_cache()$($(.$n())+)?;
+                let $self = self.clone().no_eval_cache();
                 let v_type = witness($v);
                 ergo_runtime::lazy_value! {
                     #![contains($self)]
@@ -845,11 +901,7 @@ impl ExprEvaluator {
                     types::Array(results.into()).into()
                 }
             },
-            // Blocks open a new scope; we don't want any set expressions (or expressions
-            // containing set expressions) within this scope to be cached, so we clone with
-            // no_eval_cache.
-            // XXX Not entirely sure this logic holds up anymore; it may be unnecessary.
-            Block(block) => delayed! { me.no_eval_cache, block,
+            Block(block) => delayed! { me, block,
                 match me.evaluate_block_items(&block.items, BlockItemMode::Block).await {
                     Err(e) => e.into(),
                     Ok((mut vals, env)) => {
@@ -868,11 +920,16 @@ impl ExprEvaluator {
                 types::unbound_value! {
                     #![contains(me)]
                     let mut me = me.clone().cache_root();
-                    let close_scope = me.scopes.open(me.scope_key);
-                    let bind = me.child(&bind).evaluate().await;
-                    traits::bind_no_error(bind, ARG).await?;
 
-                    let new_captures: Vec<_> = me.scopes.close(close_scope)
+                    let scope = Scope::new();
+                    let new_scope = scope.eval(me.scope_key(), async {
+                        let bind = me.child(&bind);
+                        bind.init_scope(me.scope_key()).await;
+                        let bind = bind.evaluate().await;
+                        traits::bind_no_error(bind, ARG).await
+                    }).await?;
+
+                    let new_captures: Vec<_> = new_scope
                         .into_iter()
                         .map(|(cap, _, v)| cap.map(|c| (c, v.clone())))
                         .collect();
@@ -900,12 +957,18 @@ impl ExprEvaluator {
             Set(set) => {
                 let me = self.clone().no_eval_cache();
                 let k = me.child(&set.value).evaluate().await.as_evaluated().await;
-                me.scopes.init(set.scope_key, set.capture_key.clone(), k.clone());
+                // TODO
+                // me.scopes.init(set.scope_key, set.capture_key.clone(), k.clone());
                 types::unbound_value! {
                     #![contains(me)]
                     let set = unsafe { me.expr.as_ref_unchecked::<ast::Set>() };
 
-                    if me.scopes.insert(set.scope_key, set.capture_key.clone(), k, ARG.clone()) {
+                    let had_prior_setting = ActiveScope(set.scope_key).with(|s| if let Some(s) = s {
+                        s.add(set.capture_key.clone(), k, ARG.clone())
+                    } else {
+                        false
+                    });
+                    if had_prior_setting {
                         return Err(ergo_runtime::diagnostic! {
                             labels: [
                                 primary(me.source().with(""))

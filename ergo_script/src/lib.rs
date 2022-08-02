@@ -808,6 +808,21 @@ mod test {
         }
 
         #[test]
+        /// Exercises the case where a setter is never set. Evaluation should behave as if the
+        /// setter were bound to `Unset`.
+        fn rebind_overwriting() -> Result<(), String> {
+            script_eval_to(
+                "donothing = fn :x -> () -> (); { abc = 123, donothing :abc = () }",
+                SRMap(&[]),
+            )?;
+            script_eval_to(
+                "donothing = fn :x -> () -> (); { abc = 123, donothing (donothing :abc) = () }",
+                SRMap(&[]),
+            )?;
+            Ok(())
+        }
+
+        #[test]
         fn rebinding() -> Result<(), String> {
             script_fail(
                 "store = fn :a in :b -> () -> { $b = $a }; store :x in :y = (); $y = 1; $y = 2",

@@ -36,23 +36,21 @@ pub type CaptureKey = keyset::Key;
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ScopeKey(usize);
 
+impl Default for ScopeKey {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ScopeKey {
-    pub const UNSET: Self = ScopeKey(usize::MAX);
+    pub const UNSET: Self = ScopeKey(0);
 
     pub fn new() -> Self {
-        ScopeKey(1)
+        Self::UNSET
     }
 
-    pub fn enter(&self, e: &Expr) -> Self {
-        let inc = match e.expr_type() {
-            ExpressionType::Block | ExpressionType::Function | ExpressionType::Command => true,
-            _ => false,
-        };
-        if inc {
-            ScopeKey(self.0 + 1)
-        } else {
-            *self
-        }
+    pub fn for_expr(e: &Expression) -> Self {
+        ScopeKey(e.inner.as_ref() as *const ExpressionInner as usize)
     }
 }
 
@@ -641,60 +639,64 @@ impl std::fmt::Debug for Expression {
 type Scope<K, V> = HashMap<K, V>;
 
 struct ScopeMap<K, V> {
-    scopes: Vec<Scope<K, V>>,
+    scopes: Vec<(ScopeKey, Scope<K, V>)>,
     // Index in `scopes`
-    implicit_set_scope: ScopeKey,
+    implicit_set_scope: ImplicitSetScope,
 }
+
+struct ImplicitSetScope(usize);
 
 impl<K, V> Default for ScopeMap<K, V> {
     fn default() -> Self {
         ScopeMap {
-            scopes: vec![Default::default()],
-            implicit_set_scope: ScopeKey::UNSET,
+            scopes: Default::default(),
+            implicit_set_scope: ImplicitSetScope(usize::MAX),
         }
     }
 }
 
 impl<K, V> ScopeMap<K, V> {
-    pub fn down(&mut self) -> ScopeKey {
-        self.scopes.push(Default::default());
-        self.scope_key()
+    pub fn down(&mut self, key: ScopeKey) {
+        self.scopes.push((key, Default::default()));
     }
 
-    pub fn start_set_scope(&mut self) -> ScopeKey {
-        let new = self.scope_key();
-        std::mem::replace(&mut self.implicit_set_scope, new)
+    pub fn start_set_scope(&mut self) -> ImplicitSetScope {
+        debug_assert!(!self.scopes.is_empty());
+        std::mem::replace(
+            &mut self.implicit_set_scope,
+            ImplicitSetScope(self.scopes.len() - 1),
+        )
     }
 
-    pub fn finish_set_scope(&mut self, old: ScopeKey) {
+    pub fn finish_set_scope(&mut self, old: ImplicitSetScope) {
         self.implicit_set_scope = old;
     }
 
     pub fn up(&mut self) -> HashMap<K, V> {
-        self.scopes.pop().expect("no corresponding `down`")
+        self.scopes.pop().expect("no corresponding `down`").1
     }
 
     pub fn take(&mut self) -> HashMap<K, V> {
-        std::mem::take(self.scopes.last_mut().expect("no corresponding `down`"))
-    }
-
-    pub fn scope_key(&self) -> ScopeKey {
-        ScopeKey(self.scopes.len() - 1)
+        std::mem::take(&mut self.scopes.last_mut().expect("no corresponding `down`").1)
     }
 
     pub fn implicit_scope_key(&self) -> Option<ScopeKey> {
-        if self.scopes.get(self.implicit_set_scope.0).is_none() {
-            None
+        if let Some(e) = self.scopes.get(self.implicit_set_scope.0) {
+            Some(e.0)
         } else {
-            Some(self.implicit_set_scope)
+            None
         }
     }
 }
 
 impl<K: Eq + std::hash::Hash, V> ScopeMap<K, V> {
     pub fn insert(&mut self, k: K, v: V) -> Option<ScopeKey> {
-        self.scopes.get_mut(self.implicit_set_scope.0)?.insert(k, v);
-        Some(self.implicit_set_scope)
+        if let Some((scope_key, scope)) = self.scopes.get_mut(self.implicit_set_scope.0) {
+            scope.insert(k, v);
+            Some(*scope_key)
+        } else {
+            None
+        }
     }
 
     pub fn get<Q: ?Sized>(&mut self, k: &Q) -> Option<&V>
@@ -702,7 +704,7 @@ impl<K: Eq + std::hash::Hash, V> ScopeMap<K, V> {
         K: std::borrow::Borrow<Q>,
         Q: Eq + std::hash::Hash,
     {
-        self.scopes.iter().rev().find_map(|i| i.get(k))
+        self.scopes.iter().rev().find_map(|i| i.1.get(k))
     }
 }
 
@@ -794,19 +796,19 @@ impl Expression {
         })
     }
 
-    pub fn set_with_capture(value: Expr, key: CaptureKey, scope_key: usize) -> Self {
+    pub fn set_with_capture(value: Expr, key: CaptureKey, _scope_key: usize) -> Self {
         Self::create(Set {
             capture_key: Some(key),
-            scope_key: ScopeKey(scope_key),
+            scope_key: ScopeKey::UNSET,
             value,
             captures: Default::default(),
         })
     }
 
-    pub fn set_with_scope_key(value: Expr, scope_key: usize) -> Self {
+    pub fn set_with_scope_key(value: Expr, _scope_key: usize) -> Self {
         Self::create(Set {
             capture_key: None,
-            scope_key: ScopeKey(scope_key),
+            scope_key: ScopeKey::UNSET,
             value,
             captures: Default::default(),
         })
@@ -857,6 +859,28 @@ pub fn load(
     ),
     Error,
 > {
+    load_ext(
+        source,
+        ctx,
+        lint,
+        #[cfg(test)]
+        false,
+    )
+}
+
+fn load_ext(
+    source: Source<&str>,
+    ctx: &mut Context,
+    lint: LintLevel,
+    #[cfg(test)] disable_scope_keys: bool,
+) -> Result<
+    (
+        Expr,
+        HashMap<CaptureKey, Expr>,
+        Vec<Source<std::string::String>>,
+    ),
+    Error,
+> {
     let toks = tokenize::Tokens::from(source);
     let tree_parser = parse_tree::Parser::from(toks);
     let parser = parse::Parser::from(tree_parser);
@@ -879,6 +903,8 @@ pub fn load(
 
     let mut compiler = ExpressionCompiler::with_context(ctx);
     compiler.enable_lint(lint);
+    #[cfg(test)]
+    compiler.disable_scope_keys(disable_scope_keys);
     compiler.compile_captures(&mut expr, &mut Default::default());
     let lint_messages = compiler.lint_messages();
     Ok((expr, compiler.into_free_captures()?, lint_messages))
@@ -942,6 +968,8 @@ struct ExpressionCompiler<'a> {
     capture_mapping: ScopeMap<Expression, CaptureKey>,
     lint: Option<Lint>,
     errors: Vec<Error>,
+    #[cfg(test)]
+    disable_scope_keys: bool,
 }
 
 impl Context {
@@ -965,6 +993,8 @@ impl<'a> ExpressionCompiler<'a> {
             capture_mapping: Default::default(),
             lint: Default::default(),
             errors: Default::default(),
+            #[cfg(test)]
+            disable_scope_keys: Default::default(),
         }
     }
 
@@ -974,6 +1004,11 @@ impl<'a> ExpressionCompiler<'a> {
         } else {
             self.lint = Some(Lint::new(level));
         }
+    }
+
+    #[cfg(test)]
+    pub fn disable_scope_keys(&mut self, disable: bool) {
+        self.disable_scope_keys = disable;
     }
 
     #[allow(dead_code)]
@@ -1059,6 +1094,8 @@ impl<'a> ExpressionCompiler<'a> {
             }};
         }
 
+        let scope_key = ScopeKey::for_expr(&e);
+
         match_expression_mut!(e,
             Unit(_) => (),
             BindAny(_) => (),
@@ -1066,7 +1103,7 @@ impl<'a> ExpressionCompiler<'a> {
             CompoundString(v) => do_captures!(subexpr v),
             Array(v) => do_captures!(subexpr v),
             Block(v) => do_captures!(v, |e_caps| {
-                self.capture_mapping.down();
+                self.capture_mapping.down(scope_key);
                 // Only warn about unused sets in bindings if the last value is an expression. This
                 // isn't completely accurate (a merged array may produce a final value rather than
                 // a map), but it is good enough and eliminates many false-positive lints.
@@ -1093,7 +1130,7 @@ impl<'a> ExpressionCompiler<'a> {
                 e_caps.difference_with(&in_scope_captures);
             }),
             Function(v) => do_captures!(v, |e_caps| {
-                self.capture_mapping.down();
+                self.capture_mapping.down(scope_key);
                 let old = self.capture_mapping.start_set_scope();
                 self.compile_captures(&mut v.bind, e_caps);
                 self.capture_mapping.finish_set_scope(old);
@@ -1129,6 +1166,10 @@ impl<'a> ExpressionCompiler<'a> {
                     let key = self.capture_context.key();
                     if let Some(scope_key) = self.capture_mapping.insert(v.value.value().clone(), key) {
                         v.scope_key = scope_key;
+                        #[cfg(test)]
+                        if self.disable_scope_keys {
+                            v.scope_key = ScopeKey::UNSET;
+                        }
                     } else {
                         self.errors.push(src.with("no active scope in which to bind").into_error());
                     }
@@ -1137,6 +1178,10 @@ impl<'a> ExpressionCompiler<'a> {
                 } else {
                     if let Some(scope_key) = self.capture_mapping.implicit_scope_key() {
                         v.scope_key = scope_key;
+                        #[cfg(test)]
+                        if self.disable_scope_keys {
+                            v.scope_key = ScopeKey::UNSET;
+                        }
                     } else {
                         self.errors.push(src.with("no active scope in which to bind").into_error());
                     }
@@ -1157,7 +1202,7 @@ impl<'a> ExpressionCompiler<'a> {
                 self.ignore_string_binding_conflict().compile_captures(&mut v.index, e_caps);
             }),
             Command(v) => do_captures!(v, |e_caps| {
-                self.capture_mapping.down();
+                self.capture_mapping.down(scope_key);
                 self.compile_captures(&mut v.function, e_caps);
                 for i in &mut v.args {
                     match i {
@@ -1608,7 +1653,7 @@ mod test {
 
     fn load(s: &str) -> Result<(Expr, HashMap<CaptureKey, Expression>), Error> {
         let mut ctx = super::Context::default();
-        let (e, m, _) = super::load(Source::missing(s), &mut ctx, LintLevel::Off)?;
+        let (e, m, _) = super::load_ext(Source::missing(s), &mut ctx, LintLevel::Off, true)?;
         Ok((e, m.into_iter().map(|(k, e)| (k, e.unwrap())).collect()))
     }
 }
