@@ -166,6 +166,31 @@ Unset = {
             std:Bool:true
         }
     }
+    index = {
+        none = {
+            () = std:Unset:index ()
+            std:Bool:true
+        }
+        one = {
+            1 = std:Unset:index {a=1} a
+            std:Bool:true
+        }
+        many = {
+            123 = std:Unset:index { a = { b = { c = 123 }, d = 4 } } a b c
+            std:Bool:true
+        }
+        missing = {
+            $unset = std:Unset:index { a = { b = { c = 123 }, d = 4 } } x
+            $unset = std:Unset:index { a = { b = { c = 123 }, d = 4 } } a x
+            $unset = std:Unset:index { a = { b = { c = 123 }, d = 4 } } a b x
+            std:Error _ = std:Unset:index { a = { b = { c = 123 }, d = 4 } } a b c x
+            std:Bool:true
+        }
+        bad-index = {
+            std:Error _ = std:Unset:index { a = { b = { c = 123 }, d = 4 } } a b c x
+            std:Bool:true
+        }
+    }
 }
 
 std:test:run { if, type, required, optargs, dynamic, Unset }

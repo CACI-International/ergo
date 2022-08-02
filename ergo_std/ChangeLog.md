@@ -55,6 +55,8 @@
   preferable to `std:dynamic:eval` as it leads to fewer mistakes when working
   with dynamic bindings.
 * Add `std:Unset:or` to return the first non-Unset value.
+* Add `std:Unset:index` to deeply index a value, possibly returning Unset if any
+  intermediate index is Unset.
 * Add `std:ergo-lazy` to lazily load a file (causing the identity of the
   expression to not rely on the loaded file value).
 

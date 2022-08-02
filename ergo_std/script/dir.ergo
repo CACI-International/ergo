@@ -301,6 +301,16 @@ unset-or = fn ^:values -> {
     unset-map (fn :m -> m:item) $result
 }
 
+## Index a value multiple times, returning Unset if any of the indices is Unset.
+##
+## Arguments: `:value ^:indices`
+##
+## Returns the result of indexing the value, or Unset if any intermediate index is Unset.
+unset-index = recurse <| :self -> fn :v ^:inds -> plugin:match (plugin:Array:from $inds) [
+    [] -> $v
+    [:i,^:rest] -> unset-map (fn :x -> self $x ^rest) v:$i
+]
+
 ## Bind a value to each binding provided.
 ##
 ## Arguments: `^:cases`
@@ -418,7 +428,7 @@ process-dir = plugin:Path:owned <| plugin:Path:join plugin:env:temp-dir "ergo-pr
 
     ##mdoc:module
     ## Unset type.
-    Unset = extend-type plugin:Unset {map = $unset-map, or = $unset-or}
+    Unset = extend-type plugin:Unset {map = $unset-map, or = $unset-or, index = $unset-index}
 
     ##mdoc:module
     ## Binding helpers.
