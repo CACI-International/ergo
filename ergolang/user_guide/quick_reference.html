@@ -32,7 +32,7 @@
 					width: 8.5in;
 					height: 11in;
 					box-sizing: border-box;
-					font-size: 6.0pt;
+					font-size: 6.15pt;
 					max-width: none;
 					color-adjust: exact;
 				}
@@ -43,7 +43,7 @@
 						column-count: 3;
 						width: 11in;
 						height: 8.5in;
-						font-size: 6.65pt;
+						font-size: 6.9pt;
 					}
 				}
 			}
@@ -334,20 +334,15 @@
 				<div><em>!id</em> $abc</div>
 				<div>indicate a value is relevant to the expression identity</div>
 			</div>
-			<div class="row">
-				<div><em>!no-id</em> $abc</div>
-				<div>indicate a value is not relevant to the expression identity</div>
-			</div>
 		</section>
 		<section>
 			<h2>Loading Files</h2>
 			<p>
 				The path given to the <code>ergo</code> function may resolve to
 				files installed with ergo (like <code>std</code>), files in
-				<code>"^(std:env:config)/lib"</code>, or files relative to the
-				script being executed. The path may resolve to a directory (in
-				which case an inner <code>dir.ergo</code> file is loaded) or a
-				path with the <code>.ergo</code> extension added.
+				<code>"$(std:env:config)/lib"</code>, or files relative to the
+				script being executed. The path may resolve to a directory
+				(<code>NAME/dir.ergo</code>) or file (<code>NAME.ergo</code>).
 			</p>
 			<p>
 				The <code>workspace.ergo</code> name is special. Whether a file
@@ -362,7 +357,7 @@
 				From the command-line, you can get documentation for any value
 				with the <code>--doc</code>/<code>-d</code> flag. You can use
 				the <code>-e</code> flag if you want to document the result of
-				a specific value (rather than loading the first argument). For
+				an expression (rather than loading the first argument). For
 				example:
 			</p>
 			<div class="row">
@@ -383,7 +378,7 @@
 			</div>
 			<p>
 				Use the <code>--doc-write</code> flag (which implies
-				<code>--doc</code>) to write a hierarchy of html documentation.
+				<code>--doc</code>) to write html documentation.
 			</p>
 		</section>
 		<section>
@@ -416,26 +411,23 @@
 		<section>
 			<h2>Values</h2>
 			<p>
-				Values are lazily evaluated and automatically calculate an
-				identity based on the values they use and their syntactic
-				content. This identity is what e.g. <code>std:cache</code> uses
-				as a cache key without evaluating the value at all.
+				Values are lazily evaluated and provide an identity based on
+				the values they use and their syntactic content. This identity
+				is what e.g. <code>std:cache</code> uses as a cache key without
+				evaluating the value at all.
 			</p>
 			<p>
 				Late bindings can be provided at any time in the future, and
 				can be provided multiple times for a single expression. You can
 				think of them as acting like templates or mutable variables.
 				In reality they are not exposing mutability, but rather allow
-				providing values that haven't evaluated yet (since the language
-				is lazy).
+				providing values that haven't evaluated yet.
 			<p>
 				Values which use dynamic bindings (<code>std:dynamic</code>)
-				should be used carefully. Because of the use of dynamic
-				bindings, <em>where</em> the values are evaluated becomes
-				important. Dynamic bindings are accessed through the call
-				(runtime) scope rather than through the lexical scope; this
-				makes them convenient to add external context but more
-				difficult to reason about.
+				should be used carefully: <em>where</em> the values are
+				evaluated becomes important. Dynamic bindings are accessed
+				through the call scope rather than through the lexical scope;
+				this makes them difficult to reason about.
 			</p>
 		</section>
 	</body>

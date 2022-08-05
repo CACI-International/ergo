@@ -16,8 +16,6 @@
   * [doc:value](#doc-value) - The current value being documented, if any.
 * [!id](#id) - Indicate a value's result is relevant to the identity of the
   value.
-* [!no-id](#no-id) - Indicate a value's result is relevant to the identity of the
-  value.
 
 
 <div class="function">
@@ -206,28 +204,18 @@ The current value being documented, if any. Evaluates to `Unset` if not set.
 ## `!id`
 The `!id` function is used to indicate that a value should be evaluated when the
 identity is needed, and the result of evaluation will be incorporated in the
-identity.
+identity. The function has an optional `set` keyed argument to forcibly change
+the identity evaluation semantics of the resulting value (which will propagate
+to expressions using the value).
 
 ```ergo
 a = std:String:from <| std:exec date
 b = !id $a
 std:identity $a # Will always be the same (based on the literal `std:String:from ...` syntax)
 std:identity $b # Will change as the output from running the external `date` program changes
-```
 
-</div>
-
-<div class="function">
-
-## `!no-id`
-The `!no-id` function is the opposite of `!id`; it indicates that a value
-shouldn't be used in the identity. This is only useful on values which have
-already been marked as relevant to the identity. Generally it should be applied
-directly on the function that is marked as being id-relevant.
-
-```ergo
-a = (!no-id $!id) <| std:String:from <| std:exec date
-std:identity $a # Will always be the same
+a = (!id ~set=std:Bool:false $!id) <| std:String:from <| std:exec date
+std:identity $a # Will always be the same (the semantics of `$!id` are changed to not evaluate)
 ```
 
 </div>

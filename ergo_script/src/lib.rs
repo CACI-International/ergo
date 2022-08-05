@@ -48,7 +48,6 @@ impl Runtime {
             ("late-bind", base::late_bind()),
             ("unset", base::unset()),
             ("!id", base::eval_for_id()),
-            ("!no-id", base::no_eval_for_id()),
         ]
         .into_iter()
         .map(|(k, v)| (k.into(), v))

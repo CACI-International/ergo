@@ -236,23 +236,16 @@ impl Scope {
 
     pub async fn eval<F>(
         &self,
-        key: ScopeKey,
+        key: ergo_runtime::Source<ScopeKey>,
         fut: F,
     ) -> Result<Vec<(Option<CaptureKey>, EvaluatedValue, Value)>>
     where
         F: std::future::Future<Output = Result<()>> + Send,
     {
+        let (src, key) = key.take();
         let key = ActiveScope(key);
-        debug_assert!(key.with(|v| v.is_none()), "scope unexpectedly present");
         let scope = self.clone();
-        Context::fork(
-            move |ctx| {
-                ctx.dynamic_scope
-                    .set(&ergo_runtime::source::Source::missing(key), scope)
-            },
-            fut,
-        )
-        .await?;
+        Context::fork(move |ctx| ctx.dynamic_scope.set(&src.with(key), scope), fut).await?;
         Ok(self.set_values())
     }
 
@@ -565,7 +558,7 @@ impl ExprEvaluator {
         while let Some(i) = items.next() {
             let last_item = items.peek().is_none();
 
-            let new_scope = scope.eval(me.scope_key(), async {
+            let new_scope = scope.eval(me.source().with(me.scope_key()), async {
                 match i {
                     ast::BlockItem::Expr(e) => {
                         push_result(mode, &mut results, me.child(e).evaluate().await, last_item)
@@ -821,6 +814,7 @@ impl ExprEvaluator {
     }
 
     async fn evaluate_impl(&self) -> Value {
+        log::trace!("evaluating {:?}", self.source());
         macro_rules! delayed {
             ( $self:ident , $v:ident , $( $body:tt )* ) => {{
                 // TODO the `no_eval_cache` here is purely for the purpose of breaking reference
@@ -834,11 +828,13 @@ impl ExprEvaluator {
                 ergo_runtime::lazy_value! {
                     #![contains($self)]
                     Context::spawn(EVAL_TASK_PRIORITY, |_| {}, async move {
+                        log::trace!("evaluating (delayed) {:?}", $self.source());
                         let v: Value = async {
                             // Safety: v_type (from $v) must have been from a previous checked call
                             let $v = unsafe { $self.expr_as(v_type) };
                             $($body)*
                         }.await;
+                        log::trace!("evaluated (delayed) {:?}", $self.source());
                         Ok(v)
                     })
                     .await
@@ -928,7 +924,7 @@ impl ExprEvaluator {
                     let mut me = me.clone().cache_root();
 
                     let scope = Scope::new();
-                    let new_scope = scope.eval(me.scope_key(), async {
+                    let new_scope = scope.eval(me.source().with(me.scope_key()), async {
                         let bind = me.child(&bind);
                         bind.init_scope(me.scope_key()).await;
                         let bind = bind.evaluate().await;
@@ -1062,6 +1058,7 @@ impl ExprEvaluator {
             ast::ExpressionType::DocComment | ast::ExpressionType::Attribute => (),
             _ => Source::update(&mut val, self.source()),
         }
+        log::trace!("evaluated {:?}", self.source());
         val
     }
 }

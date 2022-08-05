@@ -26,7 +26,7 @@ ergo-remote = fn ^:args -> ergo <| mcache:cache <| mnet:unarchive ~enter ^$args
 ## Lazily load a script or plugin, rather than depending on the loaded content for identities.
 ##
 ## Arguments: see `ergo`.
-ergo-lazy = !no-id $ergo
+ergo-lazy = !id ~set=plugin:Bool:false $ergo
 
 ## Return any bound value as-is.
 ##

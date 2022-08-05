@@ -28,7 +28,7 @@ function ergo_lang(hljs) {
             // Built-in functions
             {
                 className: 'built_in',
-                begin: /(\b(ergo|fn|index|std|workspace|doc|late-bind|bind|unset)\b|!id\b|!no-id\b)/
+                begin: /(\b(ergo|fn|index|std|workspace|doc|late-bind|bind|unset)\b|!id\b)/
             },
             // Quoted strings
             {

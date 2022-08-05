@@ -49,30 +49,24 @@ pub fn unset() -> Value {
 
 #[types::ergo_fn]
 #[eval_for_id]
-/// Mark the given value as pertinent to the identity of the expression.
+/// Evaluate the given value when calculating the identity of the expression.
 ///
 /// Arguments: `:value`
 ///
-/// This means that the given value will be evaluated when the identity is needed.
-pub async fn eval_for_id(mut v: _) -> Value {
+/// Keyed Arguments:
+/// * `into Bool |> :set` - if present, the resulting value will be marked (based on the `Bool`)
+/// such that it forcibly will (`true`) or won't (`false`) cause expressions containing the vaule
+/// to be further evaluated when the identity is calculated.
+///
+/// Returns the evaluated value, possibly with the identity calculating semantics changed (based on
+/// `set`).
+pub async fn eval_for_id(mut v: _, (set): [_]) -> Value {
     drop(ergo_runtime::Context::eval(&mut v).await);
-    v
-}
-
-#[types::ergo_fn]
-#[eval_for_id]
-/// Mark the given value as not pertinent to the identity of the expression.
-///
-/// Arguments: `:value`
-///
-/// The given value will _still_ be evaluated, but if it still indicates that it is pertinent to
-/// the identity, the propagation of this indication will cease.
-///
-/// For example, `(!no-id $!id) abc` will effectively disable the properties of `!id` on `abc`.
-pub async fn no_eval_for_id(mut v: _) -> Value {
-    drop(ergo_runtime::Context::eval(&mut v).await);
-    let mut id = v.immediate_id().await;
-    id.eval_for_id = false;
-    v.set_identity(id);
+    if let Some(set) = set {
+        let eval_for_id = traits::into::<types::Bool>(set).await?.into_owned().0;
+        let mut id = v.immediate_id().await;
+        id.eval_for_id = eval_for_id;
+        v.set_identity(id);
+    }
     v
 }
