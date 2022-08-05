@@ -353,24 +353,27 @@ impl Evaluate {
                     // Split the first argument on `:` to support indexing.
                     let mut indices = a.split(":");
                     let to_load = indices.next().unwrap();
+                    let use_workspace_command = runtime
+                        .resolve_script_path(None, to_load.as_ref())
+                        .is_none();
                     // Inspect the first effective argument to determine whether to invoke a normal load
                     // or the workspace:command function.
-                    s += if runtime
-                        .resolve_script_path(None, to_load.as_ref())
-                        .is_none()
-                    {
+                    s += if use_workspace_command {
                         "workspace:command"
                     } else {
-                        PROGRAM_NAME
+                        "load"
                     };
-                    s += " ";
+                    s.push(' ');
                     s += &string_quote(to_load);
+
+                    let mut needs_call = !use_workspace_command;
 
                     // Apply indices
                     let mut first = true;
                     for index in indices {
                         if first {
                             s += " |>";
+                            needs_call = false;
                             first = false;
                         }
                         s += ":";
@@ -379,6 +382,10 @@ impl Evaluate {
 
                     // Pass all remaining arguments as strings.
                     for a in args {
+                        if needs_call {
+                            s += " |>";
+                            needs_call = false;
+                        }
                         s.push(' ');
                         s += &string_quote(a);
                     }

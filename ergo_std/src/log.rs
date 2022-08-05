@@ -22,7 +22,6 @@ fn logger(log: Log) -> Value {
                 /// Create a sublogger from this logger.
                 ///
                 /// Arguments: `(String :name)`
-                #[cloning(log)]
                 async fn sublog(name: types::String) -> Value {
                     logger(log.sublog(name.as_ref().as_str()))
                 }
@@ -32,7 +31,6 @@ fn logger(log: Log) -> Value {
                 /// Display a value in the debug log.
                 ///
                 /// Arguments: `:value`
-                #[cloning(log)]
                 async fn debug(value: _) -> Value {
                     let mut s = String::new();
                     {
@@ -48,7 +46,6 @@ fn logger(log: Log) -> Value {
                 /// Display a value in the info log.
                 ///
                 /// Arguments: `:value`
-                #[cloning(log)]
                 async fn info(value: _) -> Value {
                     let mut s = String::new();
                     {
@@ -64,7 +61,6 @@ fn logger(log: Log) -> Value {
                 /// Display a value in the warn log.
                 ///
                 /// Arguments: `:value`
-                #[cloning(log)]
                 async fn warn(value: _) -> Value {
                     let mut s = String::new();
                     {
@@ -80,7 +76,6 @@ fn logger(log: Log) -> Value {
                 /// Display a value in the error log.
                 ///
                 /// Arguments: `:value`
-                #[cloning(log)]
                 async fn error(value: _) -> Value {
                     let mut s = String::new();
                     {

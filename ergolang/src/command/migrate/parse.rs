@@ -500,6 +500,18 @@ fn to_expression<E>(
                                             source,
                                             "`index a b` has been removed; use `:`",
                                         ));
+                                    } else if k == "ergo" {
+                                        migrations.push(Migration::syntax(
+                                            f.source(),
+                                            "`ergo` has been renamed to `load`",
+                                            Some("load"),
+                                        ));
+                                        if args > 2 {
+                                            migrations.push(Migration::semantics_warn(
+                                                f.source(),
+                                                "the load function no longer supports calling the result with additional arguments",
+                                            ));
+                                        }
                                     }
                                 }
                                 to_expression(

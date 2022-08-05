@@ -282,9 +282,9 @@ impl LoadFunctions {
 
         let ld = load_data.clone();
         let load = types::ergo_fn_value! {
-            /// Load a script or plugin, with optional additional arguments with which to call the result.
+            /// Load a script or plugin.
             ///
-            /// Arguments: `(Into<Path> :to-load) ^:call-args`
+            /// Arguments: `(Into<Path> :to-load)`
             ///
             /// ## Script resolution
             /// When loading a script, the following resolution process occurs for the first argument (if present):
@@ -303,11 +303,9 @@ impl LoadFunctions {
             ///    c. If the name-resolved script exists as a directory, and the directory contains `workspace.ergo`,
             ///       that path is used and step (2) is repeated.
             ///
-            /// If the directory-resolved script exists as a file, it is loaded. If additional arguments were
-            /// provided, the resulting value is called with them.
-            #[cloning(ld)]
+            /// If the directory-resolved script exists as a file, it is loaded.
             #[eval_for_id]
-            async fn load(mut path: _, ...) -> Value {
+            async fn load(mut path: _) -> Value {
                 Context::eval(&mut path).await?;
                 let target_source = metadata::Source::get(&path);
                 let target = traits::into::<types::Path>(path).await?.into_owned().into_pathbuf();
@@ -324,15 +322,7 @@ impl LoadFunctions {
                 };
 
                 // Load if some module was found.
-                let loaded = ld.load_script(&target).await;
-
-                // If there are remaining arguments apply them immediately.
-                if !REST.is_empty() {
-                    traits::bind(loaded,
-                        metadata::Source::imbue(ARGS_SOURCE.with(types::Args { args: REST }.into()))).await
-                } else {
-                    loaded
-                }
+                ld.load_script(&target).await
             }
         };
 

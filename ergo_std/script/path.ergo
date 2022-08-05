@@ -1,4 +1,4 @@
-plugin = ergo plugin
+plugin = load plugin
 
 path-base-dir = {
     p = plugin:Path:join plugin:env:project-dir std path

@@ -276,7 +276,6 @@ pub async fn function(
     let stdin = std::sync::Arc::new(Mutex::new(Some(Blocking::new(child.stdin.take().unwrap()))));
     let stdin = types::ergo_fn_value! {
         #[depends(^CALL_DEPENDS.clone())]
-        #[cloning(stdin)]
         /// Send data to stdin of the child process.
         ///
         /// Arguments: `:value`

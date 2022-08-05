@@ -1,4 +1,4 @@
-plugin = ergo plugin
+plugin = load plugin
 
 string-summary = fn :s -> (plugin:String:split "\n\n" $s):0
 

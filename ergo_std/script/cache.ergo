@@ -1,4 +1,4 @@
-plugin = ergo plugin
+plugin = load plugin
 
 once-cache = plugin:Cache:memory ()
 project-cache = plugin:Cache:open {

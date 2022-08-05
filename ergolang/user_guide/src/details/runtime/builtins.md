@@ -1,6 +1,6 @@
 # Builtins
 
-* [ergo](#ergo) - Load a script.
+* [load](#load) - Load a script.
 * [std](#std) - Access the standard library.
 * [workspace](#workspace) - Access the first ancestor workspace.
 * [fn](#fn) - Match `Args` Values
@@ -20,19 +20,16 @@
 
 <div class="function">
 
-## `ergo`
-The `ergo` function loads a script, trying to find the passed script in the
+## `load`
+The `load` function loads a script, trying to find the passed script in the
 directory relative to the working directory or in common system locations.
-
-If there is more than one argument, the remaining arguments are used to
-immediately call the resulting value as a command.
 
 </div>
 
 <div class="function">
 
 ## `std`
-The `std` value loads the `std` library as if `ergo std` was called. Thus, you
+The `std` value loads the `std` library as if `load std` was called. Thus, you
 can access values in the `std` library directly:
 
 ```ergo
@@ -47,7 +44,7 @@ std:exec
 
 ## `workspace`
 The `workspace` value finds the first ancestor `workspace.ergo`, and loads it as
-if `ergo path/to/ancestor/workspace.ergo` was called. Thus, you can access the
+if `load path/to/ancestor/workspace.ergo` was called. Thus, you can access the
 `workspace` directly:
 
 ```ergo

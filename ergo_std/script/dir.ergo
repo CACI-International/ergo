@@ -1,4 +1,4 @@
-plugin = ergo plugin
+plugin = load plugin
 
 ## Create a value that will evaluate to the first argument which successfully binds.
 ## 
@@ -7,12 +7,12 @@ plugin = ergo plugin
 ## This is a shortcut for `:a -> match $$a $$cases`.
 matches = fn :cases -> :a -> plugin:match $a $cases
 
-mcache = ergo cache
-mdoc = ergo doc
-mnet = ergo net
-mpath = ergo path
-mtest = ergo test
-mtype = ergo type
+mcache = load cache
+mdoc = load doc
+mnet = load net
+mpath = load path
+mtest = load test
+mtype = load type
 
 ## Load a remote archive.
 ##
@@ -20,13 +20,13 @@ mtype = ergo type
 ## Caches the returned value using `std:cache`.
 ##
 ## All arguments are forwarded to `std:net:http`.
-ergo-remote = fn ^:args -> ergo <| mcache:cache <| mnet:unarchive ~enter ^$args
+load-remote = fn ^:args -> load <| mcache:cache <| mnet:unarchive ~enter ^$args
 
 ##mdoc:function
 ## Lazily load a script or plugin, rather than depending on the loaded content for identities.
 ##
-## Arguments: see `ergo`.
-ergo-lazy = !id ~set=plugin:Bool:false $ergo
+## Arguments: see `load`.
+load-lazy = !id ~set=plugin:Bool:false $load
 
 ## Return any bound value as-is.
 ##
@@ -546,8 +546,8 @@ process-dir = plugin:Path:owned <| plugin:Path:join plugin:env:temp-dir "ergo-pr
     plugin:value:index {:debug,:equal,:identity,:index,:merge,:variable} = plugin:value
     plugin:value:index {:cache,:once} = $mcache
     default, optional, required, optargs
-    ergo-remote
-    ergo-lazy
+    load-remote
+    load-lazy
     exec = plugin:exec
     getopt = function-module plugin:getopt {fn = $getopt-fn}
     import

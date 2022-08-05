@@ -36,7 +36,6 @@ async fn new(id: types::String) -> Value {
     let imp = {
         let trt = trt.clone();
         types::ergo_fn_value! {
-            #[cloning(trt)]
             #[depends(trt)]
             /// Implement the trait.
             ///
@@ -57,7 +56,6 @@ async fn new(id: types::String) -> Value {
     };
 
     let get = types::ergo_fn_value! {
-        #[cloning(trt)]
         #[depends(trt)]
         /// Get the trait implementation for the type of the given value.
         ///
@@ -405,7 +403,6 @@ mod into {
         let into_type = into_type.as_ref().tp.clone();
         types::ergo_fn_value! {
             #[depends(into_type)]
-            #[cloning(into_type)]
             async fn into(target: _) -> Value {
                 types::unbound_value! {
                     #![depends(dyn ^CALL_DEPENDS)]

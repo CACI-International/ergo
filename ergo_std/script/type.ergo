@@ -1,4 +1,4 @@
-{:Type,:trait,:match,:Array,:Bool,:Error,:Iter,:Map,:MapEntry,:String,:value,^_} = ergo plugin
+{:Type,:trait,:match,:Array,:Bool,:Error,:Iter,:Map,:MapEntry,:String,:value,^_} = load plugin
 
 ## Match any value, without evaluating it.
 ##

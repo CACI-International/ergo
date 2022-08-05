@@ -73,6 +73,8 @@
     `late-bind` function.
 * Allow merging `Unset` values in Commands/Blocks/Arrays (as a no-op). This is
   convenient for conditionally merging values.
+* Rename `ergo` to `load`, and remove the ability to call the result with
+  additional arguments.
 
 ### Breaking Changes
 * Any use of `!` should be replaced with equivalent code.
@@ -93,6 +95,8 @@
   `~key=value`.
 * Change `doc:value ()` and `doc:path ()` to `doc:value` and `doc:path`,
   respectively.
+* Change `ergo` to `load`, and if it has additional arguments, change the call
+  appropriately (e.g. `ergo script arg1 arg2` => `load script |> arg1 arg2`).
 
 ## 1.0.0-rc.3  -- 2021-12-14
 * Properly remove previously-set keys when a key is set to `unset`.

@@ -57,7 +57,7 @@
 * Add `std:Unset:or` to return the first non-Unset value.
 * Add `std:Unset:index` to deeply index a value, possibly returning Unset if any
   intermediate index is Unset.
-* Add `std:ergo-lazy` to lazily load a file (causing the identity of the
+* Add `std:load-lazy` to lazily load a file (causing the identity of the
   expression to not rely on the loaded file value).
 
 #### Modifications
@@ -102,6 +102,7 @@
 * Support merging `Args` in `std:merge`.
 * Improve `std:fs:copy` to allow non-existent `from` paths if making a symbolic
   link.
+* Rename `std:ergo-remote` to `std:load-remote`.
 
 ### Migration
 * Remove the use of `std:by-content`. If it was being used to compare nested
@@ -146,6 +147,7 @@
 * Change `std:Function:recursive <| fn :self ...` to `std:recurse <| :self -> fn
   ...` and change any use of `self` in the function body to not pass `self` as
   the first argument.
+* Change `std:ergo-remote` to `std:load-remote`.
 
 ## 1.0.0-rc.3  -- 2021-12-14
 * No changes.

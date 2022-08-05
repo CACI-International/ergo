@@ -40,7 +40,7 @@ impl Runtime {
     ) -> Result<Self, ergo_runtime::context::BuilderError> {
         let load_functions = base::LoadFunctions::new(load_path);
         let env = vec![
-            (constants::PROGRAM_NAME, load_functions.load),
+            ("load", load_functions.load),
             ("fn", base::fn_()),
             ("index", base::index()),
             ("doc", base::doc()),
