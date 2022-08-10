@@ -1091,6 +1091,7 @@ impl LazyValueId for ExprEvaluator {
     fn id(&self) -> BoxFuture<Identity> {
         let me = self.value_id();
         Context::spawn(EVAL_TASK_PRIORITY, |_| {}, async move {
+            log::trace!("identifying {:?}", me.source());
             Ok(me.identity().await)
         })
         // Error only occurs when aborting.
