@@ -229,7 +229,7 @@ impl Script {
             lint_messages,
             mut captures,
             ast,
-            backtrace,
+            backtrace: _backtrace,
         } = self;
 
         if !lint_messages.is_empty() {
@@ -250,7 +250,7 @@ impl Script {
             }
         }
 
-        let evaluator = Evaluator { backtrace };
+        let evaluator = Evaluator {};
         captures.resolve_string_gets(&top_level_env)?;
         Ok(evaluator.evaluate(ast, captures).await)
     }

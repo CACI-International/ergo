@@ -8,6 +8,7 @@ use futures::future::{BoxFuture, FutureExt};
 
 pub fn module() -> Value {
     crate::make_string_map! {
+        "backtrace" = backtrace(),
         "debug" = debug(),
         "dynamic" = crate::make_string_map! {
             "get" = dynamic_binding_get(),
@@ -86,6 +87,32 @@ async fn debug(value: _) -> Value {
     );
 
     value
+}
+
+#[types::ergo_fn]
+/// Log a backtrace of the current evaluation stack at the `info` level.
+///
+/// Arguments: `()`
+async fn backtrace(_: types::Unit) -> Value {
+    use ergo_runtime::error::diagnostics_to_string;
+    crate::Context::with(|ctx| {
+        let diags: Vec<_> = ctx
+            .backtrace
+            .iter()
+            .enumerate()
+            .map(|(i, src)| {
+                let (src, m) = src.as_ref().take();
+                ergo_runtime::diagnostic! {
+                    severity: Note,
+                    labels: [primary(src.with(""))],
+                    message: if m.is_empty() { format!("backtrace frame {}", i) } else { format!("backtrace frame {} ({})", i, m) }
+                }
+            })
+            .collect();
+        let s = diagnostics_to_string(&diags, ctx.diagnostic_sources().as_ref(), true);
+        ctx.log.info(s);
+    });
+    types::Unit.into()
 }
 
 #[types::ergo_fn]

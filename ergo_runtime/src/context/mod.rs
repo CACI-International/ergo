@@ -7,6 +7,7 @@ use crate::{
 };
 use std::fmt;
 
+mod backtrace;
 mod diagnostic_sources;
 mod dynamic_scope;
 mod env;
@@ -23,6 +24,7 @@ pub use self::log::{
     logger_ref, Log, LogEntry, LogLevel, LogTarget, LogTask, LogTaskKey, Logger, LoggerRef,
     RecordingWork, Work,
 };
+pub use backtrace::Backtrace;
 pub use diagnostic_sources::{SourceId, Sources};
 pub use dynamic_scope::{DynamicScope, DynamicScopeKey, DynamicScopeRef};
 pub use env::Environment;
@@ -70,6 +72,8 @@ pub struct Context {
     pub dynamic_scope: DynamicScope,
     /// The error propagation interface.
     pub error_scope: ErrorScope,
+    /// The backtrace storage interface.
+    pub backtrace: Backtrace,
 }
 
 /// A builder for a Context.
@@ -178,6 +182,7 @@ impl ContextBuilder {
             }),
             dynamic_scope: Default::default(),
             error_scope: self.error_scope.unwrap_or_default(),
+            backtrace: Default::default(),
         })
     }
 }
@@ -359,6 +364,7 @@ impl Fork for Context {
             global: self.global.fork(),
             dynamic_scope: self.dynamic_scope.fork(),
             error_scope: self.error_scope.fork(),
+            backtrace: self.backtrace.fork(),
         }
     }
 
@@ -366,5 +372,6 @@ impl Fork for Context {
         self.global.join(forked.global);
         self.dynamic_scope.join(forked.dynamic_scope);
         self.error_scope.join(forked.error_scope);
+        self.backtrace.join(forked.backtrace);
     }
 }

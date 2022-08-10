@@ -543,7 +543,7 @@ process-dir = plugin:Path:owned <| plugin:Path:join plugin:env:temp-dir "ergo-pr
     }
 
     # Functions
-    plugin:value:index {:debug,:equal,:identity,:index,:merge,:variable} = plugin:value
+    plugin:value:index {:backtrace,:debug,:equal,:identity,:index,:merge,:variable} = plugin:value
     plugin:value:index {:cache,:once} = $mcache
     default, optional, required, optargs
     load-remote

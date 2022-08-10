@@ -21,9 +21,7 @@ use std::collections::{BTreeMap, HashMap};
 pub const EVAL_TASK_PRIORITY: u32 = 100;
 
 #[derive(Clone, Copy, Debug, Default)]
-pub struct Evaluator {
-    pub backtrace: bool,
-}
+pub struct Evaluator {}
 
 #[derive(Clone, Debug)]
 pub enum Capture {
@@ -824,10 +822,11 @@ impl ExprEvaluator {
                 // simply not relying on value lifetimes for certain things (std:cache, owned
                 // paths) could allow us to use this cache.
                 let $self = self.clone().no_eval_cache();
+                let src = self.source();
                 let v_type = witness($v);
                 ergo_runtime::lazy_value! {
                     #![contains($self)]
-                    Context::spawn(EVAL_TASK_PRIORITY, |_| {}, async move {
+                    Context::spawn(EVAL_TASK_PRIORITY, move |ctx| ctx.backtrace.push(src.with("")), async move {
                         log::trace!("evaluating (delayed) {:?}", $self.source());
                         let v: Value = async {
                             // Safety: v_type (from $v) must have been from a previous checked call
@@ -1090,10 +1089,15 @@ impl LateBind for ExprEvaluator {
 impl LazyValueId for ExprEvaluator {
     fn id(&self) -> BoxFuture<Identity> {
         let me = self.value_id();
-        Context::spawn(EVAL_TASK_PRIORITY, |_| {}, async move {
-            log::trace!("identifying {:?}", me.source());
-            Ok(me.identity().await)
-        })
+        let src = self.source();
+        Context::spawn(
+            EVAL_TASK_PRIORITY,
+            move |ctx| ctx.backtrace.push(src.with("identity")),
+            async move {
+                log::trace!("identifying {:?}", me.source());
+                Ok(me.identity().await)
+            },
+        )
         // Error only occurs when aborting.
         .map(|l| l.unwrap_or_else(|_| Identity::new(0)))
         .boxed()
