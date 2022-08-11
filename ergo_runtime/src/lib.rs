@@ -33,7 +33,7 @@ macro_rules! nsid {
             unsafe { NSID }
         }
     };
-    ( $( $l:ident )::+, $( $e:expr ),+ ) => {
+    ( $( $l:ident )::+, const $( $e:expr ),+ ) => {
         {
             static NSID_ONCE: std::sync::Once = std::sync::Once::new();
             static mut NSID: $crate::abi_stable::uuid::Uuid = $crate::NAMESPACE_ERGO;
@@ -42,6 +42,18 @@ macro_rules! nsid {
                 $( NSID = $crate::abi_stable::uuid::Uuid::new_v5(&NSID, $e); )+
             });
             unsafe { NSID }
+        }
+    };
+    ( $( $l:ident )::+, $( $e:expr ),+ ) => {
+        {
+            static NSID_ONCE: std::sync::Once = std::sync::Once::new();
+            static mut NSID: $crate::abi_stable::uuid::Uuid = $crate::NAMESPACE_ERGO;
+            NSID_ONCE.call_once(|| unsafe {
+                $( NSID = $crate::abi_stable::uuid::Uuid::new_v5(&NSID, stringify!($l).as_bytes()); )+
+            });
+            let mut ret = unsafe { NSID }.clone();
+            $( ret = $crate::abi_stable::uuid::Uuid::new_v5(&ret, $e); )+
+            ret
         }
     };
 }

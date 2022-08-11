@@ -341,7 +341,7 @@ fn impl_ergo_trait(name: syn::Ident, mut generics: syn::Generics) -> proc_macro2
                 let mut type_params = ergo_runtime::type_system::TypeParameters::default();
                 #(#set_data)*
                 ergo_runtime::type_system::Trait::with_data(
-                    ergo_runtime::nsid!(trait, concat![module_path!(), "::", #namestr].as_bytes()),
+                    ergo_runtime::nsid!(trait, const concat![module_path!(), "::", #namestr].as_bytes()),
                     type_params.into(),
                 )
             }

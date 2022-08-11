@@ -218,7 +218,7 @@ impl Parser for ErgoFnLike {
         };
 
         let fn_id = quote! {
-            let __ergo_fn_id = ergo_runtime::nsid!(function, std::concat!(std::module_path!(),"::",std::stringify!(#id)).as_bytes());
+            let __ergo_fn_id = ergo_runtime::nsid!(function, const std::concat!(std::module_path!(),"::",std::stringify!(#id)).as_bytes());
         };
 
         let declare_deps = quote! {
