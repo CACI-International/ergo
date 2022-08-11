@@ -218,6 +218,11 @@ pub trait ValueDataInterface: Clone + Send + Sync + 'static {
 
     /// Get the value data.
     fn get(&self) -> ValueType;
+
+    /// Hint that the value will be eval_for_id, to prevent `id` from being called.
+    fn eval_for_id_hint(&self) -> future::BoxFuture<bool> {
+        future::BoxFuture::new(async { false })
+    }
 }
 
 #[derive(Clone, StableAbi)]
@@ -230,6 +235,10 @@ impl ValueData {
             RSmallBox::new(interface),
             TD_Opaque,
         ))
+    }
+
+    pub async fn eval_for_id_hint(&self) -> bool {
+        self.0.eval_for_id_hint().await
     }
 
     pub async fn id(&self) -> IdInfo<U128> {
@@ -297,6 +306,10 @@ impl ValueDataInterface for ValueData {
 
     fn get(&self) -> ValueType {
         self.0.get()
+    }
+
+    fn eval_for_id_hint(&self) -> future::BoxFuture<bool> {
+        self.0.eval_for_id_hint()
     }
 }
 
@@ -1000,6 +1013,11 @@ pub mod lazy {
 
         /// Late-bound keys in the captures.
         fn late_bound(&self) -> LateBound;
+
+        /// Whether the value should be evaluated to get the identity.
+        fn eval_for_id_hint(&self) -> futures::future::BoxFuture<bool> {
+            futures::FutureExt::boxed(async { false })
+        }
     }
 
     impl LazyCaptures for () {
@@ -1026,6 +1044,10 @@ pub mod lazy {
         fn late_bound(&self) -> LateBound {
             self.inner.late_bound().clone()
         }
+
+        fn eval_for_id_hint(&self) -> futures::future::BoxFuture<bool> {
+            futures::FutureExt::boxed(self.inner.data.eval_for_id_hint())
+        }
     }
 
     impl<T: Send + Sync + 'static> LazyCaptures for TypedValue<T> {
@@ -1039,6 +1061,10 @@ pub mod lazy {
 
         fn late_bound(&self) -> LateBound {
             LazyCaptures::late_bound(&self.inner)
+        }
+
+        fn eval_for_id_hint(&self) -> futures::future::BoxFuture<bool> {
+            LazyCaptures::eval_for_id_hint(&self.inner)
         }
     }
 
@@ -1065,6 +1091,17 @@ pub mod lazy {
                 s.extend(c.late_bound());
             }
             s
+        }
+
+        fn eval_for_id_hint(&self) -> futures::future::BoxFuture<bool> {
+            futures::FutureExt::boxed(async move {
+                for c in self {
+                    if c.eval_for_id_hint().await {
+                        return true;
+                    }
+                }
+                false
+            })
         }
     }
 
@@ -1093,6 +1130,15 @@ pub mod lazy {
                     let mut s = LateBound::default();
                     $(s.extend($name.late_bound());)+
                     s
+                }
+
+                fn eval_for_id_hint(&self) -> futures::future::BoxFuture<bool> {
+                    futures::FutureExt::boxed(async move {
+                        #[allow(non_snake_case)]
+                        let ($($name,)+) = self;
+                        $(if $name.eval_for_id_hint().await { return true; })+
+                        false
+                    })
                 }
             }
         }
@@ -1155,6 +1201,10 @@ pub mod lazy {
 
         fn get(&self) -> ValueType {
             ValueType::lazy(self)
+        }
+
+        fn eval_for_id_hint(&self) -> future::BoxFuture<bool> {
+            future::BoxFuture::new(self.captures.eval_for_id_hint())
         }
     }
 }
@@ -1219,9 +1269,11 @@ impl Value {
         let ctx = Context::global();
         let _token = ctx.progress.attempt_progress();
         loop {
-            let id = self.immediate_id().await;
-            if !id.eval_for_id {
-                break;
+            if !self.inner.data.eval_for_id_hint().await {
+                let id = self.immediate_id().await;
+                if !id.eval_for_id {
+                    break;
+                }
             }
             match ctx.progress.eval_once_checking_progress(self).await {
                 Ok(true) => break,

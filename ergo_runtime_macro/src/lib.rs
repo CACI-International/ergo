@@ -48,7 +48,7 @@ pub fn match_value(ts: TokenStream) -> TokenStream {
 /// the Value. The body may contain the following inner attributes:
 /// * `#![contains(a,b,c)]` - a list of identifiers of values contained within this value (and
 /// captured by the function).
-/// * `#![depends(a,b,c)]` - arguments to pass to the `depends!` macro to an identity from dependencies.
+/// * `#![depends(a,b,c)]` - arguments to pass to the `depends!` macro to create an identity from dependencies.
 /// * `#![id(id)]` - the exact id to use for the value (overriding the above `depends` attribute).
 /// * `#![eval_for_id]` - mark the identity as eval_for_id.
 /// * `#![exclude_contains_from_id]` - if specified, the value's identity will only be derived

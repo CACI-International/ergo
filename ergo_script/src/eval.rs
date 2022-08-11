@@ -12,7 +12,7 @@ use ergo_runtime::{
     error::{DiagnosticInfo, ErrorOrDiagnostic},
     metadata::{self, Source},
     nsid, traits, types,
-    value::{match_value, Identity, LateBind, LateScope, LazyValueId},
+    value::{lazy::LazyCaptures, match_value, Identity, LateBind, LateScope, LazyValueId},
     Context, EvaluatedValue, Value,
 };
 use futures::future::{BoxFuture, FutureExt};
@@ -706,6 +706,7 @@ impl ExprEvaluator {
     fn identity<'b>(&'b self) -> BoxFuture<'b, Identity> {
         let captures_ready = self.captures_ready();
         let compute = async move {
+            // Captures (if bound) should evaluate immediately.
             if let Some(cap) = crate::match_expression!(self.expr.value(),
                 Get(g) => g.capture_key,
                 LateGet(g) => g.capture_key,
@@ -738,52 +739,34 @@ impl ExprEvaluator {
                         IdType::Expr(e) => {
                             let c = self.child(&e);
                             async move {
-                                // Shortcut Command expressions where the function is `eval_for_id`
-                                // and the captures are ready, because we know that we'll be
-                                // evaluating it anyway. This also allows things like `!id` to
-                                // prevent identities of arguments from being evaluated at all.
-                                let mut id = None;
-                                if c.captures_ready() {
-                                    if let Some(cmd) = c.expr.value().as_ref::<ast::Command>() {
-                                        let func = c.child(&cmd.function);
-                                        let mut function_id = func.identity().await;
-                                        if function_id.eval_for_id {
-                                            function_id = Context::ignore_errors(async move {
-                                                let mut v = func.evaluate().await;
-                                                v.eval_id().await
-                                            })
-                                            .await;
-                                            if function_id.eval_for_id {
-                                                id = Some(function_id);
-                                            }
-                                        }
+                                if !c.captures_ready() {
+                                    c.identity().await
+                                } else {
+                                    let mut id = Identity::new(0);
+                                    if c.eval_for_id_hint().await {
+                                        id.eval_for_id = true;
+                                    } else {
+                                        id = c.identity().await;
                                     }
+                                    // If the child can be evaluated, eagerly evaluate to potentially
+                                    // end the eval_for_id inheritance (our identity should be based on
+                                    // the evaluated identity as soon as it is available).
+                                    if id.eval_for_id {
+                                        // When evaluating for identities, any errors should not go to
+                                        // the error scope (the identity of the error is still a valid
+                                        // identity to use).
+                                        id = Context::ignore_errors(async move {
+                                            let mut v = c.evaluate().await;
+                                            v.eval_id().await
+                                        })
+                                        .await;
+                                    }
+                                    id
                                 }
-                                let mut id = match id {
-                                    Some(id) => id,
-                                    None => c.identity().await,
-                                };
-                                // If the child can be evaluated, eagerly evaluate to potentially
-                                // end the eval_for_id inheritance (our identity should be based on
-                                // the evaulated identity as soon as it is available).
-                                if id.eval_for_id && c.captures_ready() {
-                                    // When evaluating for identities, any errors should not go to
-                                    // the error scope (the identity of the error is still a valid
-                                    // identity to use).
-                                    id = Context::ignore_errors(async move {
-                                        let mut v = c.evaluate().await;
-                                        v.eval_id().await
-                                    })
-                                    .await;
-                                }
-                                id
                             }
                             .boxed()
                         }
-                        IdType::Constant(v) => {
-                            let v = ergo_runtime::value::Identity::new(v);
-                            async move { v }.boxed()
-                        }
+                        IdType::Constant(v) => async move { Identity::new(v) }.boxed(),
                     }
                     .map(Ok)
                 }))
@@ -1104,7 +1087,7 @@ impl LazyValueId for ExprEvaluator {
     }
 }
 
-impl ergo_runtime::value::lazy::LazyCaptures for ExprEvaluator {
+impl LazyCaptures for ExprEvaluator {
     fn id(&self) -> BoxFuture<Identity> {
         LazyValueId::id(self)
     }
@@ -1115,6 +1098,31 @@ impl ergo_runtime::value::lazy::LazyCaptures for ExprEvaluator {
 
     fn late_bound(&self) -> ergo_runtime::value::LateBound {
         LateBind::late_bound(self)
+    }
+
+    fn eval_for_id_hint(&self) -> BoxFuture<bool> {
+        async move {
+            // Shortcut Command expressions where the function is `eval_for_id` and the captures
+            // are ready. This allows things like `!id` to prevent identities of arguments from
+            // being evaluated at all.
+            if self.captures_ready() {
+                if let Some(cmd) = self.expr.value().as_ref::<ast::Command>() {
+                    let func = self.child(&cmd.function);
+                    let mut function_id = func.identity().await;
+                    if function_id.eval_for_id {
+                        function_id = Context::ignore_errors(async move {
+                            let mut v = func.evaluate().await;
+                            v.eval_id().await
+                        })
+                        .await;
+                        return function_id.eval_for_id;
+                    }
+                }
+            }
+
+            false
+        }
+        .boxed()
     }
 }
 
