@@ -798,13 +798,7 @@ impl ExprEvaluator {
         log::trace!("evaluating {:?}", self.source());
         macro_rules! delayed {
             ( $(#![$attr:meta])? $self:ident , $v:ident , $( $body:tt )* ) => {{
-                // TODO the `no_eval_cache` here is purely for the purpose of breaking reference
-                // loops using a blunt instrument. This will basically not use the cache for most
-                // of evaluation (losing potential performance, which has been measured to be
-                // considerable). Using a GC, weak references (particularly in loaded scripts), or
-                // simply not relying on value lifetimes for certain things (std:cache, owned
-                // paths) could allow us to use this cache.
-                let $self = self.clone().no_eval_cache();
+                let $self = self.clone();
                 let src = self.source();
                 let v_type = witness($v);
                 ergo_runtime::lazy_value! {

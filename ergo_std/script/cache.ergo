@@ -15,8 +15,7 @@ project-cache = plugin:Cache:open {
 ## See `std:Cache:entry`.
 ##
 ## This invariant is already true of any single value, however if values are recreated throughout
-## the runtime, this allows deduplication based on the identity. The cached value will be deeply
-## evaluated (using `Functor`).
+## the runtime, this allows deduplication based on the identity.
 once = fn ^:args -> plugin:Cache:entry $once-cache ^args
 
 ## Cache a value to the project cache.

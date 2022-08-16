@@ -3,21 +3,19 @@
 //! These paths will be removed when the runtime is shutdown.
 
 use crate as ergo_runtime;
-use crate::abi_stable::{
-    bst::BstSet, external_types::RMutex, path::PathBuf, std_types::RArc, StableAbi,
-};
+use crate::abi_stable::{bst::BstSet, external_types::RMutex, path::PathBuf, StableAbi};
 use crate::type_system::ErgoType;
 
-#[derive(Clone, StableAbi, ErgoType)]
+#[derive(StableAbi, ErgoType)]
 #[repr(C)]
 pub struct OwnedPaths {
-    paths: RArc<RMutex<BstSet<PathBuf>>>,
+    paths: RMutex<BstSet<PathBuf>>,
 }
 
 impl Default for OwnedPaths {
     fn default() -> Self {
         OwnedPaths {
-            paths: RArc::new(RMutex::new(Default::default())),
+            paths: RMutex::new(Default::default()),
         }
     }
 }

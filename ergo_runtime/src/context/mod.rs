@@ -71,14 +71,19 @@ impl GlobalContext {
 
     /// Get the owned paths registry.
     pub fn owned_paths(&self) -> shared_state::SharedStateRef<OwnedPaths> {
-        self.shared_state
+        let mut created = false;
+        let ret = self
+            .shared_state
             .get(|| {
-                let paths = OwnedPaths::default();
-                let paths2 = paths.clone();
-                self.hooks().add_shutdown(move || paths2.delete_all());
-                Ok(paths)
+                created = true;
+                Ok(OwnedPaths::default())
             })
-            .unwrap()
+            .unwrap();
+        if created {
+            let paths = ret.clone();
+            self.hooks().add_shutdown(move || paths.delete_all());
+        }
+        ret
     }
 }
 

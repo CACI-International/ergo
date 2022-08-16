@@ -17,12 +17,9 @@ impl MemCache {
         &self,
         key: u128,
         value: Value,
-        error_handling: super::ErrorHandling,
+        _error_handling: super::ErrorHandling,
     ) -> Result<Value> {
-        self.get_entry(key, value, move |v| {
-            super::eval_for_cache(v, error_handling)
-        })
-        .await
+        self.get_entry(key, value, |v| async move { Ok(v) }).await
     }
 
     /// Get an entry by id, without separating keys from value identities.
