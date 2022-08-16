@@ -797,7 +797,7 @@ impl ExprEvaluator {
     async fn evaluate_impl(&self) -> Value {
         log::trace!("evaluating {:?}", self.source());
         macro_rules! delayed {
-            ( $self:ident , $v:ident , $( $body:tt )* ) => {{
+            ( $(#![$attr:meta])? $self:ident , $v:ident , $( $body:tt )* ) => {{
                 // TODO the `no_eval_cache` here is purely for the purpose of breaking reference
                 // loops using a blunt instrument. This will basically not use the cache for most
                 // of evaluation (losing potential performance, which has been measured to be
@@ -808,6 +808,7 @@ impl ExprEvaluator {
                 let src = self.source();
                 let v_type = witness($v);
                 ergo_runtime::lazy_value! {
+                    $(#![$attr])?
                     #![contains($self)]
                     Context::spawn(EVAL_TASK_PRIORITY, move |ctx| ctx.backtrace.push(src.with("")), async move {
                         log::trace!("evaluating (delayed) {:?}", $self.source());
@@ -963,7 +964,7 @@ impl ExprEvaluator {
                     types::Unit.into()
                 }
             },
-            Index(ind) => delayed! { me, ind,
+            Index(ind) => delayed! { #![eval_for_id] me, ind,
                 let mut value = me.child(&ind.value).evaluate().await;
                 let index = me.child(&ind.index).evaluate().await;
                 if let Err(e) = Context::eval(&mut value).await {
@@ -1102,10 +1103,10 @@ impl LazyCaptures for ExprEvaluator {
 
     fn eval_for_id_hint(&self) -> BoxFuture<bool> {
         async move {
-            // Shortcut Command expressions where the function is `eval_for_id` and the captures
-            // are ready. This allows things like `!id` to prevent identities of arguments from
-            // being evaluated at all.
             if self.captures_ready() {
+                // Shortcut Command expressions where the function is `eval_for_id` and the captures
+                // are ready. This allows things like `!id` to prevent identities of arguments from
+                // being evaluated at all.
                 if let Some(cmd) = self.expr.value().as_ref::<ast::Command>() {
                     let func = self.child(&cmd.function);
                     let mut function_id = func.identity().await;
@@ -1117,6 +1118,10 @@ impl LazyCaptures for ExprEvaluator {
                         .await;
                         return function_id.eval_for_id;
                     }
+                }
+                // Shortcut Index expressions, which are always `eval_for_id`.
+                else if self.expr.value().expr_type() == ast::ExpressionType::Index {
+                    return true;
                 }
             }
 

@@ -125,7 +125,7 @@ async fn open(path: _) -> Value {
 /// Keyed Arguments:
 /// * `:key` - a value to use as the cache key, defaulting to `value`.
 ///   The key is what determines the cache entry, whereas the `value` identity (if different from
-///   the `key` determines whether the value can be retrieved or whether it needs to be
+///   the `key`) determines whether the value can be retrieved or whether it needs to be
 ///   re-evaluated and updated.
 /// * `:allow-error` - whether to allow errors when caching; may be:
 ///     * `Bool:false`, `:unset` (the default) - disallow errors to be cached, propagating them as normal
