@@ -124,6 +124,17 @@ impl Progress {
                     error: "deadlock detected"
                 };
                 self.inner.deadlock_errors.push(e.clone());
+                super::Context::with(|ctx| {
+                    for (i, src) in ctx.backtrace.iter().enumerate() {
+                        let (src, m) = src.as_ref().take();
+                        self.inner.deadlock_errors.push(crate::error! {
+                            severity: Note,
+                            labels: [primary(src.with(""))],
+                            error: if m.is_empty() { format!("backtrace frame {}", i) } else { format!("backtrace frame {} ({})", i, m) }
+                        });
+                    }
+                });
+
                 return Err(e);
             }
         }
