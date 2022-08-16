@@ -38,10 +38,13 @@ async fn from(value: _) -> Value {
 /// Arguments: `Into:into $Path |> :path`
 ///
 /// An owned Path is identical to a normal Path, however it has a side effect of deleting the Path
-/// (whether a file or directory, if existing at all) when the value is no longer used.
+/// (whether a file or directory, if existing at all) at shutdown.
 async fn owned(path: _) -> Value {
-    let path = traits::into::<types::Path>(path).await?.into_owned();
-    path.into_owned().into()
+    let path = traits::into::<types::Path>(path).await?;
+    ergo_runtime::Context::global()
+        .owned_paths()
+        .add(&path.as_ref().path);
+    path.into()
 }
 
 #[types::ergo_fn]

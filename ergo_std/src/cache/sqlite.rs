@@ -370,7 +370,7 @@ impl<'a, W> SqliteCacheWriter<'a, W> {
                                 }
                             },
                             p@types::Path{..} => {
-                                if p.take_ownership() {
+                                if Context::global().owned_paths().remove(&p.path) {
                                     pending_writes.paths.push(pending::Path {
                                         value: id,
                                         path: p.path().into()

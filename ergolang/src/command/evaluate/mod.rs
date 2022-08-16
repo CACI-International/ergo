@@ -441,6 +441,7 @@ impl Evaluate {
 
             let sources = runtime.ctx.global.diagnostic_sources();
             let progress = runtime.ctx.global.progress.clone();
+            runtime.ctx.global.hooks().shutdown();
             drop(runtime);
 
             drop(complete_send.send(()));

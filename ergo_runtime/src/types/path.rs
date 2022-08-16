@@ -1,70 +1,30 @@
 //! The Path type.
 
 use crate as ergo_runtime;
-use crate::abi_stable::{path::PathBuf, type_erase::Erased, StableAbi};
+use crate::abi_stable::{
+    path::PathBuf, type_erase::Erased, StableAbi,
+};
 use crate::metadata::Source;
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
 use crate::TypedValue;
 use bincode;
 
-/// Script string type.
+/// Script path type.
 #[derive(Debug, Default, ErgoType, StableAbi)]
 #[repr(C)]
 pub struct Path {
     pub path: PathBuf,
-    owned: std::sync::atomic::AtomicBool,
 }
 
 impl Path {
     /// Create a new Path.
     pub fn new<P: Into<PathBuf>>(p: P) -> Self {
-        Path {
-            path: p.into(),
-            owned: false.into(),
-        }
-    }
-
-    /// Create an owned Path.
-    pub fn owned<P: Into<PathBuf>>(p: P) -> Self {
-        Path {
-            path: p.into(),
-            owned: true.into(),
-        }
+        Path { path: p.into() }
     }
 
     pub fn path(&self) -> PathBuf {
         self.path.clone()
-    }
-
-    pub fn into_owned(self) -> Self {
-        self.take_ownership();
-        Path {
-            path: self.path.clone(),
-            owned: true.into(),
-        }
-    }
-
-    /// Take ownership of the Path, returning whether the path was owned.
-    pub fn take_ownership(&self) -> bool {
-        self.owned.swap(false, std::sync::atomic::Ordering::Relaxed)
-    }
-}
-
-impl Drop for Path {
-    fn drop(&mut self) {
-        if self.owned.load(std::sync::atomic::Ordering::Relaxed) {
-            let p = self.path.as_ref();
-            if p.is_symlink() || p.is_file() {
-                if let Err(e) = std::fs::remove_file(p) {
-                    log::warn!("error while removing owned file: {}", e);
-                }
-            } else if p.is_dir() {
-                if let Err(e) = std::fs::remove_dir_all(p) {
-                    log::warn!("error while removing owned directory: {}", e);
-                }
-            }
-        }
     }
 }
 

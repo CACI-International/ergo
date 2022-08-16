@@ -12,7 +12,9 @@ mod diagnostic_sources;
 mod dynamic_scope;
 mod env;
 mod error_scope;
+mod hooks;
 mod log;
+mod owned_paths;
 mod progress;
 mod shared_state;
 pub(crate) mod task;
@@ -29,6 +31,8 @@ pub use diagnostic_sources::{SourceId, Sources};
 pub use dynamic_scope::{DynamicScope, DynamicScopeKey, DynamicScopeRef};
 pub use env::Environment;
 pub use error_scope::ErrorScope;
+pub use hooks::Hooks;
+pub use owned_paths::OwnedPaths;
 pub use progress::Progress;
 pub use shared_state::SharedState;
 pub use task::{LocalKey, TaskManager, TaskPermit};
@@ -57,8 +61,23 @@ pub struct GlobalContext {
 impl GlobalContext {
     /// Get the shared set of diagnostic sources loaded in the runtime.
     pub fn diagnostic_sources(&self) -> shared_state::SharedStateRef<Sources> {
+        self.shared_state.get(|| Ok(Sources::new())).unwrap()
+    }
+
+    /// Get the runtime event hooks registry.
+    pub fn hooks(&self) -> shared_state::SharedStateRef<Hooks> {
+        self.shared_state.get(|| Ok(Hooks::default())).unwrap()
+    }
+
+    /// Get the owned paths registry.
+    pub fn owned_paths(&self) -> shared_state::SharedStateRef<OwnedPaths> {
         self.shared_state
-            .get::<Sources, _>(|| Ok(Sources::new()))
+            .get(|| {
+                let paths = OwnedPaths::default();
+                let paths2 = paths.clone();
+                self.hooks().add_shutdown(move || paths2.delete_all());
+                Ok(paths)
+            })
             .unwrap()
     }
 }
