@@ -16,14 +16,14 @@ use ergo_runtime::{
     types, Context, Result, Value,
 };
 use futures::{future::FutureExt, lock::Mutex};
-use std::mem::ManuallyDrop;
+use parking_lot::{MappedRwLockReadGuard, RwLock, RwLockReadGuard};
 use std::path::Path;
 use std::sync::Arc;
 
 const CACHE_WRITE_FREQUENCY: std::time::Duration = std::time::Duration::from_secs(1);
 
 pub struct SqliteCache {
-    db: ManuallyDrop<ThreadShared<Db, ()>>,
+    db: RwLock<Option<ThreadShared<Db, ()>>>,
     /// Root values that are cached.
     cached: MemCache,
     /// All stored values.
@@ -34,8 +34,8 @@ struct Db {
     connection: Mutex<Connection>,
     /// To be written to the database in a single transaction (as an optimization).
     pending_writes: Mutex<pending::Writes>,
-    /// Used when dropping.
-    finished: std::sync::atomic::AtomicBool,
+    /// Used to signal shutdown.
+    shutdown: std::sync::atomic::AtomicBool,
     log: ergo_runtime::context::Log,
 }
 
@@ -401,7 +401,7 @@ fn write_pending_loop(db: &Db) -> () {
         };
     }
 
-    while !db.finished.load(std::sync::atomic::Ordering::Relaxed) {
+    while !db.shutdown.load(std::sync::atomic::Ordering::Relaxed) {
         run!(db.write_pending());
         std::thread::park_timeout(CACHE_WRITE_FREQUENCY);
     }
@@ -554,18 +554,34 @@ impl SqliteCache {
         connection.execute(schema::init)?;
         let log = Context::global().log.sublog("cache"); //TODO should there be an associated name?
         Ok(SqliteCache {
-            db: ManuallyDrop::new(ThreadShared::new(
+            db: RwLock::new(Some(ThreadShared::new(
                 Db {
                     connection: Mutex::new(connection),
                     pending_writes: Default::default(),
-                    finished: Default::default(),
+                    shutdown: Default::default(),
                     log,
                 },
                 write_pending_loop,
-            )),
+            ))),
             cached: Default::default(),
             stored: Default::default(),
         })
+    }
+
+    fn db(&self) -> Result<MappedRwLockReadGuard<ThreadShared<Db, ()>>> {
+        // We use `try_read` because the RwLock is _only_ used for shutdown (so if it's
+        // write-locked, we know we won't be able to get it later).
+        self.db
+            .try_read()
+            .map(|guard| {
+                if guard.is_none() {
+                    None
+                } else {
+                    Some(RwLockReadGuard::map(guard, |o| o.as_ref().unwrap()))
+                }
+            })
+            .flatten()
+            .ok_or_else(|| ergo_runtime::error! { error: "database shutdown" })
     }
 
     async fn read_value(&self, id: u128) -> Result<Value> {
@@ -575,8 +591,9 @@ impl SqliteCache {
                     format!("while reading value with id {:032x}", id)
                 ],
                 async {
+                    let db = self.db()?;
                     let result = {
-                        let conn = self.db.connection.lock().await;
+                        let conn = db.connection.lock().await;
                         let mut stmt = conn.prepare(schema::read_value)?;
                         stmt.bind(1, sqlite::U128(id))?;
                         if let sqlite::State::Row = stmt.next()? {
@@ -606,7 +623,7 @@ impl SqliteCache {
                             // Load Error diagnostic sources.
                             if val.is_type::<types::Error>() {
                                 let sources = Context::global().diagnostic_sources();
-                                let conn = self.db.connection.lock().await;
+                                let conn = db.connection.lock().await;
                                 let mut stmt = conn.prepare(schema::read_diagnostic_sources)?;
                                 stmt.bind(1, sqlite::U128(id))?;
                                 while let sqlite::State::Row = stmt.next()? {
@@ -644,7 +661,8 @@ impl SqliteCache {
                 format!("while reading value with id {:032x}", id)
             ],
             async {
-                let conn = self.db.connection.lock().await;
+                let db = self.db()?;
+                let conn = db.connection.lock().await;
                 let mut stmt = conn.prepare(schema::read_value)?;
                 stmt.bind(1, sqlite::U128(id))?;
                 Result::Ok(if let sqlite::State::Row = stmt.next()? {
@@ -666,8 +684,9 @@ impl SqliteCache {
             async {
                 let id = value.id().await;
 
+                let db = self.db()?;
                 let stored_id = {
-                    let conn = self.db.connection.lock().await;
+                    let conn = db.connection.lock().await;
                     let mut stmt = conn.prepare(schema::read_entry)?;
                     stmt.bind(1, sqlite::U128(key))?;
                     if let sqlite::State::Row = stmt.next()? {
@@ -684,11 +703,11 @@ impl SqliteCache {
                         if stored_id == id {
                             match self.read_value(id).await {
                                 Ok(v) => {
-                                    self.db.log.debug(format_args!("successfully read cached value for {:032x}", id));
+                                    db.log.debug(format_args!("successfully read cached value for {:032x}", id));
                                     break v;
                                 }
                                 Err(err) => {
-                                    self.db.log.debug(format_args!(
+                                    db.log.debug(format_args!(
                                         "failed to read cached value for {:032x}, (re)caching: {}",
                                         id, err
                                     ));
@@ -696,7 +715,7 @@ impl SqliteCache {
                             }
                         }
                         else {
-                            self.db.log.debug(format_args!(
+                            db.log.debug(format_args!(
                                 "stored id for key {:032x} was {:032x}, but new id is {:032x}, recaching",
                                 key, stored_id, id
                             ));
@@ -720,11 +739,11 @@ impl SqliteCache {
                     };
                     let writer = SqliteCacheWriter::new(self, error_handling);
                     if let Err(e) = writer.write_value(to_write).await {
-                        self.db.log.warn(format!("failed to cache value for {:032x}: {}", id, e));
+                        db.log.warn(format!("failed to cache value for {:032x}: {}", id, e));
                         break value;
                     }
 
-                    self.db.log.debug(format!("wrote cache value for {:032x}", id));
+                    db.log.debug(format!("wrote cache value for {:032x}", id));
 
                     let writes = {
                         let mut pending_writes = writer.pending_writes.lock().await;
@@ -733,7 +752,7 @@ impl SqliteCache {
                         });
                         std::mem::take(&mut *pending_writes)
                     };
-                    self.db.pending_writes.lock().await.append(writes);
+                    db.pending_writes.lock().await.append(writes);
 
                     break value;
                 };
@@ -756,16 +775,6 @@ impl SqliteCache {
     }
 }
 
-impl Drop for SqliteCache {
-    fn drop(&mut self) {
-        let db = unsafe { ManuallyDrop::take(&mut self.db) };
-        db.finished
-            .store(true, std::sync::atomic::Ordering::Relaxed);
-        db.thread().unpark();
-        db.join();
-    }
-}
-
 impl super::CacheInterface for SqliteCache {
     fn cache_value(
         &self,
@@ -777,5 +786,23 @@ impl super::CacheInterface for SqliteCache {
             self.cache_value(key.into(), value, error_handling)
                 .map(|r| r.into()),
         )
+    }
+
+    fn shutdown(&self) {
+        if let Ok(db) = self.db() {
+            db.shutdown
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+            db.thread().unpark();
+        }
+
+        // Best-effort shutdown; we don't want to hang if somewhere a read lock is held for long
+        // (however unlikely).
+        if let Some(db) = self
+            .db
+            .try_write_for(std::time::Duration::from_millis(500))
+            .and_then(|mut guard| guard.take())
+        {
+            db.join();
+        }
     }
 }

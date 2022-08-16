@@ -73,13 +73,15 @@ pub async fn eval_for_cache(
 
 #[sabi_trait]
 trait CacheInterface: Send + Sync {
-    #[sabi(last_prefix_field)]
     fn cache_value(
         &self,
         key: U128,
         value: Value,
         error_handling: ErrorHandling,
     ) -> BoxFuture<'_, RResult<Value>>;
+
+    #[sabi(last_prefix_field)]
+    fn shutdown(&self) {}
 }
 
 pub fn r#type() -> Value {
@@ -114,7 +116,13 @@ async fn open(path: _) -> Value {
     let path = traits::into::<types::Path>(path).await?;
     let cache = sqlite::SqliteCache::open(path.as_ref().as_ref())
         .add_note(format!("cache path was {}", path.as_ref().display()))?;
-    Value::with_id(Cache::new(cache), CALL_DEPENDS)
+    // Clone cache to register shutdown hook.
+    let cache = Cache::new(cache);
+    let val = Value::with_id(cache.clone(), CALL_DEPENDS);
+    ergo_runtime::Context::global()
+        .hooks()
+        .add_shutdown(move || cache.0.shutdown());
+    val
 }
 
 #[types::ergo_fn]
