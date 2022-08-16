@@ -233,7 +233,8 @@ where
                                 while let Some(attr) = attributes.pop() {
                                     let old_e =
                                         std::mem::replace(e, Source::missing(Expression::unit()));
-                                    *e = attr.map(|a| match a {
+                                    let src = (attr.source(), old_e.source()).into_source();
+                                    *e = src.with(match attr.unwrap() {
                                         Attr::Attribute(a) => Expression::attribute(a, old_e),
                                         Attr::DocComment(parts) => {
                                             Expression::doc_comment(parts, old_e)
