@@ -797,12 +797,11 @@ impl ExprEvaluator {
     async fn evaluate_impl(&self) -> Value {
         log::trace!("evaluating {:?}", self.source());
         macro_rules! delayed {
-            ( $(#![$attr:meta])? $self:ident , $v:ident , $( $body:tt )* ) => {{
+            ( $self:ident , $v:ident , $( $body:tt )* ) => {{
                 let $self = self.clone();
                 let src = self.source();
                 let v_type = witness($v);
                 ergo_runtime::lazy_value! {
-                    $(#![$attr])?
                     #![contains($self)]
                     Context::spawn(EVAL_TASK_PRIORITY, move |ctx| ctx.backtrace.push(src.with("")), async move {
                         log::trace!("evaluating (delayed) {:?}", $self.source());
@@ -958,7 +957,7 @@ impl ExprEvaluator {
                     types::Unit.into()
                 }
             },
-            Index(ind) => delayed! { #![eval_for_id] me, ind,
+            Index(ind) => delayed! { me, ind,
                 let mut value = me.child(&ind.value).evaluate().await;
                 let index = me.child(&ind.index).evaluate().await;
                 if let Err(e) = Context::eval(&mut value).await {
@@ -1113,7 +1112,10 @@ impl LazyCaptures for ExprEvaluator {
                         return function_id.eval_for_id;
                     }
                 }
-                // Shortcut Index expressions, which are always `eval_for_id`.
+                // Shortcut Index expressions, which should be `eval_for_id` _only_ if the captures
+                // are ready (i.e. they are not actually marked `eval_for_id` when evaluated).
+                // XXX: this is a hack, and would be better replaced by a way at runtime to
+                // indicate a value identity should be eagerly evaluated.
                 else if self.expr.value().expr_type() == ast::ExpressionType::Index {
                     return true;
                 }

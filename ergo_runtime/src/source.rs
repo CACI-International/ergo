@@ -387,7 +387,7 @@ impl std::ops::Add for SingleId {
 
     fn add(self, rhs: Self) -> Self::Output {
         if self != rhs {
-            panic!("inconsistent sources");
+            panic!("inconsistent sources ({}, {})", self.0, rhs.0);
         }
         self.0
     }
@@ -399,7 +399,7 @@ impl std::iter::Sum<SingleId> for SourceId {
             let id = i;
             while let Some(i) = iter.next() {
                 if i != id {
-                    panic!("inconsistent sources");
+                    panic!("inconsistent sources ({}, {})", i.0, id.0);
                 }
             }
             id.0

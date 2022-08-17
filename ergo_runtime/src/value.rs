@@ -951,6 +951,15 @@ impl<T: ValueDataInterface> ValueDataInterface for IdValueData<T> {
     fn get(&self) -> ValueType {
         self.value_data.get()
     }
+
+    fn eval_for_id_hint(&self) -> future::BoxFuture<bool> {
+        future::BoxFuture::new(async move {
+            match self.id {
+                ValueId::Override { id: _, eval_for_id } => eval_for_id,
+                _ => false,
+            }
+        })
+    }
 }
 
 /// Lazy value helpers.
