@@ -98,6 +98,22 @@
 * Change `ergo` to `load`, and if it has additional arguments, change the call
   appropriately (e.g. `ergo script arg1 arg2` => `load script |> arg1 arg2`).
 
+### Known Issues
+* Identity calculation doesn't handle circular dependencies well. Ideally this
+  would "just work", however instead a deadlock occurs. Be careful with values
+  that are `eval_for_id` in `std:recurse`, for example. `std:recurse` _could_
+  set the identity appropriately for the recursive value, but for now it is left
+  to the user.
+* Index expressions (`a:b`) will be eagerly evaluated (if all captures are
+  present) when an identity is needed. This is detrimental when, for instance,
+  your expression is something like `std:cache (std:exec a b c):success`. In
+  this case, the intention is for `std:cache` to gate the actual `std:exec` call
+  occurring, but since `std:cache` needs an identity, `std:exec` will be
+  evaluated to get the `success` result due to the aforementioned behavior. In
+  this case, the expression can be rewritten as `std:cache { std:exec a b c; ()
+  }` or (more generally) `std:cache <| std:bind (std:exec a b c) (index
+  success)`, though it is ugly.
+
 ## 1.0.0-rc.3  -- 2021-12-14
 * Properly remove previously-set keys when a key is set to `unset`.
   * With the recent modification to how unset values are removed this case was
