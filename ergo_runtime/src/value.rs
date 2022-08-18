@@ -5,7 +5,7 @@ use crate::abi_stable::{
     future, sabi_trait,
     sabi_trait::prelude::*,
     sabi_types::{RRef, RSmallBox},
-    std_types::{RArc, ROption},
+    std_types::{RArc, RHashMap, ROption},
     type_erase::{Eraseable, Erased},
     u128::U128,
     StableAbi,
@@ -88,8 +88,8 @@ impl Inner {
         self.late_bound = Default::default();
     }
 
-    pub fn late_bind(&mut self, scope: &LateScope) {
-        self.data.late_bind(scope);
+    pub fn late_bind(&mut self, context: &mut LateBindContext) {
+        self.data.late_bind(context);
         let typed = self.data.ergo_type().is_some();
         self.id = Default::default();
         self.late_bound = Default::default();
@@ -155,9 +155,17 @@ pub struct LateScope {
     pub scope: BstMap<U128, Value>,
 }
 
+/// Late-binding context.
+#[derive(Debug, StableAbi)]
+#[repr(C)]
+pub struct LateBindContext<'a> {
+    pub scope: &'a LateScope,
+    pub bound: &'a mut RHashMap<usize, Value>,
+}
+
 impl LateScope {
     /// Create a LateScope with a single entry.
-    pub fn with(key: U128, value: Value) -> Self {
+    pub fn single(key: U128, value: Value) -> Self {
         LateScope {
             scope: BstMap::from_iter([(key, value)]),
         }
@@ -211,7 +219,7 @@ pub trait ValueDataInterface: Clone + Send + Sync + 'static {
     fn id(&self) -> future::BoxFuture<IdInfo<U128>>;
 
     /// Provide late bindings to a value.
-    fn late_bind(&mut self, scope: &LateScope);
+    fn late_bind(&mut self, context: &mut LateBindContext);
 
     /// Get the set of late bindings in a value.
     fn late_bound(&self) -> LateBound;
@@ -245,8 +253,8 @@ impl ValueData {
         self.0.id().await
     }
 
-    pub fn late_bind(&mut self, scope: &LateScope) {
-        self.0.late_bind(scope);
+    pub fn late_bind(&mut self, context: &mut LateBindContext) {
+        self.0.late_bind(context);
     }
 
     pub fn is_typed(&self) -> bool {
@@ -296,8 +304,8 @@ impl ValueDataInterface for ValueData {
         self.0.id()
     }
 
-    fn late_bind(&mut self, scope: &LateScope) {
-        self.0.late_bind(scope);
+    fn late_bind(&mut self, context: &mut LateBindContext) {
+        self.0.late_bind(context);
     }
 
     fn late_bound(&self) -> LateBound {
@@ -716,7 +724,7 @@ pub unsafe trait InnerValues {
 
 /// A trait to apply late bindings to a type.
 pub trait LateBind {
-    fn late_bind(&mut self, scope: &LateScope);
+    fn late_bind(&mut self, context: &mut LateBindContext);
     fn late_bound(&self) -> LateBound;
 }
 
@@ -738,8 +746,8 @@ impl<T: ErgoType + InnerValues + Clone + Send + Sync + 'static> ValueDataInterfa
         })
     }
 
-    fn late_bind(&mut self, scope: &LateScope) {
-        self.0.visit_mut(|v| v.late_bind(scope));
+    fn late_bind(&mut self, context: &mut LateBindContext) {
+        self.0.visit_mut(|v| v.late_bind(context));
     }
 
     fn late_bound(&self) -> LateBound {
@@ -774,7 +782,7 @@ impl<T: ErgoType + std::hash::Hash + Clone + Send + Sync + 'static> ValueDataInt
         future::BoxFuture::new(async move { self.id().into() })
     }
 
-    fn late_bind(&mut self, _scope: &LateScope) {}
+    fn late_bind(&mut self, _context: &mut LateBindContext) {}
 
     fn late_bound(&self) -> LateBound {
         Default::default()
@@ -823,8 +831,8 @@ pub trait LazyValueId:
 }
 
 impl LateBind for Value {
-    fn late_bind(&mut self, scope: &LateScope) {
-        Value::late_bind(self, scope);
+    fn late_bind(&mut self, context: &mut LateBindContext) {
+        Value::late_bind(self, context);
     }
 
     fn late_bound(&self) -> LateBound {
@@ -839,9 +847,9 @@ impl LazyValueId for Value {
 }
 
 impl LateBind for Dependencies {
-    fn late_bind(&mut self, scope: &LateScope) {
+    fn late_bind(&mut self, context: &mut LateBindContext) {
         self.map_mut(|d| match d {
-            Dependency::Value(v) => v.late_bind(scope),
+            Dependency::Value(v) => v.late_bind(context),
             Dependency::Constant(_) => (),
         })
     }
@@ -908,11 +916,11 @@ impl ValueId {
         }
     }
 
-    pub fn late_bind(&mut self, scope: &LateScope) {
+    pub fn late_bind(&mut self, context: &mut LateBindContext) {
         match self {
             ValueId::Id(_) => (),
-            ValueId::Lazy(l) => l.0.late_bind(scope),
-            ValueId::Override { id, .. } => id.0.late_bind(scope),
+            ValueId::Lazy(l) => l.0.late_bind(context),
+            ValueId::Override { id, .. } => id.0.late_bind(context),
         }
     }
 
@@ -937,9 +945,9 @@ impl<T: ValueDataInterface> ValueDataInterface for IdValueData<T> {
         future::BoxFuture::new(async move { self.id.id().await.into() })
     }
 
-    fn late_bind(&mut self, scope: &LateScope) {
-        self.value_data.late_bind(scope);
-        self.id.late_bind(scope);
+    fn late_bind(&mut self, context: &mut LateBindContext) {
+        self.value_data.late_bind(context);
+        self.id.late_bind(context);
     }
 
     fn late_bound(&self) -> LateBound {
@@ -1018,7 +1026,7 @@ pub mod lazy {
         fn id(&self) -> futures::future::BoxFuture<Identity>;
 
         /// Late-bind the scope into the captures.
-        fn late_bind(&mut self, scope: &LateScope);
+        fn late_bind(&mut self, context: &mut LateBindContext);
 
         /// Late-bound keys in the captures.
         fn late_bound(&self) -> LateBound;
@@ -1034,7 +1042,7 @@ pub mod lazy {
             futures::FutureExt::boxed(async move { Identity::new(0) })
         }
 
-        fn late_bind(&mut self, _scope: &LateScope) {}
+        fn late_bind(&mut self, _context: &mut LateBindContext) {}
 
         fn late_bound(&self) -> LateBound {
             Default::default()
@@ -1046,8 +1054,8 @@ pub mod lazy {
             futures::FutureExt::boxed(async move { self.clone().eval_id().await })
         }
 
-        fn late_bind(&mut self, scope: &LateScope) {
-            Value::late_bind(self, scope);
+        fn late_bind(&mut self, context: &mut LateBindContext) {
+            Value::late_bind(self, context);
         }
 
         fn late_bound(&self) -> LateBound {
@@ -1064,8 +1072,8 @@ pub mod lazy {
             LazyCaptures::id(&self.inner)
         }
 
-        fn late_bind(&mut self, scope: &LateScope) {
-            LazyCaptures::late_bind(&mut self.inner, scope);
+        fn late_bind(&mut self, context: &mut LateBindContext) {
+            LazyCaptures::late_bind(&mut self.inner, context);
         }
 
         fn late_bound(&self) -> LateBound {
@@ -1088,9 +1096,9 @@ pub mod lazy {
             })
         }
 
-        fn late_bind(&mut self, scope: &LateScope) {
+        fn late_bind(&mut self, context: &mut LateBindContext) {
             for c in self {
-                c.late_bind(scope);
+                c.late_bind(context);
             }
         }
 
@@ -1127,10 +1135,10 @@ pub mod lazy {
                     })
                 }
 
-                fn late_bind(&mut self, scope: &LateScope) {
+                fn late_bind(&mut self, context: &mut LateBindContext) {
                     #[allow(non_snake_case)]
                     let ($($name,)+) = self;
-                    $($name.late_bind(scope);)+
+                    $($name.late_bind(context);)+
                 }
 
                 fn late_bound(&self) -> LateBound {
@@ -1197,9 +1205,9 @@ pub mod lazy {
             })
         }
 
-        fn late_bind(&mut self, scope: &LateScope) {
-            self.id.late_bind(scope);
-            self.captures.late_bind(scope);
+        fn late_bind(&mut self, context: &mut LateBindContext) {
+            self.id.late_bind(context);
+            self.captures.late_bind(context);
         }
 
         fn late_bound(&self) -> LateBound {
@@ -1399,9 +1407,15 @@ impl Value {
     }
 
     /// Late-bind the given scope in this value.
-    pub fn late_bind(&mut self, scope: &LateScope) {
-        if self.late_bound().bound_by(scope) {
-            RArc::make_mut(&mut self.inner).late_bind(scope);
+    pub fn late_bind(&mut self, context: &mut LateBindContext) {
+        if self.late_bound().bound_by(context.scope) {
+            let id = self.referential_id();
+            if let Some(v) = context.bound.get(&id) {
+                self.inner = v.inner.clone();
+            } else {
+                RArc::make_mut(&mut self.inner).late_bind(context);
+                context.bound.insert(id, self.clone());
+            }
         }
     }
 

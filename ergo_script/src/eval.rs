@@ -12,7 +12,7 @@ use ergo_runtime::{
     error::{DiagnosticInfo, ErrorOrDiagnostic},
     metadata::{self, Source},
     nsid, traits, types,
-    value::{lazy::LazyCaptures, match_value, Identity, LateBind, LateScope, LazyValueId},
+    value::{lazy::LazyCaptures, match_value, Identity, LateBind, LateBindContext, LazyValueId},
     Context, EvaluatedValue, Value,
 };
 use futures::future::{BoxFuture, FutureExt};
@@ -129,10 +129,10 @@ impl Captures {
 }
 
 impl LateBind for Captures {
-    fn late_bind(&mut self, scope: &LateScope) {
+    fn late_bind(&mut self, context: &mut LateBindContext) {
         for v in self.inner.values_mut() {
             if let Capture::Evaluated(v) = v {
-                v.late_bind(scope);
+                v.late_bind(context);
             }
         }
     }
@@ -1040,10 +1040,10 @@ impl ExprEvaluator {
 }
 
 impl LateBind for ExprEvaluator {
-    fn late_bind(&mut self, scope: &LateScope) {
-        self.captures.late_bind(scope);
+    fn late_bind(&mut self, context: &mut LateBindContext) {
+        self.captures.late_bind(context);
         for (cap, key) in self.late_capture_keys() {
-            if let Some(v) = scope.scope.get(&key) {
+            if let Some(v) = context.scope.scope.get(&key) {
                 self.captures.resolve_late(cap, v.clone());
             }
         }
@@ -1086,8 +1086,8 @@ impl LazyCaptures for ExprEvaluator {
         LazyValueId::id(self)
     }
 
-    fn late_bind(&mut self, scope: &LateScope) {
-        LateBind::late_bind(self, scope);
+    fn late_bind(&mut self, context: &mut LateBindContext) {
+        LateBind::late_bind(self, context);
     }
 
     fn late_bound(&self) -> ergo_runtime::value::LateBound {

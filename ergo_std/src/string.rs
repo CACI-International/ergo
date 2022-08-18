@@ -199,9 +199,9 @@ async fn r#match(format_string: types::String, ...) -> Value {
             futures::FutureExt::boxed(async move { depends![dyn self].id().await })
         }
 
-        fn late_bind(&mut self, scope: &ergo_runtime::value::LateScope) {
+        fn late_bind(&mut self, context: &mut ergo_runtime::value::LateBindContext) {
             if let Self::Value(_, v) = self {
-                v.late_bind(scope);
+                v.late_bind(context);
             }
         }
 

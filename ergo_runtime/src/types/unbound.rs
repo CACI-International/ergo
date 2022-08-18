@@ -6,7 +6,7 @@ use crate::abi_stable::{
 };
 use crate::traits;
 use crate::type_system::{ergo_traits_fn, ErgoType};
-use crate::value::{lazy::LazyCaptures, IdInfo, LateBound, LateScope, ValueId};
+use crate::value::{lazy::LazyCaptures, IdInfo, LateBindContext, LateBound, ValueId};
 use crate::Value;
 
 /// Script type for values that require a single value to produce a new value.
@@ -21,7 +21,7 @@ pub struct Unbound(UnboundInterface_TO<RBox<()>>);
 pub trait UnboundInterface: Clone + Send + Sync + 'static {
     fn id(&self) -> BoxFuture<IdInfo<U128>>;
 
-    fn late_bind(&mut self, scope: &LateScope);
+    fn late_bind(&mut self, context: &mut LateBindContext);
 
     fn late_bound(&self) -> LateBound;
 
@@ -34,8 +34,8 @@ impl crate::value::ValueDataInterface for Unbound {
         self.0.id()
     }
 
-    fn late_bind(&mut self, scope: &LateScope) {
-        self.0.late_bind(scope);
+    fn late_bind(&mut self, context: &mut LateBindContext) {
+        self.0.late_bind(context);
     }
 
     fn late_bound(&self) -> LateBound {
@@ -84,9 +84,9 @@ where
         })
     }
 
-    fn late_bind(&mut self, scope: &LateScope) {
-        self.id.late_bind(scope);
-        self.captures.late_bind(scope);
+    fn late_bind(&mut self, context: &mut LateBindContext) {
+        self.id.late_bind(context);
+        self.captures.late_bind(context);
     }
 
     fn late_bound(&self) -> LateBound {

@@ -38,7 +38,12 @@ pub async fn late_bind(bindings: types::Map, mut v: _) -> Value {
     for (k, v) in &bindings.as_ref().0 {
         scope.scope.insert((*k.id()).into(), v.clone());
     }
-    v.late_bind(&scope);
+    let mut bound = Default::default();
+    let mut context = ergo_runtime::value::LateBindContext {
+        scope: &scope,
+        bound: &mut bound,
+    };
+    v.late_bind(&mut context);
     v
 }
 

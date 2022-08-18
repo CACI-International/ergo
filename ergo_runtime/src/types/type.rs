@@ -29,8 +29,8 @@ impl crate::value::ValueDataInterface for Type {
     }
 
     /// Provide late bindings to a value.
-    fn late_bind(&mut self, scope: &crate::value::LateScope) {
-        self.index.late_bind(scope);
+    fn late_bind(&mut self, context: &mut crate::value::LateBindContext) {
+        self.index.late_bind(context);
     }
 
     /// Get the set of late bindings in a value.
