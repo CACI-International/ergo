@@ -17,11 +17,11 @@ num_cpus = "^1"
 num = { version = "0.4", features = ["serde"] }
 parking_lot = "0.12"
 pin-project = "1"
-plugin_tls = "0.3"
+plugin_tls = "0.4.1"
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1", features = ["parking_lot","sync"] }
 uuid = { version = "0.8", features = ["v5"] }
 work-queue = "0.1"
 
 [dev-dependencies]
-plugin_tls = { version = "0.3", features = ["host"] }
+plugin_tls = { version = "0.4.1", features = ["host"] }

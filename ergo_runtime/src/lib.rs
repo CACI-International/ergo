@@ -110,7 +110,7 @@ pub mod plugin {
         }
 
         pub unsafe fn initialize(self) -> crate::Source<()> {
-            self.tls.initialize_tls();
+            self.tls.initialize();
             if let ROption::RSome(log) = self.log {
                 if let Err(e) = log::set_boxed_logger(Box::new(log)) {
                     eprintln!("error while setting logger: {}", e);

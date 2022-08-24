@@ -12,5 +12,5 @@ horrorshow = "0.8"
 libloading = "^0.6"
 log = "^0.4"
 pin-project = "1"
-plugin_tls = { version = "0.3", features = ["host"] }
+plugin_tls = { version = "0.4.1", features = ["host"] }
 pulldown-cmark = "0.8"
