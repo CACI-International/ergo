@@ -2,7 +2,7 @@
 
 use ergo_runtime::abi_stable::{
     external_types::RMutex,
-    std_types::{RArc, RString},
+    std_types::{RArc, ROption, RString},
     StableAbi,
 };
 use ergo_runtime::context::{DynamicScopeKey, Log, LogTask, RecordingWork, TaskPermit, Work};
@@ -80,7 +80,9 @@ pub async fn function(
     let description = description.into_owned().0;
 
     let log = Context::global().log.sublog("task");
-    let work = RArc::new(RMutex::new(log.work(format!("{:x}", work_id))));
+    let work = RArc::new(RMutex::new(ROption::RSome(
+        log.work(format!("{:x}", work_id)),
+    )));
 
     let do_task = ergo_runtime::lazy_value! {
         #![contains(value)]
@@ -97,8 +99,11 @@ pub async fn function(
                 log.info(format!("starting: {}", &description));
                 let ret = Context::eval(&mut value).await;
                 let errored = ret.is_err();
+                let mut work = work.lock().take();
                 if errored {
-                    work.lock().err();
+                    if let ROption::RSome(w) = &mut work {
+                        w.err();
+                    }
                 }
                 log.info(format!(
                     "complete{}: {}",
@@ -114,27 +119,40 @@ pub async fn function(
 
     let call_deps = CALL_DEPENDS.clone();
 
+    // Return an impure value, so that it will always be evaluated (without caching results). This
+    // allows multiple tasks to properly suspend when relying on the same task.
     let mut value = ergo_runtime::lazy_value! {
         #![contains(do_task)]
         #![depends(nsid!(std::task::parent), ^CALL_DEPENDS)]
-        let mut do_task = do_task;
+
+        // There's a bit of subtlety as to why we return a value here rather than immediately
+        // awaiting the task. If we have concurrent values awaiting the result of a `task` call, we
+        // want them both to suspend the calling task. However due to the way evaluation of values
+        // works, one will start evaluating this value (and suspend) whereas the other will be
+        // descheduled but won't suspend the calling task (as it will be waiting for the value to
+        // be evaluated). So, instead we immediately return the appropriate (unique/new) value in
+        // both cases, which won't conflict with each other (as this value is impure and always
+        // produces new values) and will allow each to proceed to properly suspend while the task
+        // runs.
         match Context::with(|ctx| ctx.dynamic_scope.get(&ParentTaskKey)) {
             Some(p) => {
                 let p = p.clone();
                 ergo_runtime::lazy_value! {
+                    #![contains(do_task)]
                     #![depends(nsid!(std::task::result), ^call_deps)]
+                    let mut do_task = do_task;
                     p.suspend(async move { Context::eval(&mut do_task).await?; ergo_runtime::Result::Ok(do_task) }).await?
                 }
             }
             None => ergo_runtime::lazy_value! {
+                #![contains(do_task)]
                 #![depends(nsid!(std::task::result), ^call_deps)]
+                let mut do_task = do_task;
                 Context::eval(&mut do_task).await?;
                 do_task
             },
         }
     };
-    // Return an impure value, so that it will always be evaluated (without caching results). This
-    // allows multiple tasks to properly suspend when relying on the same task.
     value.impure(true);
     value
 }
@@ -155,7 +173,7 @@ pub struct ParentTask {
     pub description: RString,
     count: u32,
     log: Log,
-    work: RArc<RMutex<Work>>,
+    work: RArc<RMutex<ROption<Work>>>,
     state: RMutex<ParentTaskState>,
 }
 
@@ -176,7 +194,12 @@ enum ParentTaskState {
 
 impl ParentTask {
     /// Create a new ParentTask and start it.
-    pub async fn new(description: RString, count: u32, log: Log, work: RArc<RMutex<Work>>) -> Self {
+    pub async fn new(
+        description: RString,
+        count: u32,
+        log: Log,
+        work: RArc<RMutex<ROption<Work>>>,
+    ) -> Self {
         let pt = ParentTask {
             description,
             count,
@@ -222,7 +245,7 @@ impl ParentTask {
             ParentTaskState::Suspended(0) => {
                 *guard = ParentTaskState::Active(
                     self.log.task(self.description.clone()),
-                    self.work.lock().start(),
+                    self.work.lock().as_mut().unwrap().start(),
                     task_permit,
                 );
             }
