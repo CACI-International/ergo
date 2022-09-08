@@ -88,7 +88,7 @@ partial = fn :f ^:args -> fn ^:args2 -> f ^$args ^$args2
 ##     ]
 ## }
 ## ```
-recurse = fn :f -> (fn :l -> l $l) (fn :l -> bind $f (l $l))
+recurse = !id ~set=plugin:Bool:false <| fn :f -> (fn :l -> l $l) (fn :l -> bind $f <| plugin:value:variable (l $l))
 
 ## Memoize a function (cache the function results based purely on arguments).
 ##
@@ -225,19 +225,13 @@ function-module = fn (plugin:Function :func) :module -> {
     ]
 
     ## $(doc $func)$mod-doc
-    :a -> {
-        { :result } = plugin:match $a [
-            index :i -> plugin:match module:$i [
-                $unset -> plugin:Error:new (source = $module) "missing index: $i"
-                :x -> { result = $x }
-            ]
-            # We want the binding to occur immediately, but if there is an error we do not want to make
-            # `match` consider it a match error and move on (to improve the overall error reported in
-            # this case).
-            :other -> { result = bind $func $other }
+    :a -> plugin:match $a [
+        index :i -> plugin:match module:$i [
+            $unset -> plugin:Error:new (source = $module) "missing index: $i"
+            :x -> $x
         ]
-        $result
-    }
+        :other -> bind $func $other
+    ]
 }
 
 ## Split an iterator after the first `n` elements.
