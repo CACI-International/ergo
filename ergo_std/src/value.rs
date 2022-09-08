@@ -75,13 +75,16 @@ async fn debug(value: _) -> Value {
         Default::default()
     };
 
+    let id = {
+        let mut v = value.clone();
+        v.eval_id().await
+    };
+
     Context::global().log.debug(
         Source::get(&value)
             .with(format!(
-                "type: {}{}, id: {:032x}",
-                name,
-                rest,
-                value.id().await
+                "type: {}{}, id: {:032x}, eval_for_id: {}",
+                name, rest, id.id, id.eval_for_id
             ))
             .to_string(),
     );
