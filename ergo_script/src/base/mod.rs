@@ -60,7 +60,7 @@ pub fn unset() -> Value {
 ///
 /// Keyed Arguments:
 /// * `into Bool |> :set` - if present, the resulting value will be marked (based on the `Bool`)
-/// such that it forcibly will (`true`) or won't (`false`) cause expressions containing the vaule
+/// such that it forcibly will (`true`) or won't (`false`) cause expressions containing the value
 /// to be further evaluated when the identity is calculated.
 ///
 /// Returns the evaluated value, possibly with the identity calculating semantics changed (based on

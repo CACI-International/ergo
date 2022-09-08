@@ -460,11 +460,6 @@ impl ExprEvaluator {
         self
     }
 
-    fn no_eval_cache(mut self) -> Self {
-        self.cache.eval = Default::default();
-        self
-    }
-
     fn child(&self, child: &Expr) -> Self {
         ExprEvaluator {
             expr: child.clone(),
@@ -479,15 +474,6 @@ impl ExprEvaluator {
                 .cache_default(child.instance_key())
                 .clone(),
         }
-    }
-
-    fn no_lexical_scope(self) -> Self {
-        // Deprecated
-        self
-    }
-
-    fn no_scopes(self) -> Self {
-        self.no_lexical_scope()
     }
 
     fn scope_key(&self) -> ScopeKey {
@@ -782,10 +768,6 @@ impl ExprEvaluator {
         }
     }
 
-    fn value_id(&self) -> Self {
-        self.clone().no_lexical_scope().no_eval_cache()
-    }
-
     fn source(&self) -> ergo_runtime::Source<()> {
         self.expr.source()
     }
@@ -894,10 +876,10 @@ impl ExprEvaluator {
             Function(func) => {
                 let bind = func.bind.clone();
                 let body = func.body.clone();
-                let me = self.clone().no_scopes().cache_root();
+                let me = self.clone();
                 types::unbound_value! {
                     #![contains(me)]
-                    let mut me = me.clone().cache_root();
+                    let mut me = me.clone();
 
                     let scope = Scope::new();
                     let new_scope = scope.eval(me.source().with(me.scope_key()), async {
@@ -915,7 +897,7 @@ impl ExprEvaluator {
                         me.captures.resolve(cap, v);
                     }
 
-                    me.child(&body).evaluate().await
+                    me.cache_root().child(&body).evaluate().await
                 }
             },
             Get(get) => {
@@ -933,10 +915,8 @@ impl ExprEvaluator {
                 }
             },
             Set(set) => {
-                let me = self.clone().no_eval_cache();
+                let me = self.clone();
                 let k = me.child(&set.value).evaluate().await.as_evaluated().await;
-                // TODO
-                // me.scopes.init(set.scope_key, set.capture_key.clone(), k.clone());
                 types::unbound_value! {
                     #![contains(me)]
                     let set = unsafe { me.expr.as_ref_unchecked::<ast::Set>() };
@@ -992,7 +972,6 @@ impl ExprEvaluator {
                 // FIXME this includes the identity of the value, but it should technically only
                 // include the identity of the doc comment.
                 // In practice the identity of a doc comment won't matter much though.
-                //let id = self.value_id();
                 let captures = items.iter().fold(CaptureSet::default(), |mut caps, e| {
                     match e {
                         ast::StringItem::Expression(e) => match e.captures() {
@@ -1003,7 +982,7 @@ impl ExprEvaluator {
                     }
                     caps
                 });
-                let mut me = self.clone().no_scopes().no_eval_cache();
+                let mut me = self.clone();
                 me.captures = me.captures.subset(&captures);
                 let mut doc = ergo_runtime::lazy_value! {
                     #![contains(me)]
@@ -1065,7 +1044,7 @@ impl LateBind for ExprEvaluator {
 
 impl LazyValueId for ExprEvaluator {
     fn id(&self) -> BoxFuture<Identity> {
-        let me = self.value_id();
+        let me = self.clone();
         let src = self.source();
         Context::spawn(
             EVAL_TASK_PRIORITY,
