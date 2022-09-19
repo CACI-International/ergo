@@ -268,8 +268,6 @@ pub struct TaskManager {
     abort_handles: RArc<RMutex<RVec<AbortHandleInterface_TO<'static, RBox<()>>>>>,
     threads: usize,
     aggregate_errors: bool,
-    // XXX temporary until task cancellation is improved
-    basic_task_cancellation: bool,
 }
 
 impl std::fmt::Debug for TaskManager {
@@ -280,7 +278,6 @@ impl std::fmt::Debug for TaskManager {
             .field("abort_handles", &self.abort_handles.lock())
             .field("threads", &self.threads)
             .field("aggregate_errors", &self.aggregate_errors)
-            .field("basic_task_cancellation", &self.basic_task_cancellation)
             .finish()
     }
 }
@@ -299,6 +296,12 @@ impl TaskManager {
         let threads = std::cmp::max(1, num_threads.unwrap_or_else(num_cpus::get));
         let abort_handles: RArc<RMutex<RVec<AbortHandleInterface_TO<'static, RBox<()>>>>> =
             RArc::new(RMutex::new(Default::default()));
+
+        // XXX temporary until task cancellation is improved
+        let batch_task_cancellation = std::env::var_os("ERGO_DEADLOCK_BATCH")
+            .and_then(|s| s.to_str().and_then(|s| s.parse().ok()))
+            .unwrap_or(usize::MAX);
+
         let pool = {
             let abort_handles = abort_handles.clone();
             let abort_handles2 = abort_handles.clone();
@@ -308,22 +311,28 @@ impl TaskManager {
                 .on_inactivity(move || {
                     log::warn!("indicating deadlock due to inactivity");
                     progress.indicate_deadlock();
-                    for handle in abort_handles.lock().iter() {
-                        handle.abort();
+                    for _ in 0..batch_task_cancellation {
+                        if let Some(handle) = abort_handles.lock().pop() {
+                            handle.abort();
+                        } else {
+                            break;
+                        }
                     }
                 })
                 .on_maintenance(move |rthandle| {
                     if progress2.check_for_deadlock(rthandle.has_blocking_tasks()) {
                         log::warn!("deadlock detected; aborting tasks");
-                        for handle in abort_handles2.lock().iter() {
-                            handle.abort();
+                        for _ in 0..batch_task_cancellation {
+                            if let Some(handle) = abort_handles2.lock().pop() {
+                                handle.abort();
+                            } else {
+                                break;
+                            }
                         }
                     }
                 })
                 .build()?
         };
-        // XXX temporary until task cancellation is improved
-        let basic_task_cancellation = std::env::var_os("ERGO_DEADLOCK_WORKAROUND").is_some();
 
         Ok(TaskManager {
             pool: ThreadPoolInterface_TO::from_value(
@@ -334,7 +343,6 @@ impl TaskManager {
             abort_handles,
             threads,
             aggregate_errors,
-            basic_task_cancellation,
         })
     }
 
@@ -350,11 +358,9 @@ impl TaskManager {
     {
         let (future, abort_handle) = abortable(f);
         {
-            let mut handles = self.abort_handles.lock();
-            if self.basic_task_cancellation {
-                handles.clear();
-            }
-            handles.push(AbortHandleInterface_TO::from_value(abort_handle, TD_Opaque));
+            self.abort_handles
+                .lock()
+                .push(AbortHandleInterface_TO::from_value(abort_handle, TD_Opaque));
         }
         let (future, handle) = future.remote_handle();
         self.pool.spawn_ok(priority, BoxFuture::new(future));

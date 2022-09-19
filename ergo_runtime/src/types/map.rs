@@ -153,7 +153,7 @@ ergo_traits_fn! {
                     crate::try_result!(traits::bind_map(self.0.clone(), SELF_VALUE, map, &arg, false).await);
                     super::Unit.into()
                 },
-                v => traits::bind_error(v).into()
+                v => traits::bind_error(&SELF_VALUE, &v).into()
             }
         }
     }

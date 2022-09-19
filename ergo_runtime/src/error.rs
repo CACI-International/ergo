@@ -860,7 +860,10 @@ pub mod diagnostics {
 
     /// A set of unique diagnostics.
     #[derive(Clone, Default, Debug)]
-    pub struct Diagnostics(HashSet<RArc<Diagnostic>>);
+    pub struct Diagnostics {
+        seen: HashSet<RArc<Diagnostic>>,
+        ordered: RVec<RArc<Diagnostic>>,
+    }
 
     impl Diagnostics {
         /// Create an empty set.
@@ -891,8 +894,9 @@ pub mod diagnostics {
             match &err.inner {
                 InnerError::Errors(diagnostics) => {
                     for d in diagnostics {
-                        let is_new = self.0.insert(d.clone());
+                        let is_new = self.seen.insert(d.clone());
                         if is_new {
+                            self.ordered.push(d.clone());
                             new(d.as_ref());
                         }
                         added |= is_new;
@@ -905,22 +909,26 @@ pub mod diagnostics {
 
         /// Extend this set with the contents of another set.
         pub fn extend(&mut self, other: Self) {
-            self.0.extend(other.0);
+            for d in other.ordered {
+                if self.seen.insert(d.clone()) {
+                    self.ordered.push(d);
+                }
+            }
         }
 
         /// Return the number of unique diagnostics in the set.
         pub fn len(&self) -> usize {
-            self.0.len()
+            self.seen.len()
         }
 
         /// Iterate over the diagnostics in the set.
         pub fn iter(&self) -> Iter {
-            Iter(self.0.iter())
+            Iter(self.ordered.iter())
         }
     }
 
     /// Diagnostics reference iterator.
-    pub struct Iter<'a>(<&'a HashSet<RArc<Diagnostic>> as IntoIterator>::IntoIter);
+    pub struct Iter<'a>(<&'a RVec<RArc<Diagnostic>> as IntoIterator>::IntoIter);
 
     impl<'a> Iterator for Iter<'a> {
         type Item = &'a Diagnostic;

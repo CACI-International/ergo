@@ -93,12 +93,16 @@ impl Progress {
                 // Attempt to find an evaluation loop in `value`.
                 let mut sources = vec![Source::get(&value)];
                 let target = value.referential_id();
-                while sources.len() < DEADLOCK_BACKTRACE_LIMIT {
+                while sources.len() < DEADLOCK_BACKTRACE_LIMIT && !value.is_evaluated() {
                     value.eval_once().await;
                     if value.referential_id() == target {
                         break;
                     }
                     sources.push(Source::get(&value));
+                }
+                if value.is_evaluated() {
+                    // False alarm (which can occur from other things deadlocking).
+                    return Ok(true);
                 }
                 use crate::error::{Diagnostic, DiagnosticInfo};
                 let mut d = Diagnostic::from("circular evaluation detected");

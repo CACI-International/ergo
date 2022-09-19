@@ -156,7 +156,7 @@ ergo_traits_fn! {
                     ).await);
                     super::Unit.into()
                 }
-                v => traits::bind_error(v).into()
+                v => traits::bind_error(&SELF_VALUE, &v).into()
             }
         }
     }

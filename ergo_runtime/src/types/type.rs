@@ -126,7 +126,7 @@ ergo_traits_fn! {
                         ).into()
                     }
                 },
-                v => traits::bind_error(v).into()
+                v => traits::bind_error(&SELF_VALUE, &v).into()
             }
         }
     }

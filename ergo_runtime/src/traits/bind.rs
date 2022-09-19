@@ -21,10 +21,11 @@ pub trait Bind {
 }
 
 /// Create a bind error result for the given value.
-pub fn bind_error(v: Value) -> crate::Error {
-    let name = type_name(&v);
-    Source::get(&v)
-        .with(format!("cannot bind to value with type '{}'", name))
+pub fn bind_error(v: &Value, bound: &Value) -> crate::Error {
+    let name = type_name(v);
+    crate::error::Diagnostic::from(format!("cannot bind to value with type '{}'", name))
+        .add_value_sources("target", v)
+        .add_value_sources("bound", bound)
         .into_error()
 }
 
@@ -35,7 +36,7 @@ pub async fn bind(mut v: Value, arg: Value) -> Value {
     }
 
     match Context::get_trait::<Bind>(&v) {
-        None => bind_error(v).into(),
+        None => bind_error(&v, &arg).into(),
         Some(t) => t.bind(v, arg).await,
     }
 }

@@ -355,7 +355,7 @@ ergo_traits_fn! {
                 super::Index(ind) => {
                     args_index(ind, &self.args).await
                 }
-                v => traits::bind_error(v).into()
+                v => traits::bind_error(&SELF_VALUE, &v).into()
             }
         }
     }
