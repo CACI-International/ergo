@@ -290,7 +290,7 @@ unset-map = fn :f :v -> plugin:match $v [$unset -> $v, :other -> f $other]
 ## If none of the `values` are not Unset, returns Unset.
 unset-or = fn ^:values -> {
     result = (plugin:Array:from $values
-        | plugin:Iter:skip-while (fn :v -> plugin:value:equal $v $unset)
+        | plugin:Iter:skip-while (fn :v -> plugin:match (plugin:Type:get $v) [plugin:Unset -> plugin:Bool:true, _ -> plugin:Bool:false])
         | plugin:Iter:item)
     unset-map (fn :m -> m:item) $result
 }
