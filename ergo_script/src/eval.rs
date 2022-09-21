@@ -372,6 +372,12 @@ mod once {
                     WAS_ACCESSED => {
                         let waker = cx.waker().clone();
                         let mut guard = me.once.wakers.lock().unwrap();
+                        // Check the state again once we acquire the lock in case it has changed:
+                        // we don't want to push a waker when the waker list has potentially
+                        // already been awoken, otherwise it will never be woken.
+                        if me.once.state.load(Ordering::Acquire) == (WAS_ACCESSED | HAS_VALUE) {
+                            break;
+                        }
                         guard.push(waker);
                         return Poll::Pending;
                     }

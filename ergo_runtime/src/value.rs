@@ -488,7 +488,7 @@ mod once {
         }
 
         pub fn try_get(&self) -> Option<&T> {
-            if self.tag.load(Ordering::Relaxed) & STATE_MASK == STATE_VALUE {
+            if self.tag.load(Ordering::Acquire) & STATE_MASK == STATE_VALUE {
                 // Safety: once the state is STATE_VALUE, it will never change and `value` is set
                 Some(unsafe { &*self.state.get().as_ref().unwrap_unchecked().value })
             } else {
@@ -518,7 +518,7 @@ mod once {
                         self.tag.fetch_or(STATE_VALUE, Ordering::Release);
                     } else {
                         // Should be a very short duration, just a move.
-                        while self.tag.load(Ordering::Relaxed) & STATE_MASK != STATE_VALUE {
+                        while self.tag.load(Ordering::Acquire) & STATE_MASK != STATE_VALUE {
                             std::hint::spin_loop();
                         }
                     }
@@ -540,7 +540,7 @@ mod once {
                 // Safety: the state must be wakers
                 unsafe { std::mem::ManuallyDrop::drop(&mut self.state.get_mut().wakers) };
             } else if state == STATE_VALUE {
-                // Safety: the state must be wakers
+                // Safety: the state must be value
                 unsafe { std::mem::ManuallyDrop::drop(&mut self.state.get_mut().value) };
             }
         }
