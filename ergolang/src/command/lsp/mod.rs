@@ -429,7 +429,7 @@ impl LanguageServer for Service {
                         }
                         _ => {
                             if [
-                                "ergo",
+                                "load",
                                 "std",
                                 "workspace",
                                 "fn",
