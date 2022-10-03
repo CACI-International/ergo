@@ -60,6 +60,7 @@
 * Add `std:load-lazy` to lazily load a file (causing the identity of the
   expression to not rely on the loaded file value).
 * Add `std:backtrace` to log a backtrace of the current evaluation.
+* Add `std:next` to evaluate a value once and bind the result.
 
 #### Modifications
 * Removed the `std:by-content` function, as one shouldn't be reinterpreting

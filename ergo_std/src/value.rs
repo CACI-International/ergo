@@ -23,6 +23,7 @@ pub fn module() -> Value {
             "get" = meta_get(),
             "set" = meta_set()
         },
+        "next" = next(),
         "source-copy" = source_copy(),
         "source-path" = source_path()
     }
@@ -373,6 +374,23 @@ async fn index(indices: types::Map) -> Value {
     }
 }
 
+#[types::ergo_fn]
+/// Evaluate a value once and bind the result.
+///
+/// Arguments: `:target -> :value`
+///
+/// Binds `target` to the result of evaluating `value` once (rather than fully evaluating to a
+/// typed value).
+async fn next(target: _) -> Value {
+    types::unbound_value! {
+        #![depends(const nsid!(std::next))]
+        #![contains(target)]
+        ARG.eval_once().await;
+        traits::bind_no_error(target, ARG).await?;
+        types::Unit.into()
+    }
+}
+
 #[cfg(test)]
 mod test {
     ergo_script::tests! {
@@ -420,6 +438,11 @@ mod test {
             t.assert_eq("self:value:index {:a,:b} = {a = 1, b = 2}", "{a = 1, b = 2}");
             t.assert_eq("self:value:index {:a} = {a = 1, b = 2}", "{a = 1}");
             t.assert_eq("self:value:index {:a,:c} = {a = 1, b = 2}", "{a = 1}");
+        }
+
+        fn next(t) {
+            t.assert_ne("a = 123; :b = { \"123\" }; self:value:equal ~exact $a $b", "self:Bool:true");
+            t.assert_eq("a = 123; self:value:next :b = { \"123\" }; self:value:equal ~exact $a $b", "self:Bool:true");
         }
     }
 }
