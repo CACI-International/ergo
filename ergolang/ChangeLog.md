@@ -52,8 +52,7 @@
   whether the result matches `string` and `other-string`, respectively, where
   before they would not be evaluated so it would never match. The prior behavior
   had very few and obscure use cases.
-* Add a built-in `!id` function to mark a value as being relevant to the
-  identity of the expression.
+* Add a built-in `id` function to change the identity of a value.
 * Fix a bug with `Iter` types where very large iterators would cause a stack
   overflow (which occurred when the value was dropped).
 * Remove the `--detect-deadlock` argument. Deadlock detection is now done

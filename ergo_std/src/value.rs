@@ -24,30 +24,8 @@ pub fn module() -> Value {
             "set" = meta_set()
         },
         "source-copy" = source_copy(),
-        "source-path" = source_path(),
-        "variable" = variable()
+        "source-path" = source_path()
     }
-}
-
-#[types::ergo_fn]
-#[eval_for_id]
-/// Change the identity of a value.
-///
-/// Arguments: `:value`
-///
-/// Keyed Arguments:
-/// * `:depends`: A value whose identity will be used to set the identity of the returned value.
-///
-/// Returns a value identical to the argument, but with a different identity. If `depends` is not set, the value will have
-/// a fixed identity derived from nothing else.
-async fn variable(mut value: _, (depends): [_]) -> Value {
-    if let Some(v) = depends {
-        value.set_identity(v);
-    } else {
-        value.set_identity(0);
-    };
-
-    value
 }
 
 #[types::ergo_fn]

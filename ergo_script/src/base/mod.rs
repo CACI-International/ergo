@@ -54,24 +54,41 @@ pub fn unset() -> Value {
 
 #[types::ergo_fn]
 #[eval_for_id]
-/// Evaluate the given value when calculating the identity of the expression.
+/// Change the identity of a value.
 ///
 /// Arguments: `:value`
 ///
 /// Keyed Arguments:
-/// * `into Bool |> :set` - if present, the resulting value will be marked (based on the `Bool`)
-/// such that it forcibly will (`true`) or won't (`false`) cause expressions containing the value
-/// to be further evaluated when the identity is calculated.
+/// * `:set` - if present, the resulting value will copy the identity of the value specified.
+/// * `into Bool |> :eval` - if present, the resulting value will be marked (based on the `Bool`)
+/// such that it will (`true`) or won't (`false`) be further evaluated when the identity is
+/// calculated. Note that this will only apply a `true` setting if the value is _not_ yet
+/// evaluated; use the value `force` to override this behavior.
 ///
-/// Returns the evaluated value, possibly with the identity calculating semantics changed (based on
-/// `set`).
-pub async fn eval_for_id(mut v: _, (set): [_]) -> Value {
-    drop(ergo_runtime::Context::eval(&mut v).await);
+/// Returns the altered value.
+pub async fn id(mut v: _, (eval): [_], (set): [_]) -> Value {
     if let Some(set) = set {
-        let eval_for_id = traits::into::<types::Bool>(set).await?.into_owned().0;
-        let mut id = v.immediate_id().await;
-        id.eval_for_id = eval_for_id;
-        v.set_identity(id);
+        v.set_identity(set);
+    }
+    if let Some(mut eval) = eval {
+        ergo_runtime::Context::eval(&mut eval).await?;
+        let force_eval = eval
+            .as_ref::<types::String>()
+            .map(|t| t.as_str() == "force")
+            .unwrap_or(false);
+        let eval_for_id = traits::into::<types::Bool>(eval).await?.into_owned().0;
+        let new_setting = if force_eval || (eval_for_id && !v.is_evaluated()) {
+            Some(true)
+        } else if !eval_for_id {
+            Some(false)
+        } else {
+            None
+        };
+        if let Some(eval_for_id) = new_setting {
+            let mut id = v.immediate_id().await;
+            id.eval_for_id = eval_for_id;
+            v.set_identity(id);
+        }
     }
     v
 }

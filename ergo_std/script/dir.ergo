@@ -26,7 +26,7 @@ load-remote = fn ^:args -> load <| mcache:cache <| mnet:unarchive ~enter ^$args
 ## Lazily load a script or plugin, rather than depending on the loaded content for identities.
 ##
 ## Arguments: see `load`.
-load-lazy = !id ~set=plugin:Bool:false $load
+load-lazy = id ~eval=plugin:Bool:false $load
 
 ## Return any bound value as-is.
 ##
@@ -88,7 +88,7 @@ partial = fn :f ^:args -> fn ^:args2 -> f ^$args ^$args2
 ##     ]
 ## }
 ## ```
-recurse = !id ~set=plugin:Bool:false <| fn :f -> (fn :l -> l $l) (fn :l -> bind $f <| plugin:value:variable (l $l))
+recurse = id ~eval=plugin:Bool:false <| fn :f -> (fn :l -> l $l) (fn :l -> bind $f <| id ~set (l $l))
 
 ## Memoize a function (cache the function results based purely on arguments).
 ##
@@ -537,7 +537,7 @@ process-dir = plugin:Path:owned <| plugin:Path:join plugin:env:temp-dir "ergo-pr
     }
 
     # Functions
-    plugin:value:index {:backtrace,:debug,:equal,:identity,:index,:merge,:variable} = plugin:value
+    plugin:value:index {:backtrace,:debug,:equal,:identity,:index,:merge} = plugin:value
     plugin:value:index {:cache,:once} = $mcache
     default, optional, required, optargs
     load-remote

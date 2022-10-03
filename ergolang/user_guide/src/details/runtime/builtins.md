@@ -14,7 +14,7 @@
   * [doc:path](#doc-path) - The current documentation path, if any.
   * [doc:raw](#doc-raw) - Get the raw documentation metadata.
   * [doc:value](#doc-value) - The current value being documented, if any.
-* [!id](#id) - Indicate a value's result is relevant to the identity of the
+* [id](#id) - Indicate a value's result is relevant to the identity of the
   value.
 
 
@@ -198,21 +198,20 @@ The current value being documented, if any. Evaluates to `Unset` if not set.
 
 <div class="function">
 
-## `!id`
-The `!id` function is used to indicate that a value should be evaluated when the
-identity is needed, and the result of evaluation will be incorporated in the
-identity. The function has an optional `set` keyed argument to forcibly change
-the identity evaluation semantics of the resulting value (which will propagate
-to expressions using the value).
+## `id`
+The `id` function is used to change the identity of a value. The function has an
+optional `eval` keyed argument to forcibly change the identity evaluation
+semantics of the value (which will propagate to expressions using the value). It
+also has an optional `set` keyed argument to copy the identity of another value.
 
 ```ergo
 a = std:String:from <| std:exec date
-b = !id $a
+b = id ~eval $a
 std:identity $a # Will always be the same (based on the literal `std:String:from ...` syntax)
 std:identity $b # Will change as the output from running the external `date` program changes
 
-a = (!id ~set=std:Bool:false $!id) <| std:String:from <| std:exec date
-std:identity $a # Will always be the same (the semantics of `$!id` are changed to not evaluate)
+a = (id ~eval=std:Bool:false std:fs:track) some/file
+std:identity $a # Will always be the same (the semantics of `std:fs:track` are changed to not evaluate)
 ```
 
 </div>

@@ -1083,7 +1083,7 @@ impl LazyCaptures for ExprEvaluator {
         async move {
             if self.captures_ready() {
                 // Shortcut Command expressions where the function is `eval_for_id` and the captures
-                // are ready. This allows things like `!id` to prevent identities of arguments from
+                // are ready. This allows things like `id` to prevent identities of arguments from
                 // being evaluated at all.
                 if let Some(cmd) = self.expr.value().as_ref::<ast::Command>() {
                     let func = self.child(&cmd.function);

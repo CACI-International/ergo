@@ -438,7 +438,7 @@ impl LanguageServer for Service {
                                 "bind",
                                 "late-bind",
                                 "unset",
-                                "!id",
+                                "id",
                             ]
                             .into_iter()
                             .any(|k| **s == k)

@@ -22,10 +22,11 @@ pub trait Bind {
 
 /// Create a bind error result for the given value.
 pub fn bind_error(v: &Value, bound: &Value) -> crate::Error {
-    let name = type_name(v);
-    crate::error::Diagnostic::from(format!("cannot bind to value with type '{}'", name))
+    let to = type_name(v);
+    let with = type_name(bound);
+    crate::error::Diagnostic::from(format!("cannot bind {} target with {} value", to, with))
         .add_value_sources("target", v)
-        .add_value_sources("bound", bound)
+        .add_value_sources("value", bound)
         .into_error()
 }
 
