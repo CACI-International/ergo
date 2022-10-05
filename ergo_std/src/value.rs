@@ -44,7 +44,7 @@ async fn debug(value: _) -> Value {
             let mut formatter = traits::Formatter::new(&mut s);
             if let Err(e) = traits::display(value.clone(), &mut formatter).await {
                 drop(formatter);
-                s.push_str("<error: ");
+                s.push_str("<");
                 s.push_str(&e.to_string());
                 s.push('>');
             }
@@ -443,6 +443,7 @@ mod test {
         fn next(t) {
             t.assert_ne("a = 123; :b = { \"123\" }; self:value:equal ~exact $a $b", "self:Bool:true");
             t.assert_eq("a = 123; self:value:next :b = { \"123\" }; self:value:equal ~exact $a $b", "self:Bool:true");
+            t.assert_ne("a = 123; self:value:next :b = {{ \"123\" }}; self:value:equal ~exact $a $b", "self:Bool:true");
         }
     }
 }

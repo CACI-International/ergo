@@ -857,6 +857,13 @@ mod test {
         }
     }
 
+    macro_rules! eval_propagation {
+        ( $($_:tt)* ) => {
+            // These tests rely on eval propagation, which is currently a disabled feature due to
+            // the need for a more rigorous design.
+        };
+    }
+
     mod identity {
         use super::*;
 
@@ -904,6 +911,7 @@ mod test {
             script_eval_semantics("*id { -; -; id ~eval + }");
         }
 
+        eval_propagation! {
         #[test]
         fn unused_block_bind() {
             // No way to know that `b` is unused without static verification, which we don't
@@ -925,12 +933,14 @@ mod test {
         fn used_block_fn() {
             script_eval_semantics("*id { f = fn :x -> id ~eval $x, f +, - }");
         }
+        }
 
         #[test]
         fn map_bind() {
             script_eval_semantics("*id { a = -, b = id ~eval + }");
         }
 
+        eval_propagation! {
         #[test]
         fn used_map_bind() {
             script_eval_semantics("*id { a = +, b = id ~eval $a, c = - }");
@@ -945,6 +955,7 @@ mod test {
         fn used_map_fn_bind() {
             script_eval_semantics("*id { f = fn :x -> id ~eval $x, b = f +, +, c = - }");
         }
+        }
 
         #[test]
         fn fn_creation() {
@@ -955,7 +966,9 @@ mod test {
         #[test]
         fn fn_call() {
             script_eval_semantics("*id <| fn :x -> { -; id ~eval + } |> -");
+            eval_propagation! {
             script_eval_semantics("*id <| fn :x -> { -; id ~eval $x } |> +");
+            }
         }
     }
 
@@ -978,17 +991,22 @@ mod test {
             script_parse_id_eq("id ~eval { x = a; $x }", "id ~eval a");
         }
 
+        eval_propagation! {
         #[test]
         fn fn_inherit() {
-            // Add the first `f a` to force both cases to evaluate the whole block (since otherwise
+            // Add the first `f = ...` to force both cases to evaluate the whole block (since otherwise
             // the first case will evaluate the whole block to bind `f` whereas the second case
             // will not).
-            script_parse_id_eq("f = fn :x -> id ~eval $x; f a", "f = fn :x -> id ~eval $x; id ~eval a");
+            script_parse_id_eq("f = fn :x -> id $x; f a", "f = fn :x -> id $x; id ~eval a");
+        }
         }
 
         #[test]
         fn fn_no_inherit() {
-            script_parse_id_ne("f = fn _ -> id ~eval a; f ()", "f = fn _ -> id ~eval a; id ~eval a");
+            script_parse_id_ne(
+                "f = fn _ -> id ~eval a; f ()",
+                "f = fn _ -> id ~eval a; id ~eval a",
+            );
         }
 
         #[test]

@@ -61,6 +61,7 @@
   expression to not rely on the loaded file value).
 * Add `std:backtrace` to log a backtrace of the current evaluation.
 * Add `std:next` to evaluate a value once and bind the result.
+* Add `std:eval-id` to fully evaluate a value when the identity is calculated.
 
 #### Modifications
 * Removed the `std:by-content` function, as one shouldn't be reinterpreting

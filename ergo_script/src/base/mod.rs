@@ -62,8 +62,8 @@ pub fn unset() -> Value {
 /// * `:set` - if present, the resulting value will copy the identity of the value specified.
 /// * `into Bool |> :eval` - if present, the resulting value will be marked (based on the `Bool`)
 /// such that it will (`true`) or won't (`false`) be further evaluated when the identity is
-/// calculated. Note that this will only apply a `true` setting if the value is _not_ yet
-/// evaluated; use the value `force` to override this behavior.
+/// calculated. A `true` setting is only applied if the value is _not_ yet evaluated; use the value
+/// `force` to override this behavior.
 ///
 /// Returns the altered value.
 pub async fn id(mut v: _, (eval): [_], (set): [_]) -> Value {
@@ -85,9 +85,10 @@ pub async fn id(mut v: _, (eval): [_], (set): [_]) -> Value {
             None
         };
         if let Some(eval_for_id) = new_setting {
-            let mut id = v.immediate_id().await;
-            id.eval_for_id = eval_for_id;
-            v.set_identity(id);
+            v.set_identity(ergo_runtime::value::IdInfo {
+                id: v.clone(),
+                eval_for_id,
+            });
         }
     }
     v

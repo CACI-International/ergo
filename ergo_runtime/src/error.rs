@@ -404,7 +404,12 @@ impl std::fmt::Display for Diagnostic {
             Severity::Note => "note",
             Severity::Help => "help",
         };
-        write!(f, "{}: {}", level, self.message)
+        let source = if let Some(l) = self.labels.first() {
+            format!(" ({}:{})", l.label.source_id, l.label.location)
+        } else {
+            Default::default()
+        };
+        write!(f, "{}: {}{}", level, self.message, source)
     }
 }
 

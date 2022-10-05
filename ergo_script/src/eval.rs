@@ -732,7 +732,12 @@ impl ExprEvaluator {
                             let c = self.child(&e);
                             async move {
                                 if !c.captures_ready() {
-                                    c.identity().await
+                                    // If captures are not ready, never propagate eval_for_id.
+                                    // This is more trouble than it's worth (without proper
+                                    // interactive tooling for debug).
+                                    let mut id = c.identity().await;
+                                    id.eval_for_id = false;
+                                    id
                                 } else {
                                     let mut id = Identity::new(0);
                                     if c.eval_for_id_hint().await {
@@ -1087,14 +1092,13 @@ impl LazyCaptures for ExprEvaluator {
                 // being evaluated at all.
                 if let Some(cmd) = self.expr.value().as_ref::<ast::Command>() {
                     let func = self.child(&cmd.function);
-                    let mut function_id = func.identity().await;
-                    if function_id.eval_for_id {
-                        function_id = Context::ignore_errors(async move {
+                    if func.eval_for_id_hint().await || func.identity().await.eval_for_id {
+                        return Context::ignore_errors(async move {
                             let mut v = func.evaluate().await;
                             v.eval_id().await
                         })
-                        .await;
-                        return function_id.eval_for_id;
+                        .await
+                        .eval_for_id;
                     }
                 }
                 // Shortcut Index expressions, which should be `eval_for_id` _only_ if the captures

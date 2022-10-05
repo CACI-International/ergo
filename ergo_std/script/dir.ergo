@@ -88,7 +88,7 @@ partial = fn :f ^:args -> fn ^:args2 -> f ^$args ^$args2
 ##     ]
 ## }
 ## ```
-recurse = id ~eval=plugin:Bool:false <| fn :f -> (fn :l -> l $l) (fn :l -> bind $f <| id ~set (l $l))
+recurse = fn :f -> (fn :l -> l $l) (fn :l -> bind $f <| id ~set (l $l))
 
 ## Memoize a function (cache the function results based purely on arguments).
 ##
@@ -349,6 +349,15 @@ dynamic-bind = fn :bindings :value -> {
 ## The path is owned and will be removed when the process completes.
 process-dir = plugin:Path:owned <| plugin:Path:join plugin:env:temp-dir "ergo-process-dir-$(plugin:env:process-id)"
 
+## Use a value's fully-evaluated result in the identity.
+##
+## Arguments: `:value`
+eval-id = fn :value -> {
+    # Use `~set` because it doesn't matter what the interior identity is since it will be evaluated
+    # anyway.
+    id ~set ~eval { plugin:Type:any :value = $value; $value }
+}
+
 ##mdoc:module
 ## The ergo standard library.
 ##
@@ -542,6 +551,7 @@ process-dir = plugin:Path:owned <| plugin:Path:join plugin:env:temp-dir "ergo-pr
     default, optional, required, optargs
     load-remote
     load-lazy
+    eval-id
     exec = plugin:exec
     getopt = function-module plugin:getopt {fn = $getopt-fn}
     import
