@@ -132,7 +132,7 @@ impl From<ExitStatus> for ergo_runtime::TypedValue<ExitStatus> {
 ///
 /// When called, the child process is spawned and a Child-typed value is returned, which supports:
 /// * Indices:
-///   * `:stdin`: A function which may be passed an `Into ByteStream` argument to write to the
+///   * `:stdin`: A function which may be passed `Into ByteStream` arguments to write to the
 ///   child's stdin, or a `Unit` argument to close the child's stdin.
 ///   * `:stdout`: The standard output `ByteStream` of the child.
 ///   * `:stderr`: The standard error `ByteStream` of the child.
@@ -278,31 +278,37 @@ pub async fn function(
         #[depends(^CALL_DEPENDS.clone())]
         /// Send data to stdin of the child process.
         ///
-        /// Arguments: `:value`
+        /// Arguments: `^:values`
         ///
-        /// If `value` is `Into ByteStream`, converts the value and copies the ByteStream to the
-        /// child's stdin stream.
+        /// Each value arguments in `values` may be:
+        /// * `Into ByteStream` - converts the value and copies the ByteStream to the child's stdin stream
+        /// * `Unit` - closes the stdin stream
         ///
-        /// If `value` is `Unit`, closes the stdin stream. Subsequent attempts to call this
-        /// function will produce an error.
-        async fn stdin(mut value: _) -> Value {
-            let mut stdin = stdin.lock().await;
-            if stdin.is_none() {
-                Err(ergo_runtime::error! {
-                    labels: [primary(ARGS_SOURCE.with(""))],
-                    error: "called `stdin` after closing"
-                })?;
-            }
+        /// Subsequent values or attempts to call this function after a `Unit` value will produce an error.
+        async fn stdin(...) -> Value {
+            let values: Vec<_> = REST.by_ref().collect();
+            REST.unused_arguments()?;
 
-            Context::eval(&mut value).await?;
-            if value.is_type::<types::Unit>() {
-                stdin.take().unwrap().close().await?;
-            } else {
-                let stream = traits::into::<types::ByteStream>(value).await?;
-                if let Err(e) = io::copy_interactive(&mut stream.as_ref().read(), stdin.as_mut().unwrap()).await {
-                    // We expect BrokenPipe to occur if the process ends.
-                    if e.kind() != std::io::ErrorKind::BrokenPipe {
-                        Err(e).into_diagnostic()?;
+            let mut stdin = stdin.lock().await;
+
+            for mut value in values {
+                if stdin.is_none() {
+                    Err(ergo_runtime::error! {
+                        labels: [primary(ARGS_SOURCE.with(""))],
+                        error: "called `stdin` after closing"
+                    })?;
+                }
+
+                Context::eval(&mut value).await?;
+                if value.is_type::<types::Unit>() {
+                    stdin.take().unwrap().close().await?;
+                } else {
+                    let stream = traits::into::<types::ByteStream>(value).await?;
+                    if let Err(e) = io::copy_interactive(&mut stream.as_ref().read(), stdin.as_mut().unwrap()).await {
+                        // We expect BrokenPipe to occur if the process ends.
+                        if e.kind() != std::io::ErrorKind::BrokenPipe {
+                            Err(e).into_diagnostic()?;
+                        }
                     }
                 }
             }
@@ -625,7 +631,9 @@ mod test {
 
         fn stdin(t) {
             t.assert_eq("child = self:exec cat; child:stdin hello; child:stdin world; child:stdin (); self:String:from child:stdout", "\"helloworld\"");
+            t.assert_eq("child = self:exec cat; child:stdin hello world (); self:String:from child:stdout", "\"helloworld\"");
             t.assert_fail("child = self:exec cat; child:stdin (); child:stdin ()");
+            t.assert_fail("child = self:exec cat; child:stdin () hi");
         }
 
         fn to_string(t) {
