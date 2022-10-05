@@ -310,23 +310,47 @@ pub async fn function(
         }
     };
 
+    // Separately buffer stdout and stderr to ensure they are read (to not hit any IO buffer size
+    // limits if they are not read by the user), which may cause the program to block on a write.
+
     // Handle stdout
-    let stdout = Value::with_id(
-        types::ByteStream::new(Blocking::new(child.stdout.take().unwrap())),
-        depends![dyn ^CALL_DEPENDS.clone(), nsid!(exec::stdout)],
-    );
+    let (copy_stdout, stdout) = {
+        let (send, recv) = io_pipe::pipe();
+        let stdout = child.stdout.take().unwrap();
+        (
+            move || send.send(stdout),
+            Value::with_id(
+                types::ByteStream::new(recv),
+                depends![dyn ^CALL_DEPENDS.clone(), nsid!(exec::stdout)],
+            ),
+        )
+    };
 
     // Handle stderr
-    let stderr = Value::with_id(
-        types::ByteStream::new(Blocking::new(child.stderr.take().unwrap())),
-        depends![dyn ^CALL_DEPENDS.clone(), nsid!(exec::stderr)],
-    );
+    let (copy_stderr, stderr) = {
+        let (send, recv) = io_pipe::pipe();
+        let stderr = child.stderr.take().unwrap();
+        (
+            move || send.send(stderr),
+            Value::with_id(
+                types::ByteStream::new(recv),
+                depends![dyn ^CALL_DEPENDS.clone(), nsid!(exec::stderr)],
+            ),
+        )
+    };
+
+    // We copy stdout in the same thread spawned for waiting for the exit status, and copy stderr
+    // in a dedicated thread.
+    // TODO: use polling and non-blocking io (across platforms) to read stdout and stderr from the
+    // same thread.
+    drop(Context::global().task.spawn_blocking(copy_stderr));
 
     // Handle running the child and getting the exit status
     let cs = command_string.clone();
     let exit_status = Context::global()
         .task
         .spawn_blocking(move || {
+            copy_stdout();
             let ret = child.wait().map_err(|e| {
                 ergo_runtime::error! {
                     labels: [ primary(ARGS_SOURCE.with("while waiting for process to exit")) ],
@@ -371,6 +395,85 @@ fn disown_pgroup(cmd: &mut Command) {
 
 #[cfg(windows)]
 fn disown_pgroup(cmd: &mut Command) {}
+
+mod io_pipe {
+    type PipeBuf = Box<[u8]>;
+    use ergo_runtime::io::Result;
+    use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
+    use futures::sink::Sink;
+    use futures::stream::{IntoAsyncRead, TryStreamExt};
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
+
+    pub struct PipeSend {
+        send: UnboundedSender<Result<PipeBuf>>,
+    }
+
+    pub type PipeRecv = IntoAsyncRead<UnboundedReceiver<Result<PipeBuf>>>;
+
+    pub fn pipe() -> (PipeSend, PipeRecv) {
+        let (send, recv) = unbounded::<Result<PipeBuf>>();
+        (PipeSend { send }, recv.into_async_read())
+    }
+
+    impl PipeSend {
+        pub fn send<R: std::io::Read>(&self, mut r: R) {
+            let mut buf = [0; 2048];
+            loop {
+                match r.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(s) => {
+                        if self
+                            .send
+                            .unbounded_send(Ok(buf[..s].to_vec().into_boxed_slice()))
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        if e.kind() != std::io::ErrorKind::Interrupted {
+                            drop(self.send.unbounded_send(Err(e)));
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    impl ergo_runtime::io::AsyncWrite for PipeSend {
+        fn poll_write(self: Pin<&mut Self>, cx: &mut Context, buf: &[u8]) -> Poll<Result<usize>> {
+            use Poll::*;
+            let mut me = Pin::new(&mut self.get_mut().send);
+            match me.as_mut().poll_ready(cx) {
+                Pending => return Pending,
+                Ready(Err(_)) => return Ready(Err(std::io::ErrorKind::BrokenPipe.into())),
+                Ready(Ok(())) => (),
+            }
+
+            Ready(
+                if me.start_send(Ok(buf.to_vec().into_boxed_slice())).is_err() {
+                    Err(std::io::ErrorKind::BrokenPipe.into())
+                } else {
+                    Ok(buf.len())
+                },
+            )
+        }
+
+        fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<()>> {
+            let me = Pin::new(&mut self.get_mut().send);
+            me.poll_flush(cx)
+                .map(|r| r.map_err(|_| std::io::ErrorKind::BrokenPipe.into()))
+        }
+
+        fn poll_close(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<()>> {
+            let me = Pin::new(&mut self.get_mut().send);
+            me.poll_close(cx)
+                .map(|r| r.map_err(|_| std::io::ErrorKind::BrokenPipe.into()))
+        }
+    }
+}
 
 ergo_runtime::type_system::ergo_traits_fn! {
     // CommandString traits
