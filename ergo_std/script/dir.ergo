@@ -352,7 +352,7 @@ process-dir = plugin:Path:owned <| plugin:Path:join plugin:env:temp-dir "ergo-pr
 ## Use a value's fully-evaluated result in the identity.
 ##
 ## Arguments: `:value`
-eval-id = fn :value -> {
+eval-id = id ~eval=force <| fn :value -> {
     # Use `~set` because it doesn't matter what the interior identity is since it will be evaluated
     # anyway.
     id ~set ~eval { plugin:Type:any :value = $value; $value }

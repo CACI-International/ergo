@@ -138,7 +138,7 @@ impl Dependency {
 #[derive(Clone, Debug, StableAbi)]
 #[repr(C)]
 pub struct Dependencies<Dep = Dependency> {
-    // The unordered/ordered distinction is used in `hash()`, but otherwise they are identical
+    // The unordered/ordered distinction is used in `id()`, but otherwise they are identical
     // because we cannot order Dependency alone.
     unordered: RVec<Dep>,
     ordered: RVec<Dep>,
@@ -244,13 +244,16 @@ impl Dependencies {
     /// Get the identity of the dependencies.
     pub async fn id(&self) -> Identity {
         let mut items = Vec::with_capacity(self.unordered.len() + self.ordered.len());
+        let unordered_count = self.unordered.len();
         for d in self.unordered.iter() {
-            items.push(d.id().await);
+            items.push(d.id());
         }
-        items.sort_unstable();
         for d in self.ordered.iter() {
-            items.push(d.id().await);
+            items.push(d.id());
         }
+
+        let mut items = futures::future::join_all(items).await;
+        items[..unordered_count].sort_unstable();
         items.iter().sum()
     }
 }

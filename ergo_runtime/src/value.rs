@@ -1089,8 +1089,9 @@ pub mod lazy {
         fn id(&self) -> futures::future::BoxFuture<Identity> {
             futures::FutureExt::boxed(async move {
                 let mut combiner = IdentityCombiner::default();
-                for c in self {
-                    combiner.add(&c.id().await);
+                let ids = futures::future::join_all(self.iter().map(|c| c.id())).await;
+                for i in ids {
+                    combiner.add(&i);
                 }
                 combiner.finish()
             })
@@ -1130,7 +1131,9 @@ pub mod lazy {
                         #[allow(non_snake_case)]
                         let ($($name,)+) = self;
                         let mut combiner = IdentityCombiner::default();
-                        $(combiner.add(&$name.id().await);)+
+                        #[allow(non_snake_case)]
+                        let ($($name,)+) = futures::join!($($name.id(),)+);
+                        $(combiner.add(&$name);)+
                         combiner.finish()
                     })
                 }
@@ -1196,8 +1199,9 @@ pub mod lazy {
             future::BoxFuture::new(async move {
                 if USE_CAPS {
                     let mut combiner = IdentityCombiner::default();
-                    combiner.add(&self.id.id().await);
-                    combiner.add(&self.captures.id().await);
+                    let (id, captures) = futures::join!(self.id.id(), self.captures.id());
+                    combiner.add(&id);
+                    combiner.add(&captures);
                     combiner.finish().into()
                 } else {
                     self.id.id().await.into()
