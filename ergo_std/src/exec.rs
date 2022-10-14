@@ -125,10 +125,10 @@ impl From<ExitStatus> for ergo_runtime::TypedValue<ExitStatus> {
 /// `ByteStream` satisfy this. `Unset` and `Unit` values passed in `arguments` will be discarded.
 ///
 /// Keyed Arguments:
-/// * `Map :env`: A map of Strings to Strings where key-value pairs define the environment
+/// * `Map :env`: A map of Strings to Strings (or Unset) where key-value pairs define the environment
 /// variables to set while executing the program (default empty).
 /// * `Into<Path> :pwd`: The working directory to set while executing the program (default none).
-/// * `:retain-terminal`: If set, the spawned child is kept in the same terminal session.
+/// * `Into<Bool> :retain-terminal`: If set, the spawned child is kept in the same terminal session.
 ///
 /// When called, the child process is spawned and a Child-typed value is returned, which supports:
 /// * Indices:
@@ -204,13 +204,18 @@ pub async fn function(
     command.env_clear();
     if let Some(v) = env {
         let types::Map(env) = v.into_owned();
-        for (k, v) in env {
+        for (k, mut v) in env {
             let k = Context::eval_as::<types::String>(k.into())
                 .await?
                 .into_owned()
                 .into_string();
-            let v = traits::into::<CommandString>(v).await?;
-            command.env(k, v.as_ref().0.as_ref());
+            drop(Context::eval(&mut v).await);
+            if v.is_type::<types::Unset>() {
+                continue;
+            } else {
+                let v = traits::into::<CommandString>(v).await?;
+                command.env(k, v.as_ref().0.as_ref());
+            }
         }
     }
     if let Some(v) = pwd {
@@ -634,6 +639,10 @@ mod test {
             t.assert_eq("child = self:exec cat; child:stdin hello world (); self:String:from child:stdout", "\"helloworld\"");
             t.assert_fail("child = self:exec cat; child:stdin (); child:stdin ()");
             t.assert_fail("child = self:exec cat; child:stdin () hi");
+        }
+
+        fn env(t) {
+            t.assert_eq("self:String:from <| self:exec ~env={ABC=123,NO={}:no-key} env", "\"ABC=123\\n\"");
         }
 
         fn to_string(t) {

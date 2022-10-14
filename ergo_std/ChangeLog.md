@@ -9,6 +9,7 @@
 * Allow multiple tasks to correctly be suspended when awaiting the same task.
 
 ### Improvements
+* Allow `Unset` values in the `env` map of `std:exec`.
 
 #### Additions
 * Add `std:Iter:partition` to partition iterators into a Map of Arrays.
