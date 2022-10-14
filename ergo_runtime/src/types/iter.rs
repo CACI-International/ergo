@@ -272,8 +272,7 @@ ergo_traits_fn! {
             let mut vals: Vec<_> = crate::try_result!(self.into_owned().collect().await);
             let mut ret = BstMap::default();
             let mut errs = vec![];
-            let mut_vals = vals.iter_mut().collect::<Vec<_>>();
-            drop(crate::Context::eval_all(mut_vals).await);
+            drop(crate::Context::eval_all(&mut vals).await);
             for v in vals {
                 crate::value::match_value! { v,
                     super::MapEntry { key, value } => {

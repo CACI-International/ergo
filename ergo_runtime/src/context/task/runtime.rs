@@ -19,7 +19,7 @@ use std::sync::{Arc, Weak};
 const MIN_BLOCKING_POOL_SIZE: usize = 2;
 pub const MAINTENANCE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
 const INACTIVITY_DURATION: std::time::Duration =
-    std::time::Duration::from_secs(if cfg!(debug_assertions) { 10 } else { 1 });
+    std::time::Duration::from_secs(if cfg!(debug_assertions) { 10 } else { 4 });
 const WORKER_QUEUE_SIZE: u16 = 128;
 
 const INACTIVITY_INTERVALS: usize =
