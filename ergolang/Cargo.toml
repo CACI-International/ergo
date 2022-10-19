@@ -19,7 +19,6 @@ pager = "0.16"
 pretty = { version = "0.11", features = ["termcolor"] }
 pulldown-cmark = "0.9"
 simplelog = "^0.11"
-slab = "^0.4"
 supports-color = "1"
 term = "*"
 terminal_size = "*"

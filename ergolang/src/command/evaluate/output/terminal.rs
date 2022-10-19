@@ -2,16 +2,14 @@
 
 use super::interface::{render::*, TerminalOutput};
 use ergo_runtime::abi_stable::std_types::{RDuration, ROption, RSlice, RString, RVec};
-use ergo_runtime::context::{LogEntry, LogLevel, LogTarget, LogTaskKey};
+use ergo_runtime::context::{LogEntry, LogLevel, LogTaskKey};
 use ergo_runtime::{
     error::{Diagnostic, Diagnostics},
     Error,
 };
 use log::warn;
-use slab::Slab;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::convert::TryInto;
-use std::sync::{Arc, Mutex};
 
 pub struct Output {
     log_level: LogLevel,
@@ -24,9 +22,10 @@ pub struct Output {
     need_update: bool,
 }
 
-#[derive(Clone)]
+#[derive(Debug)]
 struct TaskStatus {
-    tasks: Arc<Mutex<Slab<String>>>,
+    // We use a BTreeMap so that older tasks are ordered earlier.
+    tasks: BTreeMap<LogTaskKey, String>,
 }
 
 const PROGRESS_SPINNER: &'static [char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -98,16 +97,7 @@ impl super::Output for Output {
     fn take_errors(&mut self) -> ergo_runtime::error::Diagnostics {
         std::mem::take(&mut self.errors.errors)
     }
-}
 
-impl Drop for Output {
-    fn drop(&mut self) {
-        use super::Output;
-        self.update();
-    }
-}
-
-impl LogTarget for Output {
     fn log(&mut self, entry: LogEntry) {
         if entry.level >= self.log_level {
             self.pending_logs.push(entry);
@@ -115,17 +105,14 @@ impl LogTarget for Output {
         }
     }
 
-    fn task_running(&mut self, description: RString) -> LogTaskKey {
-        let key = self.tasks.insert(description);
+    fn task_running(&mut self, key: LogTaskKey, description: RString) {
+        self.tasks.insert(key, description);
         self.need_update = true;
-        LogTaskKey::new(key)
     }
 
     fn task_suspend(&mut self, key: LogTaskKey) {
-        if let Ok(key) = key.into::<usize>() {
-            self.tasks.remove(key);
-            self.need_update = true;
-        }
+        self.tasks.remove(key);
+        self.need_update = true;
     }
 
     fn timer_pending(&mut self, id: RSlice<RString>) {
@@ -141,7 +128,6 @@ impl LogTarget for Output {
 
     fn pause_logging(&mut self) {
         // Update to flush any pending logs.
-        use super::Output;
         self.update();
         self.paused = true;
         self.out.enable_stdin();
@@ -159,31 +145,24 @@ impl LogTarget for Output {
 impl TaskStatus {
     pub fn new() -> Self {
         TaskStatus {
-            tasks: Arc::new(Mutex::new(Slab::with_capacity(64))),
+            tasks: Default::default(),
         }
     }
 
-    pub fn insert(&mut self, entry: RString) -> usize {
-        self.tasks.lock().unwrap().insert(entry.into())
+    pub fn insert(&mut self, key: LogTaskKey, entry: RString) {
+        self.tasks.insert(key, entry.into());
     }
 
-    pub fn remove(&mut self, key: usize) {
-        self.tasks.lock().unwrap().remove(key);
-    }
-}
-
-impl std::fmt::Debug for TaskStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        self.tasks.lock().fmt(f)
+    pub fn remove(&mut self, key: LogTaskKey) {
+        self.tasks.remove(&key);
     }
 }
 
 impl Render for TaskStatus {
     fn render<Target: Write + Terminal>(&self, to: &mut Target) -> std::io::Result<()> {
         to.fg(term::color::YELLOW)?;
-        let guard = self.tasks.lock().unwrap();
-        for v in guard.iter() {
-            writeln!(to, "* {}", &v.1)?;
+        for v in self.tasks.values() {
+            writeln!(to, "* {}", v)?;
         }
         Ok(())
     }

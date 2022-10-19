@@ -874,7 +874,6 @@ dependencies = [
  "ropey",
  "serial_test",
  "simplelog",
- "slab",
  "supports-color",
  "term",
  "terminal_size",

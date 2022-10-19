@@ -1,11 +1,7 @@
 //! The evaluation command.
 
 use crate::AppErr;
-use ergo_runtime::{
-    abi_stable::std_types::{RDuration, ROption, RSlice, RString},
-    context::{LogEntry, LogLevel, LogTarget, LogTaskKey},
-    try_value, Error,
-};
+use ergo_runtime::{context::LogLevel, try_value, Error};
 use ergo_script::constants::{PROGRAM_NAME, WORKSPACE_NAME};
 use ergo_script::Runtime;
 
@@ -176,52 +172,6 @@ impl super::Command for Evaluate {
 impl Evaluate {
     fn eval(self, mut output: OutputInstance) -> Result<String, String> {
         output.set_log_level(self.log_level);
-        let logger = std::sync::Arc::new(std::sync::Mutex::new(output));
-
-        #[derive(Clone)]
-        struct WeakLogTarget<T>(std::sync::Weak<std::sync::Mutex<T>>);
-
-        impl<T: LogTarget + Send> WeakLogTarget<T> {
-            fn with<R, F: FnOnce(&mut (dyn LogTarget + Send)) -> R>(&self, f: F) -> Option<R> {
-                if let Some(logger) = self.0.upgrade() {
-                    if let Ok(mut logger) = logger.lock() {
-                        return Some(f(&mut *logger));
-                    }
-                }
-                None
-            }
-        }
-
-        impl<T: LogTarget + Send> LogTarget for WeakLogTarget<T> {
-            fn log(&mut self, entry: LogEntry) {
-                self.with(move |l| l.log(entry));
-            }
-
-            fn task_running(&mut self, description: RString) -> LogTaskKey {
-                self.with(move |l| l.task_running(description))
-                    .unwrap_or(LogTaskKey::new(()))
-            }
-
-            fn task_suspend(&mut self, key: LogTaskKey) {
-                self.with(move |l| l.task_suspend(key));
-            }
-
-            fn timer_pending(&mut self, id: RSlice<RString>) {
-                self.with(move |l| l.timer_pending(id));
-            }
-
-            fn timer_complete(&mut self, id: RSlice<RString>, duration: ROption<RDuration>) {
-                self.with(move |l| l.timer_complete(id, duration));
-            }
-
-            fn pause_logging(&mut self) {
-                self.with(move |l| l.pause_logging());
-            }
-
-            fn resume_logging(&mut self) {
-                self.with(move |l| l.resume_logging());
-            }
-        }
 
         let working_dir = std::env::current_dir().expect("could not get current directory");
 
@@ -284,28 +234,16 @@ impl Evaluate {
             load_paths
         };
 
-        // Use a weak pointer to the logger in the context, so that when the logger goes out of
-        // scope the output is cleaned up reliably. The runtime doesn't reliably shutdown as it
-        // drops the ThreadPool asynchronously, and likewise for general logging we shouldn't rely
-        // on values cleaning up after themselves.
-        let weak_logger = std::sync::Arc::downgrade(&logger);
-
-        let error_logger = weak_logger.clone();
+        let error_logger = output.error_log();
 
         // Create script runtime.
         let runtime = Runtime::new(
             ergo_runtime::Context::builder()
-                .logger(WeakLogTarget(weak_logger))
+                .logger(output.log())
                 .storage_directory(storage_directory)
                 .threads(self.jobs)
                 .keep_going(!self.stop)
-                .error_handler(move |e: Error| {
-                    if let Some(logger) = error_logger.upgrade() {
-                        if let Ok(mut logger) = logger.lock() {
-                            logger.new_error(e);
-                        }
-                    }
-                }),
+                .error_handler(move |e: Error| error_logger.new_error(e)),
             load_path,
         )
         .expect("failed to create script context");
@@ -448,13 +386,12 @@ impl Evaluate {
             (result, sources, progress)
         });
 
+        // Use this thread for UI updates.
         loop {
-            if let Ok(mut g) = logger.lock() {
-                if progress.made_progress() {
-                    g.indicate_progress();
-                }
-                g.update();
+            if progress.made_progress() {
+                output.indicate_progress();
             }
+            output.update();
             match complete.recv_timeout(std::time::Duration::from_millis(50)) {
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
                 _ => break,
@@ -463,26 +400,18 @@ impl Evaluate {
 
         let (result, sources, progress) = exec_thread.join().unwrap();
 
-        // Drop the logger prior to the context dropping, so that any stored state (like errors) can
-        // free with the plugins still loaded.
-        // Only drop when nothing else is using it (so we have reliable terminal cleanup).
-        let mut logger = Some(logger);
-        let errors = loop {
-            match std::sync::Arc::try_unwrap(logger.take().unwrap()) {
-                Ok(mut l) => {
-                    let deadlock_errors = progress.deadlock_errors();
-                    break if deadlock_errors.len() > 0 {
-                        deadlock_errors
-                    } else {
-                        l.get_mut().unwrap().take_errors()
-                    };
-                }
-                Err(l) => {
-                    logger = Some(l);
-                    std::thread::sleep(std::time::Duration::from_millis(50));
-                }
+        let errors = {
+            let deadlock_errors = progress.deadlock_errors();
+            if deadlock_errors.len() > 0 {
+                deadlock_errors
+            } else {
+                output.take_errors()
             }
         };
+
+        // Drop the output prior to the context dropping, so that any stored state (like errors) can
+        // drop with the plugins still loaded.
+        drop(output);
 
         match (result, errors.len()) {
             (Ok(v), 0) => Ok(v),

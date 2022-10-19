@@ -1,6 +1,6 @@
 //! Plain text output.
 
-use ergo_runtime::context::{LogEntry, LogLevel, LogTarget};
+use ergo_runtime::context::{LogEntry, LogLevel};
 use ergo_runtime::Error;
 use std::io::Write;
 
@@ -38,9 +38,7 @@ impl super::Output for Output {
     fn take_errors(&mut self) -> ergo_runtime::error::Diagnostics {
         std::mem::take(&mut self.errors)
     }
-}
 
-impl LogTarget for Output {
     fn log(&mut self, entry: LogEntry) {
         if entry.level >= self.log_level {
             writeln!(self.out, "{}", entry).expect("failed to write to output");

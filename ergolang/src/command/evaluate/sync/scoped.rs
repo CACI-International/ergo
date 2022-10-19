@@ -1,4 +1,6 @@
-//! Thread syncronization primitives.
+//! Allow synchronized access to a value that is bound to a particular scope.
+//!
+//! When the scope exits, the value is no longer accessible.
 
 use std::sync::{Arc, RwLock, RwLockReadGuard};
 
