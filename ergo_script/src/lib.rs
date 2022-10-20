@@ -847,6 +847,10 @@ mod test {
                 SRArray(&[SRString("123"), SRString("456")]),
             )?;
             script_eval_to(
+                "late-bind { key = 0 } { x = $?key, y = late-bind { key = 1 } $?key }",
+                SRMap(&[("x", SRString("0")), ("y", SRString("1"))]),
+            )?;
+            script_eval_to(
                 "late-bind { key = 0 } { x = $?key, y = late-bind { key = [$?key,1] } $?key }",
                 SRMap(&[
                     ("x", SRString("0")),
