@@ -91,9 +91,13 @@ or = fn ^:tps -> fn :target -> :v -> {
 ## MapResult :e = $$err
 ## MapResult:@:Ok :m = $$ok
 ## ```
+##
+## This will also add a Display implementation for the type.
 enum = fn (String :name) (Map :variants) -> {
     # Create new type for enum
     Self = Type:new $name
+    # Add Display impl
+    trait:Display:impl (fn (Self:@ :key :value) -> "$name:$key $value") $Self
     # Create interface functions for creation and binding.
     Type:modify $Self {
         ^Map:from <| Iter:map (fn (MapEntry:@ :key :Value) -> MapEntry:new $key {
@@ -130,9 +134,13 @@ enum = fn (String :name) (Map :variants) -> {
 ## StringPair _ = :pair
 ## StringPair:@ {:first,:second} = :pair
 ## ```
+##
+## This will also add a Display implementation for the type.
 struct = fn (String :name) (Map :fields) -> {
     # Create new type for struct
     Self = Type:new $name
+    # Add Display impl
+    trait:Display:impl (fn (Self:@ :entries) -> "$name $entries") $Self
     # Create interface functions for creation and binding.
     Type:modify $Self {
         new = fn (map-values $fields |> :entries) -> Self:new $entries
