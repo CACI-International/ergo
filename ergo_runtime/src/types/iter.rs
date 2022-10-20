@@ -232,7 +232,7 @@ ergo_traits_fn! {
                 async {
                     let items: Vec<_> = self.clone().collect().await?;
                     let mut iter = items.into_iter();
-                    write!(f, "[")?;
+                    write!(f, "Iter[")?;
                     if let Some(v) = iter.next() {
                         traits::display(v, f).await?;
                     }
