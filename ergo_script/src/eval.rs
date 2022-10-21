@@ -421,6 +421,7 @@ struct ExprEvaluator {
 #[derive(Default)]
 struct ExprEvaluatorEvalCache {
     id: Once<ergo_runtime::value::Identity>,
+    #[allow(dead_code)]
     value: Once<Value>,
 }
 
@@ -449,6 +450,13 @@ impl ExprEvaluator {
     /// This will evaluate the expression immediately if appropriate, otherwise it will return a
     /// dynamic value that will evaluate in the async context when needed.
     pub fn evaluate<'b>(&'b self) -> BoxFuture<'b, Value> {
+        // For now, disable evaluation caching as we need to do some work to only retain what's
+        // still reachable (including not simply caching all loaded scripts). This greatly improves
+        // memory usage, and makes sure some resources (like file handles) are dropped at an
+        // appropriate time. It does imply a performance hit, but meaningful workloads shouldn't be
+        // evaluation-bound.
+        self.evaluate_impl().boxed()
+        /*
         async move {
             self.cache
                 .eval
@@ -458,6 +466,7 @@ impl ExprEvaluator {
                 .clone()
         }
         .boxed()
+        */
     }
 
     /// Make the evaluator a cache root, discontinuing use of the current child cache.
