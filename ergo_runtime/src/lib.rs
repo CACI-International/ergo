@@ -61,6 +61,7 @@ macro_rules! nsid {
 pub mod context;
 pub mod dependency;
 pub mod error;
+pub mod gc;
 pub mod hash;
 pub mod io;
 pub mod metadata;
