@@ -330,7 +330,7 @@ impl Boxed {
 /// An Erased type for Trivial types.
 ///
 /// Unlike Erased, this type implements Clone, PartialEq, Eq, and Hash.
-#[derive(Debug, StableAbi)]
+#[derive(Debug, Default, StableAbi)]
 #[repr(C)]
 pub struct ErasedTrivial {
     data: Buffer,
@@ -602,16 +602,6 @@ impl Drop for ErasedTrivial {
                 let boxed = self.data.as_value::<Boxed>();
                 boxed.drop(self.size(), self.align());
             };
-        }
-    }
-}
-
-impl Default for ErasedTrivial {
-    fn default() -> Self {
-        ErasedTrivial {
-            data: unsafe { std::mem::MaybeUninit::uninit().assume_init() },
-            size: 0,
-            is_box_and_align: 0,
         }
     }
 }

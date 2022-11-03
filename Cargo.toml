@@ -1,6 +1,19 @@
 [workspace]
 members = ["abi_stable_ext", "ergolang", "ergo_runtime", "ergo_runtime_macro", "ergo_script", "ergo_std"]
 
+[workspace.package]
+version = "1.0.0-rc.5"
+authors = ["Alex Franchuk <afranchuk@caci.com>"]
+edition = "2021"
+rust-version = "1.64"
+
+[workspace.dependencies]
+abi_stable = "0.10"
+futures = "0.3"
+log = "0.4"
+pin-project = "1"
+plugin_tls = "0.4.1"
+
 [profile.release]
 lto = true
 panic = 'abort'

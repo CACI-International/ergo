@@ -1,24 +1,24 @@
 [package]
 name = "ergolang"
-version = "1.0.0-rc.4"
-authors = ["Alex Franchuk <afranchuk@caci.com>"]
-edition = "2021"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
 
 [dependencies]
-atty = "^0.2"
-backtrace = { version = "0.3", optional = true }
+atty = "0.2"
+backtrace = { version = "0.3", optional = true } # todo remove
 chrono = "^0.4"
 clap = { version = "3", features = ["derive"] }
-ctrlc = "^3.1"
+ctrlc = "3.1"
 directories = "4.0"
 ergo_script = { path = "../ergo_script" }
 ergo_runtime = { path = "../ergo_runtime" }
-futures = "^0.3"
-log = { version = "^0.4", features = ["release_max_level_debug"] }
+futures.workspace = true
+log = { workspace = true, features = ["release_max_level_debug"] }
 pager = "0.16"
 pretty = { version = "0.11", features = ["termcolor"] }
 pulldown-cmark = "0.9"
-simplelog = "^0.11"
+simplelog = "0.11"
 supports-color = "1"
 term = "*"
 terminal_size = "*"

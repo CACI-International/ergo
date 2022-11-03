@@ -775,7 +775,7 @@ dependencies = [
 
 [[package]]
 name = "ergo_runtime"
-version = "1.0.0-rc.4"
+version = "1.0.0-rc.5"
 dependencies = [
  "abi_stable",
  "abi_stable_ext",
@@ -798,7 +798,7 @@ dependencies = [
 
 [[package]]
 name = "ergo_runtime_macro"
-version = "1.0.0-rc.4"
+version = "1.0.0-rc.5"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -807,7 +807,7 @@ dependencies = [
 
 [[package]]
 name = "ergo_script"
-version = "1.0.0-rc.4"
+version = "1.0.0-rc.5"
 dependencies = [
  "cachemap",
  "ergo_runtime",
@@ -822,7 +822,7 @@ dependencies = [
 
 [[package]]
 name = "ergo_std"
-version = "1.0.0-rc.4"
+version = "1.0.0-rc.5"
 dependencies = [
  "abi_stable",
  "atty",
@@ -856,7 +856,7 @@ dependencies = [
 
 [[package]]
 name = "ergolang"
-version = "1.0.0-rc.4"
+version = "1.0.0-rc.5"
 dependencies = [
  "atty",
  "backtrace",
@@ -1013,7 +1013,6 @@ dependencies = [
  "futures-core",
  "futures-task",
  "futures-util",
- "num_cpus",
 ]
 
 [[package]]

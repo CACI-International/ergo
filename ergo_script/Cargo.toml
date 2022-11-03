@@ -1,16 +1,16 @@
 [package]
 name = "ergo_script"
-version = "1.0.0-rc.4"
-authors = ["Alex Franchuk <afranchuk@caci.com>"]
-edition = "2021"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
 
 [dependencies]
 cachemap = { git = "https://github.com/afranchuk/cachemap.git", branch = "main" }
 ergo_runtime = { path = "../ergo_runtime" }
-futures = "^0.3"
+futures.workspace = true
 horrorshow = "0.8"
 libloading = "^0.6"
-log = "^0.4"
-pin-project = "1"
-plugin_tls = { version = "0.4.1", features = ["host"] }
+log.workspace = true
+pin-project.workspace = true
+plugin_tls = { workspace = true, features = ["host"] }
 pulldown-cmark = "0.8"
