@@ -3,6 +3,7 @@ name = "ergo_runtime"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 abi_stable.workspace = true # needed only for StableAbi derive macros to work (they reference ::abi_stable)

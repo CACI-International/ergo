@@ -5,6 +5,7 @@ members = ["ergolang", "ergo_abi_stable", "ergo_runtime", "ergo_runtime_macro", 
 version = "1.0.0-rc.5"
 authors = ["Alex Franchuk <afranchuk@caci.com>"]
 edition = "2021"
+license = "MIT"
 rust-version = "1.64"
 
 [workspace.dependencies]

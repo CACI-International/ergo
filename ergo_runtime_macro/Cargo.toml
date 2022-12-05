@@ -3,6 +3,7 @@ name = "ergo_runtime_macro"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [lib]
 proc-macro = true

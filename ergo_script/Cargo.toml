@@ -3,6 +3,7 @@ name = "ergo_script"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 cachemap = { git = "https://github.com/afranchuk/cachemap.git", branch = "main" }
