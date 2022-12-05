@@ -1,5 +1,7 @@
 //! A sqlite-backed cache.
 
+use self::pending::DeleteCacheEntry;
+
 use super::memory::MemCache;
 use super::ErrorHandling;
 use crate::sqlite::{self, Connection};
@@ -116,6 +118,7 @@ mod schema {
     load!(write_value);
     load!(write_path);
     load!(write_diagnostic_source);
+    load!(delete_entry);
     load!(delete_unused_values);
     load!(delete_unused_paths);
     load!(delete_unused_diagnostic_sources);
@@ -184,6 +187,10 @@ mod pending {
         pub expiration_time: Option<i64>,
     }
 
+    pub struct DeleteCacheEntry {
+        pub key: u128,
+    }
+
     pub struct DiagnosticSource {
         pub value: u128,
         pub path: std::path::PathBuf,
@@ -200,6 +207,7 @@ mod pending {
         pub(super) values: List<Value>,
         pub(super) references: List<ValueReference>,
         pub(super) entries: List<CacheEntry>,
+        pub(super) delete_entries: List<DeleteCacheEntry>,
         pub(super) diagnostic_sources: List<DiagnosticSource>,
         pub(super) paths: List<Path>,
     }
@@ -211,6 +219,7 @@ mod pending {
                 values,
                 references,
                 entries,
+                delete_entries,
                 diagnostic_sources,
                 paths,
             }: Self,
@@ -218,6 +227,7 @@ mod pending {
             self.values.append(values);
             self.references.append(references);
             self.entries.append(entries);
+            self.delete_entries.append(delete_entries);
             self.diagnostic_sources.append(diagnostic_sources);
             self.paths.append(paths);
         }
@@ -226,6 +236,7 @@ mod pending {
             self.values.is_empty()
                 && self.references.is_empty()
                 && self.entries.is_empty()
+                && self.delete_entries.is_empty()
                 && self.diagnostic_sources.is_empty()
                 && self.paths.is_empty()
         }
@@ -438,6 +449,11 @@ impl Db {
                 stmt.bind(1, sqlite::U128(key))?;
                 stmt.bind(3, sqlite::U128(value))?;
                 stmt.bind(5, expiration_time)?;
+                while stmt.next()? != sqlite::State::Done {}
+            }
+            for pending::DeleteCacheEntry { key } in writes.delete_entries.into_iter() {
+                let mut stmt = conn.prepare(schema::delete_entry)?;
+                stmt.bind(1, sqlite::U128(key))?;
                 while stmt.next()? != sqlite::State::Done {}
             }
             for pending::DiagnosticSource { value, path, binary_source } in writes.diagnostic_sources.into_iter() {
@@ -723,12 +739,24 @@ impl SqliteCache {
                     }
 
                     // Reading serialized data failed, write the value.
+                    let writer = SqliteCacheWriter::new(self, error_handling);
 
                     // Deeply evaluate the value to make cache overlap between values more likely
                     // (and it'll need to be deeply evaluated shortly anyway). This also avoids
                     // possibly storing (in the in-memory caches) references to the cache itself
                     // (which would make a reference loop).
-                    let value = super::eval_for_cache(value.clone(), error_handling).await?;
+                    let value = match super::eval_for_cache(value.clone(), error_handling).await {
+                        Ok(v) => v,
+                        Err(e) => {
+                            // If an error occurs, remove the cache entry entirely.
+                            let mut pending_writes = writer.pending_writes.lock().await;
+                            pending_writes
+                                .delete_entries
+                                .push(pending::DeleteCacheEntry { key });
+                            return Err(e.into());
+                        }
+                    };
+
                     // Wrap the value with a dynamic value that has the original identity so write_value uses the correct id.
                     let to_write = {
                         let value = value.clone();
@@ -737,7 +765,6 @@ impl SqliteCache {
                             value
                         }
                     };
-                    let writer = SqliteCacheWriter::new(self, error_handling);
                     if let Err(e) = writer.write_value(to_write).await {
                         db.log.warn(format!("failed to cache value for {:032x}: {}", id, e));
                         break value;
