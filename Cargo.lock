@@ -41,18 +41,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "abi_stable_ext"
-version = "0.1.0"
-dependencies = [
- "abi_stable",
- "bytes 0.5.6",
- "futures",
- "log",
- "pin-project",
- "uuid",
-]
-
-[[package]]
 name = "abi_stable_shared"
 version = "0.10.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -827,14 +815,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "ergo_abi_stable"
+version = "1.0.0-rc.5"
+dependencies = [
+ "abi_stable",
+ "bytes 0.5.6",
+ "futures",
+ "log",
+ "pin-project",
+ "uuid",
+]
+
+[[package]]
 name = "ergo_runtime"
 version = "1.0.0-rc.5"
 dependencies = [
  "abi_stable",
- "abi_stable_ext",
  "bincode",
  "cachemap",
  "codespan-reporting",
+ "ergo_abi_stable",
  "ergo_runtime_macro",
  "futures",
  "log",

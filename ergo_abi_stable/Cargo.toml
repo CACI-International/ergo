@@ -1,6 +1,6 @@
 [package]
-name = "abi_stable_ext"
-version = "0.1.0"
+name = "ergo_abi_stable"
+version.workspace = true
 authors.workspace = true
 edition.workspace = true
 

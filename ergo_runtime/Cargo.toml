@@ -6,7 +6,7 @@ edition.workspace = true
 
 [dependencies]
 abi_stable.workspace = true # needed only for StableAbi derive macros to work (they reference ::abi_stable)
-abi_stable_ext = { path = "../abi_stable_ext" }
+ergo_abi_stable = { path = "../ergo_abi_stable" }
 bincode = "1.2"
 cachemap = { git = "https://github.com/afranchuk/cachemap.git", branch = "main", features = ["abi_stable"] }
 codespan-reporting = "0.11"

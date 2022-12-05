@@ -4,7 +4,7 @@
 
 use std::iter::FromIterator;
 
-pub use abi_stable_ext as abi_stable;
+pub use ergo_abi_stable as abi_stable;
 pub use futures::future;
 
 /// The root namespace UUID, for use with v3/v5 UUIDs.
@@ -88,7 +88,7 @@ pub trait ResultIterator<T> {
 }
 
 pub mod plugin {
-    use abi_stable_ext::{log, std_types::ROption};
+    use ergo_abi_stable::{log, std_types::ROption};
 
     // This struct _must_ be abi-stable, but `tls` and `log_level` (while abi-stable) don't derive
     // StableAbi, so we don't use the derivation here.
