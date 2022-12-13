@@ -218,6 +218,26 @@ matched using the built-in `index` function, e.g. `index :my-index -> ...`. Of
 course, `Map` and `Array` types already implement binding `Index` values to get
 their contents.
 
+### Most syntax-level values are strings
+
+Like shell languages and a few others, bare strings (without quotes) are
+interpreted as `String`-typed values. The language uses a handful of syntax
+sugar features to allow more cases to use bare strings as well. Quoted strings
+are parsed during conventional tokenization, so you can use quoted strings for
+pretty much anything. One thing that's fairly different here is that, unlike
+most other languages, there is no tokenized (syntactic) number type. There _is_
+a `Number` type (which covers arbitrary rational numbers) in the standard
+library, and it simply reads the rational number from a `String` type (e.g.
+`std:Number:from 1.25`, `std:Number:from -1/2`, etc).
+
+### The language has no keywords
+
+Perhaps not the most important feature, but the base ergo language is
+spoken-language-agnostic. There are no keywords, only symbols. The built-in
+functions/values and the standard library do generally use English words (or
+abbreviations). But it is kind of cool (I think) to keep the base syntax purely
+symbolic.
+
 
 ## Organization
 
