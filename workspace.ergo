@@ -92,7 +92,7 @@ package = fn :os :files -> {
        ' set -eu
        ' 
        ' target=linux
-       ' if [ "$$(uname)" == "Darwin" ]; then
+       ' if [ "$$(uname)" = "Darwin" ]; then
        '     target=mac
        ' fi
        ' 
@@ -120,7 +120,7 @@ package = fn :os :files -> {
        '     ln -s ergolang $$dir/bin/ergofmt
        ' 
        '     echo "ergo installed to $$dir/bin; ensure it is in your PATH"
-       '     if [ "$$target" == "mac" ]; then
+       '     if [ "$$target" = "mac" ]; then
        '         xattr -dr com.apple.quarantine $$dir/lib/ergo
        '     fi
        ' }
