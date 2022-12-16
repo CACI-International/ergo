@@ -97,7 +97,9 @@ package = fn :os :files -> {
        ' fi
        ' 
        ' cmd=$${1:-}
-       ' shift
+       ' if [ $$# -ge 1 ];
+       '    shift
+       ' fi
        ' 
        ' usage() {
        '     echo "Usage: installer COMMAND"
