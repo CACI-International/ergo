@@ -113,7 +113,7 @@ package = fn :os :files -> {
        ' 
        ' install() {
        '     dir=$$1
-       '     mkdir -p $$dir/{bin,lib}
+       '     mkdir -p $$dir/bin $$dir/lib
        '     cp -r ./bin/* $$dir/bin
        '     cp -r ./lib/* $$dir/lib
        '     ln -s ergolang $$dir/bin/ergo
@@ -127,7 +127,7 @@ package = fn :os :files -> {
        ' 
        ' uninstall() {
        '     dir=$$1
-       '     rm -f $$dir/bin/{ergolang,ergo,ergofmt}
+       '     rm -f $$dir/bin/ergolang $$dir/bin/ergo $$dir/bin/ergofmt
        '     rm -rf $$dir/lib/ergo
        ' }
        ' 
