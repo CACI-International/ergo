@@ -53,6 +53,10 @@ jobs:
           rustup install ${{ matrix.rust-version }}
           rustup default ${{ matrix.rust-version }}
 
+      - name: Add rust target
+        run: rustup target add ${{ matrix.target.target }}
+        if: ${{ !matrix.target.cross }}
+
       - name: Install cross
         run: cargo install cross --git https://github.com/cross-rs/cross
         if: ${{ matrix.target.cross }}
