@@ -1,0 +1,43 @@
+name: 'Test ergo'
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+# This allows a subsequently queued workflow run to interrupt previous runs
+concurrency:
+  group: '${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}'
+  cancel-in-progress: true
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        rust-version: [1.64, stable]
+        os: [ubuntu-latest, macos-latest]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Install rust
+        run: |
+          rustup install ${{ matrix.rust-version }}
+          rustup default ${{ matrix.rust-version }}
+
+      - name: Bootstrap ergo
+        run: ./bootstrap.sh
+
+      - name: Test ergo (bootstrap)
+        run: dist/bin/ergolang evaluate test
+
+      - name: Build ergo (release)
+        run: dist/bin/ergolang evaluate package local
+
+      - name: Test ergo (release)
+        run: |
+          ./ergo-*.run install `pwd`/test-install
+          test-install/bin/ergo test
