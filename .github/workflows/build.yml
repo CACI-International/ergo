@@ -66,7 +66,7 @@ jobs:
       - name: Build ergo (release)
         run: |
           [[ "${{ matrix.target.cross }}" = "true" ]] && FLAGS=--cross || FLAGS=
-          dist/bin/ergolang evaluate package --target ${{ matrix.target.target }} $FLAGS
+          dist/bin/ergolang evaluate package --target=${{ matrix.target.target }} $FLAGS
 
       - name: Test ergo (release)
         run: |
