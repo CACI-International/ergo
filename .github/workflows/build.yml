@@ -41,3 +41,11 @@ jobs:
         run: |
           ./ergo-*.run install `pwd`/test-install
           test-install/bin/ergo test
+
+      - name: Deploy
+        if: github.ref == 'ref/tags/*'
+        uses: svenstaro/upload-release-action@v2
+        with:
+          file: ergo-*.run
+          file_glob: true
+          overwrite: true
