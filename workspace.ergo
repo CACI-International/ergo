@@ -16,6 +16,19 @@ run-task = fn :name ~:stdin ^:args -> task $name {
 
 script-dir = std:source:dir ()
 
+local-release = {
+    run-task "compiling in release mode" cargo build --release
+    target-dir = Path:join (std:source:dir ()) target
+    ext = match env:os [
+        linux -> so
+        macos -> dylib
+    ]
+    {
+        binary = Path:join $target-dir release ergolang
+        stdlib = Path:join $target-dir release "libergo_std.$ext"
+    }
+}
+
 linux-release = {
     docker-image = "centos:7"
     docker-artifacts = target-docker
@@ -97,7 +110,7 @@ package = fn :os :files -> {
        ' fi
        ' 
        ' cmd=$${1:-}
-       ' if [ $$# -ge 1 ];
+       ' if [ $$# -ge 1 ]; then
        '    shift
        ' fi
        ' 
@@ -196,6 +209,7 @@ package = fn :os :files -> {
     }
 }
 
+local-package = package env:os $local-release
 linux-package = package linux $linux-release
 mac-package = package mac $mac-release
 
@@ -249,5 +263,6 @@ command = match:value [
     fn package -> [$linux-package,$mac-package]
     fn package linux -> $linux-package
     fn package mac -> $mac-package
+    fn package local -> fs:copy $local-package:path (std:source:dir ())
     fn doc -> $doc-html
 ]
