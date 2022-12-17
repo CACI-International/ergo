@@ -41,7 +41,7 @@ jobs:
               target: x86_64-apple-darwin
               test-package: true
 
-    name: "${{ matrix.target.target }} - Rust ${{ matrix.target.rust-version }}"
+    name: "${{ matrix.target.target }} - Rust ${{ matrix.rust-version }}"
     runs-on: ${{ matrix.target.os }}
 
     steps:
