@@ -1,7 +1,7 @@
 ## The minimum rust version to support.
 rust-version = 1.64.0
 
-std:import { :Bool, :Function, :Iter, :Path, :String, :env, :exec, :fs, :if, :io, :match, :task } = $std
+std:import { :Array, :Iter, :Path, :String, :env, :exec, :fs, :if, :match, :task } = $std
 
 run-task = fn :name ~:stdin ^:args -> task $name {
     child = exec (env = { PATH = env:vars:PATH }) ^args
@@ -12,92 +12,44 @@ run-task = fn :name ~:stdin ^:args -> task $name {
     child:success
 }
 
-*term* = std:sync:resource terminal 1
-
 script-dir = std:source:dir ()
 
-local-release = {
-    run-task "compiling in release mode" cargo build --release
-    target-dir = Path:join (std:source:dir ()) target
-    ext = match env:os [
-        linux -> so
-        macos -> dylib
+release = fn ^:args -> {
+    { :args, :extra-options } = match (Array:from $args) [
+        [^:args, --, ^:extra-options] -> { args, extra-options }
+        :args -> { args, extra-options = [] }
     ]
+    args = std:getopt ~consecutive $args
+
+    { :dir, :target } = if args:keyed:target {
+        target = $args:keyed:target
+        cmd = if args:keyed:cross cross else cargo
+        run-task "compiling in release mode ($target)" $cmd build --release --target $target ^extra-options
+        {
+            dir = Path:join $script-dir target $target release
+            target = "-$target"
+        }
+    } else {
+        run-task "compiling in release mode" cargo build --release ^extra-options
+        {
+            dir = Path:join $script-dir target release
+            target = ""
+        }
+    }
+    stdlib = Array:from <| Iter:filter fs:exists <| Iter:map (fn :ext -> Path:join $dir "libergo_std.$ext") [so, dylib, dll]
+    stdlib = stdlib:0
     {
-        binary = Path:join $target-dir release ergolang
-        stdlib = Path:join $target-dir release "libergo_std.$ext"
-    }
-}
-
-linux-release = {
-    docker-image = "centos:7"
-    docker-artifacts = target-docker
-
-    docker-build = {
-        run-task "updating docker image" docker pull $docker-image
-        run-task "compiling in release mode" docker run --rm -t -v "$script-dir:/host" $docker-image sh -c '
-            ' cd /host
-            ' yum install -y gcc
-            ' curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal
-            ' ~/.cargo/bin/rustup install $rust-version
-            ' ~/.cargo/bin/cargo +$rust-version build --release --target-dir $docker-artifacts
-    }
-
-    out-dir = { $docker-build; Path:join $script-dir $docker-artifacts release }
-
-    {
-        binary = { Path:join $out-dir ergolang }
-        stdlib = { Path:join $out-dir libergo_std.so }
-    }
-}
-
-mac-release = {
-    remote = std:Error:new "no remote mac server"
-    remote-dir = /ergo_remote_build/ergo/
-    file-list = exec ~pwd=$script-dir git ls-files -co --exclude-standard |>:stdout
-    remote-endpoint = "$remote:$remote-dir"
-    result-files = String:join "\n" [target/release/ergolang,target/release/libergo_std.dylib]
-
-    remote-ssh-args = [-o, "ControlPath=~/.ssh/%C", -o, "ControlMaster=auto", -o, "ControlPersist=1h"]
-    rsync-ssh = String:join " " ["ssh",^remote-ssh-args]
-
-    connect-remote = std:sync:consume $*term* {
-        # ssh reads/writes /dev/tty directly for password, so we don't pipe stdin and retain the terminal
-        cmd = exec ssh ~retain-terminal ^remote-ssh-args $remote true
-        [io:stdout cmd:stdout, io:stderr cmd:stderr]
-        ()
-    }
-
-    remotely = fn ~:no-dir :description :cmd ^:args -> {
-        cmd-str = String:join " " <| Iter:flatten [[$cmd],Iter:map (fn :e -> "\"$e\"") args:positional]
-        change-dir = if $no-dir "" else "cd $remote-dir;"
-        run-task "mac remote: $description" ssh ^remote-ssh-args $remote "exec $$SHELL -l -c '$change-dir $cmd-str'"
-    }
-
-    target-dir = remotely ~no-dir "create remote destination" mkdir -p $remote-dir
-    # Note: rsync --delete _does not_ delete files that aren't in the file list. This is really
-    # inconvenient behavior, but it's very annoying to workaround (with `--include-list` and
-    # `--exclude`); we may just want to change this to always delete all target files, as
-    # dissatisfying as that is.
-    transfer-files = run-task "transferring to remote" ~stdin=$file-list rsync -e $rsync-ssh -az "--files-from=-" --delete $script-dir $remote-endpoint
-    install-rust = remotely "updating rust toolchain" rustup install $rust-version
-    run-build = remotely "compiling in release mode" cargo "+$rust-version" build --release
-    local-files = Path:for <| fn :local-files -> {
-        run-task "retrieving files" (stdin = $result-files) rsync -e $rsync-ssh -az "--files-from=-" $remote-endpoint $local-files
-    }
-
-    build = { $connect-remote, $target-dir, $transfer-files, $install-rust, $run-build, $local-files }
-    {
-        binary = { $build, Path:join $local-files target release ergolang }
-        stdlib = { $build, Path:join $local-files target release libergo_std.dylib }
+        binary = Path:join $dir ergolang
+        stdlib
+        target
     }
 }
 
 version = exec git describe --always --tags | String:from | String:trim
 name = "ergo-$version"
 
-package = fn :os :files -> {
-    name = "$(name)-$os"
+package = fn :files -> {
+    name = "$(name)$(files:target)"
 
     installer-entry = '
        ' #!/bin/sh
@@ -197,30 +149,13 @@ package = fn :os :files -> {
     outdir = Path:for <| fn :outdir -> {
         fs:remove $outdir
         fs:create-dir $outdir
-        task "creating $os installer" {
+        task "creating $(files:target) installer" {
             exec ~pwd=$outdir (env:path-search sh) $makeself $dist $filename "ergo $version" sh ./entry.sh
             ()
         }
     }
 
-    {
-        path = Path:join $outdir $filename
-        filename
-    }
-}
-
-local-package = package env:os $local-release
-linux-package = package linux $linux-release
-mac-package = package mac $mac-release
-
-remote-deploy = std:Error:new "no remote deploy server"
-remote-docs = std:Error:new "no remote docs server"
-
-deploy = fn :package -> {
-    target = "$remote-deploy/$(package:filename)"
-    task "deploying $(package:filename) to $remote-deploy" {
-        std:net:http ~method=put ~body=(fs:read package:path) $target
-    }
+    fs:copy (Path:join $outdir $filename) $script-dir
 }
 
 doc-html = task "generating docs" {
@@ -235,34 +170,16 @@ doc-html = task "generating docs" {
     $book-dir
 }
 
-deploy-docs = task "deploying docs" <| std:sync:consume $*term* {
-    deploy = exec ~retain-terminal rsync -avz --delete "$doc-html/" $remote-docs
-    [io:stdout deploy:stdout, io:stderr deploy:stderr]
-    ()
-}
-
-deploy-all = { [deploy $linux-package, deploy $mac-package, $deploy-docs], () }
 test = { [load ergo_std/test, run-task "running tests" cargo test], () }
 
 ## Commands:
 ## * build - build all crates
 ## * test - build and run tests
-## * package [linux|mac] - create packages for linux and/or mac. This requires input of the mac
-## server builduser password.
+## * package [--target=<target>] [--cross] - create installable package
 ## * doc - generate documentation
-## * deploy [docs|linux|mac] - build documentation and packages for linux and mac, and deploy to
-## artifactory. This requires access to the hosting platforms and input of the mac server builduser
-## password.
 command = match:value [
     fn build -> run-task "compiling all projects" cargo build
     fn test -> $test
-    fn deploy -> $deploy-all
-    fn deploy docs -> $deploy-docs
-    fn deploy linux -> deploy $linux-package
-    fn deploy mac -> deploy $mac-package
-    fn package -> [$linux-package,$mac-package]
-    fn package linux -> $linux-package
-    fn package mac -> $mac-package
-    fn package local -> fs:copy $local-package:path (std:source:dir ())
+    fn package ^:args -> package <| release ^args
     fn doc -> $doc-html
 ]
