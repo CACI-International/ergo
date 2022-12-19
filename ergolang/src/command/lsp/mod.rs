@@ -194,8 +194,13 @@ impl TokenResults {
     pub fn new(source: &ropey::Rope) -> Self {
         let mut line_lengths = source
             .lines()
-            // Exclude final newline in line lengths
-            .map(|line| (line.len_bytes() - '\n'.len_utf8()) as u32)
+            .map(|mut line| {
+                // Exclude final newline in line lengths
+                if line.len_chars() > 0 && line.char(line.len_chars() - 1) == '\n' {
+                    line = line.slice(..line.len_chars() - 1);
+                }
+                line.len_bytes() as u32
+            })
             .collect::<Vec<_>>();
         // Reverse so popping can be done efficiently
         line_lengths.reverse();
