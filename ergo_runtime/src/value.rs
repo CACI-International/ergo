@@ -1495,7 +1495,7 @@ pub type Ref<T> = crate::abi_stable::type_erase::Ref<T, RArc<Erased>>;
 /// A value with a known rust type.
 #[derive(StableAbi)]
 #[repr(C)]
-#[sabi(phantom_field = "phantom: RArc<T>")]
+#[sabi(phantom_field(phantom: RArc<T>))]
 pub struct TypedValue<T> {
     inner: Value,
     phantom: std::marker::PhantomData<RArc<T>>,

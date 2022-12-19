@@ -147,10 +147,7 @@ pub struct SemaphorePermit<'a>(DynTrait<'a, RBox<()>, SemaphorePermitInterface>)
 
 impl<'a> SemaphorePermit<'a> {
     fn new<T: Send + Sync + std::fmt::Debug + 'a>(key: T) -> Self {
-        SemaphorePermit(DynTrait::from_borrowing_value(
-            key,
-            SemaphorePermitInterface,
-        ))
+        SemaphorePermit(DynTrait::from_borrowing_value(key))
     }
 }
 

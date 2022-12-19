@@ -9,7 +9,7 @@ use abi_stable::{
 use futures::stream::Stream;
 
 #[derive(StableAbi)]
-#[sabi(bound = "S::Item: StableAbi")]
+#[sabi(bound(S::Item: StableAbi))]
 #[repr(C)]
 pub struct SharedAsyncStream<S: Stream> {
     stream_iter: SharedStreamIter<S::Item>,

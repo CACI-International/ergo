@@ -39,7 +39,7 @@ impl From<std::cmp::Ordering> for Order {
 
 impl From<Order> for std::cmp::Ordering {
     fn from(o: Order) -> Self {
-        o.0.into_ordering()
+        o.0.into()
     }
 }
 

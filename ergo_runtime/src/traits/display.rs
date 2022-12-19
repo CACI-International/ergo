@@ -19,7 +19,7 @@ pub struct Formatter<'a>(DynTrait<'a, RBox<()>, FormatterInterface>);
 
 impl<'a> Formatter<'a> {
     pub fn new<W: Write + Send>(w: &'a mut W) -> Self {
-        Formatter(DynTrait::from_borrowing_value(w, FormatterInterface))
+        Formatter(DynTrait::from_borrowing_value(w))
     }
 
     // Duplicate std::fmt::Write functions, so that `write!` macros work without a `use

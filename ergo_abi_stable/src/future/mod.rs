@@ -254,6 +254,7 @@ pub mod shared {
 /// Unlike `BoxFuture`, `Send` is not required.
 #[derive(StableAbi)]
 #[repr(C)]
+#[pin_project::pin_project]
 pub struct LocalBoxFuture<'a, T> {
     inner: LocalFuture_TO<'a, RBox<()>, T>,
 }
@@ -284,15 +285,15 @@ where
 impl<'a, T> future::Future for LocalBoxFuture<'a, T> {
     type Output = T;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context) -> task::Poll<Self::Output> {
-        let me = &mut *self;
-        me.inner.poll(Context(cx.into())).into()
+    fn poll(self: Pin<&mut Self>, cx: &mut task::Context) -> task::Poll<Self::Output> {
+        self.project().inner.poll(Context(cx.into())).into()
     }
 }
 
 /// A boxed, ABI-stable future.
 #[derive(StableAbi)]
 #[repr(C)]
+#[pin_project::pin_project]
 pub struct BoxFuture<'a, T> {
     inner: Future_TO<'a, RBox<()>, T>,
 }
@@ -338,9 +339,7 @@ impl<T> future::Future for BoxFuture<'_, T> {
     type Output = T;
 
     fn poll(self: Pin<&mut Self>, cx: &mut task::Context) -> task::Poll<Self::Output> {
-        unsafe { self.map_unchecked_mut(|s| &mut s.inner) }
-            .poll(Context(cx.into()))
-            .into()
+        self.project().inner.poll(Context(cx.into())).into()
     }
 }
 
@@ -350,6 +349,7 @@ impl<T> future::Future for BoxFuture<'_, T> {
 /// value.
 #[derive(Clone, StableAbi)]
 #[repr(C)]
+#[pin_project::pin_project]
 pub struct BoxSharedFuture<T> {
     inner: SharedFuture_TO<'static, RBox<()>, T>,
 }
@@ -587,9 +587,7 @@ impl<T> future::Future for BoxSharedFuture<T> {
     type Output = T;
 
     fn poll(self: Pin<&mut Self>, cx: &mut task::Context) -> task::Poll<Self::Output> {
-        unsafe { self.map_unchecked_mut(|s| &mut s.inner) }
-            .poll(Context(cx.into()))
-            .into()
+        self.project().inner.poll(Context(cx.into())).into()
     }
 }
 

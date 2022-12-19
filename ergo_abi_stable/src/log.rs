@@ -4,7 +4,7 @@ use abi_stable::{
     sabi_trait,
     sabi_trait::*,
     sabi_types::RRef,
-    std_types::{RCow, ROption, RStr},
+    std_types::{RCowStr, ROption, RStr},
     StableAbi,
 };
 
@@ -45,7 +45,7 @@ struct Metadata<'a> {
 #[repr(C)]
 struct Record<'a> {
     metadata: Metadata<'a>,
-    message: RCow<'a, str>,
+    message: RCowStr<'a>,
     module_path: MaybeStaticStr<'a>,
     file: MaybeStaticStr<'a>,
     line: ROption<u32>,

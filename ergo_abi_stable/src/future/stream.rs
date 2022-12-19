@@ -22,6 +22,7 @@ pub trait Stream: Send {
 /// A boxed, ABI-stable stream.
 #[derive(StableAbi)]
 #[repr(C)]
+#[pin_project::pin_project]
 pub struct BoxStream<'a, T> {
     inner: Stream_TO<'a, RBox<()>, T>,
 }
@@ -61,7 +62,8 @@ impl<'a, T> futures::stream::Stream for BoxStream<'a, T> {
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context,
     ) -> std::task::Poll<Option<Self::Item>> {
-        unsafe { self.map_unchecked_mut(|s| &mut s.inner) }
+        self.project()
+            .inner
             .poll_next(Context::new(cx))
             .into_poll()
             .map(|v| v.into())

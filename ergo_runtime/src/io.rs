@@ -230,7 +230,7 @@ impl<T: AsyncRead + std::marker::Unpin> AsyncRead for Once<T> {
 }
 
 #[sabi_trait]
-trait AsyncReadInterface: Send {
+trait AsyncReadInterface: Send + Unpin {
     #[sabi(last_prefix_field)]
     fn poll_read(
         &mut self,
@@ -246,14 +246,14 @@ pub struct BoxAsyncRead<'a> {
 }
 
 impl<'a> BoxAsyncRead<'a> {
-    pub fn new<R: AsyncRead + Send + 'a>(r: R) -> Self {
+    pub fn new<R: AsyncRead + Send + std::marker::Unpin + 'a>(r: R) -> Self {
         BoxAsyncRead {
             inner: AsyncReadInterface_TO::from_value(r, TD_Opaque),
         }
     }
 }
 
-impl<R: AsyncRead + Send> AsyncReadInterface for R {
+impl<R: AsyncRead + Send + std::marker::Unpin> AsyncReadInterface for R {
     fn poll_read(
         &mut self,
         cx: abi_future::Context,
@@ -304,6 +304,7 @@ trait AsyncWriteInterface: Send {
 
 #[derive(StableAbi)]
 #[repr(C)]
+#[pin_project::pin_project]
 pub struct BoxAsyncWrite<'a> {
     inner: AsyncWriteInterface_TO<'a, RBox<()>>,
 }
@@ -364,21 +365,24 @@ impl<W: AsyncWrite + Send> AsyncWriteInterface for W {
 
 impl<'a> AsyncWrite for BoxAsyncWrite<'a> {
     fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, src: &[u8]) -> Poll<Result<usize>> {
-        unsafe { self.map_unchecked_mut(|s| &mut s.inner) }
+        self.project()
+            .inner
             .poll_write(abi_future::Context::new(cx), src.into())
             .into_poll()
             .map(|r| r.into_result().map_err(|e| e.into()))
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
-        unsafe { self.map_unchecked_mut(|s| &mut s.inner) }
+        self.project()
+            .inner
             .poll_flush(abi_future::Context::new(cx))
             .into_poll()
             .map(|r| r.into_result().map_err(|e| e.into()))
     }
 
     fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
-        unsafe { self.map_unchecked_mut(|s| &mut s.inner) }
+        self.project()
+            .inner
             .poll_close(abi_future::Context::new(cx))
             .into_poll()
             .map(|r| r.into_result().map_err(|e| e.into()))

@@ -53,7 +53,7 @@ impl From<RVec<u8>> for ByteStream {
 }
 
 impl ByteStream {
-    pub fn new<Src: io::AsyncRead + Send + 'static>(source: Src) -> Self {
+    pub fn new<Src: io::AsyncRead + Send + std::marker::Unpin + 'static>(source: Src) -> Self {
         let (stream, stream_iter) = SharedStream::new();
         let source = ByteStreamSource_TO::from_value(
             ByteStreamSourceImpl {
@@ -297,7 +297,7 @@ struct ByteStreamSourceImpl {
 }
 
 #[sabi_trait]
-trait ByteStreamSource: Clone + Send + Sync {
+trait ByteStreamSource: Clone + Send + Sync + Unpin {
     #[sabi(last_prefix_field)]
     fn poll_data<'a>(
         &'a mut self,

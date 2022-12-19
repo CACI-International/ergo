@@ -8,7 +8,7 @@ use abi_stable::{
 };
 
 #[derive(StableAbi)]
-#[sabi(bound = "I::Item: StableAbi")]
+#[sabi(bound(I::Item: StableAbi))]
 #[repr(C)]
 pub struct SharedIterator<I: Iterator> {
     stream_iter: SharedStreamIter<I::Item>,
