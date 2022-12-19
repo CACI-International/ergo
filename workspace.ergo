@@ -4,7 +4,7 @@ rust-version = 1.64.0
 std:import { :Array, :Iter, :Path, :String, :env, :exec, :fs, :if, :match, :task } = $std
 
 run-task = fn :name ~:stdin ^:args -> task $name {
-    child = exec (env = { PATH = env:vars:PATH }) ^args
+    child = exec ^(std:merge (fn ~env={PATH = env:vars:PATH}) $args)
     if $stdin {
         child:stdin $stdin ()
     }
@@ -29,14 +29,13 @@ release = fn ^:args -> {
 
     cmd = if args:keyed:cross cross else cargo
     env = {
-        PATH = env:vars:PATH
         MACOSX_DEPLOYMENT_TARGET = match $target [
             aarch64-apple-darwin -> 11.0
             x86_64-apple-darwin -> 10.7
             _ -> $unset
         ]
     }
-    run-task "compiling in release mode ($target)" (env=$env) $cmd build --release --target $target ^extra-options
+    run-task "compiling in release mode ($target)" ~env=$env $cmd build --release --target $target ^extra-options
     dir = Path:join $script-dir target $target release
 
     [:stdlib] = Array:from <| Iter:filter fs:exists <| Iter:map (fn :ext -> Path:join $dir "libergo_std.$ext") [so, dylib, dll]
