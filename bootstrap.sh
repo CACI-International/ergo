@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 # This script bootstraps an ergo installation into the 'dist' folder in the current directory.
 

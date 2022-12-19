@@ -378,7 +378,7 @@ fn set_permissions(p: &mut std::fs::Permissions, mode: u32) {
 }
 
 #[cfg(windows)]
-fn set_permissions(p: &mut std::fs::Permissions, mode: u32) {}
+fn set_permissions(_p: &mut std::fs::Permissions, _mode: u32) {}
 
 #[types::ergo_fn]
 /// Create an archive of the given path.

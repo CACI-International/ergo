@@ -16,7 +16,6 @@ ergo_script = { path = "../ergo_script" }
 ergo_runtime = { path = "../ergo_runtime" }
 futures.workspace = true
 log = { workspace = true, features = ["release_max_level_debug"] }
-pager = "0.16"
 pretty = { version = "0.11", features = ["termcolor"] }
 pulldown-cmark = "0.9"
 simplelog = "0.11"
@@ -31,6 +30,7 @@ tokio = { version = "1", features = ["parking_lot", "sync"] }
 
 [target.'cfg(unix)'.dependencies]
 termios = "0.3"
+pager = "0.16"
 
 [dev-dependencies]
 serial_test = "0.5"
