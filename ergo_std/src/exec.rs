@@ -405,7 +405,7 @@ fn disown_pgroup(cmd: &mut Command) {
 }
 
 #[cfg(windows)]
-fn disown_pgroup(cmd: &mut Command) {}
+fn disown_pgroup(_cmd: &mut Command) {}
 
 mod io_pipe {
     type PipeBuf = Box<[u8]>;

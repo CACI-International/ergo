@@ -50,7 +50,7 @@ mod windows {
     use std::os::windows::ffi::OsStrExt;
     use std::os::windows::ffi::OsStringExt;
 
-    #[derive(Clone, Debug, PartialOrd, Ord, PartialEq, Eq, Hash, StableAbi)]
+    #[derive(Clone, Debug, Default, PartialOrd, Ord, PartialEq, Eq, Hash, StableAbi)]
     #[repr(C)]
     pub struct OsString {
         wide_chars: RVec<u16>,
@@ -62,7 +62,7 @@ mod windows {
         }
 
         pub fn as_ref<'a>(&'a self) -> Cow<'a, std::ffi::OsStr> {
-            Cow::Owned(std::ffi::OsString::from_wide(&self.bytes))
+            Cow::Owned(std::ffi::OsString::from_wide(&self.wide_chars))
         }
     }
 

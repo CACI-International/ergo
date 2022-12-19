@@ -129,6 +129,21 @@ pub struct Evaluate {
     pub args: Vec<String>,
 }
 
+#[cfg(unix)]
+fn setup_pager() {
+    pager::Pager::with_default_pager(if cfg!(target_os = "macos") {
+        // macos less is old and buggy, not working correctly with `-F`
+        "less -R"
+    } else {
+        "less -R -F"
+    })
+    .setup();
+}
+
+#[cfg(windows)]
+fn setup_pager() {
+}
+
 impl super::Command for Evaluate {
     fn run(mut self) -> Result<(), String> {
         // Additional options logic.
@@ -150,13 +165,7 @@ impl super::Command for Evaluate {
         let color_support = render_markdown::ColorSupport::new();
 
         if paging_enabled {
-            pager::Pager::with_default_pager(if cfg!(target_os = "macos") {
-                // macos less is old and buggy, not working correctly with `-F`
-                "less -R"
-            } else {
-                "less -R -F"
-            })
-            .setup();
+            setup_pager();
         }
 
         let s = result?;

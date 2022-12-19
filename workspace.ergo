@@ -38,9 +38,15 @@ release = fn ^:args -> {
     run-task "compiling in release mode ($target)" ~env=$env $cmd build --release --target $target ^extra-options
     dir = Path:join $script-dir target $target release
 
-    [:stdlib] = Array:from <| Iter:filter fs:exists <| Iter:map (fn :ext -> Path:join $dir "libergo_std.$ext") [so, dylib, dll]
+    oneof = fn :target -> :options -> {
+        [$target] = Array:from <| Iter:filter fs:exists <| Iter:map (fn :f -> Path:join $dir $f) $options
+        ()
+    }
+
+    oneof :binary = [ergolang, ergolang.exe]
+    oneof :stdlib = [libergo_std.so, libergo_std.dylib, ergo_std.dll]
     {
-        binary = Path:join $dir ergolang
+        binary
         stdlib
         target
     }
