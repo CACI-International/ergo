@@ -6,10 +6,14 @@ std:import { :Array, :Iter, :Path, :String, :env, :exec, :fs, :if, :match, :task
 run-task = fn :name ~:stdin ^:args -> task $name {
     child = exec (env = { PATH = env:vars:PATH }) ^args
     if $stdin {
-        child:stdin $stdin
-        child:stdin ()
+        child:stdin $stdin ()
     }
     child:success
+}
+
+rustc-target = {
+    String:match "{}host: {}\n{}" _ :target _ = String:from <| exec (env = { PATH = env:vars:PATH }) rustc -vV
+    $target
 }
 
 script-dir = std:source:dir ()
@@ -21,23 +25,13 @@ release = fn ^:args -> {
     ]
     args = std:getopt ~consecutive $args
 
-    { :dir, :target } = if args:keyed:target {
-        target = $args:keyed:target
-        cmd = if args:keyed:cross cross else cargo
-        run-task "compiling in release mode ($target)" $cmd build --release --target $target ^extra-options
-        {
-            dir = Path:join $script-dir target $target release
-            target = "-$target"
-        }
-    } else {
-        run-task "compiling in release mode" cargo build --release ^extra-options
-        {
-            dir = Path:join $script-dir target release
-            target = ""
-        }
-    }
-    stdlib = Array:from <| Iter:filter fs:exists <| Iter:map (fn :ext -> Path:join $dir "libergo_std.$ext") [so, dylib, dll]
-    stdlib = stdlib:0
+    target = std:Unset:or args:keyed:target $rustc-target
+
+    cmd = if args:keyed:cross cross else cargo
+    run-task "compiling in release mode ($target)" $cmd build --release --target $target ^extra-options
+    dir = Path:join $script-dir target $target release
+
+    [:stdlib] = Array:from <| Iter:filter fs:exists <| Iter:map (fn :ext -> Path:join $dir "libergo_std.$ext") [so, dylib, dll]
     {
         binary = Path:join $dir ergolang
         stdlib
@@ -49,7 +43,7 @@ version = exec git describe --always --tags | String:from | String:trim
 name = "ergo-$version"
 
 package = fn :files -> {
-    name = "$(name)$(files:target)"
+    name = "$(name)-$(files:target)"
 
     installer-entry = '
        ' #!/bin/sh
@@ -144,18 +138,7 @@ package = fn :files -> {
     }
     makeself = Path:join $makeself makeself.sh
 
-    filename = "$name.run"
-
-    outdir = Path:for <| fn :outdir -> {
-        fs:remove $outdir
-        fs:create-dir $outdir
-        task "creating $(files:target) installer" {
-            exec ~pwd=$outdir (env:path-search sh) $makeself $dist $filename "ergo $version" sh ./entry.sh
-            ()
-        }
-    }
-
-    fs:copy (Path:join $outdir $filename) $script-dir
+    run-task "creating $(files:target) installer" ~pwd=$script-dir (env:path-search sh) $makeself $dist "$name.run" "ergo $version" sh ./entry.sh
 }
 
 doc-html = task "generating docs" {
