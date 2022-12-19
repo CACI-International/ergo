@@ -1,7 +1,5 @@
 //! A sqlite-backed cache.
 
-use self::pending::DeleteCacheEntry;
-
 use super::memory::MemCache;
 use super::ErrorHandling;
 use crate::sqlite::{self, Connection};
