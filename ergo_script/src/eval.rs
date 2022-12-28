@@ -7,6 +7,7 @@
 use crate::ast::{self, CaptureKey, CaptureSet, Expr, ScopeKey, Subexpressions};
 use cachemap::CacheMap;
 use ergo_runtime::abi_stable::external_types::RMutex;
+use ergo_runtime::gc;
 use ergo_runtime::Result;
 use ergo_runtime::{
     error::{DiagnosticInfo, ErrorOrDiagnostic},
@@ -29,10 +30,26 @@ pub enum Capture {
     Evaluated(Value),
 }
 
+impl gc::GcRefs for Capture {
+    fn gc_refs(&self, v: &mut gc::Visitor) {
+        if let Self::Evaluated(val) = self {
+            val.gc_refs(v);
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Captures {
     inner: HashMap<CaptureKey, Capture>,
     late_keys: std::sync::Arc<HashMap<CaptureKey, u128>>,
+}
+
+impl gc::GcRefs for Captures {
+    fn gc_refs(&self, v: &mut gc::Visitor) {
+        for cap in self.inner.values() {
+            cap.gc_refs(v);
+        }
+    }
 }
 
 impl std::iter::FromIterator<(CaptureKey, Expr)> for Captures {
@@ -416,6 +433,13 @@ struct ExprEvaluator {
     evaluator: Evaluator,
     captures: Captures,
     cache: ExprEvaluatorCache,
+}
+
+impl gc::GcRefs for ExprEvaluator {
+    fn gc_refs(&self, v: &mut gc::Visitor) {
+        self.captures.gc_refs(v);
+        // TODO cache
+    }
 }
 
 #[derive(Default)]

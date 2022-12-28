@@ -141,8 +141,7 @@ fn setup_pager() {
 }
 
 #[cfg(windows)]
-fn setup_pager() {
-}
+fn setup_pager() {}
 
 impl super::Command for Evaluate {
     fn run(mut self) -> Result<(), String> {
@@ -379,10 +378,6 @@ impl Evaluate {
                     Ok(s)
                 })
             });
-
-            // Before the context is destroyed (unloading plugins), clear the thread-local storage in case
-            // there are values which were allocated in the plugins.
-            ergo_runtime::plugin::Context::reset();
 
             drop(signal_handler_task);
 

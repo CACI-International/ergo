@@ -557,6 +557,8 @@ impl ergo_runtime::value::ValueDataInterface for DeserializedValueData {
         Default::default()
     }
 
+    fn gc_refs(&self, _v: &mut ergo_runtime::gc::Visitor) {}
+
     fn get(&self) -> ergo_runtime::value::ValueType {
         ergo_runtime::value::ValueType::typed(self)
     }

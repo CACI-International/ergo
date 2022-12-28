@@ -1,6 +1,7 @@
 //! Dependency tracking.
 
 use crate::abi_stable::{std_types::RVec, u128::U128, StableAbi};
+use crate::gc;
 use crate::hash::HashFn;
 use crate::type_system::{Trait, Type};
 use crate::value::{EvaluatedValue, IdentifiedValue, Identity, TypedValue, Value};
@@ -34,6 +35,18 @@ impl<T: Hash> From<&'_ T> for Constant {
 impl<T: AsDependency> From<T> for Dependency {
     fn from(v: T) -> Self {
         v.as_dependency()
+    }
+}
+
+impl gc::GcRefs for Constant {
+    fn gc_refs(&self, _v: &mut gc::Visitor) {}
+}
+
+impl gc::GcRefs for Dependency {
+    fn gc_refs(&self, v: &mut gc::Visitor) {
+        if let Self::Value(val) = self {
+            val.gc_refs(v);
+        }
     }
 }
 
@@ -164,6 +177,17 @@ impl From<DependenciesConstant> for Dependencies {
                 .map(Dependency::Constant)
                 .collect(),
             ordered: deps.ordered.into_iter().map(Dependency::Constant).collect(),
+        }
+    }
+}
+
+impl<D: gc::GcRefs> gc::GcRefs for Dependencies<D> {
+    fn gc_refs(&self, v: &mut gc::Visitor) {
+        for d in &self.unordered {
+            d.gc_refs(v);
+        }
+        for d in &self.ordered {
+            d.gc_refs(v);
         }
     }
 }

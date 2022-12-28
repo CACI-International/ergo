@@ -12,6 +12,7 @@ mod diagnostic_sources;
 mod dynamic_scope;
 mod env;
 mod error_scope;
+mod gc;
 mod hooks;
 mod log;
 mod owned_paths;
@@ -31,6 +32,7 @@ pub use diagnostic_sources::{SourceId, Sources};
 pub use dynamic_scope::{DynamicScope, DynamicScopeKey, DynamicScopeRef};
 pub use env::Environment;
 pub use error_scope::ErrorScope;
+pub use gc::GarbageCollector;
 pub use hooks::Hooks;
 pub use owned_paths::OwnedPaths;
 pub use progress::Progress;
@@ -56,6 +58,8 @@ pub struct GlobalContext {
     ///
     /// This is primarily used internally for deadlock detection.
     pub progress: Progress,
+    /// The garbage collector interface and state.
+    pub gc: GarbageCollector,
 }
 
 impl GlobalContext {
@@ -203,6 +207,7 @@ impl ContextBuilder {
                 .map_err(BuilderError::TaskManagerError)?,
                 traits: Default::default(),
                 progress,
+                gc: GarbageCollector::new(),
             }),
             dynamic_scope: Default::default(),
             error_scope: self.error_scope.unwrap_or_default(),

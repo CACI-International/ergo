@@ -10,7 +10,9 @@ use crate::abi_stable::{
     u128::U128,
     StableAbi,
 };
+use crate::context::GarbageCollector;
 use crate::dependency::{Dependencies, DependenciesConstant, Dependency};
+use crate::gc::{self, Gc, GcRefs};
 use crate::hash::HashFn;
 use crate::type_system::{ErgoType, Type};
 use crate::Context;
@@ -19,11 +21,21 @@ use crate::Context;
 ///
 /// Values have an id and metadata, and either a type and associated data or a future to evaluate
 /// it.
-#[derive(Clone, StableAbi)]
+#[derive(StableAbi)]
 #[repr(C)]
 pub struct Value {
-    inner: RArc<Inner>,
+    inner: Gc<Inner>,
     metadata: BstMap<U128, RArc<Erased>>,
+}
+
+impl Clone for Value {
+    fn clone(&self) -> Self {
+        Value {
+            // Safety: All Values must exist as descendants of a root.
+            inner: unsafe { self.inner.clone() },
+            metadata: self.metadata.clone(),
+        }
+    }
 }
 
 #[derive(Clone, StableAbi)]
@@ -33,6 +45,18 @@ struct Inner {
     id: Once<IdInfo<U128>>,
     late_bound: Once<LateBound>,
     next: ROption<Once<Value>>,
+}
+
+impl GcRefs for Inner {
+    fn gc_refs(&self, v: &mut gc::Visitor) {
+        self.data.gc_refs(v);
+
+        if let ROption::RSome(n) = &self.next {
+            if let Some(val) = n.try_get() {
+                val.gc_refs(v);
+            }
+        }
+    }
 }
 
 impl Inner {
@@ -227,6 +251,9 @@ pub trait ValueDataInterface: Clone + Send + Sync + 'static {
     /// Get the value data.
     fn get(&self) -> ValueType;
 
+    /// Visit contained GC references.
+    fn gc_refs(&self, v: &mut gc::Visitor);
+
     /// Hint that the value will be eval_for_id, to prevent `id` from being called.
     fn eval_for_id_hint(&self) -> future::BoxFuture<bool> {
         future::BoxFuture::new(async { false })
@@ -310,6 +337,10 @@ impl ValueDataInterface for ValueData {
 
     fn late_bound(&self) -> LateBound {
         self.0.late_bound()
+    }
+
+    fn gc_refs(&self, v: &mut gc::Visitor) {
+        self.0.gc_refs(v);
     }
 
     fn get(&self) -> ValueType {
@@ -756,6 +787,10 @@ impl<T: ErgoType + InnerValues + Clone + Send + Sync + 'static> ValueDataInterfa
         ret
     }
 
+    fn gc_refs(&self, v: &mut gc::Visitor) {
+        self.0.visit(|val| val.gc_refs(v));
+    }
+
     fn get(&self) -> ValueType {
         ValueType::typed(&self.0)
     }
@@ -787,6 +822,8 @@ impl<T: ErgoType + std::hash::Hash + Clone + Send + Sync + 'static> ValueDataInt
     fn late_bound(&self) -> LateBound {
         Default::default()
     }
+
+    fn gc_refs(&self, _v: &mut gc::Visitor) {}
 
     fn get(&self) -> ValueType {
         ValueType::typed(&self.0)
@@ -825,7 +862,7 @@ pub enum ValueId {
 }
 
 pub trait LazyValueId:
-    LateBind + lazy_value_id_clone::LazyValueIdClone + Send + Sync + 'static
+    LateBind + GcRefs + lazy_value_id_clone::LazyValueIdClone + Send + Sync + 'static
 {
     fn id(&self) -> futures::future::BoxFuture<Identity>;
 }
@@ -933,6 +970,16 @@ impl ValueId {
     }
 }
 
+impl GcRefs for ValueId {
+    fn gc_refs(&self, v: &mut gc::Visitor) {
+        match self {
+            ValueId::Id(_) => (),
+            ValueId::Lazy(l) => l.0.gc_refs(v),
+            ValueId::Override { id, .. } => id.0.gc_refs(v),
+        }
+    }
+}
+
 #[derive(Clone)]
 #[repr(C)]
 struct IdValueData<T> {
@@ -954,6 +1001,11 @@ impl<T: ValueDataInterface> ValueDataInterface for IdValueData<T> {
         let mut s = self.value_data.late_bound();
         s.extend(self.id.late_bound());
         s
+    }
+
+    fn gc_refs(&self, v: &mut gc::Visitor) {
+        self.value_data.gc_refs(v);
+        self.id.gc_refs(v);
     }
 
     fn get(&self) -> ValueType {
@@ -1021,7 +1073,7 @@ pub mod lazy {
         }
     }
 
-    pub trait LazyCaptures: Clone + Send + Sync + 'static {
+    pub trait LazyCaptures: GcRefs + Clone + Send + Sync + 'static {
         /// Get the identity of the captures.
         fn id(&self) -> futures::future::BoxFuture<Identity>;
 
@@ -1220,6 +1272,11 @@ pub mod lazy {
             s
         }
 
+        fn gc_refs(&self, v: &mut gc::Visitor) {
+            self.id.gc_refs(v);
+            self.captures.gc_refs(v);
+        }
+
         fn get(&self) -> ValueType {
             ValueType::lazy(self)
         }
@@ -1230,11 +1287,17 @@ pub mod lazy {
     }
 }
 
+impl GcRefs for Value {
+    fn gc_refs(&self, v: &mut gc::Visitor) {
+        v.visit(&self.inner);
+    }
+}
+
 impl Value {
     /// Create a new Value from anything implementing ValueDataInterface.
     pub fn new<T: ValueDataInterface + 'static>(value_data: T) -> Self {
         Value {
-            inner: RArc::new(Inner::new(ValueData::new(value_data))),
+            inner: GarbageCollector::create(Inner::new(ValueData::new(value_data))),
             metadata: Default::default(),
         }
     }
@@ -1256,7 +1319,7 @@ impl Value {
         let mut inner = Inner::new(ValueData::new(value_data));
         inner.id.set(id.into());
         Value {
-            inner: RArc::new(inner),
+            inner: GarbageCollector::create(inner),
             metadata: Default::default(),
         }
     }
@@ -1269,7 +1332,7 @@ impl Value {
         let mut inner = Inner::new(ValueData::new(TypedValueImpl(value)));
         inner.set_id(id);
         Value {
-            inner: RArc::new(inner),
+            inner: GarbageCollector::create(inner),
             metadata: Default::default(),
         }
     }
@@ -1373,11 +1436,14 @@ impl Value {
     /// Get this value as the given mutable type, if evaluated to that type and no other references
     /// exist.
     pub fn as_mut<T: ErgoType>(&mut self) -> Option<&mut T> {
+        /*
         if self.is_type::<T>() {
             if let Some(inner) = RArc::get_mut(&mut self.inner) {
                 return Some(unsafe { inner.data.as_mut::<T>() });
             }
         }
+        */
+        // TODO remove
         None
     }
 
@@ -1395,7 +1461,9 @@ impl Value {
     where
         D: Into<ValueId>,
     {
-        RArc::make_mut(&mut self.inner).set_id(id);
+        let mut new_inner = (*self.inner).clone();
+        new_inner.set_id(id);
+        self.inner = GarbageCollector::create(new_inner);
     }
 
     /// Set the value as impure. This will prevent `next` values from being cached (calling `next`
@@ -1403,11 +1471,13 @@ impl Value {
     ///
     /// Calling this (even with `impure` set to false) will clear any existing cached result.
     pub fn impure(&mut self, impure: bool) {
-        RArc::make_mut(&mut self.inner).next = if impure {
+        let mut new_inner = (*self.inner).clone();
+        new_inner.next = if impure {
             ROption::RNone
         } else {
             ROption::RSome(Default::default())
         };
+        self.inner = GarbageCollector::create(new_inner);
     }
 
     /// Late-bind the given scope in this value.
@@ -1415,9 +1485,11 @@ impl Value {
         if self.late_bound().bound_by(context.scope) {
             let id = self.referential_id();
             if let Some(v) = context.bound.get(&id) {
-                self.inner = v.inner.clone();
+                self.inner = unsafe { v.inner.clone() };
             } else {
-                RArc::make_mut(&mut self.inner).late_bind(context);
+                let mut new_inner = (*self.inner).clone();
+                new_inner.late_bind(context);
+                self.inner = GarbageCollector::create(new_inner);
                 context.bound.insert(id, self.clone());
             }
         }
@@ -1514,6 +1586,12 @@ impl<T> TypedValue<T> {
     }
 }
 
+impl<T: 'static> GcRefs for TypedValue<T> {
+    fn gc_refs(&self, v: &mut gc::Visitor) {
+        self.inner.gc_refs(v);
+    }
+}
+
 impl<T: ErgoType + Clone + Eraseable> TypedValue<T> {
     /// Create a typed value.
     pub fn new(data: T) -> Self
@@ -1541,10 +1619,7 @@ impl<T: ErgoType + Clone + Eraseable> TypedValue<T> {
 
     /// Extract the Value's type as an owned value.
     pub fn into_owned(self) -> T {
-        match RArc::try_unwrap(self.inner.inner) {
-            Ok(inner) => unsafe { inner.data.into_owned() },
-            Err(arc) => unsafe { arc.data.as_ref::<T>() }.clone(),
-        }
+        unsafe { self.inner.inner.data.as_ref::<T>() }.clone()
     }
 }
 

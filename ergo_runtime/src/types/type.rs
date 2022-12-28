@@ -38,6 +38,10 @@ impl crate::value::ValueDataInterface for Type {
         ergo_runtime::value::LateBind::late_bound(&self.index)
     }
 
+    fn gc_refs(&self, v: &mut crate::gc::Visitor) {
+        crate::gc::GcRefs::gc_refs(&self.index, v);
+    }
+
     /// Get the value data.
     fn get(&self) -> crate::value::ValueType {
         crate::value::ValueType::typed(self)

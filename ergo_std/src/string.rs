@@ -194,6 +194,14 @@ async fn r#match(format_string: types::String, ...) -> Value {
         }
     }
 
+    impl ergo_runtime::gc::GcRefs for FormatBind {
+        fn gc_refs(&self, v: &mut ergo_runtime::gc::Visitor) {
+            if let Self::Value(_, val) = self {
+                val.gc_refs(v);
+            }
+        }
+    }
+
     impl ergo_runtime::value::lazy::LazyCaptures for FormatBind {
         fn id(&self) -> futures::future::BoxFuture<ergo_runtime::value::Identity> {
             futures::FutureExt::boxed(async move { depends![dyn self].id().await })

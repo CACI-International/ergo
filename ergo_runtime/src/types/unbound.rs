@@ -25,6 +25,8 @@ pub trait UnboundInterface: Clone + Send + Sync + 'static {
 
     fn late_bound(&self) -> LateBound;
 
+    fn gc_refs(&self, v: &mut crate::gc::Visitor);
+
     #[sabi(last_prefix_field)]
     fn bind(&self, arg: Value) -> BoxFuture<Value>;
 }
@@ -40,6 +42,10 @@ impl crate::value::ValueDataInterface for Unbound {
 
     fn late_bound(&self) -> LateBound {
         self.0.late_bound()
+    }
+
+    fn gc_refs(&self, v: &mut crate::gc::Visitor) {
+        self.0.gc_refs(v);
     }
 
     fn get(&self) -> crate::value::ValueType {
@@ -93,6 +99,12 @@ where
         let mut s = self.id.late_bound();
         s.extend(self.captures.late_bound());
         s
+    }
+
+    fn gc_refs(&self, v: &mut crate::gc::Visitor) {
+        use crate::gc::GcRefs;
+        self.id.gc_refs(v);
+        self.captures.gc_refs(v);
     }
 
     fn bind(&self, arg: Value) -> BoxFuture<Value> {

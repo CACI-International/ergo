@@ -60,6 +60,10 @@ impl ergo_runtime::value::ValueDataInterface for ScriptTypeValue {
         ergo_runtime::value::LateBind::late_bound(&self.data)
     }
 
+    fn gc_refs(&self, v: &mut ergo_runtime::gc::Visitor) {
+        ergo_runtime::gc::GcRefs::gc_refs(&self.data, v);
+    }
+
     fn get(&self) -> ergo_runtime::value::ValueType {
         ergo_runtime::value::ValueType::typed(self)
     }
