@@ -1536,6 +1536,16 @@ impl Value {
             false
         }
     }
+
+    /// Set a value as a GC root.
+    pub fn root(self: &Self) {
+        Gc::root(&self.inner);
+    }
+
+    /// Remove a value as a GC root.
+    pub fn unroot(self: &Self) {
+        Gc::unroot(&self.inner);
+    }
 }
 
 /// Match expression for Values.

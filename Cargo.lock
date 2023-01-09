@@ -460,6 +460,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "cachemap"
+version = "0.1.0"
+source = "git+https://github.com/afranchuk/cachemap.git?rev=443e3672fc15244a17406123be12a2e0214ebe39#443e3672fc15244a17406123be12a2e0214ebe39"
+
+[[package]]
 name = "castaway"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -839,7 +844,7 @@ version = "1.0.0-rc.5"
 dependencies = [
  "abi_stable",
  "bincode",
- "cachemap",
+ "cachemap 0.1.0 (git+https://github.com/afranchuk/cachemap.git?branch=main)",
  "codespan-reporting",
  "ergo_abi_stable",
  "ergo_runtime_macro",
@@ -869,7 +874,7 @@ dependencies = [
 name = "ergo_script"
 version = "1.0.0-rc.5"
 dependencies = [
- "cachemap",
+ "cachemap 0.1.0 (git+https://github.com/afranchuk/cachemap.git?rev=443e3672fc15244a17406123be12a2e0214ebe39)",
  "ergo_runtime",
  "futures",
  "horrorshow",

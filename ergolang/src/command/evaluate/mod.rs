@@ -366,15 +366,27 @@ impl Evaluate {
             // reloading the scripts.
             runtime.clear_load_cache();
 
-            let result = value_to_execute.and_then(|value| {
+            let result = value_to_execute.and_then(|mut value| {
                 runtime.block_on(async {
                     use ergo_runtime::traits::{display, eval_nested, Formatter};
+                    use ergo_runtime::Value;
+                    // Evaluate and pass GC root to each subsequent value.
+                    let mut root_value = value.clone();
+                    Value::root(&root_value);
+                    drop(ergo_runtime::Context::eval_with(&mut value, |v| {
+                        if v.referential_id() != root_value.referential_id() {
+                            Value::root(v);
+                            Value::unroot(&root_value);
+                            root_value = v.clone();
+                        }
+                    }));
                     eval_nested(value.clone()).await?;
                     let mut s = String::new();
                     {
                         let mut formatter = Formatter::new(&mut s);
                         display(value, &mut formatter).await?;
                     }
+                    Value::unroot(&root_value);
                     Ok(s)
                 })
             });

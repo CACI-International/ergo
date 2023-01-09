@@ -422,6 +422,19 @@ mod once {
                 should_poll: false,
             }
         }
+
+        pub fn try_get(&self) -> Option<&T> {
+            if self.state.load(Ordering::Acquire) == (WAS_ACCESSED | HAS_VALUE) {
+                unsafe {
+                    (self.value.get() as *const Option<T>)
+                        .as_ref()
+                        .unwrap_unchecked()
+                        .as_ref()
+                }
+            } else {
+                None
+            }
+        }
     }
 }
 
@@ -438,7 +451,7 @@ struct ExprEvaluator {
 impl gc::GcRefs for ExprEvaluator {
     fn gc_refs(&self, v: &mut gc::Visitor) {
         self.captures.gc_refs(v);
-        // TODO cache
+        self.cache.gc_refs(v);
     }
 }
 
@@ -453,6 +466,19 @@ struct ExprEvaluatorEvalCache {
 struct ExprEvaluatorCache {
     eval: std::sync::Arc<ExprEvaluatorEvalCache>,
     children: std::sync::Arc<CacheMap<usize, ExprEvaluatorCache>>,
+}
+
+impl gc::GcRefs for ExprEvaluatorCache {
+    fn gc_refs(&self, v: &mut gc::Visitor) {
+        if let Some(val) = self.eval.value.try_get() {
+            val.gc_refs(v);
+        }
+        // Iter and collect to not lock the children map for long.
+        let children: Vec<_> = self.children.iter().map(|v| v.1).collect();
+        for child_cache in children {
+            child_cache.gc_refs(v);
+        }
+    }
 }
 
 fn witness<T>(_: &T) -> std::marker::PhantomData<T> {
@@ -474,13 +500,6 @@ impl ExprEvaluator {
     /// This will evaluate the expression immediately if appropriate, otherwise it will return a
     /// dynamic value that will evaluate in the async context when needed.
     pub fn evaluate<'b>(&'b self) -> BoxFuture<'b, Value> {
-        // For now, disable evaluation caching as we need to do some work to only retain what's
-        // still reachable (including not simply caching all loaded scripts). This greatly improves
-        // memory usage, and makes sure some resources (like file handles) are dropped at an
-        // appropriate time. It does imply a performance hit, but meaningful workloads shouldn't be
-        // evaluation-bound.
-        self.evaluate_impl().boxed()
-        /*
         async move {
             self.cache
                 .eval
@@ -490,7 +509,6 @@ impl ExprEvaluator {
                 .clone()
         }
         .boxed()
-        */
     }
 
     /// Make the evaluator a cache root, discontinuing use of the current child cache.

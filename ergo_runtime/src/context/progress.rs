@@ -162,9 +162,18 @@ impl Progress {
     }
 
     /// Evaluate a value, checking for progress and deadlock.
-    pub(crate) async fn eval_checking_progress(&self, value: &mut Value) -> crate::Result<()> {
+    ///
+    /// The function is called on each produced value.
+    pub(crate) async fn eval_checking_progress<F: FnMut(&Value)>(
+        &self,
+        value: &mut Value,
+        mut each: F,
+    ) -> crate::Result<()> {
         let _token = self.attempt_progress();
-        while !self.eval_once_checking_progress(value).await? {}
+        while !self.eval_once_checking_progress(value).await? {
+            each(value);
+        }
+        each(value);
         debug_assert!(value.is_evaluated());
         Ok(())
     }

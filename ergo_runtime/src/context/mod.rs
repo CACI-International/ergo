@@ -246,9 +246,16 @@ impl Context {
 
     /// Evaluate a value.
     pub async fn eval(value: &mut Value) -> crate::Result<()> {
+        Self::eval_with(value, |_| ()).await
+    }
+
+    /// Evaluate a value, calling a function on each intermediate value.
+    ///
+    /// The intermediate values are not guaranteed to be different from the original value.
+    pub async fn eval_with<F: FnMut(&Value)>(value: &mut Value, each: F) -> crate::Result<()> {
         Context::global()
             .progress
-            .eval_checking_progress(value)
+            .eval_checking_progress(value, each)
             .await?;
         debug_assert!(value.is_evaluated());
         if value.is_type::<crate::types::Error>() {

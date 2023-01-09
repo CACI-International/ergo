@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-cachemap = { git = "https://github.com/afranchuk/cachemap.git", branch = "main" }
+cachemap = { git = "https://github.com/afranchuk/cachemap.git", rev = "443e3672fc15244a17406123be12a2e0214ebe39" }
 ergo_runtime = { path = "../ergo_runtime" }
 futures.workspace = true
 horrorshow = "0.8"
