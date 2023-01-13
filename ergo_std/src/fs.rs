@@ -740,7 +740,7 @@ async fn track(file: _, (force_check): [_]) -> Value {
 
                     let calc_hash = other
                         .as_ref()
-                        .map(|data| data.modification_time < modification_time)
+                        .map(|data| data.modification_time != modification_time)
                         .unwrap_or(true);
 
                     ergo_runtime::Result::Ok(if calc_hash {
