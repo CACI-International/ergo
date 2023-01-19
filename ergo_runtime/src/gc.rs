@@ -94,6 +94,12 @@ impl<T> Gc<T> {
         self.info().remove_root();
     }
 
+    pub fn forget(self: Self) {
+        DISABLE_DROP.with(|d| d.store(true, Ordering::Relaxed));
+        drop(self);
+        DISABLE_DROP.with(|d| d.store(false, Ordering::Relaxed));
+    }
+
     fn info(&self) -> &GenericGcInfo {
         unsafe { GenericGcInfo::from_value_ptr(self.ptr).as_ref() }
     }

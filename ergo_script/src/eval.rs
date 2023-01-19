@@ -448,11 +448,10 @@ struct ExprEvaluator {
     cache: ExprEvaluatorCache,
 }
 
-impl gc::GcRefs for ExprEvaluator {
-    fn gc_refs(&self, v: &mut gc::Visitor) {
-        self.captures.gc_refs(v);
-        self.cache.gc_refs(v);
-    }
+#[derive(Default, Clone)]
+struct ExprEvaluatorCache {
+    eval: std::sync::Arc<ExprEvaluatorEvalCache>,
+    children: std::sync::Arc<CacheMap<usize, ExprEvaluatorCache>>,
 }
 
 #[derive(Default)]
@@ -462,10 +461,11 @@ struct ExprEvaluatorEvalCache {
     value: Once<Value>,
 }
 
-#[derive(Default, Clone)]
-struct ExprEvaluatorCache {
-    eval: std::sync::Arc<ExprEvaluatorEvalCache>,
-    children: std::sync::Arc<CacheMap<usize, ExprEvaluatorCache>>,
+impl gc::GcRefs for ExprEvaluator {
+    fn gc_refs(&self, v: &mut gc::Visitor) {
+        self.captures.gc_refs(v);
+        self.cache.gc_refs(v);
+    }
 }
 
 impl gc::GcRefs for ExprEvaluatorCache {
