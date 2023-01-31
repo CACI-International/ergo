@@ -319,7 +319,7 @@ async fn copy(from: types::Path, to: types::Path, (shallow): [_], (follow_symlin
 #[types::ergo_fn]
 /// Return the file size of the given path.
 ///
-/// Arugments: `(Path :path)`
+/// Arguments: `(Path :path)`
 ///
 /// Returns a Number with the file size in bytes. Does not follow symlinks (returning the size of
 /// the symlink file).
@@ -334,7 +334,7 @@ async fn file_size(path: types::Path) -> Value {
 #[types::ergo_fn]
 /// Return the path pointed to by a symbolic link.
 ///
-/// Arugments: `(Path :link)`
+/// Arguments: `(Path :link)`
 ///
 /// If the link does not exist or the user does not have permission to the path, returns `Unset`.
 async fn read_link(path: types::Path) -> Value {
@@ -346,7 +346,7 @@ async fn read_link(path: types::Path) -> Value {
 #[types::ergo_fn]
 /// Return the file type of the given path.
 ///
-/// Arugments: `(Path :path)`
+/// Arguments: `(Path :path)`
 ///
 /// Returns a String with the file type:
 /// * `file` - a normal file
