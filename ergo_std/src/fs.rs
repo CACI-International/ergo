@@ -26,6 +26,7 @@ pub fn module() -> Value {
         "glob" = glob_(),
         "lock" = lock(),
         "read" = read(),
+        "read-link" = read_link(),
         "remove" = remove(),
         "rename" = rename(),
         "sha1" = sha1(),
@@ -327,6 +328,18 @@ async fn copy(from: types::Path, to: types::Path, (shallow): [_], (follow_symlin
 async fn file_size(path: types::Path) -> Value {
     std::fs::symlink_metadata(path.as_ref().as_ref())
         .map(|m| types::Number::from(m.len()).into())
+        .unwrap_or(types::Unset.into())
+}
+
+#[types::ergo_fn]
+/// Return the path pointed to by a symbolic link.
+///
+/// Arugments: `(Path :link)`
+///
+/// If the link does not exist or the user does not have permission to the path, returns `Unset`.
+async fn read_link(path: types::Path) -> Value {
+    std::fs::read_link(path.as_ref().as_ref())
+        .map(|p| types::Path::from(p).into())
         .unwrap_or(types::Unset.into())
 }
 
