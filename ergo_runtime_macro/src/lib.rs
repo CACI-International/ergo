@@ -90,7 +90,7 @@ pub fn ergo_fn(_args: TokenStream, item: TokenStream) -> TokenStream {
 /// following special attributes:
 /// * `#[eval_for_id]` - indicate that the function should have the `eval_for_id` bit set.
 /// * `#[depends(a,b,c)]` - arguments to pass to the `depends!` macro to create the function
-/// identity. The identity will always include a generate identifier from the function name and
+/// identity. The identity will always include a generated identifier from the function name and
 /// module scope.
 ///
 /// Any other attributes will be preserved, and doc comments will be used as documentation for the

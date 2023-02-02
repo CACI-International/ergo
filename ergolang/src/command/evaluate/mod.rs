@@ -253,14 +253,12 @@ impl Evaluate {
                 .keep_going(!self.stop)
                 .error_handler(move |e: Error| error_logger.new_error(e)),
             load_path,
+            self.lint
+                .map(|l| l.unwrap_or(ergo_script::LintLevel::On))
+                .unwrap_or_default(),
+            self.backtrace,
         )
         .expect("failed to create script context");
-
-        if let Some(level) = self.lint {
-            runtime.lint_level(level.unwrap_or(ergo_script::LintLevel::On));
-        }
-
-        runtime.backtrace(self.backtrace);
 
         // Set interrupt signal handler to abort tasks.
         //
@@ -360,11 +358,6 @@ impl Evaluate {
                 let v = runtime.block_on(Runtime::apply_unbound(script_output));
                 Ok(try_value!(v))
             });
-
-            // Clear load cache, so that lifetimes are optimistically dropped. It's not very likely that
-            // stuff will be loaded while executing the final value, but if so it'll just take the hit of
-            // reloading the scripts.
-            runtime.clear_load_cache();
 
             let result = value_to_execute.and_then(|mut value| {
                 runtime.block_on(async {

@@ -10,7 +10,6 @@ use crate::abi_stable::{
     u128::U128,
     StableAbi,
 };
-use crate::context::GarbageCollector;
 use crate::dependency::{Dependencies, DependenciesConstant, Dependency};
 use crate::gc::{self, Gc, GcRefs};
 use crate::hash::HashFn;
@@ -24,7 +23,7 @@ use crate::Context;
 #[derive(StableAbi)]
 #[repr(C)]
 pub struct Value {
-    inner: Gc<Inner>,
+    pub(crate) inner: Gc<Inner>,
     metadata: BstMap<U128, RArc<Erased>>,
 }
 
@@ -40,7 +39,7 @@ impl Clone for Value {
 
 #[derive(Clone, StableAbi)]
 #[repr(C)]
-struct Inner {
+pub(crate) struct Inner {
     data: ValueData,
     id: Once<IdInfo<U128>>,
     late_bound: Once<LateBound>,
@@ -60,7 +59,7 @@ impl GcRefs for Inner {
 }
 
 impl Inner {
-    pub fn new(data: ValueData) -> Self {
+    fn new(data: ValueData) -> Self {
         let typed = data.ergo_type().is_some();
         Inner {
             data,
@@ -126,6 +125,14 @@ impl Inner {
 
     pub fn late_bound(&self) -> &LateBound {
         self.late_bound.get_sync(|| self.data.late_bound())
+    }
+}
+
+impl From<Inner> for Gc<Inner> {
+    fn from(i: Inner) -> Self {
+        let ret = crate::context::GarbageCollector::create(i);
+        Context::with(|ctx| ctx.garbage_scope.push(unsafe { ret.clone() }));
+        ret
     }
 }
 
@@ -1297,7 +1304,7 @@ impl Value {
     /// Create a new Value from anything implementing ValueDataInterface.
     pub fn new<T: ValueDataInterface + 'static>(value_data: T) -> Self {
         Value {
-            inner: GarbageCollector::create(Inner::new(ValueData::new(value_data))),
+            inner: Inner::new(ValueData::new(value_data)).into(),
             metadata: Default::default(),
         }
     }
@@ -1319,7 +1326,7 @@ impl Value {
         let mut inner = Inner::new(ValueData::new(value_data));
         inner.id.set(id.into());
         Value {
-            inner: GarbageCollector::create(inner),
+            inner: inner.into(),
             metadata: Default::default(),
         }
     }
@@ -1332,7 +1339,7 @@ impl Value {
         let mut inner = Inner::new(ValueData::new(TypedValueImpl(value)));
         inner.set_id(id);
         Value {
-            inner: GarbageCollector::create(inner),
+            inner: inner.into(),
             metadata: Default::default(),
         }
     }
@@ -1463,7 +1470,7 @@ impl Value {
     {
         let mut new_inner = (*self.inner).clone();
         new_inner.set_id(id);
-        self.inner = GarbageCollector::create(new_inner);
+        self.inner = new_inner.into();
     }
 
     /// Set the value as impure. This will prevent `next` values from being cached (calling `next`
@@ -1477,7 +1484,7 @@ impl Value {
         } else {
             ROption::RSome(Default::default())
         };
-        self.inner = GarbageCollector::create(new_inner);
+        self.inner = new_inner.into();
     }
 
     /// Late-bind the given scope in this value.
@@ -1489,7 +1496,7 @@ impl Value {
             } else {
                 let mut new_inner = (*self.inner).clone();
                 new_inner.late_bind(context);
-                self.inner = GarbageCollector::create(new_inner);
+                self.inner = new_inner.into();
                 context.bound.insert(id, self.clone());
             }
         }

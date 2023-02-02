@@ -17,6 +17,8 @@ impl Test {
         let rt = crate::Runtime::new(
             Context::builder().threads(Some(1)).keep_going(false),
             vec![],
+            Default::default(),
+            false,
         )
         .expect("failed to create runtime");
 

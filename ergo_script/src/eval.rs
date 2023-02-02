@@ -847,7 +847,12 @@ impl ExprEvaluator {
                 let v_type = witness($v);
                 ergo_runtime::lazy_value! {
                     #![contains($self)]
-                    Context::spawn(EVAL_TASK_PRIORITY, move |ctx| ctx.backtrace.push(src.with("")), async move {
+                    let gc_scope = ergo_runtime::context::GarbageScope::default();
+                    let _retain_ret_gc_scope = gc_scope.clone();
+                    let ret: Value = Context::spawn(EVAL_TASK_PRIORITY, move |ctx| {
+                        ctx.backtrace.push(src.with(""));
+                        ctx.garbage_scope = gc_scope;
+                    }, async move {
                         log::trace!("evaluating (delayed) {:?}", $self.source());
                         let v: Value = async {
                             // Safety: v_type (from $v) must have been from a previous checked call
@@ -858,7 +863,10 @@ impl ExprEvaluator {
                         Ok(v)
                     })
                     .await
-                    .into()
+                    .into();
+                    // Add the return value to the enclosing garbage scope.
+                    Context::with(|ctx| ctx.garbage_scope.add(&ret));
+                    ret
                 }
             }};
         }

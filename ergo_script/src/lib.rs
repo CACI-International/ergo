@@ -29,18 +29,36 @@ use eval::*;
 
 /// Script runtime functions.
 pub struct Runtime {
-    load_data: base::LoadData,
     pub ctx: Context,
+    load_path: Vec<std::path::PathBuf>,
+    lint_level: LintLevel,
+    backtrace: bool,
 }
 
 impl Runtime {
     pub fn new(
         cb: ergo_runtime::context::ContextBuilder,
         load_path: Vec<std::path::PathBuf>,
+        lint_level: LintLevel,
+        backtrace: bool,
     ) -> Result<Self, ergo_runtime::context::BuilderError> {
-        let load_functions = base::LoadFunctions::new(load_path);
-        let env = vec![
-            ("load", load_functions.load),
+        let ctx = cb.build()?;
+        // Add initial traits
+        ergo_runtime::ergo_traits(&ctx.traits);
+        Ok(Runtime {
+            ctx,
+            load_path,
+            lint_level,
+            backtrace,
+        })
+    }
+
+    /// Create a LoadContext based on runtime settings.
+    ///
+    /// This must be called with an active Context, and most methods in the returned LoadContext
+    /// also require an active Context.
+    fn load_context(&self) -> base::LoadContext {
+        let default_top_level_env = vec![
             ("fn", base::fn_()),
             ("index", base::index()),
             ("doc", base::doc()),
@@ -52,23 +70,13 @@ impl Runtime {
         .into_iter()
         .map(|(k, v)| (k.into(), v))
         .collect();
-        let load_data = load_functions.load_data;
-        load_data.set_top_level_env(env);
 
-        let ctx = cb.build()?;
-        // Add initial traits
-        ergo_runtime::ergo_traits(&ctx.traits);
-        Ok(Runtime { load_data, ctx })
-    }
-
-    /// Set the lint level when loading scripts.
-    pub fn lint_level(&self, level: LintLevel) {
-        self.load_data.set_lint_level(level);
-    }
-
-    /// Set whether backtraces are enabled when loading scripts.
-    pub fn backtrace(&self, backtrace: bool) {
-        self.load_data.set_backtrace(backtrace);
+        base::LoadContext::new(
+            self.load_path.clone(),
+            self.lint_level,
+            self.backtrace,
+            default_top_level_env,
+        )
     }
 
     /// Load a script from a string.
@@ -82,25 +90,10 @@ impl Runtime {
 
     /// Load a script from a Source.
     pub fn load(&self, src: Source<()>) -> Result<Script, Error> {
-        let sources = self
-            .ctx
-            .block_on(async { Context::global().diagnostic_sources() });
-        let content = sources.content(src.source_id).ok_or_else(|| ergo_runtime::error! {
-            error: format!("failed to read content for source '{}'", sources.name(src.source_id).unwrap_or("unknown".into()))
-        })?;
-        let mut s = {
-            let mut guard = self.load_data.ast_context.lock();
-            Script::load(src.with(content), &mut *guard, self.load_data.lint_level())?
-        };
-        let source_path = sources.path(src.source_id);
-        s.top_level_env(
-            self.load_data
-                .script_top_level_env(source_path.as_ref().map(|p| p.as_path())),
-        );
-        if self.load_data.backtrace() {
-            s.enable_backtrace();
-        }
-        Ok(s)
+        self.ctx.block_on(async {
+            let sources = Context::global().diagnostic_sources();
+            self.load_context().load_source(sources.as_ref(), src)
+        })
     }
 
     /// Load and evaluate a script from a string.
@@ -128,7 +121,7 @@ impl Runtime {
         working_dir: Option<&std::path::Path>,
         path: &std::path::Path,
     ) -> Option<std::path::PathBuf> {
-        self.load_data.resolve_script_path(working_dir, path)
+        self.load_context().resolve_script_path(working_dir, path)
     }
 
     /// Apply any Unbound values on `()` Args.
@@ -154,16 +147,10 @@ impl Runtime {
         }
         val
     }
-
-    /// Clear the load cache of any loaded scripts.
-    pub fn clear_load_cache(&self) {
-        self.load_data.load_cache.lock().clear();
-    }
 }
 
 impl Drop for Runtime {
     fn drop(&mut self) {
-        self.load_data.reset();
         self.ctx.task.shutdown();
     }
 }
@@ -1038,8 +1025,10 @@ mod test {
 
     fn script_eval_to(s: &str, expected: ScriptResult) -> Result<(), String> {
         let runtime = make_runtime()?;
-        let script = script_eval(&runtime, s);
-        let res = runtime.block_on(async { val_match(script?, expected).await });
+        let res = runtime.block_on(async {
+            let script = script_eval(&runtime, s);
+            val_match(script?, expected).await
+        });
         res
     }
 
@@ -1262,7 +1251,13 @@ mod test {
     }
 
     fn make_runtime() -> Result<Runtime, String> {
-        Runtime::new(Default::default(), vec![]).map_err(|e| e.to_string())
+        Runtime::new(
+            Default::default(),
+            Default::default(),
+            Default::default(),
+            Default::default(),
+        )
+        .map_err(|e| e.to_string())
     }
 
     fn script_eval(runtime: &Runtime, s: &str) -> Result<Value, String> {

@@ -1,73 +1,72 @@
 //! Loading-related functions.
 
 use crate::constants::{DIR_NAME, EXTENSION, PLUGIN_ENTRY, WORKSPACE_NAME};
+use cachemap::CacheMap;
 use ergo_runtime::abi_stable::external_types::RMutex;
 use ergo_runtime::{
+    depends,
     error::{DiagnosticInfo, RResult},
     metadata, nsid, traits,
     type_system::ErgoType,
-    types, Context, Source, Value,
+    types, Context, Source, TypedValue, Value,
 };
 use libloading as dl;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-#[derive(Clone)]
-pub struct LoadData {
-    // The load cache `Value` is always a dynamic value which (when evaluated once) will do the
-    // actual loading of the script/plugin to take advantage of evaluation caching.
-    pub load_cache: Arc<RMutex<HashMap<PathBuf, Value>>>,
-    pub load_path: Arc<Vec<PathBuf>>,
-    top_level_env: Arc<RMutex<HashMap<String, Value>>>,
-    pub ast_context: Arc<RMutex<crate::ast::Context>>,
-    pub lint: Arc<RMutex<crate::ast::LintLevel>>,
-    pub backtrace: Arc<std::sync::atomic::AtomicBool>,
+/// Context information used to load scripts.
+#[derive(Clone, ErgoType)]
+pub struct LoadContext {
+    /// Paths used for lookup.
+    pub paths: Vec<PathBuf>,
+    /// The configured lint level.
+    pub lint: crate::ast::LintLevel,
+    /// Whether backtraces are enabled.
+    pub backtrace: bool,
+    shared: Arc<SharedLoadContext>,
 }
 
-impl LoadData {
-    fn new(load_path: Vec<PathBuf>) -> Self {
-        LoadData {
-            load_cache: Arc::new(RMutex::new(HashMap::default())),
-            load_path: Arc::new(load_path),
-            top_level_env: Arc::new(RMutex::new(Default::default())),
-            ast_context: Arc::new(RMutex::new(Default::default())),
-            lint: Arc::new(RMutex::new(Default::default())),
-            backtrace: Arc::new(false.into()),
+unsafe impl ergo_runtime::value::InnerValues for LoadContext {
+    fn visit<'a, F: FnMut(&'a Value)>(&'a self, mut f: F) {
+        for (_, v) in self.shared.cache.iter() {
+            f(v);
         }
     }
+}
 
-    /// Reset the inner state of the load data.
-    pub fn reset(&self) {
-        *self.load_cache.lock() = Default::default();
-        *self.top_level_env.lock() = Default::default();
-        *self.ast_context.lock() = Default::default();
-    }
+/// Global load context information that is shared among all clones of a LoadContext.
+struct SharedLoadContext {
+    /// A cache of loaded files.
+    ///
+    /// This cache will _only_ be used when a script's top-level environment is unmodified
+    /// from the default top-level environment.
+    // The load cache `Value` is always a dynamic value which (when evaluated once) will do the
+    // actual loading of the script/plugin to take advantage of evaluation caching.
+    cache: CacheMap<PathBuf, Value>,
+    /// The default top-level environment available to loaded files.
+    default_top_level_env: HashMap<String, Value>,
+    /// The AST context used when loading.
+    ast_context: RMutex<crate::ast::Context>,
+}
 
-    /// Set the top-level environment used when loading scripts.
-    pub fn set_top_level_env(&self, env: HashMap<String, Value>) {
-        *self.top_level_env.lock() = env;
-    }
-
-    /// Get the lint level.
-    pub fn lint_level(&self) -> crate::ast::LintLevel {
-        *self.lint.lock()
-    }
-
-    /// Set the lint level.
-    pub fn set_lint_level(&self, level: crate::ast::LintLevel) {
-        *self.lint.lock() = level;
-    }
-
-    /// Get whether backtraces are enabled.
-    pub fn backtrace(&self) -> bool {
-        self.backtrace.load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    /// Set whether backtraces are enabled.
-    pub fn set_backtrace(&self, backtrace: bool) {
-        self.backtrace
-            .store(backtrace, std::sync::atomic::Ordering::Relaxed)
+impl LoadContext {
+    pub fn new(
+        paths: Vec<PathBuf>,
+        lint: crate::ast::LintLevel,
+        backtrace: bool,
+        default_top_level_env: HashMap<String, Value>,
+    ) -> Self {
+        LoadContext {
+            paths,
+            lint,
+            backtrace,
+            shared: Arc::new(SharedLoadContext {
+                cache: Default::default(),
+                default_top_level_env,
+                ast_context: RMutex::new(Default::default()),
+            }),
+        }
     }
 
     /// Resolve a path to the full script path, based on the load path.
@@ -83,23 +82,76 @@ impl LoadData {
             Some(dir) => get(dir.as_ref()),
             None => std::env::current_dir().ok().and_then(|p| get(p.as_ref())),
         }
-        .or_else(|| self.load_path.iter().find_map(|p| get(p.as_ref())))
+        .or_else(|| self.paths.iter().find_map(|p| get(p.as_ref())))
+    }
+
+    fn as_value(&self) -> TypedValue<Self> {
+        TypedValue::with_id(self.clone(), depends![const nsid!(ergo::loadcontext)])
     }
 
     /// Create the top-level env for the given script file.
     pub fn script_top_level_env(&self, script_file: Option<&Path>) -> HashMap<String, Value> {
-        let mut env = self.top_level_env.lock().clone();
+        let mut env = self.shared.default_top_level_env.clone();
 
-        // Add `std`, which will act like `ergo std` relative to the path.
         {
-            let ld = self.clone();
+            let ld = self.as_value();
+            let load = types::ergo_fn_value! {
+                /// Load a script or plugin.
+                ///
+                /// Arguments: `(Into<Path> :to-load)`
+                ///
+                /// ## Script resolution
+                /// When loading a script, the following resolution process occurs for the first argument:
+                /// 1. Filesystem Name Resolution
+                ///    a. If the passed script is an existing path in one of the load path directories, it is used.
+                ///    b. If the passed script with the `.ergo` extension appended is an existing path in one of the
+                ///      load path directories, it is used.
+                ///
+                ///    The load path is checked from first to last, and is determined by the location of `ergo` and the currently-executing
+                ///    script. By default, the load path contains the directory containing the currently-executing script (or if there is no
+                ///    script, the current working directory), followed by user and system directories.
+                /// 2. Filesystem Directory Resolution
+                ///    a. If the name-resolved script exists as a file, it is used.
+                ///    b. If the name-resolved script exists as a directory, and the directory contains `dir.ergo`,
+                ///       that path is used and step (2) is repeated.
+                ///
+                /// If the directory-resolved script exists as a file, it is loaded.
+                #[eval_for_id]
+                #[depends(ld)]
+                async fn load(mut path: _) -> Value {
+                    Context::eval(&mut path).await?;
+                    let target_source = metadata::Source::get(&path);
+                    let target = traits::into::<types::Path>(path).await?.into_owned().into_pathbuf();
+
+                    let working_dir = Context::source_path(&ARGS_SOURCE);
+                    let working_dir = working_dir.as_ref().and_then(|p| p.parent());
+
+                    // Try to find target in the load path.
+                    let target = match ld.as_ref().resolve_script_path(working_dir, &target) {
+                        Some(path) => path,
+                        None => {
+                            Err(target_source.with(format!("could not resolve script path: {}", target.display())).into_error())?
+                        }
+                    };
+
+                    // Load if some module was found.
+                    ld.as_ref().load_script(&target).await
+                }
+            };
+            env.insert("load".into(), load);
+        }
+
+        // Add `std`, which will act like `load std` relative to the path.
+        {
+            let ld = self.as_value();
             let working_dir = script_file.and_then(|p| p.parent()).map(|p| p.to_owned());
             let std = ergo_runtime::lazy_value! {
-                //! Get the value as if `ergo std` were run.
+                //! Get the value as if `load std` were run.
                 #![depends(const nsid!(std))]
+                #![contains(ld)]
                 #![eval_for_id]
                 let wd = working_dir.clone();
-                let path = match ld.resolve_script_path(working_dir, "std".as_ref()) {
+                let path = match ld.as_ref().resolve_script_path(working_dir, "std".as_ref()) {
                     Some(path) => path,
                     None => {
                         let mut e =
@@ -114,13 +166,13 @@ impl LoadData {
                     }
                 };
 
-                ld.load_script(&path).await
+                ld.as_ref().load_script(&path).await
             };
             env.insert("std".into(), std);
         }
 
         {
-            let ld = self.clone();
+            let ld = self.as_value();
             // If the current file is a workspace, allow it to load from parent workspaces.
             let (path_basis, check_for_workspace) = match script_file {
                 Some(p) => (p.to_owned(), true),
@@ -130,8 +182,9 @@ impl LoadData {
                 ),
             };
             let workspace = ergo_runtime::lazy_value! {
-                //! Get the value as if `ergo path/to/ancestor/workspace.ergo` were run.
+                //! Get the value as if `load path/to/ancestor/workspace.ergo` were run.
                 #![depends(const nsid!(workspace))]
+                #![contains(ld)]
                 #![eval_for_id]
                 let resolved = Context::global()
                     .shared_state
@@ -177,12 +230,33 @@ impl LoadData {
                 .set_message("no ancestor workspace found")
                 .add_note(format_args!("for path {}", path_basis.display()))?;
 
-                ld.load_script(&path).await
+                ld.as_ref().load_script(&path).await
             };
             env.insert("workspace".into(), workspace);
         }
 
         env
+    }
+
+    /// Load a source.
+    pub fn load_source(
+        &self,
+        sources: &ergo_runtime::context::Sources,
+        source: Source<()>,
+    ) -> ergo_runtime::Result<crate::Script> {
+        let mut guard = self.shared.ast_context.lock();
+        // unwrap because the content must be available for a file source.
+        let content = sources.content(source.source_id).ok_or_else(|| ergo_runtime::error! {
+            error: format!("failed to read content for source '{}'", sources.name(source.source_id).unwrap_or("unknown".into()))
+        })?;
+        let mut script = crate::Script::load(source.with(content), &mut *guard, self.lint)?;
+
+        let source_path = sources.path(source.source_id);
+        script.top_level_env(self.script_top_level_env(source_path.as_ref().map(|p| p.as_path())));
+        if self.backtrace {
+            script.enable_backtrace();
+        }
+        Ok(script)
     }
 
     /// Load a script at the given path.
@@ -193,10 +267,9 @@ impl LoadData {
         let path = path.canonicalize().unwrap(); // unwrap because is_file() should guarantee that canonicalize will succeed.
 
         let mut loaded = self
-            .load_cache
-            .lock()
-            .entry(path.clone())
-            .or_insert_with(|| {
+            .shared
+            .cache
+            .cache(path.clone(), || {
                 let me = self.clone();
                 ergo_runtime::lazy_value! {
                     #![depends(const nsid!(load), path)]
@@ -213,25 +286,9 @@ impl LoadData {
                                     error: e
                                 }
                             })?);
-                        let script_result = {
-                            let mut guard = me.ast_context.lock();
-                            // unwrap because the content must be available for a file source.
-                            let content = sources.content(source.source_id).unwrap();
-                            crate::Script::load(
-                                source.with(content),
-                                &mut *guard,
-                                me.lint_level(),
-                            )
-                        };
-                        match script_result {
+                        match me.load_source(sources.as_ref(), source) {
                             Err(e) => Err(e),
-                            Ok(mut s) => {
-                                s.top_level_env(me.script_top_level_env(Some(&path)));
-                                if me.backtrace() {
-                                    s.enable_backtrace();
-                                }
-                                s.evaluate().await
-                            }
+                            Ok(s) => s.evaluate().await
                         }
                     } else {
                         let source = Source::new(sources.add_binary_file(path.clone()));
@@ -267,66 +324,6 @@ impl LoadData {
         // Evaluate the cached value to get the result of loading.
         loaded.eval_once().await;
         loaded
-    }
-}
-
-pub struct LoadFunctions {
-    pub load: Value,
-    pub load_data: LoadData,
-}
-
-impl LoadFunctions {
-    /// Return the load functions (which are all created with a shared cache).
-    pub fn new(load_path: Vec<PathBuf>) -> Self {
-        let load_data = LoadData::new(load_path);
-
-        let ld = load_data.clone();
-        let load = types::ergo_fn_value! {
-            /// Load a script or plugin.
-            ///
-            /// Arguments: `(Into<Path> :to-load)`
-            ///
-            /// ## Script resolution
-            /// When loading a script, the following resolution process occurs for the first argument (if present):
-            /// 1. Filesystem Name Resolution
-            ///    a. If the passed script is an existing path in one of the load path directories, it is used.
-            ///    b. If the passed script with the `.ergo` extension appended is an existing path in one of the
-            ///      load path directories, it is used.
-            ///
-            ///    The load path is checked from first to last, and is determined by the location of `ergo` and the currently-executing
-            ///    script. By default, the load path contains the directory containing the currently-executing script (or if there is no
-            ///    script, the current working directory), followed by user and system directories.
-            /// 2. Filesystem Directory Resolution
-            ///    a. If the name-resolved script exists as a file, it is used.
-            ///    b. If the name-resolved script exists as a directory, and the directory contains `dir.ergo`,
-            ///       that path is used and step (2) is repeated.
-            ///    c. If the name-resolved script exists as a directory, and the directory contains `workspace.ergo`,
-            ///       that path is used and step (2) is repeated.
-            ///
-            /// If the directory-resolved script exists as a file, it is loaded.
-            #[eval_for_id]
-            async fn load(mut path: _) -> Value {
-                Context::eval(&mut path).await?;
-                let target_source = metadata::Source::get(&path);
-                let target = traits::into::<types::Path>(path).await?.into_owned().into_pathbuf();
-
-                let working_dir = Context::source_path(&ARGS_SOURCE);
-                let working_dir = working_dir.as_ref().and_then(|p| p.parent());
-
-                // Try to find target in the load path.
-                let target = match ld.resolve_script_path(working_dir, &target) {
-                    Some(path) => path,
-                    None => {
-                        Err(target_source.with(format!("could not resolve script path: {}", target.display())).into_error())?
-                    }
-                };
-
-                // Load if some module was found.
-                ld.load_script(&target).await
-            }
-        };
-
-        LoadFunctions { load, load_data }
     }
 }
 
