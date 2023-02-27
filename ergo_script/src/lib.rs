@@ -113,7 +113,7 @@ impl Runtime {
         self.ctx.block_on(fut)
     }
 
-    /// Resolve a path to the full script path, based on the load path.
+    /// Resolve a path to the full script path, based on the stored load path.
     ///
     /// If resolution succeeds, the returned path will be to a file (not directory).
     pub fn resolve_script_path(
@@ -121,7 +121,7 @@ impl Runtime {
         working_dir: Option<&std::path::Path>,
         path: &std::path::Path,
     ) -> Option<std::path::PathBuf> {
-        self.load_context().resolve_script_path(working_dir, path)
+        base::resolve_script_path(path, working_dir, &self.load_path)
     }
 
     /// Apply any Unbound values on `()` Args.
@@ -1126,38 +1126,38 @@ mod test {
     fn script_eval_semantics(a: &str) {
         let mut musteval_checks = Vec::new();
         let mut noeval_checks = Vec::new();
-        let mut script = String::new();
-        let mut env = HashMap::new();
-
-        env.insert("*id".to_string(), t_id());
-
-        let mut iter = a.chars().peekable();
-        while let Some(c) = iter.next() {
-            match c {
-                '+' | '-' if iter.peek() != Some(&'>') => {
-                    let (v, check) = check_eval();
-                    let ind = musteval_checks.len() + noeval_checks.len();
-                    let name = format!("*{}", ind);
-                    script.push_str(&format!("${}", &name));
-                    env.insert(name, v);
-                    if c == '+' {
-                        &mut musteval_checks
-                    } else {
-                        &mut noeval_checks
-                    }
-                    .push((check, ind));
-                }
-                c => script.push(c),
-            }
-        }
 
         let runtime = make_runtime().unwrap();
-        let mut script = runtime.load_string("<test>", &script).unwrap();
-        script.extend_top_level_env(env);
-        let mut v = runtime.block_on(script.evaluate()).unwrap();
-        runtime
-            .block_on(async { Context::eval(&mut v).await })
-            .unwrap();
+        runtime.block_on(async {
+            let mut script = String::new();
+            let mut env = HashMap::new();
+            env.insert("*id".to_string(), t_id());
+
+            // Add values to the environment for each `+` and `-` encountered.
+            let mut iter = a.chars().peekable();
+            while let Some(c) = iter.next() {
+                match c {
+                    '+' | '-' if iter.peek() != Some(&'>') => {
+                        let (v, check) = check_eval();
+                        let ind = musteval_checks.len() + noeval_checks.len();
+                        let name = format!("*{}", ind);
+                        script.push_str(&format!("${}", &name));
+                        env.insert(name, v);
+                        if c == '+' {
+                            &mut musteval_checks
+                        } else {
+                            &mut noeval_checks
+                        }
+                        .push((check, ind));
+                    }
+                    c => script.push(c),
+                }
+            }
+            let mut script = runtime.load_string("<test>", &script).unwrap();
+            script.extend_top_level_env(env);
+            let mut v = script.evaluate().await.unwrap();
+            Context::eval(&mut v).await.unwrap();
+        });
 
         for (c, name) in musteval_checks {
             if !c.is_evaluated() {

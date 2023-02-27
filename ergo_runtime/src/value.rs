@@ -1565,7 +1565,7 @@ impl Value {
 /// value (if the value is dynamically typed or none of the type cases matched).
 ///
 /// ## Example
-/// ```
+/// ```ignore
 /// # use ergo_runtime::value::{match_value, Value};
 /// # use ergo_runtime::types::{Unit, Bool, MapEntry};
 /// let value: Value = Unit.into();

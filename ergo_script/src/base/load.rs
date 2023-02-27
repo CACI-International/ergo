@@ -69,7 +69,7 @@ impl LoadContext {
         }
     }
 
-    /// Resolve a path to the full script path, based on the load path.
+    /// Resolve a path to the full script path, based on the stored load path.
     ///
     /// If resolution succeeds, the returned path will be to a file (not directory).
     pub fn resolve_script_path<P: AsRef<Path>>(
@@ -77,12 +77,7 @@ impl LoadContext {
         working_dir: Option<P>,
         path: &Path,
     ) -> Option<PathBuf> {
-        let get = script_path_exists(path, true);
-        match working_dir {
-            Some(dir) => get(dir.as_ref()),
-            None => std::env::current_dir().ok().and_then(|p| get(p.as_ref())),
-        }
-        .or_else(|| self.paths.iter().find_map(|p| get(p.as_ref())))
+        resolve_script_path(path, working_dir, &self.paths)
     }
 
     fn as_value(&self) -> TypedValue<Self> {
@@ -444,4 +439,22 @@ fn script_path_exists<'a, P: 'a + AsRef<Path>>(
             }
         })
     }
+}
+
+/// Resolve a script path given the working directory and list of load paths.
+pub fn resolve_script_path<'a, P: AsRef<Path>, Paths>(
+    path: &Path,
+    working_dir: Option<P>,
+    load_paths: Paths,
+) -> Option<PathBuf>
+where
+    Paths: IntoIterator,
+    Paths::Item: AsRef<Path>,
+{
+    let get = script_path_exists(path, true);
+    match working_dir {
+        Some(dir) => get(dir.as_ref()),
+        None => std::env::current_dir().ok().and_then(|p| get(p.as_ref())),
+    }
+    .or_else(|| load_paths.into_iter().find_map(|p| get(p.as_ref())))
 }
