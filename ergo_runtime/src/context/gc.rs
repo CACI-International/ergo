@@ -1,8 +1,13 @@
 //! Runtime garbage collector.
 
+use crate::abi_stable::{closure::Closure, std_types::RArc, StableAbi};
 use crate::gc;
-use abi_stable::{std_types::RArc, StableAbi};
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+use std::thread;
+use std::time::{Duration, Instant as Clock};
+
+/// The amount of time between garbage collections.
+const GC_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Default, Clone, Copy, StableAbi)]
 #[repr(C)]
@@ -22,7 +27,7 @@ impl gc::atomic::WithPile for ContextPile {
 #[repr(C)]
 pub struct GarbageCollector {
     pile: Pile,
-    done: RArc<AtomicBool>,
+    done: Closure<(), ()>,
 }
 
 impl std::fmt::Debug for GarbageCollector {
@@ -37,12 +42,18 @@ impl GarbageCollector {
         let done_token = done.clone();
         let mut collector: GarbageCollectorImpl = Default::default();
         let pile = collector.pile.clone();
-        std::thread::spawn(move || {
+        let handle = thread::spawn(move || {
+            let mut next = Clock::now();
             while !done_token.load(Ordering::Relaxed) {
-                std::thread::sleep(std::time::Duration::from_secs(1));
-                //collector.collect();
+                next += GC_INTERVAL;
+                thread::park_timeout(next - Clock::now());
+                collector.collect();
             }
             collector.collect();
+        });
+        let done = Closure::<(), ()>::new(move || {
+            done.store(true, Ordering::Relaxed);
+            handle.thread().unpark();
         });
         GarbageCollector { pile, done }
     }
@@ -55,7 +66,7 @@ impl GarbageCollector {
 
 impl Drop for GarbageCollector {
     fn drop(&mut self) {
-        self.done.store(true, Ordering::Relaxed);
+        self.done.call();
     }
 }
 
