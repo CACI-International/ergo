@@ -263,7 +263,7 @@ iter-do = fn ~:parallel ^:args -> {
         done = plugin:Array:from $iter
         plugin:match $parallel [
             () -> $done
-            :unset -> { ^done }
+            $unset -> { ^done }
         ]
         ()
     }
