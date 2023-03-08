@@ -247,6 +247,32 @@ iter-split = fn :n :iter -> [plugin:Iter:take $n $iter, plugin:Iter:skip $n $ite
 ## Arguments: `(into $$Iter |> :iter)`
 iter-true = fn :iter -> plugin:Iter:filter (fn :a -> $a) $iter
 
+## Evaluate an iterator.
+##
+## Arguments: `[Function :func] (Into<Iter> :iter)`
+##
+## Keyed Arguments:
+## * `parallel` - evaluate the iterator in parallel, rather than in order
+##
+## Evaluates each iterator element. If `func` is provided, apply it to each element as if by `Iter:map`.
+##
+## This function returns `()`, so it is only useful if evaluating the iterator has some side effect,
+## such as manipulating the file system or executing a program.
+iter-do = fn ~:parallel ^:args -> {
+    impl = fn ~:parallel :iter -> {
+        done = plugin:Array:from $iter
+        plugin:match $parallel [
+            () -> $done
+            :unset -> { ^done }
+        ]
+        ()
+    }
+    plugin:match $args [
+        fn :f :iter -> impl ^{parallel} <| plugin:Iter:map $f $iter
+        fn :iter -> impl ^{parallel} $iter
+    ]
+}
+
 ## Conditionally return a value.
 ##
 ## Arguments: `(Into Bool |> :condition) :if_true [else if :cond2 :if_true2]... [else :if_false]`
@@ -390,7 +416,7 @@ eval-id = id ~eval=force <| fn :value -> {
 
     ##mdoc:module
     ## Iterators producing values.
-    Iter = extend-type plugin:Iter {split = $iter-split, true = $iter-true}
+    Iter = extend-type plugin:Iter {split = $iter-split, true = $iter-true, do = $iter-do}
 
     ##mdoc:module
     ## Maps of values.
