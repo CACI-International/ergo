@@ -29,7 +29,8 @@ pub struct LoadContext {
 
 unsafe impl ergo_runtime::value::InnerValues for LoadContext {
     fn visit<'a, F: FnMut(&'a Value)>(&'a self, mut f: F) {
-        for (_, v) in self.shared.cache.iter() {
+        let items = self.shared.cache.iter().map(|(_, v)| v).collect::<Vec<_>>();
+        for v in items {
             f(v);
         }
     }

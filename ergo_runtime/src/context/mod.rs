@@ -213,7 +213,7 @@ impl ContextBuilder {
             }),
             dynamic_scope: Default::default(),
             error_scope: self.error_scope.unwrap_or_default(),
-            garbage_scope: Default::default(),
+            garbage_scope: GarbageScope::empty(),
             backtrace: Default::default(),
         })
     }

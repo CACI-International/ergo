@@ -127,11 +127,16 @@ impl<T> GcScopeRoot<T> {
         Gc::root(pointer);
         GcScopeRoot(unsafe { pointer.clone() })
     }
+
+    /// Unroot a GcScopeRoot early.
+    pub fn unroot(&self) {
+        Gc::unroot(&self.0);
+    }
 }
 
 impl<T> Drop for GcScopeRoot<T> {
     fn drop(&mut self) {
-        Gc::unroot(&self.0);
+        self.unroot();
     }
 }
 

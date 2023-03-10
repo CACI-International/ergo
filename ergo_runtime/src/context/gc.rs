@@ -1,7 +1,12 @@
 //! Runtime garbage collector.
 
-use crate::abi_stable::{closure::Closure, std_types::RArc, StableAbi};
+use crate::abi_stable::{
+    closure::ClosureOnce,
+    std_types::{RArc, ROption},
+    StableAbi,
+};
 use crate::gc;
+use std::mem::ManuallyDrop;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use std::thread;
 use std::time::{Duration, Instant as Clock};
@@ -27,7 +32,7 @@ impl gc::atomic::WithPile for ContextPile {
 #[repr(C)]
 pub struct GarbageCollector {
     pile: Pile,
-    done: Closure<(), ()>,
+    done: ManuallyDrop<ClosureOnce<(), ()>>,
 }
 
 impl std::fmt::Debug for GarbageCollector {
@@ -42,20 +47,31 @@ impl GarbageCollector {
         let done_token = done.clone();
         let mut collector: GarbageCollectorImpl = Default::default();
         let pile = collector.pile.clone();
-        let handle = thread::spawn(move || {
-            let mut next = Clock::now();
-            while !done_token.load(Ordering::Relaxed) {
-                next += GC_INTERVAL;
-                thread::park_timeout(next - Clock::now());
+        let handle = thread::Builder::new()
+            .name("ergo_runtime gc".into())
+            .spawn(move || {
+                let mut next = Clock::now();
+                while !done_token.load(Ordering::Relaxed) {
+                    next += GC_INTERVAL;
+                    thread::park_timeout(next - Clock::now());
+                    let start = Clock::now();
+                    collector.collect();
+                    log::info!("GC collect took {:?}", start.elapsed());
+                }
                 collector.collect();
-            }
-            collector.collect();
-        });
-        let done = Closure::<(), ()>::new(move || {
+            })
+            .expect("failed to create GC thread");
+        let done = ClosureOnce::<(), ()>::new(move || {
             done.store(true, Ordering::Relaxed);
             handle.thread().unpark();
+            if handle.join().is_err() {
+                log::error!("GC thread panicked");
+            }
         });
-        GarbageCollector { pile, done }
+        GarbageCollector {
+            pile,
+            done: ManuallyDrop::new(done),
+        }
     }
 
     #[inline]
@@ -66,7 +82,7 @@ impl GarbageCollector {
 
 impl Drop for GarbageCollector {
     fn drop(&mut self) {
-        self.done.call();
+        unsafe { ManuallyDrop::take(&mut self.done) }.call();
     }
 }
 
@@ -76,27 +92,37 @@ impl Drop for GarbageCollector {
 #[derive(Clone, StableAbi)]
 #[repr(C)]
 pub struct GarbageScope {
-    list: RArc<gc::GcScopeRoot<GarbageScopeList>>,
+    list: ROption<RArc<gc::GcScopeRoot<GarbageScopeList>>>,
 }
 
 impl Default for GarbageScope {
     fn default() -> Self {
         GarbageScope {
-            list: RArc::new(gc::GcScopeRoot::new(&GarbageCollector::create(
+            list: ROption::RSome(RArc::new(gc::GcScopeRoot::new(&GarbageCollector::create(
                 GarbageScopeList::default(),
-            ))),
+            )))),
         }
     }
 }
 
 impl GarbageScope {
+    pub(crate) fn empty() -> Self {
+        GarbageScope {
+            list: ROption::RNone,
+        }
+    }
+
     pub(crate) fn push(&self, v: gc::Gc<crate::value::Inner>) {
-        self.list.push(v);
+        if let ROption::RSome(list) = &self.list {
+            list.push(v);
+        }
     }
 
     /// Add the given value to the garbage scope.
     pub fn add(&self, v: &crate::Value) {
-        self.list.add(v);
+        if let ROption::RSome(list) = &self.list {
+            list.add(v);
+        }
     }
 }
 
