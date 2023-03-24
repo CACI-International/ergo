@@ -1,13 +1,12 @@
 ARG TAG
-
 FROM debian:$TAG
-ARG ERGO_VERSION
-ARG TARGET
 
 ENV LANG C.UTF-8
 ENV LC_ALL C.UTF-8
 
-ADD https://github.com/CACI-International/ergo/releases/download/$ERGO_VERSION/ergo-$ERGO_VERSION-$TARGET.run /installer
+ARG TARGETARCH
+ARG TARGETVARIANT
+COPY ergo-${TARGETARCH}${TARGETVARIANT}.run /installer
 
 RUN apt-get update && apt-get install less && rm -rf /var/lib/apt/lists/* \
   && sh /installer install /usr && rm /installer
