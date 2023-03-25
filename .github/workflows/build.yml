@@ -114,7 +114,7 @@ jobs:
           overwrite: true
 
   docker:
-    name: "Docker build - ${{ matrix.target.target }} ${{ matrix.target.image }}"
+    name: "Docker build - ${{ matrix.target.image }}:${{ matrix.target.tag }}"
     runs-on: ubuntu-latest
     needs: build
 
