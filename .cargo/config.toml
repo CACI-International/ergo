@@ -3,3 +3,6 @@ rustflags = ["-C", "target-feature=-crt-static", "-C", "link-args=-lm"]
 
 [target.aarch64-unknown-linux-musl]
 rustflags = ["-C", "target-feature=-crt-static", "-C", "link-args=-lm"]
+
+[target.armv7-unknown-linux-musleabihf]
+rustflags = ["-C", "target-feature=-crt-static", "-C", "link-args=-lm"]

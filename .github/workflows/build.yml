@@ -23,11 +23,17 @@ jobs:
             target: aarch64-unknown-linux-gnu
             cross: true
           - os: ubuntu-latest
+            target: armv7-unknown-linux-gnueabihf
+            cross: true
+          - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             cross: true
             test-package: true
           - os: ubuntu-latest
             target: aarch64-unknown-linux-musl
+            cross: true
+          - os: ubuntu-latest
+            target: armv7-unknown-linux-musleabihf
             cross: true
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
@@ -141,7 +147,7 @@ jobs:
     env:
       dockerfile: 'docker/Dockerfile.${{ matrix.target.image }}'
       build_args: 'TAG=${{ matrix.target.tag }}'
-      platforms: linux/amd64,linux/arm64/v8
+      platforms: linux/amd64,linux/arm64/v8,linux/arm/v7
       tag: '${{ matrix.target.prefix }}${{ matrix.target.tag }}'
       test_tag: 'ergo-${{ matrix.target.image }}-${{ matrix.target.tag }}:test'
 
@@ -154,6 +160,11 @@ jobs:
         with:
           name: aarch64-unknown-linux-${{ matrix.target.abi }}
 
+      - name: Download the installer (armv7)
+        uses: actions/download-artifact@v3
+        with:
+          name: armv7-unknown-linux-${{ matrix.target.abi }}eabihf
+
       - name: Download the installer (x86_64)
         uses: actions/download-artifact@v3
         with:
@@ -162,6 +173,7 @@ jobs:
       - name: Adjust installer filenames
         run: |
           mv ergo-*-aarch64-unknown-linux-${{ matrix.target.abi }}.run docker/ergo-arm64.run
+          mv ergo-*-armv7-unknown-linux-${{ matrix.target.abi }}eabihf.run docker/ergo-armv7.run
           mv ergo-*-x86_64-unknown-linux-${{ matrix.target.abi }}.run docker/ergo-amd64.run
 
       - name: Log in to Docker Hub
