@@ -1,12 +1,9 @@
 ARG TAG
-FROM debian:$TAG
-
-ENV LANG C.UTF-8
-ENV LC_ALL C.UTF-8
+FROM alpine:$TAG
 
 ARG TARGETARCH
 ARG TARGETVARIANT
 COPY ergo-${TARGETARCH}${TARGETVARIANT}.run /installer
 
-RUN apt-get update && apt-get install less && rm -rf /var/lib/apt/lists/* \
+RUN apk add libgcc ncurses-terminfo-base \
   && sh /installer install /usr/local && rm /installer

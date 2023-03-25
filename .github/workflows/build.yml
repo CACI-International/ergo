@@ -133,12 +133,17 @@ jobs:
           - image: debian
             tag: bookworm-slim
             abi: gnu
+          - image: alpine
+            tag: 3.17
+            abi: musl
+            prefix: alpine
 
     env:
       dockerfile: 'docker/Dockerfile.${{ matrix.target.image }}'
       build_args: 'TAG=${{ matrix.target.tag }}'
       platforms: linux/amd64,linux/arm64/v8
-      test_tag: 'ergo-${{ matrix.target.tag }}:test'
+      tag: '${{ matrix.target.prefix }}${{ matrix.target.tag }}'
+      test_tag: 'ergo-${{ matrix.target.image }}-${{ matrix.target.tag }}:test'
 
     steps:
       - name: Checkout
@@ -201,10 +206,10 @@ jobs:
             latest=false
           tags: |
             type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'main') && matrix.target.tag == 'bullseye' }}
-            type=pep440,pattern=${{ matrix.target.tag }}
-            type=pep440,pattern={{version}}-${{ matrix.target.tag }}
-            type=pep440,pattern={{major}}-${{ matrix.target.tag }}-${{ matrix.target.tag }}
-            type=pep440,pattern={{major}}.{{minor}}-${{ matrix.target.tag }}
+            type=pep440,pattern=${{ env.tag }}
+            type=pep440,pattern={{version}}-${{ env.tag }}
+            type=pep440,pattern={{major}}-${{ env.tag }}
+            type=pep440,pattern={{major}}.{{minor}}-${{ env.tag }}
 
       - name: Push Docker image
         uses: docker/build-push-action@v4
