@@ -75,7 +75,7 @@ jobs:
             ~/.cargo/git
             target
             .ergo_work
-          key: ${{ matrix.target.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: cargo-${{ matrix.rust-version }}-${{ matrix.target.target }}-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Install cross
         run: cargo install cross --git https://github.com/cross-rs/cross
