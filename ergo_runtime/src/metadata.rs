@@ -1,16 +1,15 @@
 //! Common value metadata keys.
 
 use crate as ergo_runtime;
-use crate::abi_stable::{rvec, std_types::RVec, uuid::Uuid};
+use crate::abi_stable::{rvec, std_types::RVec, uuid::Uuid, StableAbi};
 use crate::context::DynamicScopeKey;
-use crate::value::{match_value, MetadataKey, Value};
+use crate::type_system::ErgoType;
+use crate::value::{match_value, MetadataKey, TypedValue, Value};
 
 /// Documentation metadata key.
 pub struct Doc;
 
 impl MetadataKey for Doc {
-    type Value = Value;
-
     fn id(&self) -> u128 {
         crate::nsid!(meta::doc).as_u128()
     }
@@ -38,7 +37,7 @@ impl Doc {
         while value.get_metadata(&Doc).is_none() && value.eval_once().await {}
 
         if let Some(v) = value.get_metadata(&Doc) {
-            let mut v = v.owned();
+            let mut v = v.clone();
             let doc_v = value.clone();
             crate::Context::fork(
                 |ctx| {
@@ -77,27 +76,42 @@ impl Doc {
 /// Source metadata key.
 pub struct Source;
 
-impl MetadataKey for Source {
-    type Value = RVec<crate::Source<()>>;
+#[derive(Clone, Debug, ErgoType, StableAbi, PartialEq, Eq, Hash)]
+#[repr(C)]
+struct ValueSources {
+    sources: RVec<crate::Source<()>>,
+}
 
+crate::ConstantDependency!(ValueSources);
+
+impl From<ValueSources> for TypedValue<ValueSources> {
+    fn from(vs: ValueSources) -> Self {
+        Self::constant(vs)
+    }
+}
+
+impl MetadataKey for Source {
     fn id(&self) -> u128 {
         crate::nsid!(meta::source).as_u128()
     }
 }
 
 impl Source {
-    /// Get the source of the given value, if any.
-    pub fn get_option(value: &Value) -> Option<crate::Source<()>> {
+    /// Get all source information for the given value.
+    pub fn get_sources(value: &Value) -> Option<&RVec<crate::Source<()>>> {
         value
             .get_metadata(&Source)
-            .map(|v| v.last().unwrap().clone())
+            .map(|v| &v.as_ref::<ValueSources>().unwrap().sources)
+    }
+
+    /// Get the source of the given value, if any.
+    pub fn get_option(value: &Value) -> Option<crate::Source<()>> {
+        Self::get_sources(value).map(|v| v.last().unwrap().clone())
     }
 
     /// Get the origin source of the given value, if any.
     pub fn get_origin_option(value: &Value) -> Option<crate::Source<()>> {
-        value
-            .get_metadata(&Source)
-            .map(|v| v.first().unwrap().clone())
+        Self::get_sources(value).map(|v| v.first().unwrap().clone())
     }
 
     /// Get some source for the given value.
@@ -122,7 +136,7 @@ impl Source {
 
     /// Get the source immediately prior to the last source for the given value, if any.
     pub fn get_prior(value: &Value) -> crate::Source<()> {
-        match value.get_metadata(&Source) {
+        match Self::get_sources(value) {
             None => crate::Source::missing(()),
             Some(v) => v.iter().nth_back(1).or_else(|| v.last()).unwrap().clone(),
         }
@@ -138,17 +152,23 @@ impl Source {
 
     /// Set the source for the given value.
     pub fn set(v: &mut Value, src: crate::Source<()>) {
-        v.set_metadata(&Self, rvec![src]);
+        v.set_metadata(
+            &Self,
+            ValueSources {
+                sources: rvec![src],
+            }
+            .into(),
+        );
     }
 
     /// Add the latest source for the given value.
     pub fn update(v: &mut Value, src: crate::Source<()>) {
-        let mut sources = match v.get_metadata(&Source) {
+        let mut sources = match Self::get_sources(v) {
             None => rvec![],
-            Some(v) => v.owned(),
+            Some(v) => v.clone(),
         };
         sources.push(src);
-        v.set_metadata(&Source, sources);
+        v.set_metadata(&Source, ValueSources { sources }.into());
     }
 
     /// Set the source for the given value if no other source is set.
@@ -168,7 +188,7 @@ impl Source {
     /// Copy all source information from one value to another.
     pub fn copy(from: &Value, mut to: Value) -> Value {
         if let Some(sources) = from.get_metadata(&Self) {
-            to.set_metadata(&Self, sources.as_ref().clone());
+            to.set_metadata(&Self, sources.clone());
         }
         to
     }
@@ -181,8 +201,6 @@ pub struct Runtime {
 }
 
 impl MetadataKey for Runtime {
-    type Value = Value;
-
     fn id(&self) -> u128 {
         let mut id = crate::nsid!(meta::any);
         id = Uuid::new_v5(&id, self.key.to_string().as_bytes());

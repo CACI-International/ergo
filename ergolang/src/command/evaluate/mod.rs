@@ -354,10 +354,10 @@ impl Evaluate {
         let (complete_send, complete) = std::sync::mpsc::channel();
 
         let exec_thread = std::thread::spawn(move || {
-            let value_to_execute = loaded.and_then(|script_output| {
+            let value_to_execute = loaded/*.and_then(|script_output| {
                 let v = runtime.block_on(Runtime::apply_unbound(script_output));
                 Ok(try_value!(v))
-            });
+            })*/;
 
             let result = value_to_execute.and_then(|mut value| {
                 runtime.block_on(async {

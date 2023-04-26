@@ -24,7 +24,7 @@ use crate::Context;
 #[repr(C)]
 pub struct Value {
     pub(crate) inner: Gc<Inner>,
-    metadata: BstMap<U128, RArc<Erased>>,
+    metadata: BstMap<U128, Value>,
 }
 
 impl Clone for Value {
@@ -132,6 +132,7 @@ impl From<Inner> for Gc<Inner> {
     fn from(i: Inner) -> Self {
         let ret = crate::context::GarbageCollector::create(i);
         Context::with(|ctx| ctx.garbage_scope.push(unsafe { ret.clone() }));
+        Gc::track(&ret);
         ret
     }
 }
@@ -140,8 +141,6 @@ impl From<Inner> for Gc<Inner> {
 ///
 /// Keys generate the metadata id and have an associated output type.
 pub trait MetadataKey {
-    type Value: Eraseable;
-
     /// Get the metadata identifier from this key.
     fn id(&self) -> u128;
 }
@@ -1297,6 +1296,9 @@ pub mod lazy {
 impl GcRefs for Value {
     fn gc_refs(&self, v: &mut gc::Visitor) {
         v.visit(&self.inner);
+        for (_, val) in &self.metadata {
+            val.gc_refs(v);
+        }
     }
 }
 
@@ -1508,9 +1510,8 @@ impl Value {
     }
 
     /// Set a metadata entry for this value.
-    pub fn set_metadata<T: MetadataKey>(&mut self, key: &T, value: T::Value) {
-        self.metadata
-            .insert(key.id().into(), RArc::new(Erased::new(value)));
+    pub fn set_metadata<T: MetadataKey>(&mut self, key: &T, value: Value) {
+        self.metadata.insert(key.id().into(), value);
     }
 
     /// Copy the metadata from another value.
@@ -1524,10 +1525,8 @@ impl Value {
     }
 
     /// Get a metadata entry for this value.
-    pub fn get_metadata<T: MetadataKey>(&self, key: &T) -> Option<Ref<T::Value>> {
-        self.metadata
-            .get(&key.id())
-            .map(|v| unsafe { Ref::new(v.clone()) })
+    pub fn get_metadata<T: MetadataKey>(&self, key: &T) -> Option<&Value> {
+        self.metadata.get(&key.id())
     }
 
     /// Evaluate the value once (if dynamic).

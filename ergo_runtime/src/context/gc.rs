@@ -97,11 +97,12 @@ pub struct GarbageScope {
 
 impl Default for GarbageScope {
     fn default() -> Self {
-        GarbageScope {
-            list: ROption::RSome(RArc::new(gc::GcScopeRoot::new(&GarbageCollector::create(
-                GarbageScopeList::default(),
-            )))),
-        }
+        let list = GarbageCollector::create(GarbageScopeList::default());
+        let ret = GarbageScope {
+            list: ROption::RSome(RArc::new(gc::GcScopeRoot::new(&list))),
+        };
+        gc::Gc::track(&list);
+        ret
     }
 }
 

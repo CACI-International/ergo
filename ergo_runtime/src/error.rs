@@ -179,7 +179,7 @@ pub trait DiagnosticInfo {
         R: DiagnosticInfo<Output = R>,
     {
         use crate::metadata::Source;
-        let sources = match v.get_metadata(&Source) {
+        let sources = match Source::get_sources(v) {
             None => return self.into_diagnostic(),
             Some(sources) => sources,
         };

@@ -7,24 +7,16 @@
 //! * A reference must only be cloned from a reference that is in the graph.
 //! * A cloned reference must be added to the graph prior to the original reference being removed.
 //!
-//! If either of the above are not upheld, it's possible that multiple references are created, one
-//! is dropped and collection occurs, dropping the data and leaving the other references in an
-//! invalid state.
+//! If either of the above are not upheld, it's possible that a collection occurs when references
+//! exist but are not in the graph, dropping the data and leaving the references in an invalid
+//! state.
 //!
-//! Rather than keeping a list of all values that have been allocated (which would need locking on
-//! allocation), this scheme only keeps the root references and has a list of dropped references
-//! for consideration (which does not need locking). So rather than doing a traditional mark and
-//! sweep (checking for inclusion) on all allocations, this traverses to determine everything
-//! that's reachable and drops data related to dropped references that are no longer reachable
-//! (checking for exclusion).
+//! The collector keeps a list of all values that have been allocated to determine which are
+//! eligible for dropping. However, the initial inclusion is opt-in (to make sure that the
+//! reference is in the graph prior to being tracked).
 
 use abi_stable::{std_types::RHashMap, StableAbi};
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicBool, Ordering};
-
-plugin_tls::thread_local! {
-    static DISABLE_DROP: AtomicBool = AtomicBool::new(false);
-}
 
 /// A garbage-collected value.
 ///
@@ -42,6 +34,12 @@ impl<T> std::ops::Deref for Gc<T> {
     type Target = T;
 
     fn deref(&self) -> &T {
+        log::trace!(
+            "gc dereference ({} bytes) at {:?}",
+            std::mem::size_of::<T>(),
+            self.ptr
+        );
+        log::logger().flush();
         unsafe { self.ptr.as_ref() }
     }
 }
@@ -80,8 +78,9 @@ impl<T> Gc<T> {
         }
     }
 
-    /// Safety: if you clone a Gc, the result is only guaranteed to be valid as long as the source
-    /// Gc is valid (until the cloned Gc is added as a reference of some other valid value).
+    /// # Safety
+    /// If you clone a Gc, the result is only guaranteed to be valid as long as the source Gc is
+    /// valid (until the cloned Gc is added as a reference of some other valid value).
     pub unsafe fn clone(&self) -> Self {
         Gc { ptr: self.ptr }
     }
@@ -94,22 +93,18 @@ impl<T> Gc<T> {
         self.info().remove_root();
     }
 
-    pub fn forget(self: Self) {
-        DISABLE_DROP.with(|d| d.store(true, Ordering::Relaxed));
-        drop(self);
-        DISABLE_DROP.with(|d| d.store(false, Ordering::Relaxed));
+    pub fn track(self: &Self) {
+        self.info().track();
     }
 
     fn info(&self) -> &GenericGcInfo {
+        log::trace!(
+            "gc info for value ({} bytes) at {:?}",
+            std::mem::size_of::<T>(),
+            self.ptr
+        );
+        log::logger().flush();
         unsafe { GenericGcInfo::from_value_ptr(self.ptr).as_ref() }
-    }
-}
-
-impl<T> Drop for Gc<T> {
-    fn drop(&mut self) {
-        if !DISABLE_DROP.with(|d| d.load(Ordering::Relaxed)) {
-            self.info().consider_drop();
-        }
     }
 }
 
@@ -215,8 +210,6 @@ impl_tuple! { A B C D E F G H I J }
 #[repr(C)]
 pub struct Visitor {
     visited: RHashMap<NonNull<GenericGcInfo>, ()>,
-    to_drop: RHashMap<NonNull<GenericGcInfo>, ()>,
-    visiting_dropping: bool,
 }
 
 impl Visitor {
@@ -227,31 +220,20 @@ impl Visitor {
     }
 
     fn visit_generic(&mut self, info: &GenericGcInfo) {
-        if self.visiting_dropping {
-            // Only visit things which were not visited and aren't in the pile.
-            if !self.visited.contains_key(&NonNull::from(info)) && !info.in_pile() {
-                if self.to_drop.insert(NonNull::from(info), ()).is_none() {
-                    info.gc_refs(self);
-                }
-            }
-        } else if self.visited.insert(NonNull::from(info), ()).is_none() {
+        if self.visited.insert(NonNull::from(info), ()).is_none() {
             info.gc_refs(self);
         }
-    }
-
-    fn visiting_dropping(&mut self) {
-        self.visiting_dropping = true;
     }
 }
 
 pub struct Cleaner<'a> {
     roots: &'a mut RHashMap<NonNull<GenericGcInfo>, ()>,
-    consider_drop: &'a mut Vec<NonNull<GenericGcInfo>>,
+    tracked: &'a mut RHashMap<NonNull<GenericGcInfo>, ()>,
 }
 
 impl Cleaner<'_> {
-    pub fn consider_drop(&mut self, info: NonNull<GenericGcInfo>) {
-        self.consider_drop.push(info);
+    pub fn track(&mut self, info: NonNull<GenericGcInfo>) {
+        self.tracked.insert(info, ());
     }
 
     pub fn add_root(&mut self, info: NonNull<GenericGcInfo>) {
@@ -270,7 +252,7 @@ pub trait GarbagePile {
 }
 
 pub trait GarbagePileItem {
-    fn consider_drop(&self);
+    fn track(&self);
     fn add_root(&self);
     fn remove_root(&self);
     fn is_in_pile(&self) -> bool;
@@ -280,6 +262,7 @@ pub trait GarbagePileItem {
 #[repr(C)]
 pub struct GarbageCollector<Pile> {
     roots: RHashMap<NonNull<GenericGcInfo>, ()>,
+    tracked: RHashMap<NonNull<GenericGcInfo>, ()>,
     pub pile: Pile,
 }
 
@@ -295,17 +278,11 @@ impl<Pile: GarbagePile> GarbageCollector<Pile> {
     }
 
     pub fn collect(&mut self) {
-        let mut consider_drop = Vec::new();
         let mut cleaner = Cleaner {
             roots: &mut self.roots,
-            consider_drop: &mut consider_drop,
+            tracked: &mut self.tracked,
         };
         self.pile.clean(&mut cleaner);
-
-        if consider_drop.is_empty() {
-            // No need to traverse anything.
-            return;
-        }
 
         // Traverse all info starting at the roots.
         let mut v = Visitor::default();
@@ -314,44 +291,23 @@ impl<Pile: GarbagePile> GarbageCollector<Pile> {
             unsafe { gc.as_ref() }.gc_refs(&mut v);
         }
 
-        // Visit all dropped infos, recording all values and references (deeply) which aren't in
-        // the visited set. Without visiting ancestors, each subsequent collect would only collect
-        // the next generation of ancestors (as the Gc references are iteratively dropped).
-        v.visiting_dropping();
-        for infoptr in consider_drop {
-            if !v.visited.contains_key(&infoptr) {
-                // Drop the info if it hasn't been added to the pile while we were traversing.
-                let info = unsafe { infoptr.as_ref() };
-                if !info.in_pile() {
-                    v.to_drop.insert(infoptr, ());
-                    info.gc_refs(&mut v);
+        // Remove and drop any tracked values which weren't visited.
+        let tracked: Vec<_> = self.tracked.keys().copied().collect();
+        for k in tracked {
+            if !v.visited.contains_key(&k) {
+                self.tracked.remove(&k);
+                unsafe {
+                    k.as_ref().drop();
                 }
             }
         }
-
-        // Disable pile collection so that anything dropped here won't add children to the pile.
-        DISABLE_DROP.with(|d| d.store(true, Ordering::Relaxed));
-        // Anything in `to_drop` must _not_ have been in `visited`, and all descendents that are no
-        // longer reachable are accounted for. Based on the assumptions of this collector
-        // implementation, we don't need to check `next_dropped` for null, as the above loop and
-        // `gc_refs` visit (after `visiting_dropping` is enabled) checks for this, and we may
-        // assume that if the value wasn't reachable when we traversed and it hasn't been dropped,
-        // then it won't be dropped (users are not allowed to keep such dangling values around;
-        // they must be added to the graph prior to removing their source reference that was
-        // already in the graph).
-        for info in v.to_drop.keys() {
-            unsafe {
-                info.as_ref().drop();
-            }
-        }
-        DISABLE_DROP.with(|d| d.store(false, Ordering::Relaxed));
     }
 }
 
 #[derive(StableAbi)]
 #[repr(C)]
 struct GcVTable {
-    consider_drop: extern "C" fn(&GenericGcInfo),
+    track: extern "C" fn(&GenericGcInfo),
     add_root: extern "C" fn(&GenericGcInfo),
     remove_root: extern "C" fn(&GenericGcInfo),
     in_pile: extern "C" fn(&GenericGcInfo) -> bool,
@@ -370,8 +326,8 @@ impl GenericGcInfo {
         (self.vtable.gc_refs)(self, v);
     }
 
-    pub fn consider_drop(&self) {
-        (self.vtable.consider_drop)(self);
+    pub fn track(&self) {
+        (self.vtable.track)(self);
     }
 
     pub fn add_root(&self) {
@@ -429,7 +385,7 @@ unsafe fn offset_backward<To, From>(ptr: *const From) -> *const To {
 
 impl<T: GcRefs, PileInfo: GarbagePileItem> GcInfo<PileInfo, T> {
     const VTABLE: GcVTable = GcVTable {
-        consider_drop: Self::consider_drop,
+        track: Self::track,
         add_root: Self::add_root,
         remove_root: Self::remove_root,
         in_pile: Self::in_pile,
@@ -445,8 +401,8 @@ impl<T: GcRefs, PileInfo: GarbagePileItem> GcInfo<PileInfo, T> {
         }
     }
 
-    extern "C" fn consider_drop(generic: &GenericGcInfo) {
-        Self::from_generic(generic).pile_item.consider_drop();
+    extern "C" fn track(generic: &GenericGcInfo) {
+        Self::from_generic(generic).pile_item.track();
     }
 
     extern "C" fn add_root(generic: &GenericGcInfo) {
@@ -462,15 +418,31 @@ impl<T: GcRefs, PileInfo: GarbagePileItem> GcInfo<PileInfo, T> {
     }
 
     extern "C" fn gc_refs_impl(generic: &GenericGcInfo, v: &mut Visitor) {
+        log::trace!(
+            "gc refs for value ({} bytes) at {:?}",
+            std::mem::size_of::<T>(),
+            &Self::from_generic(generic).value as *const _
+        );
+        log::logger().flush();
         GcRefs::gc_refs(&Self::from_generic(generic).value, v);
     }
 
     extern "C" fn drop_info(generic: &GenericGcInfo) {
+        let ptr = Self::from_generic(generic) as *const Self as *mut Self;
+        log::trace!(
+            "gc freeing value ({} bytes) at {:?}",
+            std::mem::size_of::<T>(),
+            &(unsafe { &*ptr }).value as *const _
+        );
         unsafe {
-            std::mem::drop(Box::from_raw(
-                Self::from_generic(generic) as *const Self as *mut Self
-            ))
-        };
+            std::ptr::drop_in_place(ptr);
+            // Poison the memory
+            #[cfg(debug_assertions)]
+            {
+                (ptr as *mut u8).write_bytes(0xa5, std::mem::size_of::<Self>());
+            }
+            std::mem::drop(Box::from_raw(ptr as *mut std::mem::ManuallyDrop<Self>));
+        }
     }
 
     pub fn new(value: T) -> NonNull<T>
@@ -484,6 +456,11 @@ impl<T: GcRefs, PileInfo: GarbagePileItem> GcInfo<PileInfo, T> {
             },
             value,
         }));
+        log::trace!(
+            "gc allocated new value ({} bytes) at {:?}",
+            std::mem::size_of::<T>(),
+            &info.value as *const _
+        );
         (&mut info.value).into()
     }
 }
@@ -542,8 +519,8 @@ pub mod atomic {
                 let next = item.next.swap(0, Ordering::Relaxed);
                 top = (next & !0b111) as *mut PileItem<WP>;
                 let info = unsafe { GenericGcInfo::from_pile_item_ptr(item.into()) };
-                if next & PILE_CONSIDER_DROP != 0 {
-                    cleaner.consider_drop(info);
+                if next & PILE_TRACK != 0 {
+                    cleaner.track(info);
                 }
                 if next & PILE_CONSIDER_ROOT != 0 {
                     if next & PILE_ROOT != 0 {
@@ -556,8 +533,8 @@ pub mod atomic {
         }
     }
 
-    /// Consider a pointer to be possibly dropped.
-    const PILE_CONSIDER_DROP: usize = 1 << 0;
+    /// Add a pointer to the set of tracked pointers.
+    const PILE_TRACK: usize = 1 << 0;
     /// Consider a pointer to be added or removed as a root.
     const PILE_CONSIDER_ROOT: usize = 1 << 1;
     /// Whether to add or remove the pointer as a root (if `PILE_CONSIDER_ROOT` is set).
@@ -638,8 +615,8 @@ pub mod atomic {
     }
 
     impl<WP: WithPile> GarbagePileItem for PileItem<WP> {
-        fn consider_drop(&self) {
-            self.add_to_pile_with(|v| v | PILE_CONSIDER_DROP);
+        fn track(&self) {
+            self.add_to_pile_with(|v| v | PILE_TRACK);
         }
 
         fn add_root(&self) {

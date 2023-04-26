@@ -120,7 +120,7 @@ async fn meta_eval(metadata_key: _, mut value: _) -> Value {
     let key = metadata_key.id().await;
     while value.get_metadata(&Runtime { key }).is_none() && value.eval_once().await {}
     crate::make_string_map! { source ARGS_SOURCE,
-        "metadata-value" = value.get_metadata(&Runtime { key }).map(|v| v.as_ref().clone()).unwrap_or_else(|| types::Unset.into()),
+        "metadata-value" = value.get_metadata(&Runtime { key }).cloned().unwrap_or_else(|| types::Unset.into()),
         "result" = value
     }
 }
@@ -134,7 +134,7 @@ async fn meta_eval(metadata_key: _, mut value: _) -> Value {
 async fn meta_get(metadata_key: _, value: _) -> Value {
     let key = metadata_key.id().await;
     match value.get_metadata(&Runtime { key }) {
-        Some(v) => v.as_ref().clone(),
+        Some(v) => v.clone(),
         None => types::Unset.into(),
     }
 }

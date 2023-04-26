@@ -33,6 +33,9 @@ unsafe impl ergo_runtime::value::InnerValues for LoadContext {
         for v in items {
             f(v);
         }
+        for v in self.shared.default_top_level_env.values() {
+            f(v);
+        }
     }
 }
 

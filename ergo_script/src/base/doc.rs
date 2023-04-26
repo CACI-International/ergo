@@ -136,7 +136,7 @@ Evaluates to the doc Path, or Unset if no Path is present (documentation is not 
             match value.get_metadata(&Doc) {
                 None => types::Unset.into(),
                 Some(v) => {
-                    let mut v = v.owned();
+                    let mut v = v.clone();
                     let doc_v = value.clone();
                     crate::Context::fork(
                         |ctx| {
