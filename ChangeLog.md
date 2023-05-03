@@ -3,6 +3,7 @@
 ## Unreleased
 ### Standard Library
 #### Additions
+* Add `std:builtin` module containing language builtins, for better discoverability.
 * Add `std:fs:read-link` to read symbolic link targets.
 
 ## 1.0.0-rc.4  -- 2022-10-21
