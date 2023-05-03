@@ -5,6 +5,19 @@
     late-bind
     id
     load
+    doc
+
+    ##std:doc:value
+    ## Load the workspace as if by `load /path/to/ancestor/workspace.ergo`.
+    ##
+    ## This value is only accessible via the builtin `$$workspace`, `std:builtin:workspace` is `Unset`.
+    workspace = {$unset}
+
+    ##std:doc:value
+    ## Load the standard library as if by `load /path/to/std.ergo`.
+    ##
+    ## This value is only accessible via the builtin `$$std`, `std:builtin:std` is `Unset`.
+    std = {$unset}
 
     unset = {$unset}
 }
