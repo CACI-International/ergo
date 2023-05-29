@@ -130,7 +130,7 @@ Evaluates to the doc Path, or Unset if no Path is present (documentation is not 
         /// Returns either a `String` or `Unset`.
         ///
         /// Unlike `doc`, this will not create a doc string describing the type when no
-        /// documentation string has been set, nor will it evaluate the given value until a doc
+        /// documentation string has been set, nor will it evaluate the given value until doc
         /// metadata is available.
         async fn raw(value: _) -> Value {
             match value.get_metadata(&Doc) {
@@ -257,6 +257,9 @@ Evaluates to the doc Path, or Unset if no Path is present (documentation is not 
         //! * `raw` - Get the raw documentation metadata for a value.
         //! * `write` - Write documentation to the given output path.
         #![depends(const nsid!(ergo::doc))]
+        #![contains(value, path, child, write, raw)]
+        #![exclude_contains_from_id]
+
         let source = metadata::Source::get(&ARG);
         match_value! {ARG,
             types::Args { mut args } => {

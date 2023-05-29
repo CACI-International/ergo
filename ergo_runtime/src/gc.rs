@@ -278,11 +278,10 @@ impl<Pile: GarbagePile> GarbageCollector<Pile> {
     }
 
     pub fn collect(&mut self) {
-        let mut cleaner = Cleaner {
+        self.pile.clean(&mut Cleaner {
             roots: &mut self.roots,
             tracked: &mut self.tracked,
-        };
-        self.pile.clean(&mut cleaner);
+        });
 
         // Traverse all info starting at the roots.
         let mut v = Visitor::default();
@@ -293,7 +292,26 @@ impl<Pile: GarbagePile> GarbageCollector<Pile> {
 
         // Remove and drop any tracked values which weren't visited.
         let tracked: Vec<_> = self.tracked.keys().copied().collect();
+        let mut to_remove = Vec::new();
         for k in tracked {
+            if !v.visited.contains_key(&k) {
+                to_remove.push(k);
+            }
+        }
+
+        // Do a second clean where, if any roots were added, we disqualify values from being
+        // dropped which are now reachable again (but don't add any new values to be dropped).
+        let old_roots = self.roots.clone();
+        self.pile.clean(&mut Cleaner {
+            roots: &mut self.roots,
+            tracked: &mut self.tracked,
+        });
+        let mut v = Visitor::default();
+        for gc in self.roots.keys().filter(|k| !old_roots.contains_key(k)) {
+            v.visited.insert(*gc, ());
+            unsafe { gc.as_ref() }.gc_refs(&mut v);
+        }
+        for k in to_remove {
             if !v.visited.contains_key(&k) {
                 self.tracked.remove(&k);
                 unsafe {
@@ -425,6 +443,10 @@ impl<T: GcRefs, PileInfo: GarbagePileItem> GcInfo<PileInfo, T> {
         );
         log::logger().flush();
         GcRefs::gc_refs(&Self::from_generic(generic).value, v);
+        log::trace!(
+            "gc refs complete for value at {:?}",
+            &Self::from_generic(generic).value as *const _
+        );
     }
 
     extern "C" fn drop_info(generic: &GenericGcInfo) {
