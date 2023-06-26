@@ -1081,6 +1081,9 @@ impl ExprEvaluator {
             // Don't set sources as the doc comment/attribute source, it tends to produce confusing
             // error messages.
             ast::ExpressionType::DocComment | ast::ExpressionType::Attribute => (),
+            // XXX: This creates a new value, which is later freed and then accessed again. Add log
+            // output indicating references to be able to build a reference graph and see what is
+            // referencing it.
             _ => Source::update(&mut val, self.source()),
         }
         log::trace!("evaluated {:?}", self.source());

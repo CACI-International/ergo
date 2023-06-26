@@ -1546,11 +1546,17 @@ impl Value {
     /// Set a value as a GC root.
     pub fn root(self: &Self) {
         Gc::root(&self.inner);
+        for (_, v) in &self.metadata {
+            Value::root(v);
+        }
     }
 
     /// Remove a value as a GC root.
     pub fn unroot(self: &Self) {
         Gc::unroot(&self.inner);
+        for (_, v) in &self.metadata {
+            Value::unroot(v);
+        }
     }
 }
 
